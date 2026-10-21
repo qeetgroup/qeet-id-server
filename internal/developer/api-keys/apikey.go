@@ -22,6 +22,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/api-keys/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -141,9 +142,18 @@ type CreateInput struct {
 	Name      string     `json:"name" validate:"required,min=1,max=200"`
 	Scopes    []string   `json:"scopes"`
 	ExpiresAt *time.Time `json:"expires_at"`
+	// Actor is who is creating the key, set by the handler from the caller and
+	// never from the body. A key may act only for Actor.UserID, or for no one.
+	Actor audit.Actor `json:"-"`
 }
 
 func (s *Service) Create(ctx context.Context, in CreateInput) (*Key, string, error) {
+	// A key presents itself as its user on every call, so it may act only for
+	// the person creating it. Naming anyone else, a colleague or someone in
+	// another organization, would let the creator act as them.
+	if in.UserID != nil && (in.Actor.UserID == nil || *in.UserID != *in.Actor.UserID) {
+		return nil, "", errs.ErrAPIKeyUserNotSelf
+	}
 	if err := rbac.ValidateMachineScopes(in.Scopes); err != nil {
 		return nil, "", err
 	}
@@ -177,7 +187,12 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Key, string, err
 	if in.Scopes == nil {
 		in.Scopes = []string{}
 	}
-	row, err := s.q.CreateAPIKey(ctx, dbgen.CreateAPIKeyParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	defer tx.Rollback(ctx)
+	row, err := s.q.WithTx(tx).CreateAPIKey(ctx, dbgen.CreateAPIKeyParams{
 		TenantID:  in.TenantID,
 		UserID:    pgUUID(in.UserID),
 		Name:      in.Name,
@@ -191,6 +206,17 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Key, string, err
 	}
 	k := rowToKey(row.ID, row.TenantID, row.UserID, row.Name, row.Prefix,
 		row.Scopes, row.ExpiresAt, row.LastUsedAt, row.RevokedAt, row.CreatedAt)
+	// The audit row is the record of who created the key; the table has none.
+	meta := map[string]any{"name": k.Name, "scopes": k.Scopes}
+	if k.UserID != nil {
+		meta["user_id"] = k.UserID.String()
+	}
+	if err := audit.Record(ctx, tx, in.Actor.Event(in.TenantID, "apikey.created", "api_key", k.ID, meta)); err != nil {
+		return nil, "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, "", err
+	}
 	return &k, full, nil
 }
 
@@ -207,15 +233,23 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Key, error) {
 	return out, nil
 }
 
-func (s *Service) Revoke(ctx context.Context, tenantID, id uuid.UUID) error {
-	n, err := s.q.RevokeAPIKey(ctx, dbgen.RevokeAPIKeyParams{ID: id, TenantID: tenantID})
+func (s *Service) Revoke(ctx context.Context, tenantID, id uuid.UUID, actor audit.Actor) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	n, err := s.q.WithTx(tx).RevokeAPIKey(ctx, dbgen.RevokeAPIKeyParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		return err
 	}
 	if n == 0 {
 		return errs.ErrAPIKeyNotFound
 	}
-	return nil
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "apikey.revoked", "api_key", id, map[string]any{})); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // Verify resolves a presented `<prefix>.<secret>` to its tenant + scopes,
@@ -288,6 +322,18 @@ type Handler struct {
 	Service *Service
 }
 
+// actorOf is the caller, for the key's owner check and the audit trail.
+func actorOf(r *http.Request) audit.Actor {
+	a := audit.Actor{Type: "user", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
+	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
+		a.UserID = p.UserID
+		if p.ActorType != "" {
+			a.Type = p.ActorType
+		}
+	}
+	return a
+}
+
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/api-keys", h.create)
 	r.Get("/tenants/{tenantID}/api-keys", h.list)
@@ -306,6 +352,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.TenantID = tid
+	in.Actor = actorOf(r)
 	if in.Name == "" {
 		httpx.WriteError(w, r, errs.ErrAPIKeyNameRequired)
 		return
@@ -347,7 +394,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.Revoke(r.Context(), tid, id); err != nil {
+	if err := h.Service.Revoke(r.Context(), tid, id, actorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

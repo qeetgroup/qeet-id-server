@@ -261,6 +261,14 @@ func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, t
 		if p.ActorType != "" {
 			actorType = p.ActorType
 		}
+		// A machine credential is named by its own id, so a key's access is
+		// never mistaken for the person whose id the key carries.
+		if p.ActorType != "" && p.ActorType != "user" && p.Subject != "" {
+			if meta == nil {
+				meta = map[string]any{}
+			}
+			meta["credential_id"] = p.Subject
+		}
 	}
 	tid := tenantID
 	rid := resourceID

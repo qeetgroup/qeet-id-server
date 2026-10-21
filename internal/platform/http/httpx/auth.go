@@ -55,6 +55,7 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 			}
 			auth := r.Header.Get("Authorization")
 			if !strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+				w.Header().Set("WWW-Authenticate", `Bearer realm="qeet"`)
 				WriteError(w, r, errs.ErrUnauthorized)
 				return
 			}
@@ -67,6 +68,7 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 				// "expired" / "issuer mismatch" — an oracle that maps our key
 				// rotation state for an unauthenticated caller. The cause is
 				// logged by WriteError; the client gets a bare 401.
+				w.Header().Set("WWW-Authenticate", `Bearer realm="qeet", error="invalid_token"`)
 				WriteError(w, r, errs.ErrUnauthorized.Wrap(err))
 				return
 			}
@@ -164,29 +166,4 @@ func RequireUser(r *http.Request) (uuid.UUID, error) {
 		return uuid.Nil, errs.ErrUnauthorized
 	}
 	return *p.UserID, nil
-}
-
-// RequireScope blocks the request unless the principal has at least one
-// of the provided scopes.
-func RequireScope(scopes ...string) func(http.Handler) http.Handler {
-	want := make(map[string]struct{}, len(scopes))
-	for _, s := range scopes {
-		want[s] = struct{}{}
-	}
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			p := PrincipalFromCtx(r.Context())
-			if p == nil {
-				WriteError(w, r, errs.ErrUnauthorized)
-				return
-			}
-			for _, s := range p.Scopes {
-				if _, ok := want[s]; ok {
-					next.ServeHTTP(w, r)
-					return
-				}
-			}
-			WriteError(w, r, errs.ErrForbidden)
-		})
-	}
 }

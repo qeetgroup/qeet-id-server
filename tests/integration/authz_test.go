@@ -10,7 +10,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/abac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authzen"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decide"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rebac"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
@@ -474,7 +476,7 @@ func TestAuthZENEvaluation(t *testing.T) {
 	ctx := context.Background()
 	rbacRepo := rbac.NewRepository(testPool)
 	rebacSvc := rebac.NewService(testPool)
-	svc := authzen.NewService(rbacRepo, rebacSvc)
+	svc := authzen.NewService(rbacRepo, rebacSvc, decide.New(rbacRepo, rebacSvc, abac.NewService(testPool)))
 
 	tenantID := createTenant(t, ctx, uniqueSlug("azen"))
 	user := createUserInTenant(t, ctx, tenantID)

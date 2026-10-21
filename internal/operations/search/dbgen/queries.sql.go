@@ -258,17 +258,25 @@ func (q *Queries) SearchRoles(ctx context.Context, arg SearchRolesParams) ([]Sea
 
 const searchUsers = `-- name: SearchUsers :many
 
-SELECT id, email, display_name, status, updated_at
-FROM "user".users
-WHERE tenant_id = $1
-  AND deleted_at IS NULL
-  AND (email ILIKE $2 OR display_name ILIKE $2)
-ORDER BY updated_at DESC, id
+SELECT u.id, u.email, u.display_name, u.status, u.updated_at
+FROM "user".users u
+WHERE u.deleted_at IS NULL
+  AND (
+      u.tenant_id = $1::uuid
+      OR EXISTS (
+          SELECT 1 FROM rbac.user_roles membership
+          JOIN rbac.roles member_role
+            ON member_role.id = membership.role_id AND member_role.tenant_id = membership.tenant_id
+          WHERE membership.user_id = u.id AND membership.tenant_id = $1::uuid
+      )
+  )
+  AND (u.email ILIKE $2 OR u.display_name ILIKE $2)
+ORDER BY u.updated_at DESC, u.id
 LIMIT $3
 `
 
 type SearchUsersParams struct {
-	TenantID pgtype.UUID
+	TenantID uuid.UUID
 	Q        string
 	RowLimit int32
 }
@@ -289,6 +297,9 @@ type SearchUsersRow struct {
 // the service before being returned to the caller.
 // pg_trgm is not enabled in this database, so fuzzy matching is ILIKE;
 // prefix/exact scoring is computed in Go after the rows are fetched.
+// SearchUsers finds the tenant's members: a role in the tenant whose role is
+// the tenant's own, or the tenant being their home, the rule the member list
+// and admin actions use, so members who joined by invitation are found too.
 func (q *Queries) SearchUsers(ctx context.Context, arg SearchUsersParams) ([]SearchUsersRow, error) {
 	rows, err := q.db.Query(ctx, searchUsers, arg.TenantID, arg.Q, arg.RowLimit)
 	if err != nil {

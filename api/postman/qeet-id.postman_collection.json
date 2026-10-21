@@ -4822,7 +4822,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/v1/oauth/authorize?response_type=code&client_id={{oidcClientId}}&redirect_uri=http://localhost:3000/callback&scope=openid%20profile%20email&state=xyz&code_challenge=REPLACE&code_challenge_method=S256",
+              "raw": "{{baseUrl}}/v1/oauth/authorize?response_type=code&client_id={{oidcClientId}}&redirect_uri=http://localhost:3000/callback&scope=openid%20profile%20email&state=xyz&code_challenge=REPLACE&code_challenge_method=S256&nonce=REPLACE_WITH_NONCE",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -4859,6 +4859,10 @@
                 {
                   "key": "code_challenge_method",
                   "value": "S256"
+                },
+                {
+                  "key": "nonce",
+                  "value": "REPLACE_WITH_NONCE"
                 }
               ]
             }
@@ -8293,7 +8297,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"ip_allowlist\": [\"10.0.0.0/8\"],\n  \"ip_denylist\": [],\n  \"password_min_length\": 12,\n  \"password_complexity\": \"standard\",\n  \"session_max_age\": \"720h\",\n  \"mfa_enforcement\": \"optional\",\n  \"settings\": {}\n}"
+              "raw": "{\n  \"password_min_length\": 12,\n  \"password_complexity\": \"standard\",\n  \"session_max_age\": \"720h\",\n  \"mfa_enforcement\": \"optional\",\n  \"settings\": {}\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/policy",

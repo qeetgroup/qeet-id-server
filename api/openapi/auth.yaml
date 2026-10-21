@@ -113,7 +113,7 @@ paths:
   /v1/auth/login:
     post:
       operationId: post_v1_auth_login
-      description: 'Authenticates a user by email and password and, on success, returns an access and refresh token pair. If the account has a second factor enrolled, tokens are withheld and a short-lived mfa_token with the available methods is returned instead; exchange it for tokens at the complete-MFA call. Passwordless accounts authenticate through passkey login rather than this endpoint, and a registered passkey satisfies MFA on its own. Requests are rate limited to slow credential stuffing. Failed sign-ins are counted per account and source network, per account across networks, and per source network across accounts (see the sign-in lockout on the create-SSO-session call); a locked account answers 429 auth.account_locked whatever the password, a throttled source 429 too_many_requests, and an address with no account answers exactly like a wrong password. When the account''s own organisation has switched password sign-in off, a correct password is refused with 403 auth.method_disabled. Every sign-in is assessed for risk (bot-like clients, and impossible travel and new devices where the organisation turns them on), and its country and device are kept 90 days for later sign-ins to be compared against. A risky sign-in by someone with no second factor answers an mfa_token challenge met by a code sent to their verified email address (methods [email], the factor named by the challenge''s own id), or 403 auth.risk_verification_unavailable when they have no verified address.'
+      description: 'Authenticates a user by email and password and, on success, returns an access and refresh token pair. If the account has a second factor enrolled, tokens are withheld and a short-lived mfa_token with the available methods is returned instead; exchange it for tokens at the complete-MFA call. Passwordless accounts authenticate through passkey login rather than this endpoint, and a registered passkey satisfies MFA on its own. Requests are rate limited to slow credential stuffing. Failed sign-ins are counted per account and source network, per account across networks, and per source network across accounts (see the sign-in lockout on the create-SSO-session call); a locked account answers 429 auth.account_locked whatever the password, a throttled source 429 too_many_requests, and an address with no account answers exactly like a wrong password. When the account''s own organisation has switched password sign-in off, a correct password is refused with 403 auth.method_disabled. Every sign-in is assessed for risk (bot-like clients, and impossible travel and new devices where the organisation turns them on), and its country and device are kept 90 days for later sign-ins to be compared against. A risky sign-in by someone with no second factor answers an mfa_token challenge met by a code sent to their verified email address (methods [email], the factor named by the challenge''s own id), or 403 auth.risk_verification_unavailable when they have no verified address. While the organisation''s address rules are on, a sign-in from an address they refuse is refused with 403 auth.address_not_allowed before any session is issued; the same holds on every other way of signing in to the organisation (passkey, magic link, social, SAML, LDAP, invitation, organisation switch, application authorization and the device flow).'
       summary: Sign in
       tags:
         - Auth
@@ -522,6 +522,8 @@ paths:
         the same terms as the hosted password sign-in, including a trusted
         device (qe_td) skipping it where the organisation allows. The link is
         spent either way.
+        A link for an organisation whose address rules refuse the browser's
+        address answers 403 auth.address_not_allowed and opens no session.
       tags:
         - Auth
       security: []
@@ -603,13 +605,14 @@ paths:
   /v1/auth/me:
     get:
       operationId: get_v1_auth_me
-      description: 'Returns the principal resolved from the presented credential, including the user, tenant, and session identifiers, the actor type, and granted scopes. Use it to confirm who the current credential authenticates as and which tenant it is scoped to. A tenant-less principal reports a null tenant until one is selected with the switch-tenant call.'
+      description: 'Returns the principal resolved from the presented credential, including the user, tenant, and session identifiers, the actor type, and granted scopes. Use it to confirm who the current credential authenticates as and which tenant it is scoped to. A tenant-less principal reports a null tenant until one is selected with the switch-tenant call. Also accepts the hosted-login session cookie (qe_ls) in place of a bearer token, so a browser app signed in through the hosted login can tell who is signed in.'
       summary: Me
       tags:
         - Auth
       security:
         - bearerAuth: []
         - apiKeyAuth: []
+        - ssoCookie: []
       responses:
         '200':
           description: Current principal
@@ -622,7 +625,7 @@ paths:
   /v1/auth/refresh:
     post:
       operationId: post_v1_auth_refresh
-      description: 'Exchanges a valid refresh token for a new access and refresh token pair. The presented refresh token is rotated and invalidated, so each token may be redeemed only once; persist the returned refresh token for the next rotation. A revoked or already-rotated token is rejected and forces a fresh sign-in. A session ends by itself at its maximum age however active it is, and once it goes longer than its idle timeout without a renewal; each renewal restarts the idle timeout, and the response says when the session ends either way (session_expires_at, idle_expires_at). A renewal after either is refused with 401 auth.session_timed_out and the session ends, recorded as an expiry and announced to session.revoked subscribers with the reason expired.'
+      description: 'Exchanges a valid refresh token for a new access and refresh token pair. The presented refresh token is rotated and invalidated, so each token may be redeemed only once; persist the returned refresh token for the next rotation. A revoked or already-rotated token is rejected and forces a fresh sign-in. A session ends by itself at its maximum age however active it is, and once it goes longer than its idle timeout without a renewal; each renewal restarts the idle timeout, and the response says when the session ends either way (session_expires_at, idle_expires_at). A renewal after either is refused with 401 auth.session_timed_out and the session ends, recorded as an expiry and announced to session.revoked subscribers with the reason expired. A renewal from an address the organisation''s address rules refuse answers 403 auth.address_not_allowed; the session stays, and renews again from an allowed address.'
       summary: Refresh
       tags:
         - Auth
@@ -642,6 +645,8 @@ paths:
                 $ref: '#/components/schemas/TokenPair'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
   /v1/auth/reset-password:
@@ -700,7 +705,7 @@ paths:
       description: 'Establishes a hosted-login SSO session and sets the HttpOnly qe_ls cookie so the browser can continue into the OAuth authorize and consent flow. When the account has a second factor enrolled, no cookie is set yet and a short-lived mfa_token is returned; complete it at the session-MFA call before the cookie is issued. Because this is a cookie session, later state-changing calls made with it are subject to CSRF protection. End the session with the corresponding destroy-session call.
 
 
-        Sign-in lockout: failed password sign-ins are counted per account and source network (the client IP behind the trusted proxies; an IPv4 address or an IPv6 /64). Reaching the threshold within the window locks the account for that network for the lock duration, so a stranger on another network cannot lock the owner out. The threshold, window and duration are those of the tenant of the OAuth client named by `client_id` (its authentication policy), or the platform defaults when no client is named. Failures from any mix of networks also lock the account everywhere at a looser cap (the threshold times LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER), and a source network that fails against too many distinct accounts (LOGIN_SPRAY_ACCOUNTS within LOGIN_SPRAY_WINDOW) is refused password sign-in for LOGIN_SPRAY_BLOCK. An address with no account is counted and answered exactly like a wrong password. When the counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable (fail closed). When the organisation of the named client_id has switched password sign-in off, the request is refused with 403 auth.method_disabled before any password is checked (the same answer for any account or none); without a client_id, the account''s own organisation decides once the password is verified.'
+        Sign-in lockout: failed password sign-ins are counted per account and source network (the client IP behind the trusted proxies; an IPv4 address or an IPv6 /64). Reaching the threshold within the window locks the account for that network for the lock duration, so a stranger on another network cannot lock the owner out. The threshold, window and duration are those of the tenant of the OAuth client named by `client_id` (its authentication policy), or the platform defaults when no client is named. Failures from any mix of networks also lock the account everywhere at a looser cap (the threshold times LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER), and a source network that fails against too many distinct accounts (LOGIN_SPRAY_ACCOUNTS within LOGIN_SPRAY_WINDOW) is refused password sign-in for LOGIN_SPRAY_BLOCK. An address with no account is counted and answered exactly like a wrong password. When the counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable (fail closed). When the organisation of the named client_id has switched password sign-in off, the request is refused with 403 auth.method_disabled before any password is checked (the same answer for any account or none); without a client_id, the account''s own organisation decides once the password is verified. While the address rules of that client''s organisation are on, an address they refuse is answered 403 auth.address_not_allowed before any password is checked, and no cookie is set.'
       summary: Create SSO session
       tags:
         - Auth
@@ -833,6 +838,9 @@ paths:
         tenant's self_registration_enabled policy (403 when disabled). The
         password must meet that tenant's password rules (422 naming the rule
         that failed). Enumeration-safe: an existing email returns a neutral 422.
+
+        An address the organisation's address rules refuse answers 403
+        auth.address_not_allowed, and no account is created.
       tags:
         - Auth
       security: []
@@ -1378,7 +1386,7 @@ paths:
   /v1/auth/switch-tenant:
     post:
       operationId: post_v1_auth_switch_tenant
-      description: 'Replaces the caller''s session with one scoped to another tenant they belong to and returns its token pair. The new access token carries the claims the target tenant''s authentication hook adds, and renewals keep them; the hook may also refuse the switch. The session the presented access token belongs to ends: its refresh token is refused from now on, its access token stays valid only until it expires, and the tenant''s session.revoked subscribers are notified with reason tenant_switch. Use the returned pair from now on. The caller''s session list shows the one sign-in, not one entry per switch. Refused, with nothing changed: a tenant the caller does not belong to (403), a refusal by the tenant''s hook, or an access token whose session has already ended (401). Confirm the active scope afterward with the current-principal call.'
+      description: 'Replaces the caller''s session with one scoped to another tenant they belong to and returns its token pair. The new access token carries the claims the target tenant''s authentication hook adds, and renewals keep them; the hook may also refuse the switch. The session the presented access token belongs to ends: its refresh token is refused from now on, its access token stays valid only until it expires, and the tenant''s session.revoked subscribers are notified with reason tenant_switch. Use the returned pair from now on. The caller''s session list shows the one sign-in, not one entry per switch. Refused, with nothing changed: a tenant the caller does not belong to (403), a refusal by the tenant''s hook, an address the tenant''s address rules refuse (403 auth.address_not_allowed), or an access token whose session has already ended (401). Confirm the active scope afterward with the current-principal call.'
       summary: Switch tenant
       tags:
         - Auth
@@ -2752,7 +2760,7 @@ paths:
   /v1/check:
     get:
       operationId: get_v1_check
-      description: 'Evaluates whether a user holds a given permission in a tenant under the baseline RBAC model and returns an allow or deny decision. By default the response is the bare decision; pass explain=true to receive the full authorization trace, including the grant path and, on denial, a reason. This is a read-only decision and changes no state. Richer models are available through the ABAC evaluate, ReBAC check, and AuthZEN evaluation calls.'
+      description: 'Evaluates whether a user may use a permission in a tenant, composing every model: an ABAC deny policy (resource type and action read from the key, so doc:write is resource doc, action write) refuses and stops; otherwise a role granting the permission, or an ABAC allow policy, permits; otherwise it is refused. An engine error refuses. The response names the deciding model and rule in decided_by; the ABAC policy is named only to a caller holding policy.read. Pass explain=true to add the role grant paths, a reason on denial and the step-by-step trace. This is a read-only decision and changes no state.'
       summary: Permission check
       tags:
         - RBAC
@@ -2778,7 +2786,7 @@ paths:
           name: explain
           required: false
           description: >-
-            When "true", return the full authorization trace (allowed, the grant path(s), and a reason on denial) instead of the bare {allowed} object.
+            When "true", also return the role grant path(s), a reason on denial and the decision's trace.
           schema:
             type: string
             enum:
@@ -2789,16 +2797,28 @@ paths:
       responses:
         '200':
           description: >-
-            Decision. The default shape is {allowed}. With explain=true the response is the Explanation object (allowed, paths, reason).
+            Decision: {allowed, decided_by}. With explain=true also paths, reason (on denial) and trace.
           content:
             application/json:
               schema:
-                oneOf:
-                  - type: object
-                    properties:
-                      allowed:
-                        type: boolean
-                  - $ref: '#/components/schemas/AuthzExplanation'
+                type: object
+                properties:
+                  allowed:
+                    type: boolean
+                  decided_by:
+                    $ref: '#/components/schemas/AuthzDecidedBy'
+                  paths:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuthzGrantStep'
+                  reason:
+                    type: string
+                    description: Set only on a denial, with explain=true.
+                  trace:
+                    type: array
+                    items:
+                      type: string
+                    description: With explain=true. Each step in order, prefixed with its model (tenant, abac, rbac, rebac, none).
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -3191,7 +3211,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     post:
       operationId: post_v1_users_ByUserID_tenants_ByTenantID_roles_ByRoleID
-      description: 'Assigns a role to a user within the tenant, adding the role''s permissions to that user''s effective permissions. The role must belong to the tenant, and the assignment is idempotent. Reverse it with the unassign-role-from-user call, and verify the outcome with the effective-permissions call.'
+      description: 'Assigns a role to a user within the tenant, adding the role''s permissions to that user''s effective permissions. The role must belong to the tenant and the user must already be a member of it, or have it as their home tenant; otherwise the call answers 404 rbac.user_or_role_not_found, the same for a missing id as for another tenant''s. The assignment is idempotent. Reverse it with the unassign-role-from-user call, and verify the outcome with the effective-permissions call.'
       summary: Assign role to user
       tags:
         - RBAC
@@ -3591,7 +3611,7 @@ paths:
   /v1/tenants/{tenantID}/relation-tuples/check:
     post:
       operationId: post_v1_tenants_ByTenantID_relation_tuples_check
-      description: 'Evaluates whether a user holds a relation on an object by walking the ReBAC tuple graph, following userset references transitively. It returns a boolean decision by default; pass explain=true to also receive the root-to-leaf chain of tuples that granted access. This is a read-only decision; author the underlying tuples with the write-tuple call.'
+      description: 'Evaluates whether a user holds a relation on an object, composing every model: an ABAC deny policy for the object''s type with the relation as action refuses and stops; otherwise a relationship tuple (following userset references transitively), a role granting type:relation or type.relation, or an ABAC allow policy permits. A role grant counts without a tuple. An engine error refuses. The response names the deciding model and rule in decided_by; pass explain=true to also receive the chain of tuples that granted access and the decision''s trace. This is a read-only decision; author the underlying tuples with the write-tuple call.'
       summary: Check relation
       tags:
         - ReBAC
@@ -3630,7 +3650,7 @@ paths:
                   type: string
       responses:
         '200':
-          description: '{ allowed: bool } by default; with explain=true, { allowed, path } where each path step is { object, relation, subject, depth }'
+          description: '{ allowed, decided_by } by default; with explain=true also path, where each step is { object, relation, subject, depth }, and trace'
           content:
             application/json:
               schema:
@@ -3638,6 +3658,12 @@ paths:
                 properties:
                   allowed:
                     type: boolean
+                  decided_by:
+                    $ref: '#/components/schemas/AuthzDecidedBy'
+                  trace:
+                    type: array
+                    items:
+                      type: string
                   path:
                     type: array
                     items:
@@ -3752,7 +3778,7 @@ paths:
     post:
       operationId: post_v1_tenants_ByTenantID_access_v1_evaluation
       summary: AuthZEN evaluation
-      description: OpenID AuthZEN core PDP evaluation request. Routes to RBAC when resource.type is "permission" (action.name is the permission key); otherwise routes to ReBAC (resource becomes "type:id", action.name becomes the relation).
+      description: OpenID AuthZEN core PDP evaluation request, answered by the same composed decision as the permission and relation checks (an ABAC deny refuses; then roles, relationships and ABAC allow policies are a union). When resource.type is "permission", action.name is the permission key; otherwise resource becomes "type:id" and action.name the relation. The response context always carries decided_by.
       tags:
         - AuthZEN
       parameters:
@@ -3795,10 +3821,10 @@ paths:
                       type: string
                 context:
                   type: object
-                  description: 'Optional. { explain: true } includes the grant-path trace inline in the response context.'
+                  description: 'Optional. { explain: true } includes the grant path and the decision''s trace inline in the response context.'
       responses:
         '200':
-          description: '{ decision: bool, context?: object }'
+          description: '{ decision: bool, context: { decided_by, paths | path, trace } }'
           content:
             application/json:
               schema:
@@ -3947,7 +3973,11 @@ paths:
       description: >-
         Replaces the organisation's security policy. Session bounds apply to
         sessions and application grants started afterwards. A value out of
-        range is refused with 422 validation_failed naming the field.
+        range is refused with 422 validation_failed naming the field. The
+        policy holds no IP lists: which addresses may sign in is the address
+        rules (/v1/tenants/{tenantID}/ip-rules). ip_allowlist and ip_denylist
+        are still accepted empty, for older consoles; entries are refused with
+        422 validation_failed, code retired.
       responses:
         '200':
           description: OK
@@ -4063,7 +4093,10 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: >-
+        Says what the address rules make of an address ({"ip": "…"}): enabled,
+        allowed, and the reason. The same decision every sign-in gets while the
+        rules are on; an address that can't be read is refused.
       responses:
         '201':
           description: Created
@@ -4105,7 +4138,23 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: >-
+        Turns the organisation's address rules on or off ({"enabled": bool}).
+        While they are on, every sign-in to the organisation (password,
+        passkey, magic link, social, SAML, LDAP, invitation, organisation
+        switch, application authorization, device approval and the device's
+        token collection) and every session renewal asks them first. An address
+        is refused when a deny rule matches it, or when allow rules exist and
+        none matches; deny wins. An address that can't be read is refused. A
+        refusal answers 403 auth.address_not_allowed (access_denied to an
+        application), names no rule, and is audited as auth.address_refused
+        with the rule responsible, the address and the path. Off, nothing is
+        checked. Switching them on is refused with 409
+        risk.rules_lock_out_caller when they would refuse the address the
+        request comes from (as are adding or removing a rule while they are on,
+        when the result would), so an admin can't lock themselves out; the
+        console calls from its own server, so its address must stay allowed.
+        Switching them off always works.
       responses:
         '200':
           description: OK
@@ -4451,7 +4500,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: 'Authenticated but not permitted. auth.application_token: the access token was issued to an application (it carries client_id) and this route accepts only the user''s own tokens; applications may call GET /v1/oauth/userinfo.'
+      description: 'Authenticated but not permitted. auth.application_token: the access token was issued to an application (it carries client_id) and this route accepts only the user''s own tokens; applications may call GET /v1/oauth/userinfo. auth.insufficient_scope: an application''s token reached a route open to applications without the scope the route needs (named in the WWW-Authenticate challenge).'
       content:
         application/json:
           schema:
@@ -4742,14 +4791,6 @@ components:
         tenant_id:
           type: string
           format: uuid
-        ip_allowlist:
-          type: array
-          items:
-            type: string
-        ip_denylist:
-          type: array
-          items:
-            type: string
         password_min_length:
           type: integer
           minimum: 8
@@ -5135,6 +5176,19 @@ components:
           format: uuid
           description: Set only when via is a group grant.
         role_id:
+          type: string
+          format: uuid
+    AuthzDecidedBy:
+      type: object
+      description: >-
+        What decided a composed authorization decision. The ABAC policy (rule, policy_id) is named only to a caller holding policy.read; anyone else sees rule "an attribute policy".
+      properties:
+        model:
+          type: string
+          enum: [tenant, abac, rbac, rebac, none]
+        rule:
+          type: string
+        policy_id:
           type: string
           format: uuid
     AuthzExplanation:

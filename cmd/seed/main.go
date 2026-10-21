@@ -297,7 +297,7 @@ func main() {
 
 	// ---- API keys ----
 	for _, name := range []string{"Production API", "GitHub Actions CI", "qeet-logs ingestion"} {
-		k, full, err := apikeySvc.Create(ctx, apikey.CreateInput{TenantID: qeet.ID, UserID: &founder.ID, Name: name, Scopes: []string{"user.read", "audit.read"}})
+		k, full, err := apikeySvc.Create(ctx, apikey.CreateInput{TenantID: qeet.ID, UserID: &founder.ID, Name: name, Scopes: []string{"user.read", "audit.read"}, Actor: audit.Actor{Type: "system", UserID: &founder.ID}})
 		must(err, "create api key "+name)
 		fmt.Printf("  • api key %-22q %s\n", k.Name, full)
 	}
@@ -419,8 +419,6 @@ func main() {
 	inTx("policy", func(tx pgx.Tx) error {
 		_, err := policyRepo.Upsert(ctx, tx, policy.Policy{
 			TenantID:           qeet.ID,
-			IPAllowlist:        []string{},
-			IPDenylist:         []string{},
 			PasswordMinLength:  12,
 			PasswordComplexity: "standard",
 			SessionMaxAge:      policy.Duration(12 * time.Hour),

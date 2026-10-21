@@ -214,19 +214,25 @@ func (q *Queries) GetClientTenant(ctx context.Context, clientID string) (uuid.UU
 }
 
 const getLoginSession = `-- name: GetLoginSession :one
-SELECT id, user_id, expires_at FROM auth.login_sessions WHERE token_hash = $1
+SELECT id, user_id, expires_at, created_at FROM auth.login_sessions WHERE token_hash = $1
 `
 
 type GetLoginSessionRow struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID
 	ExpiresAt time.Time
+	CreatedAt time.Time
 }
 
 func (q *Queries) GetLoginSession(ctx context.Context, tokenHash string) (GetLoginSessionRow, error) {
 	row := q.db.QueryRow(ctx, getLoginSession, tokenHash)
 	var i GetLoginSessionRow
-	err := row.Scan(&i.ID, &i.UserID, &i.ExpiresAt)
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+	)
 	return i, err
 }
 

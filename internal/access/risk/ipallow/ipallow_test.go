@@ -1,6 +1,10 @@
 package ipallow
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/google/uuid"
+)
 
 func rule(cidr, action string) Rule { return Rule{CIDR: cidr, Action: action} }
 
@@ -55,9 +59,38 @@ func TestEvaluate_BareHostAndIPv6(t *testing.T) {
 	}
 }
 
-func TestEvaluate_UnparseableFailsOpen(t *testing.T) {
-	rules := []Rule{rule("10.0.0.0/8", "allow")}
-	if ok, _ := Evaluate(rules, "not-an-ip"); !ok {
-		t.Error("unparseable address should fail open (not lock out)")
+// While rules are on, a sign-in whose address can't be read doesn't get past
+// them, whatever the rules say.
+func TestDecide_UnreadableAddressIsRefused(t *testing.T) {
+	for _, rules := range [][]Rule{nil, {rule("10.0.0.0/8", "allow")}, {rule("10.0.0.0/8", "deny")}} {
+		for _, addr := range []string{"", "not-an-ip", "10.0.0.1:443"} {
+			if d := Decide(rules, addr); d.Allowed || d.Reason != ReasonUnknownAddr {
+				t.Errorf("Decide(%v, %q) = %+v, want refused as %s", rules, addr, d, ReasonUnknownAddr)
+			}
+		}
+	}
+}
+
+// A refusal names the deny rule responsible; deny wins when an allow rule
+// matches too; outside every allow rule, no single rule is responsible.
+func TestDecide_NamesTheRuleResponsible(t *testing.T) {
+	deny := Rule{ID: uuid.New(), CIDR: "192.0.2.0/24", Action: "deny"}
+	rules := []Rule{rule("192.0.2.0/24", "allow"), deny, rule("198.51.100.0/24", "allow")}
+	d := Decide(rules, "192.0.2.10")
+	if d.Allowed || d.Reason != ReasonDenyRule || d.Rule == nil || d.Rule.ID != deny.ID {
+		t.Fatalf("deny and allow both match: %+v, want refused by rule %s", d, deny.ID)
+	}
+	if d := Decide(rules, "203.0.113.5"); d.Allowed || d.Reason != ReasonNotAllowed || d.Rule != nil {
+		t.Fatalf("outside every allow rule: %+v, want refused with no rule", d)
+	}
+	if d := Decide(rules, "198.51.100.7"); !d.Allowed || d.Rule != nil {
+		t.Fatalf("inside an allow rule: %+v, want allowed", d)
+	}
+}
+
+// An IPv4 address written as IPv6 (::ffff:a.b.c.d) is judged as itself.
+func TestDecide_IPv4MappedAddress(t *testing.T) {
+	if d := Decide([]Rule{rule("192.0.2.0/24", "deny")}, "::ffff:192.0.2.10"); d.Allowed {
+		t.Fatal("an IPv4-mapped address got past the deny rule for its IPv4 form")
 	}
 }

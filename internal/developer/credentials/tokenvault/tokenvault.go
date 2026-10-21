@@ -688,12 +688,21 @@ func (h *Handler) getAccessToken(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	provider := chi.URLParam(r, "provider")
+	// A connected account's raw token goes only to the person who connected
+	// it, signed in themselves. An API key, service principal, agent or
+	// application token carries a user id it was given, not one it proved, so
+	// it is refused, and the attempt is recorded as that credential.
+	if !signedInPerson(p) {
+		h.recordAccessRefused(r, p, tenantID, provider)
+		httpx.WriteError(w, r, errs.ErrTokenVaultPeopleOnly)
+		return
+	}
 	userID, err := httpx.RequireUser(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	provider := chi.URLParam(r, "provider")
 	if !hasVaultScope(p.Scopes, provider) {
 		httpx.WriteError(w, r, errs.ErrTokenVaultScopeRequired)
 		return
@@ -711,6 +720,7 @@ func (h *Handler) getAccessToken(w http.ResponseWriter, r *http.Request) {
 		if aerr := audit.Record(ctx, tx, audit.Event{
 			TenantID:     &tenantID,
 			ActorUserID:  actorID,
+			ActorType:    "user",
 			Action:       "vault.tokens.accessed",
 			ResourceType: "token_vault_grant",
 			IP:           httpx.ClientIP(r),
@@ -722,6 +732,46 @@ func (h *Handler) getAccessToken(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"access_token": token})
+}
+
+// signedInPerson reports whether p is a person's own session: not an API key,
+// service principal or agent, and not a token issued to an application.
+func signedInPerson(p *httpx.Principal) bool {
+	return (p.ActorType == "" || p.ActorType == "user") && p.UserID != nil && p.SessionID != nil && p.ClientID == ""
+}
+
+// recordAccessRefused audits a refused token read under the credential that
+// tried, never under the user id that credential carries.
+func (h *Handler) recordAccessRefused(r *http.Request, p *httpx.Principal, tenantID uuid.UUID, provider string) {
+	ctx := r.Context()
+	tx, err := h.Service.pool.Begin(ctx)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback(ctx)
+	meta := map[string]any{"provider": provider, "credential_id": p.Subject}
+	if p.UserID != nil {
+		meta["target_user_id"] = p.UserID.String()
+	}
+	if p.ClientID != "" {
+		meta["client_id"] = p.ClientID
+	}
+	actorType := p.ActorType
+	if actorType == "" {
+		actorType = "user"
+	}
+	if audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tenantID,
+		ActorType:    actorType,
+		Action:       "vault.tokens.access_refused",
+		ResourceType: "token_vault_grant",
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     meta,
+	}) == nil {
+		_ = tx.Commit(ctx)
+	}
 }
 
 func hasVaultScope(scopes []string, provider string) bool {

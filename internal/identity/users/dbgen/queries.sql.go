@@ -103,6 +103,27 @@ func (q *Queries) CountUserEffectivePermissions(ctx context.Context, arg CountUs
 	return effective, err
 }
 
+const getAccessOrganization = `-- name: GetAccessOrganization :one
+SELECT id, name, slug FROM tenant.tenants WHERE id = $1
+`
+
+type GetAccessOrganizationRow struct {
+	ID   uuid.UUID
+	Name string
+	Slug string
+}
+
+// GetUserOrganization returns the tenant (a.k.a. organization) a user belongs to.
+// Each user belongs to exactly one tenant (users.tenant_id is NOT NULL).
+// GetAccessOrganization is the organization an access view is about: the one
+// the admin is viewing the user from, never the user's home elsewhere.
+func (q *Queries) GetAccessOrganization(ctx context.Context, id uuid.UUID) (GetAccessOrganizationRow, error) {
+	row := q.db.QueryRow(ctx, getAccessOrganization, id)
+	var i GetAccessOrganizationRow
+	err := row.Scan(&i.ID, &i.Name, &i.Slug)
+	return i, err
+}
+
 const getPasswordHash = `-- name: GetPasswordHash :one
 SELECT password_hash FROM auth.password_credentials WHERE user_id = $1
 `
@@ -244,28 +265,6 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow
 	return i, err
 }
 
-const getUserOrganization = `-- name: GetUserOrganization :one
-SELECT t.id, t.name, t.slug
-FROM "user".users u
-JOIN tenant.tenants t ON t.id = u.tenant_id
-WHERE u.id = $1
-`
-
-type GetUserOrganizationRow struct {
-	ID   uuid.UUID
-	Name string
-	Slug string
-}
-
-// GetUserOrganization returns the tenant (a.k.a. organization) a user belongs to.
-// Each user belongs to exactly one tenant (users.tenant_id is NOT NULL).
-func (q *Queries) GetUserOrganization(ctx context.Context, id uuid.UUID) (GetUserOrganizationRow, error) {
-	row := q.db.QueryRow(ctx, getUserOrganization, id)
-	var i GetUserOrganizationRow
-	err := row.Scan(&i.ID, &i.Name, &i.Slug)
-	return i, err
-}
-
 const getUserPasskeyLastUsed = `-- name: GetUserPasskeyLastUsed :one
 SELECT last_used_at FROM auth.passkey_credentials
 WHERE user_id = $1 AND last_used_at IS NOT NULL
@@ -355,6 +354,39 @@ func (q *Queries) GetUserSecuritySummary(ctx context.Context, id uuid.UUID) (Get
 	return i, err
 }
 
+const getUserStandingIn = `-- name: GetUserStandingIn :one
+SELECT COALESCE(u.tenant_id = $1::uuid, false)::boolean AS home,
+       EXISTS (
+           SELECT 1 FROM rbac.user_roles membership
+           JOIN rbac.roles member_role
+             ON member_role.id = membership.role_id AND member_role.tenant_id = membership.tenant_id
+           WHERE membership.user_id = u.id AND membership.tenant_id = $1::uuid
+       )::boolean AS member
+FROM "user".users u
+WHERE u.id = $2
+`
+
+type GetUserStandingInParams struct {
+	TenantID uuid.UUID
+	ID       uuid.UUID
+}
+
+type GetUserStandingInRow struct {
+	Home   bool
+	Member bool
+}
+
+// GetUserStandingIn is how a user relates to a tenant: whether the tenant is
+// their home, the one that manages the account, and whether they hold one of
+// its roles. A user who is neither isn't the tenant's to see. Soft-deleted
+// users are included so the home tenant can restore or purge them.
+func (q *Queries) GetUserStandingIn(ctx context.Context, arg GetUserStandingInParams) (GetUserStandingInRow, error) {
+	row := q.db.QueryRow(ctx, getUserStandingIn, arg.TenantID, arg.ID)
+	var i GetUserStandingInRow
+	err := row.Scan(&i.Home, &i.Member)
+	return i, err
+}
+
 const getUserStats = `-- name: GetUserStats :one
 WITH members AS (
   SELECT u.id, u.status, u.created_at
@@ -408,19 +440,6 @@ func (q *Queries) GetUserStats(ctx context.Context, tenantID uuid.UUID) (GetUser
 		&i.NewLast30d,
 	)
 	return i, err
-}
-
-const getUserTenantOf = `-- name: GetUserTenantOf :one
-SELECT tenant_id FROM "user".users WHERE id = $1
-`
-
-// GetUserTenantOf returns the tenant a user belongs to regardless of soft-delete
-// (used to enforce that admin by-id operations never cross tenant boundaries).
-func (q *Queries) GetUserTenantOf(ctx context.Context, id uuid.UUID) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, getUserTenantOf, id)
-	var tenant_id pgtype.UUID
-	err := row.Scan(&tenant_id)
-	return tenant_id, err
 }
 
 const getUserTrends = `-- name: GetUserTrends :many
@@ -561,7 +580,7 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (InsertU
 }
 
 const listDeletedUsers = `-- name: ListDeletedUsers :many
-SELECT id, email, display_name, deleted_at, created_at
+SELECT id, email, display_name, deleted_at, created_at, deleted_by
 FROM "user".users
 WHERE tenant_id = $1 AND deleted_at IS NOT NULL
 ORDER BY deleted_at DESC
@@ -579,6 +598,7 @@ type ListDeletedUsersRow struct {
 	DisplayName *string
 	DeletedAt   pgtype.Timestamptz
 	CreatedAt   time.Time
+	DeletedBy   pgtype.UUID
 }
 
 func (q *Queries) ListDeletedUsers(ctx context.Context, arg ListDeletedUsersParams) ([]ListDeletedUsersRow, error) {
@@ -596,6 +616,7 @@ func (q *Queries) ListDeletedUsers(ctx context.Context, arg ListDeletedUsersPara
 			&i.DisplayName,
 			&i.DeletedAt,
 			&i.CreatedAt,
+			&i.DeletedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -758,9 +779,44 @@ func (q *Queries) PurgeUser(ctx context.Context, id uuid.UUID) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const removeUserGroupsInTenant = `-- name: RemoveUserGroupsInTenant :exec
+DELETE FROM tenant.group_members WHERE user_id = $1 AND tenant_id = $2
+`
+
+type RemoveUserGroupsInTenantParams struct {
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+}
+
+func (q *Queries) RemoveUserGroupsInTenant(ctx context.Context, arg RemoveUserGroupsInTenantParams) error {
+	_, err := q.db.Exec(ctx, removeUserGroupsInTenant, arg.UserID, arg.TenantID)
+	return err
+}
+
+const removeUserRolesInTenant = `-- name: RemoveUserRolesInTenant :execrows
+
+DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2
+`
+
+type RemoveUserRolesInTenantParams struct {
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+}
+
+// The writes that remove a member from one tenant, leaving their account and
+// every other tenant alone: their roles and groups there, and the application
+// grants and API keys they hold there.
+func (q *Queries) RemoveUserRolesInTenant(ctx context.Context, arg RemoveUserRolesInTenantParams) (int64, error) {
+	result, err := q.db.Exec(ctx, removeUserRolesInTenant, arg.UserID, arg.TenantID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const restoreUser = `-- name: RestoreUser :execrows
 UPDATE "user".users
-SET deleted_at = NULL, status = 'active', updated_at = NOW()
+SET deleted_at = NULL, deleted_by = NULL, status = 'active', updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NOT NULL
 `
 
@@ -770,6 +826,36 @@ func (q *Queries) RestoreUser(ctx context.Context, id uuid.UUID) (int64, error) 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const revokeUserAPIKeysInTenant = `-- name: RevokeUserAPIKeysInTenant :exec
+UPDATE auth.api_keys SET revoked_at = NOW()
+WHERE user_id = $1 AND tenant_id = $2 AND revoked_at IS NULL
+`
+
+type RevokeUserAPIKeysInTenantParams struct {
+	UserID   pgtype.UUID
+	TenantID uuid.UUID
+}
+
+func (q *Queries) RevokeUserAPIKeysInTenant(ctx context.Context, arg RevokeUserAPIKeysInTenantParams) error {
+	_, err := q.db.Exec(ctx, revokeUserAPIKeysInTenant, arg.UserID, arg.TenantID)
+	return err
+}
+
+const revokeUserAppGrantsInTenant = `-- name: RevokeUserAppGrantsInTenant :exec
+UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
+WHERE user_id = $1 AND tenant_id = $2 AND revoked_at IS NULL
+`
+
+type RevokeUserAppGrantsInTenantParams struct {
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+}
+
+func (q *Queries) RevokeUserAppGrantsInTenant(ctx context.Context, arg RevokeUserAppGrantsInTenantParams) error {
+	_, err := q.db.Exec(ctx, revokeUserAppGrantsInTenant, arg.UserID, arg.TenantID)
+	return err
 }
 
 const setPassword = `-- name: SetPassword :exec
@@ -826,4 +912,32 @@ func (q *Queries) SoftDeleteUser(ctx context.Context, id uuid.UUID) (int64, erro
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const softDeleteUserBy = `-- name: SoftDeleteUserBy :one
+UPDATE "user".users
+SET deleted_at = NOW(), status = 'deleted', deleted_by = $1, updated_at = NOW()
+WHERE id = $2 AND deleted_at IS NULL
+RETURNING id, deleted_at, deleted_by
+`
+
+type SoftDeleteUserByParams struct {
+	DeletedBy pgtype.UUID
+	ID        uuid.UUID
+}
+
+type SoftDeleteUserByRow struct {
+	ID        uuid.UUID
+	DeletedAt pgtype.Timestamptz
+	DeletedBy pgtype.UUID
+}
+
+// SoftDeleteUserBy is an admin's soft delete: it records who deleted the user
+// and returns what was deleted. The row is locked, so it runs in the same
+// transaction as the session revocation and audit row.
+func (q *Queries) SoftDeleteUserBy(ctx context.Context, arg SoftDeleteUserByParams) (SoftDeleteUserByRow, error) {
+	row := q.db.QueryRow(ctx, softDeleteUserBy, arg.DeletedBy, arg.ID)
+	var i SoftDeleteUserByRow
+	err := row.Scan(&i.ID, &i.DeletedAt, &i.DeletedBy)
+	return i, err
 }

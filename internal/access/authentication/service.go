@@ -62,6 +62,11 @@ type Service struct {
 	// loginHook is an optional synchronous policy gate run after credentials
 	// verify (nil = no gate). Set via SetLoginHook.
 	loginHook LoginHook
+	// addresses is the organisations' address rules, asked before any session
+	// in an organisation is issued or renewed (nil = no rules). See address.go.
+	addresses AddressPolicy
+	// signOutNotifier tells applications of a hosted sign-out (nil = none).
+	signOutNotifier SignOutNotifier
 	// signals announces ended sessions to subscribed applications (nil =
 	// announces nothing). Set via SetSessionSignals.
 	signals *sessionsignal.Signaller
@@ -603,6 +608,17 @@ func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, t
 	// SSO cookie is opaque, and any JWT is minted later by the OIDC authorize
 	// flow for a specific client, decoupled from this call — a separate,
 	// larger integration than the direct API-token login this powers.
+	// The hosted login opens a session for the browser, not for one
+	// organisation; the application it is serving belongs to one, whose address
+	// rules refuse here, not later at authorize. Before the password is
+	// checked, so the answer is the same whether it is right or wrong.
+	clientTenant, err := s.SignInTenant(ctx, in.ClientID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.checkAddress(ctx, clientTenant, uuid.Nil, in.IP, "hosted_password"); err != nil {
+		return nil, err
+	}
 	u, _, err := s.CheckPassword(ctx, in)
 	if err != nil {
 		return nil, err
@@ -651,6 +667,10 @@ func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, emai
 	}
 	if !enabled {
 		return nil, nil, errs.ErrAuthSelfRegistrationDisabled
+	}
+	// Nobody joins an organisation from an address it doesn't allow.
+	if err := s.checkAddress(ctx, tenantID, uuid.Nil, ip, "hosted_signup"); err != nil {
+		return nil, nil, err
 	}
 	if err := s.checkNewPassword(ctx, tenantID, email, plain); err != nil {
 		return nil, nil, err
@@ -1290,6 +1310,12 @@ func (s *Service) issuePair(ctx context.Context, userID, tenantID uuid.UUID, ip,
 // auditMeta (may be nil) is added to the sign-in audit record. notAfter (zero:
 // none) is when the sign-in this session continues ends: it ends no later.
 func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID, ip, ua, method string, claims, auditMeta map[string]any, notAfter time.Time) (*TokenPair, error) {
+	// Every sign-in to an organisation ends here, whatever its method, so the
+	// organisation's address rules are asked here, before anything is written
+	// (the session limit below may end another session).
+	if err := s.checkAddress(ctx, tenantID, userID, ip, method); err != nil {
+		return nil, err
+	}
 	sessionID := uuid.New()
 	var ipArg any
 	if ip != "" {
@@ -1502,6 +1528,13 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 			return nil, err
 		}
 		return nil, errs.ErrAuthSessionRevoked
+	}
+
+	// A session renews only from an address its organisation still allows, so
+	// a newly blocked address stops renewing. The session itself stays: it
+	// renews again from an allowed address.
+	if err := s.checkAddress(ctx, tenantID, userID, in.IP, "refresh"); err != nil {
+		return nil, err
 	}
 
 	newRaw, newHash, err := tokens.NewRefreshToken()

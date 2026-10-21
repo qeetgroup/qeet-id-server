@@ -68,6 +68,26 @@ func (q *Queries) FindUserIDByEmail(ctx context.Context, email string) (uuid.UUI
 	return id, err
 }
 
+const getInboxEmail = `-- name: GetInboxEmail :one
+SELECT email, (email_verified_at IS NOT NULL)::boolean AS verified
+FROM "user".users WHERE id = $1 AND deleted_at IS NULL
+`
+
+type GetInboxEmailRow struct {
+	Email    string
+	Verified bool
+}
+
+// GetInboxEmail is the address the in-app invitations inbox is keyed on, and
+// whether the account has proven it. Anyone can sign up with any address, so an
+// unproven one opens nothing.
+func (q *Queries) GetInboxEmail(ctx context.Context, userID uuid.UUID) (GetInboxEmailRow, error) {
+	row := q.db.QueryRow(ctx, getInboxEmail, userID)
+	var i GetInboxEmailRow
+	err := row.Scan(&i.Email, &i.Verified)
+	return i, err
+}
+
 const getInviteByIDForAccept = `-- name: GetInviteByIDForAccept :one
 SELECT id, tenant_id, email, role_id, status, expires_at
 FROM tenant.invites

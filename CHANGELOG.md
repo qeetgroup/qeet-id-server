@@ -33,6 +33,456 @@ The changes below are the work staged for that first release.
 
 ### Security
 
+**Tenant isolation (2026-10-19)**
+
+* **rbac:** role assignment now refuses users and roles from other organisations.
+  `POST /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}` checked only that the caller held
+  `role.write` in its own tenant, then inserted whatever user and role ids it was given. A
+  `user_roles` row is what makes someone a member, so any organisation admin could pull a user
+  from another organisation in, with permissions, or attach another organisation's role to one
+  of their own users. The insert now requires the role to be the tenant's own and the user to be
+  a live member (or have it as their home tenant), in the same statement. Every refusal is the
+  same `404 rbac.user_or_role_not_found` and is audited as `role.assign_refused`. A missing role
+  id, which used to fail as a database error, gets the same 404.
+* **groups:** adding a group member now refuses anyone outside the organisation.
+  `POST /v1/groups/{id}/members/{userID}` checked only that the group was the caller's, then
+  wrote whatever user id it was given, and the member list returned that user's email and display
+  name. So any organisation admin could read the email and name behind any user id, add people
+  from other organisations to their groups, or add ids with no account. The insert now requires a
+  live member of the organisation, in the same statement, and every refusal is the same
+  `404 group.user_not_found`. The member list shows only members of the organisation. Migration
+  `0135` removes member rows that name no account and adds the missing foreign key to
+  `"user".users`. Removing someone who isn't in the group no longer writes a `group.member_removed`
+  audit entry.
+* **groups:** a group's parent must now be a group of the same organisation, and a move can't
+  make the hierarchy loop. `POST /v1/groups` and `PATCH /v1/groups/{id}` stored any `parent_id`,
+  so a group could be nested under another organisation's group (and deleting that group then
+  deleted this one's subgroups), made its own parent, or moved under its own subgroup. A parent
+  outside the organisation is `404 group.parent_not_found`, and a move into the group itself or
+  one of its subgroups is `400 group.cycle`. Migration `0136` detaches groups whose parent is in
+  another organisation (they become top-level; nothing is deleted) and replaces the parent key
+  with one on `(tenant_id, parent_id)`. `tools/scripts/group-hierarchy-check.sql` lists those
+  groups, and any existing loops, before it runs.
+* **groups:** `PATCH /v1/groups/{id}` now changes only the fields it is sent. It replaced the whole
+  group, so moving a group erased its name and description, and renaming it detached it from its
+  parent. `"parent_id": null` makes a group top-level.
+
+**Email verification and invitations (2026-10-19)**
+
+* **verification:** an email code now proves only the address and flow it was issued for. Verifying
+  the address on file and changing to a new address both wrote codes to `email_verifications`
+  with nothing telling them apart, and the verify step marked the account's current address
+  verified without checking where the code had gone. So someone who signed up with an address
+  they don't own could start an address change to their own inbox and submit that code to
+  verify the address on file. Migration `0137` adds a `purpose` column (`verify_email` or
+  `change_email`, backfilled from the address each code was sent to); each confirm reads only
+  its own purpose, verifying requires the code's address to be the one on the account, and
+  issuing a code expires the other flow's open codes. The flows are now audited
+  (`email.verification_started`, `email.verified`, `email.verification_failed`, `email.changed`
+  with both addresses), and the previous address is sent a notice after a change.
+* **invitations:** the in-app invitations inbox (`GET /v1/me/invites`, `POST
+  /v1/me/invites/{id}/accept` and `/decline`) now needs a verified address. It matched
+  invitations on the account's address alone, so anyone who signed up with an invited address
+  before its owner could see the invitation and join the organisation with its role. It answers
+  `403 invite.email_not_verified` until the address is verified; accepting through the emailed
+  link is unchanged.
+
+**API keys and the token vault (2026-10-19)**
+
+* **api-keys:** an API key can now act only for the person who creates it. `POST /v1/api-keys`
+  stored any `user_id` it was sent, and the key then presented itself as that person on every
+  call, so anyone allowed to create keys could make one act for a colleague, or for someone in
+  another organisation. A `user_id` other than the caller's is `403 apikey.user_not_self`; a key
+  with no `user_id` is unchanged. Creating and revoking a key is now audited (`apikey.created`,
+  with the key's user and scopes, and `apikey.revoked`): the table records no creator.
+  `tools/scripts/api-keys-acting-for-people.sql` lists live keys that act for a person for review.
+* **token vault:** `GET /v1/vault/tokens/{provider}/access-token` hands a connected account's token
+  only to the person who connected it, signed in to their own session. It admitted any key with a
+  vault scope and resolved the grant from the user id the key carried, so a key made to act for a
+  colleague received that colleague's live third-party token, and the access was audited under
+  the colleague's name. API keys, service principals, agents and application tokens are now
+  `403 tokenvault.people_only`, recorded as `vault.tokens.access_refused` under the credential's
+  own id. Vault secret reads by a machine credential record its `credential_id`.
+**OAuth client authentication (2026-10-19)**
+
+* **oidc:** a public client's `client_id` no longer stands in for client authentication. The
+  shared client check passed a public client with no secret at all, and a public client's id is
+  in every sign-in link, so anyone could call `/oauth/introspect` as it, learning whether any
+  token in that organisation was live and whose it was, and could use token exchange or CIBA if
+  the client had been given those flows. Introspection, token exchange and
+  `/v1/oauth/bc-authorize` now refuse public clients (`401 oidc.client_auth_failed`), and a public
+  client can't be registered or edited to hold token exchange or CIBA
+  (`400 oidc.unsupported_flow`). Public clients keep the flows built for them: code with PKCE,
+  refresh, device, and revoking their own tokens (RFC 7009). A confidential client's wrong secret,
+  and a public client at a confidential-only endpoint, are audited as `oidc.client_auth_failed`.
+  Discovery now publishes `token_endpoint_auth_methods_supported`,
+  `revocation_endpoint_auth_methods_supported` and `introspection_endpoint_auth_methods_supported`.
+* **oidc:** editing a client (`PATCH /v1/tenants/{tenantID}/oidc/clients/{id}`) is now held to the
+  same rules as registration. It wrote grant types and redirect URIs unchecked, so an edit could
+  set an unsupported grant or a redirect URI that registration refuses (a fragment, userinfo, or
+  plain `http` off loopback).
+
+**Hosted consent (2026-10-19)**
+
+* **oidc:** the hosted consent screen's Deny no longer sends people to an address the link chose.
+  `GET /v1/oauth/authorize` forwarded the whole query to the consent screen before checking
+  `redirect_uri`, and the decision (`POST /v1/oauth/authorize/decision`) built the denial redirect
+  from the `redirect_uri` the browser posted back. A link naming a real application with any
+  `redirect_uri` turned the genuine, branded consent page into an open redirect, and with a
+  `javascript:` URI the consent screen navigated to script on the hosted-login origin. Authorize
+  now refuses an unregistered `redirect_uri` before anything else
+  (`400 oidc.redirect_uri_not_registered`, shown, never redirected), stores the request
+  (migration `0138`, `auth.oidc_consent_requests`) and gives the consent screen only its
+  `request_id`; the decision names that id and acts on the stored values, once, for the
+  hosted-login session that started it. A decision with no stored request, another session's,
+  or one that tries to change it is `400 oidc.consent_request_invalid`. New
+  `GET /v1/oauth/authorize/request` lets the consent screen show the stored client and scopes.
+  **The hosted login's consent screen must send `request_id` (released with this).**
+
+**Cutting off someone who leaves (2026-10-19)**
+
+* **users:** soft-deleting a user now cuts them off and records it, like suspend. `DELETE
+  /v1/users/{id}` was a single UPDATE: the user's sessions kept working, nothing was audited, no
+  event was sent and nobody was recorded as the deleter. In one transaction it now ends every
+  session (announced as `deleted`), writes a `user.deleted` audit row naming the admin, queues a
+  `user.deleted` event, and records `deleted_by` (migration `0139`), which `GET /v1/users/deleted`
+  returns. The answer is `200` with `id`, `deleted_at` and `deleted_by` instead of an empty `204`.
+  Restoring the account clears `deleted_by` and brings none of the old sessions back.
+* **oidc:** an application can no longer renew or collect tokens for a suspended or deleted
+  account. The refresh grant rotated the stored token without reading the user, so suspending a
+  leaver didn't stop the applications they had signed in to, each renewing for up to 30 days. The
+  refresh, authorization-code, device and CIBA grants now refuse a suspended or deleted account
+  (`auth.account_suspended`, or `invalid_grant` `account_suspended` when polling), a refused
+  refresh revokes that application's refresh tokens for the user, and a code or approval from
+  before the suspension is spent rather than redeemed.
+
+**Members who joined by invitation (2026-10-19)**
+
+* **users:** an organisation can now open and remove the members who joined it by invitation, and
+  can't change an account another organisation manages. Every by-id admin action checked the
+  user's home-organisation column, so a person who already had an account and then accepted an
+  invitation was listed but answered 404 when opened, suspended, reset or signed out, and search
+  didn't find them. Viewing (`GET /v1/users/{id}`, `/security`, `/sessions`, `/access`) and search
+  now use membership: a role in the organisation, or it being the person's home. Actions on the whole
+  account (status, profile, password, MFA, deletion, restore, purge, signing out everywhere) stay
+  with the organisation the account belongs to; another one gets `403 user.managed_elsewhere`
+  instead of 404, because those actions reach the person's other organisations too. New
+  `DELETE /v1/users/{id}/membership` removes such a member from this organisation only: their roles
+  and groups here, their sessions here, and the application grants and API keys they hold here,
+  audited as `user.removed_from_organization` (`409 user.managed_here` for the organisation's own
+  accounts). The access view now describes the organisation being viewed, not the person's home.
+
+**Assistant reads and explains only (2026-10-20)**
+
+* **qeetai:** the model is no longer offered the assistant's change tools. The console stopped
+  running them for 1.0 (it answers "can't make changes in this version"), but the orchestrator
+  still sent all 21 tools from `api/qeetai/tools.manifest.json` to the model, and its system prompt
+  said the assistant could manage roles and create OIDC clients, so the model kept asking for
+  changes. Every tool in the manifest now declares `mutates` (14 of the 21 do); while change tools
+  are switched off, the model is offered only the 7 that read or explain, and a tool that doesn't
+  declare `mutates` is a manifest error. The system prompt describes a read-only assistant that
+  explains the steps and names the console screen that makes a change.
+
+**Address rules (2026-10-20)**
+
+* **ipallow:** address rules now decide every sign-in. Admins could turn rules on and add allow and
+  deny ranges, and the check endpoint reported "denied", but no sign-in ever asked them: a deny rule
+  blocked nothing and an allow list let everyone in. While an organisation's rules are on, every
+  session in it is now refused from an address they refuse (a deny rule matches, or allow rules
+  exist and none matches; deny wins), before anything is written: password, passkey, magic link,
+  social, SAML, LDAP, invitation, organisation creation and switch, and the MFA step. So are its
+  sessions' renewals (the session stays, and renews again from an allowed address), an
+  application's authorization in the browser, a device approval, and a device collecting its
+  tokens. A refusal answers `403 auth.address_not_allowed` (`access_denied` to an application),
+  names no rule, and is audited as `auth.address_refused` with the rule responsible, the address
+  and the path. An address that can't be read is refused while rules are on (the check endpoint
+  said "allowed" for one). Rules judge the address the platform derives, so behind a proxy
+  `TRUSTED_PROXY_HOPS` must be set. Code redemption and refresh at the token endpoint come from the
+  application's server and are not asked.
+* **hosted login:** the hosted login opens a session for the browser, not for one organisation, so a
+  refused address only surfaced at authorize, as `access_denied` sent to the application. The
+  organisation of the application being signed in to now refuses at the sign-in itself: password
+  (`POST /v1/auth/session` with `client_id`, before the password is checked, so a right and a wrong
+  password get the same answer), magic link (the link's organisation), sign-up (no account is
+  created) and social (the browser goes back to the hosted login with `error=address_not_allowed`
+  and its `return_to`). No hosted-login session is opened.
+* **ipallow:** an admin can no longer lock themselves out. Switching enforcement on, or adding or
+  removing a rule while it is on, is refused with `409 risk.rules_lock_out_caller` when the result
+  would refuse the address the change comes from; switching it off always works. The console signs
+  people in from its own server, so the API sees that server's address for console sign-ins (until
+  the console forwards the person's address, QTID-592 / QTID-828): it is the address that must stay
+  allowed, and an office-only allow list would otherwise have refused every console sign-in.
+* **policy:** the security policy's own `ip_allowlist` and `ip_denylist` are gone (migration 0140).
+  Nothing ever read them; address rules are the one address control. The policy no longer reports
+  them; a save that still sends them empty is accepted, and one with entries is refused with
+  `422 validation_failed` (code `retired`).
+
+**OAuth-only clients can configure themselves (2026-10-20)**
+
+* **oidc:** `/.well-known/oauth-authorization-server` (RFC 8414) answered 404, so a client that
+  speaks only OAuth, or a model-context-protocol client following the protected-resource document
+  to the authorization server it names, could not configure itself. It now serves the same metadata
+  as the OpenID configuration, so the two always agree. The protected-resource document emits
+  `scopes_supported` (its schema said `scopes_provided`, now corrected), and the OpenID configuration
+  no longer carries the invented `protected_resource_metadata` key.
+
+**Sign-out tells the applications (2026-10-20)**
+
+* **oidc:** signing out ended the hosted session and its grants and told no application, so a
+  person stayed signed in wherever an application keeps its own session, and a plain link or image
+  could sign anyone out. Applications can now register a `backchannel_logout_uri` (a signed logout
+  token naming the session, OpenID Connect Back-Channel Logout, POSTed and retried with backoff; a
+  final failure audited as `oidc.backchannel_logout_failed`) and a `frontchannel_logout_uri` (loaded
+  by the hosted signed-out page, which continues to the post-logout address through a signed ticket
+  at `/v1/oauth/logout/continue`); migration 0146. Every application with a code or grant from the
+  ended session is told, whether the sign-out came from an application or the hosted login itself
+  (`DELETE /v1/auth/session` now returns the front-channel pages). `/v1/oauth/logout` verifies an
+  `id_token_hint` (another sign-in's is refused) and, without one, asks the person first on the
+  hosted login with a confirmation ticket. Audited as `oidc.sign_out_notified`; discovery advertises
+  both logout profiles.
+
+**Authorize honours the OIDC directives (2026-10-20)**
+
+* **oidc:** `/v1/oauth/authorize` read four parameters and the proof key and ignored the rest:
+  `response_type` was never read (a request for an unsupported flow got a code), and `prompt` and
+  `max_age` were accepted and discarded. Now `response_type` is required and only `code` served
+  (`invalid_request`, `unsupported_response_type`); `prompt=none` answers `login_required` or
+  `consent_required` instead of showing a page; `prompt=login`, and a sign-in older than `max_age`,
+  send the browser to sign in again before the code is issued; `prompt=consent` asks again;
+  `request`, `request_uri` and response modes other than `query` are refused. The ID token carries
+  `auth_time` and `sid` (migration 0145), and discovery lists the prompts, response modes and types
+  honoured.
+
+**UserInfo and the ID token say who signed in (2026-10-20)**
+
+* **oidc:** `/v1/oauth/userinfo` returned only `sub` and the tenant id, so no application could
+  learn a person's email or name over standard OIDC though discovery advertised the scopes. It now
+  returns the standard claims the token's scopes grant (`email` → `email`, `email_verified`;
+  `profile` → `name`, `picture`, `locale`, `updated_at`; `phone` → `phone_number`,
+  `phone_number_verified`), and the ID token carries the same; discovery lists them in
+  `claims_supported`. A token without `openid` gets `403 oidc.insufficient_scope`; POST works as
+  well as GET. Bearer 401s now carry `WWW-Authenticate: Bearer error="invalid_token"` (RFC 6750).
+
+**Token exchange can't extend a credential (2026-10-20)**
+
+* **oidc:** every token exchange issued a fresh, full-lifetime token, the result could be exchanged
+  again without limit, nobody re-checked the person, and any application allowed to exchange could
+  exchange any token passing through it. One captured ten-minute token could be renewed forever.
+  Now the caller must be entitled to the subject (issued to it, issued for a resource it serves, or
+  the person consented to it); a suspended person or closed organisation is refused; the result
+  expires no later than the subject token, gets its own session id, and carries a new
+  `exchange_depth` claim, refused past `TOKEN_EXCHANGE_MAX_DEPTH` (2); every exchange is audited as
+  `oidc.token_exchanged` (caller, subject, actor, scopes, resource, originating session).
+
+**Introspection answers only for the owner (2026-10-20)**
+
+* **oidc:** `/oauth/introspect` answered for any access token of the caller's organisation, so any
+  application could read the live state, subject and scopes of every other application's tokens,
+  and it reported the fixed platform audience. An application now learns only about access tokens
+  issued to it, or issued for a registered resource it serves; anything else is `{"active": false}`,
+  and asking about another application's token is audited (`oidc.introspection_refused`). An active
+  token reports its real `aud`, its `client_id`, and `resource` when it was issued for one.
+
+**Resource indicators confine tokens (2026-10-20)**
+
+* **oidc:** a token issued for a resource is for that resource alone. A client could name any
+  `resource` and get a Qeet-signed token with it added to the audience next to the platform's, so a
+  token minted for one service was accepted by any other and by the platform API. Organisations now
+  register resources (`/v1/tenants/{tenantID}/oidc/resources`, migration 0144); an unregistered one
+  is `invalid_target` at authorize and at the token endpoint. A token for a resource names it as its
+  only audience, so the platform API refuses it. `resource` is accepted at authorize (and through
+  consent), carried by the code, and a token request may not name another one. The device and
+  backchannel flows refuse a `resource` instead of dropping it. `tokens.Issuer.VerifyAccessFor`
+  checks a token for a given audience, as a downstream service does.
+
+**Scheduled maintenance actually runs (2026-10-20)**
+
+* **audit / ops:** audit-chain verification and the session, MFA, sign-in-history and dead-letter
+  cleanups had never run: they lived only in `cmd/scheduler`, which the image didn't include and
+  nothing started. The API now runs them as its embedded `scheduler` worker (`EMBEDDED_WORKERS`),
+  and the image also ships `/qeet-id-scheduler`; `cmd/worker` runs them too. Each job is claimed in
+  `platform.scheduled_job_runs` before it runs (migration 0147), so it runs once per interval however
+  many instances run the scheduler (the old advisory lock let each replica run it on its own tick),
+  and at start when it is due. A failing or panicking job is recorded and the others still run.
+* **audit:** the verification walked only the platform chain (`Verify(nil)`), never an
+  organisation's, so a tampered organisation chain read as intact with 0 rows checked. It now walks
+  every organisation's chain, stores each run in `platform.audit_verification_runs` (outcome,
+  organisations walked, rows, first broken organisation and row), and logs each broken chain at
+  ERROR with its organisation and row.
+* **metrics:** `scheduled_job_last_success_timestamp_seconds{job}` and
+  `audit_verify_last_success_timestamp_seconds`, read from the database at scrape time so they hold
+  whichever instance ran the job; `scheduled_job_failures_total{job}`,
+  `scheduled_job_duration_seconds{job}` and `audit_verify_failures_total`.
+
+**Revocation ends the whole grant (2026-10-20)**
+
+* **oidc:** revoking a refresh token at `/oauth/revoke` now ends every rotation of its grant. Each
+  rotation inserted a new row, and revocation ended only the row presented, so revoking an older
+  link left the live one usable (and the admin path, which ended the whole chain, disagreed). Every
+  refresh token now records its grant (`grant_id`, migration 0143, backfilled for existing chains);
+  revocation ends them all and is audited as `oidc.grant_revoked`. An access token presented for
+  revocation is refused with `unsupported_token_type` instead of a 200 that revoked nothing; an
+  unknown or another client's token is still a 200 no-op. This holds for an access token issued for
+  a registered resource too, which first slipped through as a 200 no-op.
+
+**Application secret lockout (2026-10-20)**
+
+* **oidc:** wrong application secrets are counted and lock the application out. Nothing counted a
+  failed client authentication, so a secret could be guessed at volume, invisibly, on any of the
+  endpoints that take one. Failures now count against the application in one durable budget shared
+  by every such endpoint (code exchange, refresh, token exchange, device and backchannel requests,
+  revocation, introspection). Past `CLIENT_AUTH_LOCKOUT_THRESHOLD` within
+  `CLIENT_AUTH_LOCKOUT_WINDOW` (10 in 15 minutes) every authentication is refused for
+  `CLIENT_AUTH_LOCKOUT_DURATION` (15 minutes) before the secret is even compared, with the same
+  `401 oidc.client_auth_failed` as a wrong secret or an unknown application. Each failure is audited
+  with the caller's address and no secret; a lockout is audited (`oidc.client_locked_out`) and
+  announced (`oidc.client.locked_out`) once. A success resets the count. New
+  `GET /v1/tenants/{tenantID}/oidc/clients/{id}/auth-failures` shows the lockout and recent
+  failures (migration 0142).
+
+**Relayed sign-ins (2026-10-20)**
+
+* **httpx:** a first-party relay can name the person's address. The console signs people in, and the
+  hosted login fetches application details, from their own servers, so the API saw one address for
+  everyone behind them: one shared per-address allowance (twenty people signing in at once got 429),
+  one network for sign-in lockout and spraying, one address in every audit record and session, and
+  address rules that could neither allow nor refuse a console user by their own network. A relay
+  that sends a key from the new `RELAY_KEYS` in `X-Qeet-Relay-Key` may name the person's address in
+  `X-Qeet-Client-IP`, and limits, lockout, risk, address rules, sessions and audit use it. A claimed
+  address without a valid key is ignored. Several keys may be configured, so one can be rotated.
+
+**Signing keys at startup (2026-10-20)**
+
+* **config:** `SERVICE_ENV` has no default. Left unset it meant `dev`, which switches the production
+  gates off and makes up keys, so a deployment that forgot it ran as a workstation. Startup now
+  refuses, naming the setting. `.env.example`, the kit (`local`) and the production deployment
+  (`prod`) already set it.
+* **tokens:** an instance no longer mints a signing key at every start. With `SERVICE_ENV=dev` and
+  no `JWT_SIGNING_KEY`, it generated a key and promoted it, retiring the last one with a 30-day
+  grace: two instances on one database each signed with their own key (one's tokens refused by the
+  other) and every restart added a key to JWKS. It now signs with the database's active key, and
+  makes one only when the database has none, under the registry lock so instances starting together
+  agree on it. If its vault key can't open the active key, it refuses to start and changes nothing.
+  A configured key is no longer activated just because the vault key is ephemeral: only
+  `JWT_ACTIVATE_SIGNING_KEY` activates one.
+* **health:** `/readyz` reports `jwt-keyring` failing after 3 keyring refreshes in a row fail (it
+  stayed green while an instance logged a failure every 5 seconds). New metrics:
+  `jwt_signing_key_active{kid}`, `jwt_signing_key_snapshot_timestamp_seconds` (age = `time()` minus
+  it) and `jwt_signing_key_sync_failures_total`.
+
+**Proof key for every application (2026-10-20)**
+
+* **oidc:** every application must send a PKCE `code_challenge` (S256), and a `nonce` with
+  `openid`. Only public applications needed PKCE: a confidential one that left it out got a working
+  flow with nothing tying the code or the ID token to the browser that started it (OAuth 2.1 and
+  RFC 9700 require PKCE for every client type). Authorize now refuses such a request with
+  `invalid_request` (`oidc.code_challenge_required`, `oidc.nonce_required`), before any consent is
+  asked; the nonce comes back in the ID token. A confidential application can be exempted from both
+  until a date within 90 days (`pkce_exempt_until` on `PATCH /v1/tenants/{tenantID}/oidc/clients/{id}`,
+  shown on the application, audited); a code issued under an exemption redeems only while it lasts.
+  No application is exempt by default. **Breaking** for a relying party that sends no proof key or
+  nonce.
+* **oidc:** an authorization code presented a second time now also revokes the grant its first
+  redemption issued, every renewal of it included (RFC 6749 §4.1.2), and is audited as
+  `oidc.authorization_code_reused`; other grants of the application stay. Migration 0141 records
+  the code a grant came from.
+
+**Applications act within the scope they were given (2026-10-21)**
+
+* **rbac:** every authenticated route now names the OAuth scope an application's token needs on it
+  (`RoutePolicy.ApplicationScope`): the route's permission on an administrative route (`user.read`,
+  `role.write` …, the names API keys already carry), `account.read`/`account.write` on the user's own
+  account, `openid` on userinfo. A token issued to an application (it carries `client_id`) passes only
+  with that scope **and** the user's role granting the permission, so it holds the overlap of the two; a
+  token without the scope gets 403 `auth.insufficient_scope` with an RFC 6750 challenge naming it. The
+  user's own tokens are unchanged. Which routes accept application tokens at all is unchanged too
+  (userinfo only, `auth.application_token` elsewhere); opening another is a product decision, and now
+  safe to make. `TestEveryRouteNamesAnApplicationScope` fails a route added without a scope. The unused
+  `httpx.RequireScope`, which implied a scope check that never ran, is removed.
+
+**A deny policy binds everywhere (2026-10-21)**
+
+* **authz:** an attribute (ABAC) deny policy now refuses at every enforcement point, not only at
+  `POST /v1/tenants/{tenantID}/abac/evaluate`. A tenant that wrote a deny to block someone found them still
+  allowed by `GET /v1/check`, the relationship check, AuthZEN and the platform's own route guard, each of
+  which consulted one engine. One composed decision (`internal/access/authorization/decide`) now answers all
+  four: the tenant first, then any ABAC deny refuses and stops, then a role, a relationship tuple or an ABAC
+  allow policy permits; an engine error refuses. ABAC reads a permission as resource type and action
+  (`doc:write` → `doc`, `write`) and the subject as the platform knows it (`subject.id`, `subject.type`,
+  `subject.tenant_id`). A role granting `type:relation` (or `type.relation`) now allows at the relationship
+  check without a tuple; roles and relationships were either-or by resource kind. On Qeet ID's own
+  management API only a role allows: an ABAC allow can't widen it, a deny narrows it. Tenants with no
+  policy of the kind that matters skip ABAC (a per-tenant flag cached 5 s, cleared on every change).
+  The check responses add `decided_by` (`model`, `rule`, `policy_id`) and, with `explain=true`, a `trace`;
+  the policy is named only to a caller holding `policy.read`. Saving an enabled deny that would stop its
+  own author changing policies is refused with 409 `abac.policy_locks_out`, so no tenant can lock itself
+  out of undoing it.
+
+**Rolling back to a named version (2026-10-21)**
+
+* **deploy:** the pipeline now hands the host the exact tag it built (`redeploy.sh <version>` over SSM)
+  and confirms `GET /version` serves it, failing the job otherwise; the host's script records the
+  version it replaces. A manual `workflow_dispatch` run on `main` with `rollback_to` (a release tag or
+  commit sha) rolls production back without building: it stops before touching the host when the image
+  is no longer in ECR. Images are stamped with `VERSION`/`COMMIT`/`DATE` (they reported `dev`) and pushed
+  under their immutable version and commit tags only; nothing pushes or runs `latest`. The steps live in
+  `scripts/deploy/roll-host.sh`. Needs the host part in qeet-id-deploy.
+* **ops:** `GET /version` answers what's running: version, commit, build date, and the database
+  migration next to the newest the build carries (read at start, nothing per request).
+* **db:** a build refuses to start on a database a later release migrated past its newest migration,
+  and on a half-applied migration, with what to do (roll forward, or restore to before the migration;
+  migrations never run down automatically), instead of golang-migrate's "file does not exist". The
+  scheduler and worker refuse it too. `qeet-id-server schema-check` reports the same and changes
+  nothing (exit 0 compatible, 1 not, 2 can't tell), so the host can check the target image before it
+  stops anything.
+
+**Email that says whether it arrived (2026-10-21)**
+
+* **email:** every email is recorded (`platform.email_messages`, migration 0148) with what happened to it:
+  sent, delivered, bounced, complained, suppressed or failed, and the provider's reason. Amazon SES reports
+  arrive at a new public `POST /v1/webhooks/ses` through SNS: each message's signature (SignatureVersion 2,
+  SHA256withRSA only) is verified against a
+  certificate served by `sns.<region>.amazonaws.com`, messages older than an hour are refused, and only the
+  topics in `SES_EVENTS_TOPIC_ARN` are accepted (anyone can create an SNS topic; with none set the endpoint
+  is off); the subscription is confirmed by visiting its `SubscribeURL`. Emails name
+  `SES_CONFIGURATION_SET` so SES publishes the events. A hard bounce or a complaint suppresses the address
+  platform-wide (`platform.email_suppressions`); a soft bounce is only recorded. A send to a suppressed
+  address never reaches the provider and fails with 422 `email.suppressed`. Addresses are stored as a
+  SHA-256 plus a masked hint, never in plain text. `email_messages_total{template,status}` counts them.
+* **email:** `GET /v1/tenants/{tenantID}/email/messages?to=` (`user.read`) shows an organisation its mail to
+  an address and the address's suppression; `GET …/email/suppressions` lists those its mail caused, and
+  `DELETE …/email/suppressions/{id}` (`user.write`, audited `email.suppression_cleared`) clears one; another
+  organisation's suppression is neither identified nor clearable. Records are kept 90 days
+  (`email-delivery-cleanup`).
+* **email:** with no provider configured outside development, a send now fails with 503
+  `email.provider_unavailable` instead of reporting success while the message reached nobody (QTID-115). An
+  invitation is still created (its link can be shared), and its response now says whether the email went:
+  `invite.delivery` is `sent`, or `not_sent` with the code (`email.suppressed`, `email.provider_unavailable`).
+
+**Introspection knows about revocation (2026-10-21)**
+
+* **oidc:** `POST /oauth/introspect` now answers `{"active": false}` for a signature-valid access token whose
+  account is suspended or deleted, whose membership of the organisation has ended, or whose agent is no longer
+  active; it said active for any token that verified, so a relying party following the specification was told
+  a revoked token was live. The contract (ADR-0017 in qeet-id-files): offline verification stays bounded by
+  `ACCESS_TOKEN_TTL` (10 minutes), introspection is authoritative, and relying parties that need immediate
+  revocation introspect. Tying an application's access token to its grant, so revoking the grant also shows
+  here, needs a token claim and is QTID-41.
+
+**The hosted-login session can say who is signed in (2026-10-21)**
+
+* **auth:** the hosted login's session cookie (`qe_ls`) now also reads `GET /v1/auth/me`, `GET /v1/me` and
+  `GET /v1/me/organizations`, the caller's own identity, profile and organisations. A browser app signed in
+  through the hosted login, which holds only that cookie, got 401 on all three, so the React SDK's `useUser`
+  had no profile and its organisation switcher showed a bare id. The cookie still opens nothing else
+  (`LoginSessionRoutes`, pinned by `TestLoginSessionRoutesStayNarrow`); every other route still needs a token.
+
+**Toolchain (2026-10-21)**
+
+* **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:
+  `crypto/x509` in 1.27.2 trusts compromised intermediate certificates, reached through token
+  verification (govulncheck).
+
 **Dependencies and toolchain (2026-10-16)**
 
 * **GO-2026-6617** (HTTP/2 server crash, HPACK encoder race; in `golang.org/x/net` and the Go standard

@@ -150,7 +150,7 @@ func TestOIDCAuthorizeRequiresActiveTenantMembership(t *testing.T) {
 	svc := oidc.NewService(testPool, mustIssuer())
 	client, _ := registerOIDCClient(t, ctx, svc, tenantB, "https://client.example/callback")
 	authorize := func(userID uuid.UUID) error {
-		_, _, err := svc.Authorize(ctx, userID, client.ClientID, "https://client.example/callback", []string{"openid"}, "", "", "")
+		_, _, err := svc.Authorize(ctx, userID, client.ClientID, "https://client.example/callback", []string{"openid"}, testNonce, testChallenge, "S256")
 		return err
 	}
 

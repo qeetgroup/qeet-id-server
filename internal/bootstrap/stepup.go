@@ -128,6 +128,7 @@ func stepUpRoutes() map[string]mfa.StepUpRule {
 		"DELETE /v1/tenants/{tenantID}",
 		"PATCH /v1/tenants/{tenantID}",
 		"DELETE /v1/users/{id}",
+		"DELETE /v1/users/{id}/membership",
 		"DELETE /v1/users/{id}/purge",
 		"POST /v1/gdpr/purge",
 	} {

@@ -69,6 +69,7 @@ func Run() {
 	// Client IP resolution must be configured before the listener starts: it
 	// keys the login rate limiter and every audit record.
 	httpx.SetTrustedProxyHops(cfg.TrustedProxyHops)
+	httpx.SetRelayKeys(cfg.RelayKeys()) // first-party relays may name the person's address
 	httpx.SetGeoCountryHeader(cfg.GeoCountryHeader)
 	if !cfg.IsDev() && cfg.TrustedProxyHops == 0 {
 		slog.Warn("TRUSTED_PROXY_HOPS is 0: X-Forwarded-For is ignored and every " +
@@ -96,12 +97,20 @@ func Run() {
 		slog.Info("tracing disabled (no-op): set OTEL_EXPORTER_OTLP_ENDPOINT to enable")
 	}
 
-	// Run migrations before opening the runtime pool.
+	// Run migrations before opening the runtime pool. A database a later
+	// release migrated past this build is refused, unchanged, with the
+	// recovery step (migrations.SchemaError).
 	slog.Info("running database migrations")
 	if err := migrations.Run(cfg.DBURL); err != nil {
 		slog.Error("migrations failed", "err", err)
 		os.Exit(1)
 	}
+	schema, err := migrations.Read(cfg.DBURL)
+	if err != nil {
+		slog.Error("read schema version", "err", err)
+		os.Exit(1)
+	}
+	slog.Info("database schema", "migration", schema.Database, "latest", schema.Latest)
 
 	pool, err := db.NewPool(rootCtx, cfg.DBURL, cfg.DBMinConns, cfg.DBMaxConns)
 	if err != nil {
@@ -122,6 +131,7 @@ func Run() {
 	}
 
 	deps, workers := buildDeps(rootCtx, cfg, pool, outboxPub)
+	deps.Health.Schema = &schema
 
 	if cfg.CSRFDisabled {
 		slog.Warn("CSRF protection is DISABLED (dev only) — set CSRF_DISABLED=false to re-enable")

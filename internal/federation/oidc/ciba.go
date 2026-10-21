@@ -56,11 +56,14 @@ type CIBAAuthResponse struct {
 // error vocabulary (OpenID CIBA §13) via oauthError, matching how the device
 // grant's polling errors are rendered.
 func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecret, loginHint, scope, bindingMessage string) (*CIBAAuthResponse, error) {
-	grantTypes, err := s.authenticateClient(ctx, clientID, clientSecret)
+	client, err := s.authenticateClient(ctx, clientID, clientSecret)
 	if err != nil {
 		return nil, err
 	}
-	if !contains(grantTypes, grantTypeCIBA) {
+	if err := s.requireConfidential(ctx, client); err != nil {
+		return nil, err
+	}
+	if !contains(client.GrantTypes, grantTypeCIBA) {
 		return nil, oauthErr("unauthorized_client", "client is not permitted the CIBA grant")
 	}
 	if strings.TrimSpace(loginHint) == "" {
@@ -281,6 +284,18 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, rawAuthReqID s
 	if err := q.ConsumeCIBARequest(ctx, cr.ID); err != nil {
 		return nil, err
 	}
+	// An approval given before the account was suspended or deleted issues
+	// nothing; the request is spent either way.
+	active, err := accountActive(ctx, q, cr.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if !active {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return nil, oauthErr("invalid_grant", "account_suspended")
+	}
 	grantTypes, err := q.GetClientGrantTypes(ctx, clientID)
 	if err != nil {
 		return nil, err
@@ -299,7 +314,7 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, rawAuthReqID s
 	}
 	idTok := ""
 	if contains(scopes, "openid") {
-		t, err := s.signIDToken(userID, tenantID, clientID, "")
+		t, err := s.signIDToken(ctx, idToken{UserID: userID, TenantID: tenantID, Audience: clientID, Scopes: scopes})
 		if err != nil {
 			return nil, err
 		}
@@ -307,7 +322,7 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, rawAuthReqID s
 	}
 	refresh := ""
 	if contains(grantTypes, "refresh_token") {
-		refresh, err = s.issueRefreshToken(ctx, s.q, clientID, userID, tenantID, scopes, "", pgtype.UUID{})
+		refresh, err = s.issueRefreshToken(ctx, s.q, clientID, userID, tenantID, scopes, "", pgtype.UUID{}, "")
 		if err != nil {
 			return nil, err
 		}
@@ -331,6 +346,11 @@ func (h *Handler) backchannelAuthorize(w http.ResponseWriter, r *http.Request) {
 	clientSecret := r.Form.Get("client_secret")
 	if u, p, ok := r.BasicAuth(); ok {
 		clientID, clientSecret = u, p
+	}
+	if r.Form.Get("resource") != "" {
+		// Explicitly refused, never silently dropped: this flow binds no resource.
+		writeOAuthError(w, oauthErr("invalid_target", "resource indicators aren't supported on the device and backchannel flows"))
+		return
 	}
 	resp, err := h.Service.BackchannelAuthorize(r.Context(), clientID, clientSecret,
 		r.Form.Get("login_hint"), r.Form.Get("scope"), r.Form.Get("binding_message"))

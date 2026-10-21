@@ -15,14 +15,17 @@ const (
 	CodeOIDCClientAuthFailed = "oidc.client_auth_failed"
 
 	// Redirect URIs & scopes.
-	CodeOIDCRedirectURIInvalid  = "oidc.redirect_uri_invalid"
-	CodeOIDCRedirectURIMismatch = "oidc.redirect_uri_mismatch"
-	CodeOIDCScopeNotPermitted   = "oidc.scope_not_permitted"
-	CodeOIDCScopeExceedsSubject = "oidc.scope_exceeds_subject"
+	CodeOIDCRedirectURIInvalid       = "oidc.redirect_uri_invalid"
+	CodeOIDCRedirectURIMismatch      = "oidc.redirect_uri_mismatch"
+	CodeOIDCRedirectURINotRegistered = "oidc.redirect_uri_not_registered"
+	CodeOIDCConsentRequestInvalid    = "oidc.consent_request_invalid"
+	CodeOIDCScopeNotPermitted        = "oidc.scope_not_permitted"
+	CodeOIDCScopeExceedsSubject      = "oidc.scope_exceeds_subject"
 
 	// Grant types.
 	CodeOIDCGrantTypeUnsupported = "oidc.grant_type_unsupported"
 	CodeOIDCGrantTypeNotAllowed  = "oidc.grant_type_not_allowed"
+	CodeOIDCUnsupportedFlow      = "oidc.unsupported_flow"
 
 	// Authorization code + PKCE.
 	CodeOIDCAuthCodeInvalid                = "oidc.auth_code_invalid"
@@ -33,6 +36,14 @@ const (
 	CodeOIDCCodeVerifierRequired           = "oidc.code_verifier_required"
 	CodeOIDCCodeVerifierInvalid            = "oidc.code_verifier_invalid"
 	CodeOIDCCodeChallengeMethodUnsupported = "oidc.code_challenge_method_unsupported"
+	CodeOIDCNonceRequired                  = "oidc.nonce_required"
+	CodeOIDCNonceInvalid                   = "oidc.nonce_invalid"
+	CodeOIDCPKCEExemptionInvalid           = "oidc.pkce_exemption_invalid"
+	CodeOIDCResourceInvalid                = "oidc.resource_invalid"
+	CodeOIDCExchangeDepthExceeded          = "oidc.exchange_depth_exceeded"
+	CodeOIDCInsufficientScope              = "oidc.insufficient_scope"
+	CodeOIDCResourceExists                 = "oidc.resource_exists"
+	CodeOIDCResourceNotFound               = "oidc.resource_not_found"
 
 	// Token exchange (RFC 8693) subject/actor tokens.
 	CodeOIDCSubjectTokenRequired          = "oidc.subject_token_required"
@@ -92,22 +103,44 @@ var (
 	// Redirect URIs & scopes.
 	ErrOIDCRedirectURIInvalid  = New(CodeOIDCRedirectURIInvalid, "That redirect URI is not registered for this client.")
 	ErrOIDCRedirectURIMismatch = New(CodeOIDCRedirectURIMismatch, "The redirect URI doesn't match the one used to obtain this code.")
-	ErrOIDCScopeNotPermitted   = New(CodeOIDCScopeNotPermitted, "One or more requested scopes aren't permitted for this client.")
-	ErrOIDCScopeExceedsSubject = New(CodeOIDCScopeExceedsSubject, "The requested scope exceeds the subject token's scope.")
+	// ErrOIDCRedirectURINotRegistered: an authorize request names a redirect_uri
+	// the client never registered. It is shown where it happened, never sent to
+	// that address.
+	ErrOIDCRedirectURINotRegistered = New(CodeOIDCRedirectURINotRegistered, "This application didn't register that return address, so we can't send you back to it.")
+	// ErrOIDCConsentRequestInvalid: a consent decision names no stored request
+	// for this browser, one already decided or expired, or tries to change it.
+	ErrOIDCConsentRequestInvalid = New(CodeOIDCConsentRequestInvalid, "This sign-in request has expired or isn't valid. Start signing in again from the application.")
+	ErrOIDCScopeNotPermitted     = New(CodeOIDCScopeNotPermitted, "One or more requested scopes aren't permitted for this client.")
+	ErrOIDCScopeExceedsSubject   = New(CodeOIDCScopeExceedsSubject, "The requested scope exceeds the subject token's scope.")
 
 	// Grant types.
 	ErrOIDCGrantTypeUnsupported = New(CodeOIDCGrantTypeUnsupported, "That grant type isn't supported.")
 	ErrOIDCGrantTypeNotAllowed  = New(CodeOIDCGrantTypeNotAllowed, "This client isn't permitted to use that grant type.")
+	// ErrOIDCUnsupportedFlow: a public client authenticates with a client_id
+	// alone, so it can't hold token exchange or backchannel sign-in.
+	ErrOIDCUnsupportedFlow = New(CodeOIDCUnsupportedFlow, "A public application can't use token exchange or backchannel sign-in. Register it as confidential.")
 
 	// Authorization code + PKCE.
 	ErrOIDCAuthCodeInvalid                = New(CodeOIDCAuthCodeInvalid, "That authorization code is invalid.")
 	ErrOIDCAuthCodeUsed                   = New(CodeOIDCAuthCodeUsed, "That authorization code has already been used.")
 	ErrOIDCAuthCodeExpired                = New(CodeOIDCAuthCodeExpired, "That authorization code has expired. Start again to get a new one.")
-	ErrOIDCCodeChallengeRequired          = New(CodeOIDCCodeChallengeRequired, "A PKCE code_challenge is required for this client.")
+	ErrOIDCCodeChallengeRequired          = New(CodeOIDCCodeChallengeRequired, "A PKCE code_challenge (S256) is required.")
 	ErrOIDCCodeChallengeInvalid           = New(CodeOIDCCodeChallengeInvalid, "The PKCE code_challenge is invalid.")
 	ErrOIDCCodeVerifierRequired           = New(CodeOIDCCodeVerifierRequired, "A PKCE code_verifier is required.")
 	ErrOIDCCodeVerifierInvalid            = New(CodeOIDCCodeVerifierInvalid, "The PKCE code_verifier is invalid.")
 	ErrOIDCCodeChallengeMethodUnsupported = New(CodeOIDCCodeChallengeMethodUnsupported, "That PKCE code_challenge_method isn't supported.")
+	// ErrOIDCNonceRequired: an OpenID Connect request (scope openid) carries no
+	// nonce, which ties the ID token to the browser that started the sign-in.
+	ErrOIDCNonceRequired = New(CodeOIDCNonceRequired, "A nonce is required when the openid scope is requested.")
+	ErrOIDCNonceInvalid  = New(CodeOIDCNonceInvalid, "The nonce is too long (at most 255 characters).")
+	// ErrOIDCPKCEExemptionInvalid: a PKCE exemption must be for a confidential
+	// application, and end in the future and within 90 days.
+	ErrOIDCInsufficientScope     = New(CodeOIDCInsufficientScope, "This token wasn't issued with the openid scope.")
+	ErrOIDCExchangeDepthExceeded = New(CodeOIDCExchangeDepthExceeded, "This token was already exchanged as many times as allowed.")
+	ErrOIDCResourceInvalid       = New(CodeOIDCResourceInvalid, "A resource identifier is an absolute URI without a fragment, such as https://api.example.com.")
+	ErrOIDCResourceExists        = New(CodeOIDCResourceExists, "That resource is already registered.")
+	ErrOIDCResourceNotFound      = New(CodeOIDCResourceNotFound, "We couldn't find that resource.")
+	ErrOIDCPKCEExemptionInvalid  = New(CodeOIDCPKCEExemptionInvalid, "A PKCE exemption is for a confidential application, and must end in the future and within 90 days.")
 
 	// Token exchange (RFC 8693) subject/actor tokens.
 	ErrOIDCSubjectTokenRequired          = New(CodeOIDCSubjectTokenRequired, "A subject_token is required.")

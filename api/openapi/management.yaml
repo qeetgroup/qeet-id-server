@@ -56,7 +56,8 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Caller-scoped user-only list of active, non-deleted organizations with valid role membership. No user or tenant identity is taken from query parameters. last_used_at excludes the current session so automatic sign-in scope is not labeled as a prior selection.
+        - ssoCookie: []
+      description: Caller-scoped user-only list of active, non-deleted organizations with valid role membership. No user or tenant identity is taken from query parameters. last_used_at excludes the current session so automatic sign-in scope is not labeled as a prior selection. Also accepts the hosted-login session cookie (qe_ls) in place of a bearer token, so a browser app signed in through the hosted login can list the caller's organizations by name.
       parameters:
         - name: limit
           in: query
@@ -801,13 +802,33 @@ paths:
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/User'
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        email:
+                          type: string
+                        display_name:
+                          type: string
+                          nullable: true
+                        deleted_at:
+                          type: string
+                          format: date-time
+                        deleted_by:
+                          type: string
+                          format: uuid
+                          nullable: true
+                          description: The admin who deleted the user; null when not recorded.
+                        created_at:
+                          type: string
+                          format: date-time
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/users/{id}:
     delete:
       operationId: delete_v1_users_ById
-      description: 'Soft-deletes the user, moving the account into the tenant recycle bin rather than erasing it. A soft-deleted account can be brought back with the restore call or removed for good with the purge call. It continues to appear in the deleted-users list until purged.'
+      description: 'Soft-deletes the user, moving the account into the tenant recycle bin rather than erasing it. A soft-deleted account can be brought back with the restore call or removed for good with the purge call. It continues to appear in the deleted-users list until purged. In the same transaction every session of the user ends, the deletion is audited (user.deleted, naming the admin) and a user.deleted event is queued; restoring the account brings none of those sessions back. The answer names the deleted user, when, and by whom. Only the organization the account belongs to can delete it; for a member whose account belongs elsewhere the call answers 403 user.managed_elsewhere.'
       summary: Delete user
       tags:
         - Users
@@ -821,8 +842,23 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '204':
-          description: Soft-deleted
+        '200':
+          description: The deleted user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  deleted_at:
+                    type: string
+                    format: date-time
+                  deleted_by:
+                    type: string
+                    format: uuid
+                    nullable: true
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -833,7 +869,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     get:
       operationId: get_v1_users_ById
-      description: 'Returns a single user by id within the caller''s tenant. Requests for a user outside the tenant are rejected rather than disclosed.'
+      description: 'Returns a single user by id within the caller''s tenant. Requests for a user outside the tenant are rejected rather than disclosed. Anyone who belongs to the caller''s organization can be fetched: a role here, or here being their home. Anyone else is 404.'
       summary: Get user
       tags:
         - Users
@@ -859,7 +895,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_users_ById
-      description: 'Updates mutable attributes of a user in the caller''s tenant. Only the fields present in the request body are modified. This edits directory attributes, not credentials or verification state.'
+      description: 'Updates mutable attributes of a user in the caller''s tenant. Only the fields present in the request body are modified. This edits directory attributes, not credentials or verification state. Changing the account (status, profile) belongs to the organization the account belongs to; for a member whose account belongs elsewhere the call answers 403 user.managed_elsewhere and nothing changes. Remove them from this organization instead (DELETE /v1/users/{id}/membership).'
       summary: Update user
       tags:
         - Users
@@ -1478,6 +1514,46 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/users/{id}/membership:
+    delete:
+      operationId: delete_v1_users_ById_membership
+      summary: Remove a member from this organization
+      description: 'Removes a member whose account belongs to another organization (or to none) from the caller''s organization, in one transaction: their roles and groups here, their sessions here, and the application grants and API keys they hold here. Their account and their other organizations are left alone. Audited as user.removed_from_organization, with an event. The organization''s own accounts are suspended or deleted instead (409 user.managed_here); someone who doesn''t belong here is 404.'
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The member was removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  roles_removed:
+                    type: integer
+                  sessions_ended:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v1/users/{id}/restore:
     post:
       operationId: post_v1_users_ById_restore
@@ -1520,12 +1596,13 @@ paths:
   /v1/me:
     get:
       operationId: get_v1_me
-      description: 'Returns the profile of the authenticated caller, resolved from the presented token rather than any path parameter. Use it to render the signed-in user''s own account details.'
+      description: 'Returns the profile of the authenticated caller, resolved from the presented token rather than any path parameter. Use it to render the signed-in user''s own account details. Also accepts the hosted-login session cookie (qe_ls) in place of a bearer token.'
       summary: Get the authenticated user's profile
       tags: [Users]
       security:
         - bearerAuth: []
         - apiKeyAuth: []
+        - ssoCookie: []
       responses:
         '200':
           description: User profile
@@ -1564,7 +1641,7 @@ paths:
   /v1/users/{id}/verify/email/confirm:
     post:
       operationId: post_v1_users_ById_verify_email_confirm
-      description: 'Confirms email verification by validating the code delivered by the start-email-verification call and marking the address verified. Codes are single-use, expire after a short window, and are retired after a small number of wrong attempts, at which point a new code must be requested. Request the code with the start-email-verification call before invoking this.'
+      description: 'Confirms email verification by validating the code delivered by the start-email-verification call and marking the address verified. Codes are single-use, expire after a short window, and are retired after a small number of wrong attempts, at which point a new code must be requested. Request the code with the start-email-verification call before invoking this. Only a code sent by the start-email-verification call to the address now on the account counts; a code sent for an email change is the invalid-code error.'
       summary: Confirm email verification
       tags:
         - Verification
@@ -1652,7 +1729,7 @@ paths:
     post:
       operationId: post_v1_me_email_change_confirm
       summary: Confirm my email change
-      description: Verifies the code sent to the new address and swaps it onto the account (marking it verified). Returns the new email.
+      description: 'Verifies the code sent to the new address and swaps it onto the account (marking it verified). Returns the new email. Only a code from the start-email-change call counts. The previous address is sent a notice of the change.'
       tags:
         - Verification
       security:
@@ -1844,7 +1921,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Creates a group in the caller''s tenant. A parent_id must name one of the tenant''s own groups; otherwise the call answers 404 group.parent_not_found, the same for a missing id as for another tenant''s group.'
       responses:
         '201':
           description: Created
@@ -1886,7 +1963,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Changes only the fields sent: an omitted name, description or parent_id keeps its value, and "parent_id": null makes the group top-level. A new parent must be one of the tenant''s own groups (404 group.parent_not_found otherwise) and not the group itself or one of its subgroups (400 group.cycle).'
       responses:
         '200':
           description: Updated
@@ -1895,6 +1972,8 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2232,15 +2311,10 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Adds a user to one of the caller''s groups. The user must be a live member of the caller''s tenant, or have it as their home tenant; otherwise the call answers 404 group.user_not_found, the same for a missing id as for another tenant''s user. Adding someone already in the group is a no-op.'
       responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
+        '204':
+          description: Added
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2302,7 +2376,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Creates an invitation and emails its accept link. The response carries the invitation, its raw token (so the link can be shared by hand) and invite.delivery: status sent when a provider accepted the email, or not_sent with code and message when it did not (email.suppressed: the address bounced or reported spam before; email.provider_unavailable: no provider is configured). The invitation is created either way.'
       responses:
         '201':
           description: Created
@@ -2311,6 +2385,15 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+                properties:
+                  invite:
+                    type: object
+                    additionalProperties: true
+                    properties:
+                      delivery:
+                        $ref: '#/components/schemas/InviteDelivery'
+                  token:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2524,7 +2607,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Pending, unexpired invitations addressed to the signed-in user's email, each with the inviting organization's name — the in-app inbox for a user who may not belong to any org yet.
+      description: 'Pending, unexpired invitations addressed to the signed-in user''s email, each with the inviting organization''s name — the in-app inbox for a user who may not belong to any org yet. Answers 403 invite.email_not_verified until the account''s address is verified: anyone can sign up with any address.'
       responses:
         '200':
           description: OK
@@ -2535,6 +2618,8 @@ paths:
                 additionalProperties: true
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/me/invites/accept:
@@ -2592,7 +2677,7 @@ paths:
           schema:
             type: string
             format: uuid
-      description: Same as accepting by token, but selects the invite by id (from GET /v1/me/invites). Returns a tenant-scoped token pair.
+      description: 'Same as accepting by token, but selects the invite by id (from GET /v1/me/invites). Returns a tenant-scoped token pair. Answers 403 invite.email_not_verified until the account''s address is verified.'
       responses:
         '200':
           description: OK
@@ -2625,7 +2710,7 @@ paths:
           schema:
             type: string
             format: uuid
-      description: Dismisses a pending invitation addressed to the caller's email (marks it declined). Scoped by email, so one user can't decline another's.
+      description: 'Dismisses a pending invitation addressed to the caller''s email (marks it declined). Scoped by email, so one user can''t decline another''s. Answers 403 invite.email_not_verified until the account''s address is verified.'
       responses:
         '200':
           description: OK
@@ -2638,6 +2723,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/invites/{id}:
@@ -2672,7 +2759,7 @@ paths:
   /v1/invites/{id}/resend:
     post:
       operationId: post_v1_invites_ById_resend
-      description: 'Rotates the invitation token, extends its expiry, and re-sends the invitation email. Only pending or expired invites belonging to the caller''s tenant qualify; already-accepted or revoked invites are rejected. The recipient completes the flow through the accept-invite call, as with the original invitation.'
+      description: 'Rotates the invitation token, extends its expiry, and re-sends the invitation email. Only pending or expired invites belonging to the caller''s tenant qualify; already-accepted or revoked invites are rejected. The recipient completes the flow through the accept-invite call, as with the original invitation. invite.delivery says whether the email went out (as on create): a suppressed address reports not_sent with email.suppressed rather than success.'
       summary: Resend an invitation
       tags: [Invites]
       parameters:
@@ -2862,7 +2949,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: 'Authenticated but not permitted. auth.application_token: the access token was issued to an application (it carries client_id) and this route accepts only the user''s own tokens; applications may call GET /v1/oauth/userinfo.'
+      description: 'Authenticated but not permitted. auth.application_token: the access token was issued to an application (it carries client_id) and this route accepts only the user''s own tokens; applications may call GET /v1/oauth/userinfo. auth.insufficient_scope: an application''s token reached a route open to applications without the scope the route needs (named in the WWW-Authenticate challenge).'
       content:
         application/json:
           schema:
@@ -2892,6 +2979,18 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    InviteDelivery:
+      type: object
+      description: Whether the invitation's email went out. The invitation exists either way.
+      properties:
+        status:
+          type: string
+          enum: [sent, not_sent]
+        code:
+          type: string
+          description: 'Why not, when not_sent: email.suppressed, email.provider_unavailable or email.send_failed.'
+        message:
+          type: string
     TenantBranding:
       type: object
       properties:

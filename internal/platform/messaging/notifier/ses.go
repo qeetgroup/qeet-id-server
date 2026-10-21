@@ -18,6 +18,10 @@ import (
 type SESv2Sender struct {
 	client sesSendEmailAPI
 	from   string
+	// configurationSet, when set, names the SES configuration set whose event
+	// destination publishes delivery, bounce and complaint events (to SNS and
+	// the server's /v1/webhooks/ses).
+	configurationSet string
 }
 
 // sesSendEmailAPI is the slice of the SES client SESv2Sender needs — narrowed
@@ -29,7 +33,7 @@ type sesSendEmailAPI interface {
 // NewSESv2Sender builds a sender using the default AWS credential chain. region
 // may be empty to fall back to AWS_REGION; from is the RFC 5322 From header
 // (display name allowed, e.g. `Qeet ID <support@qeet.in>`).
-func NewSESv2Sender(ctx context.Context, region, from string) (*SESv2Sender, error) {
+func NewSESv2Sender(ctx context.Context, region, from, configurationSet string) (*SESv2Sender, error) {
 	if from == "" {
 		return nil, fmt.Errorf("ses: From address is required")
 	}
@@ -41,15 +45,22 @@ func NewSESv2Sender(ctx context.Context, region, from string) (*SESv2Sender, err
 	if err != nil {
 		return nil, fmt.Errorf("ses: load aws config: %w", err)
 	}
-	return &SESv2Sender{client: sesv2.NewFromConfig(cfg), from: from}, nil
+	return &SESv2Sender{client: sesv2.NewFromConfig(cfg), from: from, configurationSet: configurationSet}, nil
 }
 
 func (s *SESv2Sender) Send(ctx context.Context, m Message) error {
+	_, err := s.SendID(ctx, m)
+	return err
+}
+
+// SendID sends m and returns the id SES gave it, which its later delivery,
+// bounce and complaint events name.
+func (s *SESv2Sender) SendID(ctx context.Context, m Message) (string, error) {
 	if m.Channel != "" && m.Channel != "email" {
-		return fmt.Errorf("ses sender: unsupported channel %q", m.Channel)
+		return "", fmt.Errorf("ses sender: unsupported channel %q", m.Channel)
 	}
 	if m.To == "" {
-		return fmt.Errorf("ses sender: empty recipient")
+		return "", fmt.Errorf("ses sender: empty recipient")
 	}
 	body := &types.Body{
 		Text: &types.Content{Data: aws.String(m.Body), Charset: aws.String("UTF-8")},
@@ -61,10 +72,15 @@ func (s *SESv2Sender) Send(ctx context.Context, m Message) error {
 	if address := replyAddress(m.ReplyTo); address != "" {
 		replyTo = []string{address}
 	}
-	_, err := s.client.SendEmail(ctx, &sesv2.SendEmailInput{
-		FromEmailAddress: aws.String(messageFrom(s.from, m.FromName)),
-		ReplyToAddresses: replyTo,
-		Destination:      &types.Destination{ToAddresses: []string{m.To}},
+	var configurationSet *string
+	if s.configurationSet != "" {
+		configurationSet = aws.String(s.configurationSet)
+	}
+	out, err := s.client.SendEmail(ctx, &sesv2.SendEmailInput{
+		ConfigurationSetName: configurationSet,
+		FromEmailAddress:     aws.String(messageFrom(s.from, m.FromName)),
+		ReplyToAddresses:     replyTo,
+		Destination:          &types.Destination{ToAddresses: []string{m.To}},
 		Content: &types.EmailContent{
 			Simple: &types.Message{
 				Subject: &types.Content{Data: aws.String(m.Subject), Charset: aws.String("UTF-8")},
@@ -73,7 +89,7 @@ func (s *SESv2Sender) Send(ctx context.Context, m Message) error {
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("ses send: %w", err)
+		return "", fmt.Errorf("ses send: %w", err)
 	}
-	return nil
+	return aws.ToString(out.MessageId), nil
 }

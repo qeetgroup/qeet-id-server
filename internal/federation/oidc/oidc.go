@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 type Client struct {
@@ -41,6 +43,14 @@ type Client struct {
 	GrantTypes     []string  `json:"grant_types"`
 	Scopes         []string  `json:"scopes"`
 	CreatedAt      time.Time `json:"created_at"`
+	// PKCEExemptUntil is when this confidential application's exemption from
+	// sending a PKCE code_challenge (and a nonce) ends; nil: no exemption.
+	PKCEExemptUntil *time.Time `json:"pkce_exempt_until"`
+	// BackchannelLogoutURI receives a signed logout token, server to server,
+	// when someone it signed in signs out; FrontchannelLogoutURI is loaded by
+	// the hosted signed-out page. "" for none.
+	BackchannelLogoutURI  string `json:"backchannel_logout_uri"`
+	FrontchannelLogoutURI string `json:"frontchannel_logout_uri"`
 }
 
 type Service struct {
@@ -55,10 +65,39 @@ type Service struct {
 	// grantMaxAge ends a grant that long after it starts however often it is
 	// renewed, where its organisation sets no maximum session age of its own.
 	grantMaxAge time.Duration
+	// addresses is the organisations' address rules (nil = no rules). See
+	// address.go.
+	addresses AddressPolicy
+	// lockout bounds wrong application secrets. See client_lockout.go.
+	lockout ClientLockout
+	// logoutClient sends back-channel sign-out notices under logoutEgress
+	// (the SSRF guard); nil sends none. See logout.go.
+	logoutClient *http.Client
+	logoutEgress *egress.Policy
+	// exchangeMaxDepth bounds a chain of token exchanges (config
+	// TOKEN_EXCHANGE_MAX_DEPTH).
+	exchangeMaxDepth int
+	// agentStatus returns an AI agent's lifecycle status, so introspection
+	// reports a suspended agent's tokens inactive (nil: not checked).
+	agentStatus func(ctx context.Context, agentID uuid.UUID) (string, error)
+}
+
+// SetAgentStatus wires the agent lifecycle lookup introspection consults.
+func (s *Service) SetAgentStatus(f func(ctx context.Context, agentID uuid.UUID) (string, error)) {
+	s.agentStatus = f
 }
 
 func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer, grantMaxAge: 30 * 24 * time.Hour}
+	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer, grantMaxAge: 30 * 24 * time.Hour, lockout: DefaultClientLockout(), exchangeMaxDepth: 2}
+}
+
+// SetTokenExchangeMaxDepth sets how many exchanges deep a token may be
+// exchanged again (at least 1). Called from internal/bootstrap/dependencies.go.
+func (s *Service) SetTokenExchangeMaxDepth(n int) {
+	if n < 1 {
+		n = 1
+	}
+	s.exchangeMaxDepth = n
 }
 
 // SetGrantMaxAge sets how long an application's grant lasts however often it
@@ -91,6 +130,9 @@ type CreateClientInput struct {
 	PostLogoutURIs []string  `json:"post_logout_uris"`
 	GrantTypes     []string  `json:"grant_types"`
 	Scopes         []string  `json:"scopes"`
+	// Where the application hears of a sign-out (see Client).
+	BackchannelLogoutURI  string `json:"backchannel_logout_uri"`
+	FrontchannelLogoutURI string `json:"frontchannel_logout_uri"`
 }
 
 // Pool exposes the connection pool so handlers can begin their own
@@ -151,15 +193,17 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 	}
 	q := s.q.WithTx(tx)
 	row, err := q.InsertOIDCClient(ctx, dbgen.InsertOIDCClientParams{
-		TenantID:         in.TenantID,
-		ClientID:         clientID,
-		ClientSecretHash: secretHash,
-		Type:             in.Type,
-		Name:             in.Name,
-		RedirectUris:     in.RedirectURIs,
-		PostLogoutUris:   in.PostLogoutURIs,
-		GrantTypes:       in.GrantTypes,
-		Scopes:           in.Scopes,
+		TenantID:              in.TenantID,
+		ClientID:              clientID,
+		ClientSecretHash:      secretHash,
+		Type:                  in.Type,
+		Name:                  in.Name,
+		RedirectUris:          in.RedirectURIs,
+		PostLogoutUris:        in.PostLogoutURIs,
+		GrantTypes:            in.GrantTypes,
+		Scopes:                in.Scopes,
+		BackchannelLogoutUri:  in.BackchannelLogoutURI,
+		FrontchannelLogoutUri: in.FrontchannelLogoutURI,
 	})
 	if err != nil {
 		return nil, "", err
@@ -169,6 +213,8 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 		Type: row.Type, Name: row.Name,
 		RedirectURIs: row.RedirectUris, PostLogoutURIs: row.PostLogoutUris,
 		GrantTypes: row.GrantTypes, Scopes: row.Scopes, CreatedAt: row.CreatedAt,
+		PKCEExemptUntil:      timePtr(row.PkceExemptUntil),
+		BackchannelLogoutURI: derefStr(row.BackchannelLogoutUri), FrontchannelLogoutURI: derefStr(row.FrontchannelLogoutUri),
 	}
 	return &c, raw, nil
 }
@@ -191,6 +237,12 @@ func validateClientInput(in CreateClientInput) error {
 		if _, ok := supportedClientGrantTypes[grantType]; !ok {
 			return errs.ErrOIDCGrantTypeUnsupported.WithDetail("unsupported grant_type: " + grantType)
 		}
+	}
+	if in.Type == "public" && containsAny(in.GrantTypes, "token_exchange", grantTypeTokenExchange, grantTypeCIBA) {
+		return errs.ErrOIDCUnsupportedFlow
+	}
+	if !validLogoutURI(in.BackchannelLogoutURI) || !validLogoutURI(in.FrontchannelLogoutURI) {
+		return errs.ErrBadRequest.WithDetail("logout URIs must be absolute http(s) URLs without a fragment")
 	}
 	if contains(in.GrantTypes, "authorization_code") && len(in.RedirectURIs) == 0 {
 		return errs.ErrOIDCRedirectURIInvalid.WithDetail("authorization_code clients require a redirect URI")
@@ -327,15 +379,40 @@ func (s *Service) ReviewShadowAIClient(ctx context.Context, tenantID, id, review
 // user and mints a one-time authorization code. The client's tenant is derived
 // from the client itself (the browser-facing flow has no user JWT to carry it).
 // Returns the raw code and the resolved tenant id. The code is tied to no
-// hosted-login session; the browser flow uses AuthorizeInLoginSession.
+// hosted-login session, and no address is known, so an organisation with its
+// address rules on refuses it; the browser flow uses AuthorizeInLoginSession.
 func (s *Service) Authorize(ctx context.Context, userID uuid.UUID, clientID, redirectURI string, scopes []string, nonce, challenge, challengeMethod string) (string, uuid.UUID, error) {
-	return s.AuthorizeInLoginSession(ctx, uuid.Nil, userID, clientID, redirectURI, scopes, nonce, challenge, challengeMethod)
+	return s.AuthorizeInLoginSession(ctx, AuthorizeInput{
+		UserID: userID, ClientID: clientID, RedirectURI: redirectURI, Scopes: scopes,
+		Nonce: nonce, CodeChallenge: challenge, CodeChallengeMethod: challengeMethod,
+	})
 }
 
-// AuthorizeInLoginSession is Authorize for a user signed in to the hosted
-// login: the code records loginSessionID (uuid.Nil for none), and so does the
-// grant redeemed from it, so that signing out of that session ends both.
-func (s *Service) AuthorizeInLoginSession(ctx context.Context, loginSessionID, userID uuid.UUID, clientID, redirectURI string, scopes []string, nonce, challenge, challengeMethod string) (string, uuid.UUID, error) {
+// AuthorizeInput is one authorization request to mint a code for.
+type AuthorizeInput struct {
+	// LoginSessionID is the hosted-login session the code is minted in
+	// (uuid.Nil for none); signing out of it ends the code and its grant.
+	LoginSessionID, UserID             uuid.UUID
+	ClientID, RedirectURI              string
+	Scopes                             []string
+	Nonce                              string
+	CodeChallenge, CodeChallengeMethod string
+	// IP is the browser's address (httpx.ClientIP), which the organisation's
+	// address rules must allow.
+	IP string
+	// Resource ("" for none) is the RFC 8707 resource the token is for, which
+	// the organisation must have registered; the code carries it.
+	Resource string
+	// AuthTime is when the person signed in (zero: unknown); the ID token
+	// reports it as auth_time.
+	AuthTime time.Time
+}
+
+// AuthorizeInLoginSession mints a code for a request in a hosted-login session.
+func (s *Service) AuthorizeInLoginSession(ctx context.Context, in AuthorizeInput) (string, uuid.UUID, error) {
+	clientID, redirectURI, scopes := in.ClientID, in.RedirectURI, in.Scopes
+	userID, loginSessionID := in.UserID, in.LoginSessionID
+	nonce, challenge, challengeMethod, ip, resource := in.Nonce, in.CodeChallenge, in.CodeChallengeMethod, in.IP, in.Resource
 	info, err := s.q.GetClientRedirectInfo(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", uuid.Nil, errs.ErrOIDCClientUnknown
@@ -358,7 +435,14 @@ func (s *Service) AuthorizeInLoginSession(ctx context.Context, loginSessionID, u
 			return "", uuid.Nil, errs.ErrOIDCScopeNotPermitted
 		}
 	}
-	if err := validatePKCEAuthorization(info.Type, challenge, challengeMethod); err != nil {
+	if err := validateSignInRequest(info.Type, info.PkceExempt, scopes, nonce, challenge, challengeMethod); err != nil {
+		return "", uuid.Nil, err
+	}
+	if err := s.checkResource(ctx, info.TenantID, resource); err != nil {
+		return "", uuid.Nil, err
+	}
+	// This is where the person signs in to the application, from the browser.
+	if err := s.checkAddress(ctx, info.TenantID, userID, ip, "oidc_authorize"); err != nil {
 		return "", uuid.Nil, err
 	}
 	raw, hash, err := codes.URLToken()
@@ -376,30 +460,13 @@ func (s *Service) AuthorizeInLoginSession(ctx context.Context, loginSessionID, u
 		CodeChallenge:       challenge,
 		CodeChallengeMethod: challengeMethod,
 		LoginSessionID:      optionalUUID(loginSessionID),
+		Resource:            resource,
+		AuthTime:            optionalTime(in.AuthTime),
 	})
 	if err != nil {
 		return "", uuid.Nil, err
 	}
 	return raw, info.TenantID, nil
-}
-
-func validatePKCEAuthorization(clientType, challenge, method string) error {
-	if challenge == "" {
-		if method != "" {
-			return errs.ErrOIDCCodeChallengeInvalid
-		}
-		if clientType == "public" {
-			return errs.ErrOIDCCodeChallengeRequired
-		}
-		return nil
-	}
-	if method != "S256" {
-		return errs.ErrOIDCCodeChallengeMethodUnsupported
-	}
-	if !validPKCEValue(challenge, 43, 43) {
-		return errs.ErrOIDCCodeChallengeInvalid
-	}
-	return nil
 }
 
 func validPKCEValue(value string, minLength, maxLength int) bool {
@@ -431,6 +498,42 @@ func (s *Service) activeClientTenantMember(ctx context.Context, userID uuid.UUID
 		)
 	`, userID, clientID).Scan(&member)
 	return member, err
+}
+
+// tokenSubjectLive reports whether what an access token acts for still holds:
+// its user active, not deleted and a member of its organisation (itself
+// active), and its agent, if any, active.
+func (s *Service) tokenSubjectLive(ctx context.Context, claims *tokens.Claims) (bool, error) {
+	if claims.UserID != uuid.Nil {
+		var member bool
+		if err := s.pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM "user".users u
+				JOIN rbac.user_roles ur ON ur.user_id = u.id AND ur.tenant_id = $2
+				JOIN tenant.tenants t ON t.id = ur.tenant_id
+				WHERE u.id = $1
+				  AND u.status = 'active' AND u.deleted_at IS NULL
+				  AND t.status = 'active' AND t.deleted_at IS NULL
+			)
+		`, claims.UserID, claims.TenantID).Scan(&member); err != nil {
+			return false, err
+		}
+		if !member {
+			return false, nil
+		}
+	}
+	if claims.AgentID != "" && s.agentStatus != nil {
+		id, err := uuid.Parse(claims.AgentID)
+		if err != nil {
+			return false, nil
+		}
+		status, err := s.agentStatus(ctx, id)
+		if err != nil || status != "active" {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // RegisteredRedirect reports whether redirectURI is registered for the client.
@@ -563,21 +666,79 @@ const (
 	tokenTypeAccessToken   = "urn:ietf:params:oauth:token-type:access_token"
 )
 
-// authenticateClient verifies a confidential client's secret and returns its grant types.
-func (s *Service) authenticateClient(ctx context.Context, clientID, clientSecret string) ([]string, error) {
+// authedClient is the client a request identified itself as. For a public
+// client that identity is only claimed: its client_id is in every sign-in link
+// and it has no secret, so an endpoint that needs proof calls
+// requireConfidential.
+type authedClient struct {
+	ID         uuid.UUID
+	TenantID   uuid.UUID
+	ClientID   string
+	Type       string
+	GrantTypes []string
+}
+
+// authenticateClient identifies the calling client: a confidential client must
+// present its secret, a public one presents none. A wrong secret is audited
+// against the client's tenant. Unknown client ids are refused without an audit
+// row, so an unauthenticated caller can't fill the audit trail.
+func (s *Service) authenticateClient(ctx context.Context, clientID, clientSecret string) (authedClient, error) {
 	row, err := s.q.GetClientForAuth(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrOIDCClientAuthFailed
+		return authedClient{}, errs.ErrOIDCClientAuthFailed
 	}
 	if err != nil {
-		return nil, err
+		return authedClient{}, err
 	}
+	c := authedClient{ID: row.ID, TenantID: row.TenantID, ClientID: clientID, Type: row.Type, GrantTypes: row.GrantTypes}
 	if row.Type == "confidential" {
+		// A locked-out application is refused before its secret is compared
+		// (a memory-hard hash per guess), with the same answer as a wrong one.
+		locked, err := s.clientLocked(ctx, row.ID)
+		if err != nil {
+			return authedClient{}, err
+		}
+		if locked {
+			return authedClient{}, errs.ErrOIDCClientAuthFailed
+		}
 		if row.ClientSecretHash == nil || !password.Verify(*row.ClientSecretHash, clientSecret) {
-			return nil, errs.ErrOIDCClientAuthFailed
+			s.clientAuthFailed(ctx, c)
+			return authedClient{}, errs.ErrOIDCClientAuthFailed
+		}
+		if err := s.q.ClearClientAuthFailures(ctx, row.ID); err != nil {
+			return authedClient{}, err
 		}
 	}
-	return row.GrantTypes, nil
+	return c, nil
+}
+
+// requireConfidential refuses a public client at an endpoint that relies on
+// client authentication (introspection, token exchange, backchannel sign-in):
+// for a public client, presenting its client_id proves nothing.
+func (s *Service) requireConfidential(ctx context.Context, c authedClient) error {
+	if c.Type == "confidential" {
+		return nil
+	}
+	s.auditClientAuthFailure(ctx, c, "public_client")
+	return errs.ErrOIDCClientAuthFailed
+}
+
+// auditClientAuthFailure records a refused client authentication. Best-effort:
+// the refusal stands whether or not the row is written.
+func (s *Service) auditClientAuthFailure(ctx context.Context, c authedClient, reason string) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback(ctx)
+	tenantID, id := c.TenantID, c.ID
+	if audit.Record(ctx, tx, audit.Event{
+		TenantID: &tenantID, ActorType: "client", Action: "oidc.client_auth_failed",
+		ResourceType: "oidc_client", ResourceID: &id, IP: httpx.ClientIPFromContext(ctx),
+		Metadata: map[string]any{"client_id": c.ClientID, "reason": reason},
+	}) == nil {
+		_ = tx.Commit(ctx)
+	}
 }
 
 // TokenExchange implements RFC 8693 in its downscoping form: a confidential
@@ -588,11 +749,17 @@ func (s *Service) authenticateClient(ctx context.Context, clientID, clientSecret
 // granted "token_exchange". Only access tokens are supported as subject and
 // requested token type.
 func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, subjectToken, subjectTokenType, requestedTokenType, scope, actorToken, actorTokenType, resource string) (*TokenResponse, error) {
-	grantTypes, err := s.authenticateClient(ctx, clientID, clientSecret)
+	client, err := s.authenticateClient(ctx, clientID, clientSecret)
 	if err != nil {
 		return nil, err
 	}
-	if !containsAny(grantTypes, "token_exchange", grantTypeTokenExchange) {
+	if err := s.requireConfidential(ctx, client); err != nil {
+		return nil, err
+	}
+	if err := s.checkResource(ctx, client.TenantID, resource); err != nil {
+		return nil, err
+	}
+	if !containsAny(client.GrantTypes, "token_exchange", grantTypeTokenExchange) {
 		return nil, errs.ErrOIDCGrantTypeNotAllowed
 	}
 	if subjectToken == "" {
@@ -604,7 +771,8 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 	if requestedTokenType != "" && requestedTokenType != tokenTypeAccessToken {
 		return nil, errs.ErrOIDCRequestedTokenTypeUnsupported
 	}
-	claims, err := s.issuer.VerifyAccess(subjectToken)
+	// Whatever its audience; who may exchange it is decided below.
+	claims, err := s.issuer.VerifyAccessAnyAudience(subjectToken)
 	if err != nil {
 		return nil, errs.ErrOIDCSubjectTokenInvalid
 	}
@@ -627,6 +795,29 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 	userID, err := uuid.Parse(claims.Subject)
 	if err != nil {
 		return nil, errs.ErrOIDCSubjectTokenNoSubject
+	}
+	// The caller must be entitled to the subject's token: issued to it, issued
+	// for a resource it serves, or the person delegated to it (consented).
+	// Otherwise an application allowed to exchange could mint tokens in the
+	// name of anyone whose token passes through it, an administrator's too.
+	entitled, err := s.mayExchange(ctx, caller.TenantID, clientID, userID, claims)
+	if err != nil {
+		return nil, err
+	}
+	if !entitled {
+		return nil, errs.ErrOIDCSubjectTokenInvalid
+	}
+	// A suspended or deleted person, or a closed organisation, gets nothing.
+	live, err := s.activeTenantPrincipal(ctx, userID, claims.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	if !live {
+		return nil, errs.ErrAuthAccountSuspended
+	}
+	// A chain of exchanges is bounded.
+	if claims.ExchangeDepth >= s.exchangeMaxDepth {
+		return nil, errs.ErrOIDCExchangeDepthExceeded
 	}
 	// Downscope: the result is at most the subject's scopes (never escalate).
 	granted, ok := downscope(strings.Fields(claims.Scope), scope)
@@ -652,12 +843,15 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 		}
 		actorSubject = actorClaims.Subject
 	}
-	// Preserve the originating session so the exchanged token traces back to it.
-	sid := claims.SessionID
-	if sid == uuid.Nil {
-		sid = uuid.New()
-	}
+	// A session of its own, linked to the one it came from in the audit
+	// record, so the chain doesn't read as one sign-in.
+	sid := uuid.New()
 	scopeStr := strings.Join(granted, " ")
+	// Never outlive the subject token: exchange can't extend a credential.
+	var notAfter time.Time
+	if claims.ExpiresAt != nil {
+		notAfter = claims.ExpiresAt.Time
+	}
 	var (
 		access string
 		exp    time.Time
@@ -667,8 +861,12 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 	access, exp, err = s.issuer.IssueClientAccess(tokens.ClientAccess{
 		UserID: userID, TenantID: claims.TenantID, SessionID: sid, Scopes: scopeStr,
 		ActorSubject: actorSubject, Resource: resource, ClientID: clientID,
+		NotAfter: notAfter, ExchangeDepth: claims.ExchangeDepth + 1,
 	})
 	if err != nil {
+		return nil, err
+	}
+	if err := s.auditExchange(ctx, claims, clientID, userID, sid, actorSubject, scopeStr, resource, exp); err != nil {
 		return nil, err
 	}
 	return &TokenResponse{
@@ -708,7 +906,7 @@ func containsAny(set []string, vs ...string) bool {
 
 // ExchangeCode swaps an authorization_code for tokens.
 func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code, redirectURI, codeVerifier, resource string) (*TokenResponse, error) {
-	grantTypes, err := s.authenticateClient(ctx, clientID, clientSecret)
+	client, err := s.authenticateClient(ctx, clientID, clientSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -738,6 +936,14 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	challenge := ac.CodeChallenge
 	method := ac.CodeChallengeMethod
 	if ac.UsedAt.Valid {
+		// A code presented twice was seen by someone else: end what its first
+		// redemption issued (RFC 6749 §4.1.2), then refuse.
+		if err := s.revokeGrantFromCode(ctx, tx, clientID, hash, userID, tenantID); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
 		return nil, errs.ErrOIDCAuthCodeUsed
 	}
 	if time.Now().After(ac.ExpiresAt) {
@@ -746,7 +952,20 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	if ac.RedirectUri != redirectURI {
 		return nil, errs.ErrOIDCRedirectURIMismatch
 	}
-	if clientInfo.Type == "public" && (challenge == nil || *challenge == "") {
+	// The token is for the resource the authorization named; a token request
+	// may repeat it but not name another.
+	if ac.Resource != nil && *ac.Resource != "" {
+		if resource != "" && resource != *ac.Resource {
+			return nil, oauthErr("invalid_target", "resource differs from the one the authorization was for")
+		}
+		resource = *ac.Resource
+	}
+	if err := s.checkResource(ctx, tenantID, resource); err != nil {
+		return nil, err
+	}
+	// A code issued with no challenge redeems only while its confidential
+	// application's exemption is still in force.
+	if (challenge == nil || *challenge == "") && (clientInfo.Type != "confidential" || !clientInfo.PkceExempt) {
 		return nil, errs.ErrOIDCCodeChallengeRequired
 	}
 	if challenge != nil && *challenge != "" {
@@ -765,15 +984,27 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 			return nil, errs.ErrOIDCCodeVerifierInvalid
 		}
 	}
+	// A code issued before the account was suspended or deleted is spent, not
+	// redeemed.
+	active, err := accountActive(ctx, q, userID)
+	if err != nil {
+		return nil, err
+	}
 	if err := q.MarkAuthorizationCodeUsed(ctx, hash); err != nil {
 		return nil, err
+	}
+	if !active {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return nil, errs.ErrAuthAccountSuspended
 	}
 	// The grant is written while the code is still locked, so a sign-out of
 	// the hosted-login session the code came from either spends the code first
 	// (and this redemption fails) or waits and then ends the grant.
 	refresh := ""
-	if contains(grantTypes, "refresh_token") {
-		refresh, err = s.issueRefreshToken(ctx, q, clientID, userID, tenantID, scopes, resource, ac.LoginSessionID)
+	if contains(client.GrantTypes, "refresh_token") {
+		refresh, err = s.issueRefreshToken(ctx, q, clientID, userID, tenantID, scopes, resource, ac.LoginSessionID, hash)
 		if err != nil {
 			return nil, err
 		}
@@ -792,7 +1023,10 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	}
 	idTok := ""
 	if contains(scopes, "openid") {
-		t, err := s.signIDToken(userID, tenantID, clientID, derefStr(nonce))
+		t, err := s.signIDToken(ctx, idToken{
+			UserID: userID, TenantID: tenantID, Audience: clientID, Nonce: derefStr(nonce), Scopes: scopes,
+			AuthTime: timeOrZero(ac.AuthTime), SessionID: uuidOrNil(ac.LoginSessionID),
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -813,8 +1047,9 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 // indicator, if any, bound to the access token this refresh token accompanies
 // — persisted so a later rotation can re-bind the same resource.
 // loginSessionID is the hosted-login session the grant was started through
-// (NULL for none). q is the caller's querier, so it can run in its transaction.
-func (s *Service) issueRefreshToken(ctx context.Context, q *dbgen.Queries, clientID string, userID, tenantID uuid.UUID, scopes []string, resource string, loginSessionID pgtype.UUID) (string, error) {
+// (NULL for none), and codeHash the authorization code it was redeemed from
+// ("" for none). q is the caller's querier, so it can run in its transaction.
+func (s *Service) issueRefreshToken(ctx context.Context, q *dbgen.Queries, clientID string, userID, tenantID uuid.UUID, scopes []string, resource string, loginSessionID pgtype.UUID, codeHash string) (string, error) {
 	raw, hash, err := tokens.NewRefreshToken()
 	if err != nil {
 		return "", err
@@ -825,9 +1060,10 @@ func (s *Service) issueRefreshToken(ctx context.Context, q *dbgen.Queries, clien
 	}
 	exp := time.Now().UTC().Add(s.issuer.RefreshTTL())
 	if err := q.InsertRefreshToken(ctx, dbgen.InsertRefreshTokenParams{
+		ID:        uuid.New(),
 		TokenHash: hash, ClientID: clientID, UserID: userID, TenantID: tenantID,
 		Scopes: scopes, ExpiresAt: exp, Resource: res, LoginSessionID: loginSessionID,
-		DefaultMaxAgeSeconds: s.grantMaxAge.Seconds(),
+		DefaultMaxAgeSeconds: s.grantMaxAge.Seconds(), AuthorizationCodeHash: optionalString(codeHash),
 	}); err != nil {
 		return "", err
 	}
@@ -870,6 +1106,21 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	if rt.RevokedAt.Valid {
 		return nil, errs.ErrOIDCRefreshTokenRevoked
 	}
+	// A suspended or deleted account renews nothing, and the application's
+	// grants for it end, so reactivating the account doesn't revive them.
+	active, err := accountActive(ctx, q, rt.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if !active {
+		if err := q.RevokeRefreshTokenChain(ctx, dbgen.RevokeRefreshTokenChainParams{ClientID: clientID, UserID: rt.UserID}); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return nil, errs.ErrAuthAccountSuspended
+	}
 	if rt.UsedAt.Valid {
 		// Reuse — assume theft: revoke every live token for this (client, user) and audit it.
 		if err := s.handleRefreshReuse(ctx, tx, clientID, rt.UserID, rt.TenantID, rt.ID); err != nil {
@@ -885,6 +1136,8 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	}
 	if resource == "" && rt.Resource != nil {
 		resource = *rt.Resource
+	} else if err := s.checkResource(ctx, rt.TenantID, resource); err != nil {
+		return nil, err
 	}
 
 	newRaw, newHash, err := tokens.NewRefreshToken()
@@ -899,7 +1152,8 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	newID, err := q.InsertRotatedRefreshToken(ctx, dbgen.InsertRotatedRefreshTokenParams{
 		TokenHash: newHash, ClientID: clientID, UserID: rt.UserID, TenantID: rt.TenantID,
 		Scopes: rt.Scopes, ExpiresAt: newExp, Resource: newRes, LoginSessionID: rt.LoginSessionID,
-		GrantExpiresAt: rt.GrantExpiresAt,
+		GrantExpiresAt: rt.GrantExpiresAt, AuthorizationCodeHash: rt.AuthorizationCodeHash,
+		GrantID: rt.GrantID,
 	})
 	if err != nil {
 		return nil, err
@@ -925,7 +1179,7 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	}
 	idTok := ""
 	if contains(scopes, "openid") {
-		t, err := s.signIDToken(userID, tenantID, clientID, "")
+		t, err := s.signIDToken(ctx, idToken{UserID: userID, TenantID: tenantID, Audience: clientID, Scopes: scopes})
 		if err != nil {
 			return nil, err
 		}
@@ -942,6 +1196,145 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 }
 
 // handleRefreshReuse revokes every live refresh token for a (client, user) on replay and audits it.
+// accountActive reports whether a user may still be issued tokens by any
+// application grant: not suspended and not deleted, the rule the first-party
+// refresh applies. A user who no longer exists is not active.
+func accountActive(ctx context.Context, q *dbgen.Queries, userID uuid.UUID) (bool, error) {
+	row, err := q.GetAccountStanding(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return !row.Deleted && row.Status != "suspended", nil
+}
+
+// mayExchange reports whether clientID may exchange a subject token of its
+// tenant: the token was issued to it, or for a registered resource it serves,
+// or the person has consented to it (a delegation it holds).
+func (s *Service) mayExchange(ctx context.Context, tenantID uuid.UUID, clientID string, userID uuid.UUID, claims *tokens.Claims) (bool, error) {
+	if ok, err := s.mayIntrospect(ctx, tenantID, clientID, claims); err != nil || ok {
+		return ok, err
+	}
+	_, err := s.q.GetConsent(ctx, dbgen.GetConsentParams{UserID: userID, ClientID: clientID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// auditExchange records a token exchange: caller, subject, actor, scopes,
+// resource, and the session the subject token came from.
+func (s *Service) auditExchange(ctx context.Context, subject *tokens.Claims, clientID string, userID, sid uuid.UUID, actor, scopes, resource string, exp time.Time) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tenantID := subject.TenantID
+	meta := map[string]any{
+		"client_id": clientID, "scope": scopes, "resource": resource, "actor": actor,
+		"subject_client_id": subject.ClientID, "exchange_depth": subject.ExchangeDepth + 1,
+		"session_id": sid, "expires_at": exp,
+	}
+	if subject.SessionID != uuid.Nil {
+		meta["from_session_id"] = subject.SessionID
+	}
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID: &tenantID, ActorUserID: &userID, ActorType: "client",
+		Action: "oidc.token_exchanged", ResourceType: "oidc_client", IP: httpx.ClientIPFromContext(ctx),
+		Metadata: meta,
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// mayIntrospect reports whether clientID may see an access token of its
+// tenant: it is the application the token was issued to (client_id claim), or
+// it serves one of the registered resources the token was issued for.
+func (s *Service) mayIntrospect(ctx context.Context, tenantID uuid.UUID, clientID string, claims *tokens.Claims) (bool, error) {
+	if claims.ClientID != "" && claims.ClientID == clientID {
+		return true, nil
+	}
+	res := resourcesOf(claims.Audience, s.issuer.JWTAudience())
+	if len(res) == 0 {
+		return false, nil
+	}
+	return s.q.ResourceServedBy(ctx, dbgen.ResourceServedByParams{TenantID: tenantID, ClientID: &clientID, Identifiers: res})
+}
+
+// auditIntrospectionRefused records an application asking about a token it
+// doesn't own (owner "" for a token issued to no application).
+func (s *Service) auditIntrospectionRefused(ctx context.Context, tenantID uuid.UUID, caller, owner string) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback(ctx)
+	if audit.Record(ctx, tx, audit.Event{
+		TenantID: &tenantID, ActorType: "client", Action: "oidc.introspection_refused",
+		ResourceType: "oidc_client", IP: httpx.ClientIPFromContext(ctx),
+		Metadata: map[string]any{"client_id": caller, "token_client_id": owner, "outcome": "inactive"},
+	}) == nil {
+		_ = tx.Commit(ctx)
+	}
+}
+
+// resourcesOf is an audience without the platform's own entry: the resources
+// a token was issued for.
+func resourcesOf(aud []string, platform string) []string {
+	var out []string
+	for _, a := range aud {
+		if a != platform {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// audienceClaim renders an audience as JWT does: one value as a string,
+// several as a list.
+func audienceClaim(aud []string) any {
+	if len(aud) == 1 {
+		return aud[0]
+	}
+	return aud
+}
+
+// revokeGrantFromCode ends the grant redeemed from the authorization code
+// with this hash, after the code was presented again, and records it.
+func (s *Service) revokeGrantFromCode(ctx context.Context, tx pgx.Tx, clientID, codeHash string, userID, tenantID uuid.UUID) error {
+	n, err := s.q.WithTx(tx).RevokeGrantFromCode(ctx, dbgen.RevokeGrantFromCodeParams{
+		ClientID: clientID, AuthorizationCodeHash: &codeHash,
+	})
+	if err != nil {
+		return err
+	}
+	tid, uid := tenantID, userID
+	return audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tid,
+		ActorUserID:  &uid,
+		ActorType:    "system",
+		Action:       "oidc.authorization_code_reused",
+		ResourceType: "oidc_client",
+		Metadata: map[string]any{
+			"client_id":      clientID,
+			"grants_revoked": n,
+			"reason":         "authorization_code_reuse",
+		},
+	})
+}
+
+// optionalString is s for a nullable column, nil for "".
+func optionalString(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
 func (s *Service) handleRefreshReuse(ctx context.Context, tx pgx.Tx, clientID string, userID, tenantID, tokenID uuid.UUID) error {
 	q := s.q.WithTx(tx)
 	if err := q.RevokeRefreshTokenChain(ctx, dbgen.RevokeRefreshTokenChainParams{
@@ -965,19 +1358,47 @@ func (s *Service) handleRefreshReuse(ctx context.Context, tx pgx.Tx, clientID st
 	})
 }
 
-func (s *Service) signIDToken(userID, tenantID uuid.UUID, audience, nonce string) (string, error) {
+// idToken is what an ID token is minted from.
+type idToken struct {
+	UserID, TenantID uuid.UUID
+	// Audience is the client the token is for; Nonce the one the
+	// authorization request sent ("" for none).
+	Audience, Nonce string
+	// Scopes decide which standard claims it carries (see userClaims).
+	Scopes []string
+	// AuthTime is when the person signed in (zero: unknown), reported as
+	// auth_time; SessionID is the hosted-login session (uuid.Nil: none),
+	// reported as sid so a sign-out notice can name it.
+	AuthTime  time.Time
+	SessionID uuid.UUID
+}
+
+func (s *Service) signIDToken(ctx context.Context, in idToken) (string, error) {
 	now := time.Now().UTC()
 	exp := now.Add(s.issuer.AccessTTL())
 	claims := jwt.MapClaims{
 		"iss":       s.issuer.JWTIssuer(),
-		"sub":       userID.String(),
-		"aud":       audience,
+		"sub":       in.UserID.String(),
+		"aud":       in.Audience,
 		"exp":       exp.Unix(),
 		"iat":       now.Unix(),
-		"tenant_id": tenantID.String(),
+		"tenant_id": in.TenantID.String(),
 	}
-	if nonce != "" {
-		claims["nonce"] = nonce
+	if in.Nonce != "" {
+		claims["nonce"] = in.Nonce
+	}
+	if !in.AuthTime.IsZero() {
+		claims["auth_time"] = in.AuthTime.Unix()
+	}
+	if in.SessionID != uuid.Nil {
+		claims["sid"] = in.SessionID.String()
+	}
+	user, err := s.userClaims(ctx, in.UserID, in.Scopes)
+	if err != nil {
+		return "", err
+	}
+	for k, v := range user {
+		claims[k] = v
 	}
 	return s.issuer.Sign(claims)
 }
@@ -1003,6 +1424,7 @@ func derefStr(s *string) string {
 type SessionManager interface {
 	ResolveLoginSession(ctx context.Context, raw string) (uuid.UUID, error)
 	ResolveLoginSessionWithID(ctx context.Context, raw string) (sessionID, userID uuid.UUID, err error)
+	ResolveLoginSessionAt(ctx context.Context, raw string) (sessionID, userID uuid.UUID, signedInAt time.Time, err error)
 	EndLoginSession(ctx context.Context, in auth.EndLoginSessionInput) (auth.LoginSessionEnded, error)
 }
 
@@ -1064,6 +1486,7 @@ type Handler struct {
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/oidc/clients", h.registerClient)
 	r.Get("/oauth/userinfo", h.userinfo)
+	r.Post("/oauth/userinfo", h.userinfo) // OIDC Core §5.3.1 allows both
 	r.Get("/oauth/bc-authorize/pending", h.pendingBackchannel)
 	r.Post("/oauth/bc-authorize/decision", h.backchannelDecision)
 	r.Get("/tenants/{tenantID}/oauth/grants", h.listGrants)
@@ -1075,6 +1498,10 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/oidc/clients", h.listClients)
 	r.Get("/tenants/{tenantID}/oidc/clients/{id}", h.getClient)
 	r.Patch("/tenants/{tenantID}/oidc/clients/{id}", h.patchClient)
+	r.Get("/tenants/{tenantID}/oidc/clients/{id}/auth-failures", h.clientAuthFailures)
+	r.Get("/tenants/{tenantID}/oidc/resources", h.listResources)
+	r.Post("/tenants/{tenantID}/oidc/resources", h.createResource)
+	r.Delete("/tenants/{tenantID}/oidc/resources/{id}", h.deleteResource)
 	r.Delete("/tenants/{tenantID}/oidc/clients/{id}", h.deleteClient)
 	r.Post("/tenants/{tenantID}/oidc/clients/{id}/rotate-secret", h.rotateClientSecret)
 	r.Get("/tenants/{tenantID}/oidc/clients/shadow-ai", h.shadowAI)
@@ -1101,10 +1528,12 @@ func (h *Handler) Mount(r chi.Router) {
 func (h *Handler) MountBrowser(r chi.Router) {
 	r.Get("/oauth/authorize", h.authorize)
 	r.Post("/oauth/authorize/decision", h.decision)
+	r.Get("/oauth/authorize/request", h.consentRequest)
 	r.Post("/oauth/token-code", h.tokenCode)
 	r.Get("/oauth/login-context", h.loginContext)
 	r.Get("/oauth/logout", h.endSession)  // RP-Initiated Logout
 	r.Post("/oauth/logout", h.endSession) // (some RPs POST)
+	r.Get("/oauth/logout/continue", h.endSessionContinue)
 	// Device Authorization Grant (RFC 8628). device_authorization is
 	// client-authenticated M2M (CSRF-exempt in the router, like token-code);
 	// the device context + decision endpoints are SSO-cookie gated like
@@ -1189,6 +1618,7 @@ func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) MountPublic(r chi.Router) {
 	r.Get("/.well-known/openid-configuration", h.discovery)
+	r.Get("/.well-known/oauth-authorization-server", h.authorizationServerMetadata) // RFC 8414
 	r.Get("/.well-known/jwks.json", h.jwks)
 	r.Get("/.well-known/oauth-protected-resource", h.protectedResourceMetadata) // RFC 9728
 	// Client-authenticated, machine-to-machine; CSRF-exempt in the router.
@@ -1274,35 +1704,76 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	clientID := q.Get("client_id")
 	redirect := q.Get("redirect_uri")
+	state := q.Get("state")
 	scopes := strings.Fields(q.Get("scope"))
 
-	loginSessionID, userID, ok := h.loginSession(r)
-	if !ok {
-		ret := url.QueryEscape(currentURL(r))
-		http.Redirect(w, r, h.LoginBaseURL+"/login?return_to="+ret, http.StatusFound)
+	// Nothing about this request is trusted until its redirect_uri is one the
+	// client registered: until then the error is shown here, never sent there.
+	if !h.Service.RegisteredRedirect(r.Context(), clientID, redirect) {
+		httpx.WriteError(w, r, errs.ErrOIDCRedirectURINotRegistered)
+		return
+	}
+	if err := checkAuthorizeRequest(q); err != nil {
+		h.authorizeError(w, r, clientID, redirect, state, err)
+		return
+	}
+	silent := slices.Contains(prompts(q), "none")
+
+	loginSessionID, userID, signedInAt, ok := h.loginSessionAt(r)
+	now := time.Now()
+	switch {
+	case !ok && silent:
+		h.authorizeError(w, r, clientID, redirect, state, oauthErr("login_required", "no active sign-in"))
+		return
+	case !ok:
+		http.Redirect(w, r, h.LoginBaseURL+"/login?return_to="+url.QueryEscape(currentURL(r)), http.StatusFound)
+		return
+	case signInRequired(q, signedInAt, now) && silent:
+		h.authorizeError(w, r, clientID, redirect, state, oauthErr("login_required", "a fresh sign-in is required"))
+		return
+	case signInRequired(q, signedInAt, now):
+		// prompt=login or max_age: sign in again, then come back to this request.
+		http.Redirect(w, r, h.LoginBaseURL+"/login?prompt=login&return_to="+url.QueryEscape(reauthReturnTo(r, now)), http.StatusFound)
 		return
 	}
 
 	has, err := h.Service.HasConsent(r.Context(), userID, clientID, scopes)
 	if err != nil {
-		h.authorizeError(w, r, clientID, redirect, q.Get("state"), err)
+		h.authorizeError(w, r, clientID, redirect, state, err)
 		return
 	}
-	if !has {
-		// Hand off to the hosted consent screen, echoing the authorize params
-		// so it can post them back to the decision endpoint.
-		http.Redirect(w, r, h.LoginBaseURL+"/consent?"+r.URL.RawQuery, http.StatusFound)
+	if !has && silent {
+		h.authorizeError(w, r, clientID, redirect, state, oauthErr("consent_required", "consent is required"))
+		return
+	}
+	if !has || slices.Contains(prompts(q), "consent") {
+		// Hand off to the hosted consent screen with only the id of the request
+		// stored here; the decision acts on the stored values, not on anything
+		// the browser sends back.
+		id, err := h.Service.StartConsentRequest(r.Context(), loginSessionID, userID, ConsentRequest{
+			ClientID: clientID, RedirectURI: redirect, Scopes: scopes, State: state,
+			Nonce: q.Get("nonce"), CodeChallenge: q.Get("code_challenge"), CodeChallengeMethod: q.Get("code_challenge_method"),
+			Resource: q.Get("resource"),
+		})
+		if err != nil {
+			h.authorizeError(w, r, clientID, redirect, state, err)
+			return
+		}
+		http.Redirect(w, r, h.LoginBaseURL+"/consent?request_id="+url.QueryEscape(id.String()), http.StatusFound)
 		return
 	}
 
-	code, _, err := h.Service.AuthorizeInLoginSession(r.Context(), loginSessionID, userID, clientID, redirect,
-		scopes, q.Get("nonce"), q.Get("code_challenge"), q.Get("code_challenge_method"))
+	code, _, err := h.Service.AuthorizeInLoginSession(r.Context(), AuthorizeInput{
+		LoginSessionID: loginSessionID, UserID: userID, ClientID: clientID, RedirectURI: redirect, Scopes: scopes,
+		Nonce: q.Get("nonce"), CodeChallenge: q.Get("code_challenge"), CodeChallengeMethod: q.Get("code_challenge_method"),
+		IP: httpx.ClientIP(r), Resource: q.Get("resource"), AuthTime: signedInAt,
+	})
 	if err != nil {
-		h.authorizeError(w, r, clientID, redirect, q.Get("state"), err)
+		h.authorizeError(w, r, clientID, redirect, state, err)
 		return
 	}
 	// RFC 9207: identify the issuer in the authorization response.
-	http.Redirect(w, r, appendQuery(redirect, "code", code, "state", q.Get("state"), "iss", h.Service.issuer.JWTIssuer()), http.StatusFound)
+	http.Redirect(w, r, appendQuery(redirect, "code", code, "state", state, "iss", h.Service.issuer.JWTIssuer()), http.StatusFound)
 }
 
 // authorizeError reports a failure that happened before a code was minted.
@@ -1316,14 +1787,20 @@ func (h *Handler) authorizeError(w http.ResponseWriter, r *http.Request, clientI
 		return
 	}
 	oauthCode := "server_error"
+	var oe *oauthError
 	switch {
-	case errors.Is(err, errs.ErrOIDCUserTenantMismatch):
+	case errors.As(err, &oe):
+		oauthCode = oe.Code
+	case errors.Is(err, errs.ErrOIDCUserTenantMismatch),
+		errors.Is(err, errs.ErrAuthAddressNotAllowed):
 		oauthCode = "access_denied"
 	case errors.Is(err, errs.ErrOIDCScopeNotPermitted):
 		oauthCode = "invalid_scope"
 	case errors.Is(err, errs.ErrOIDCCodeChallengeRequired),
 		errors.Is(err, errs.ErrOIDCCodeChallengeInvalid),
-		errors.Is(err, errs.ErrOIDCCodeChallengeMethodUnsupported):
+		errors.Is(err, errs.ErrOIDCCodeChallengeMethodUnsupported),
+		errors.Is(err, errs.ErrOIDCNonceRequired),
+		errors.Is(err, errs.ErrOIDCNonceInvalid):
 		oauthCode = "invalid_request"
 	case errors.Is(err, errs.ErrOIDCRedirectURIInvalid):
 		// The URI validated as registered above, so this is some other
@@ -1336,7 +1813,11 @@ func (h *Handler) authorizeError(w http.ResponseWriter, r *http.Request, clientI
 }
 
 type decisionInput struct {
-	Approve             bool   `json:"approve"`
+	RequestID string `json:"request_id"`
+	Approve   bool   `json:"approve"`
+	// The request's own values, as an older consent screen echoed them. They
+	// are optional and never used: one that is sent must match the stored
+	// request, or the decision is refused.
 	ClientID            string `json:"client_id"`
 	RedirectURI         string `json:"redirect_uri"`
 	Scope               string `json:"scope"`
@@ -1346,10 +1827,22 @@ type decisionInput struct {
 	CodeChallengeMethod string `json:"code_challenge_method"`
 }
 
+// matches reports whether every echoed value that was sent equals the stored
+// request's.
+func (in decisionInput) matches(req *ConsentRequest) bool {
+	same := func(sent, stored string) bool { return sent == "" || sent == stored }
+	return same(in.ClientID, req.ClientID) && same(in.RedirectURI, req.RedirectURI) &&
+		same(strings.Join(strings.Fields(in.Scope), " "), strings.Join(req.Scopes, " ")) &&
+		same(in.State, req.State) && same(in.Nonce, req.Nonce) &&
+		same(in.CodeChallenge, req.CodeChallenge) && same(in.CodeChallengeMethod, req.CodeChallengeMethod)
+}
+
 // decision records the consent decision from the hosted consent screen. The
-// user is identified by the SSO cookie. It returns (as JSON) the URL the
-// consent SPA should navigate to: a code on approval, or error=access_denied on
-// deny.
+// user is identified by the SSO cookie and the request by the id authorize
+// stored it under; the request's values come from storage, so neither answer
+// can be pointed at an address the client never registered. It returns (as
+// JSON) the URL the consent SPA should navigate to: a code on approval, or
+// error=access_denied on deny.
 func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
 	loginSessionID, userID, ok := h.loginSession(r)
 	if !ok {
@@ -1361,25 +1854,72 @@ func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if !in.Approve {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"redirect": appendQuery(in.RedirectURI, "error", "access_denied", "state", in.State, "iss", h.Service.issuer.JWTIssuer()),
-		})
+	id, err := uuid.Parse(in.RequestID)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrOIDCConsentRequestInvalid)
 		return
 	}
-	scopes := strings.Fields(in.Scope)
-	if err := h.Service.GrantConsent(r.Context(), userID, in.ClientID, scopes); err != nil {
+	req, err := h.Service.TakeConsentRequest(r.Context(), id, loginSessionID)
+	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	code, _, err := h.Service.AuthorizeInLoginSession(r.Context(), loginSessionID, userID, in.ClientID, in.RedirectURI,
-		scopes, in.Nonce, in.CodeChallenge, in.CodeChallengeMethod)
+	if req.UserID != userID || !in.matches(req) {
+		httpx.WriteError(w, r, errs.ErrOIDCConsentRequestInvalid)
+		return
+	}
+	// The client may have dropped the address since the request was stored.
+	if !h.Service.RegisteredRedirect(r.Context(), req.ClientID, req.RedirectURI) {
+		httpx.WriteError(w, r, errs.ErrOIDCRedirectURINotRegistered)
+		return
+	}
+	if !in.Approve {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"redirect": appendQuery(req.RedirectURI, "error", "access_denied", "state", req.State, "iss", h.Service.issuer.JWTIssuer()),
+		})
+		return
+	}
+	if err := h.Service.GrantConsent(r.Context(), userID, req.ClientID, req.Scopes); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	_, _, signedInAt, _ := h.loginSessionAt(r)
+	code, _, err := h.Service.AuthorizeInLoginSession(r.Context(), AuthorizeInput{
+		LoginSessionID: loginSessionID, UserID: userID, ClientID: req.ClientID, RedirectURI: req.RedirectURI,
+		Scopes: req.Scopes, Nonce: req.Nonce, CodeChallenge: req.CodeChallenge, CodeChallengeMethod: req.CodeChallengeMethod,
+		IP: httpx.ClientIP(r), Resource: req.Resource, AuthTime: signedInAt,
+	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"redirect": appendQuery(in.RedirectURI, "code", code, "state", in.State, "iss", h.Service.issuer.JWTIssuer()),
+		"redirect": appendQuery(req.RedirectURI, "code", code, "state", req.State, "iss", h.Service.issuer.JWTIssuer()),
+	})
+}
+
+// consentRequest is what the hosted consent screen shows: the client and the
+// scopes of the stored request, for the browser that started it.
+func (h *Handler) consentRequest(w http.ResponseWriter, r *http.Request) {
+	loginSessionID, _, ok := h.loginSession(r)
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	id, err := uuid.Parse(r.URL.Query().Get("request_id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrOIDCConsentRequestInvalid)
+		return
+	}
+	req, err := h.Service.GetConsentRequest(r.Context(), id, loginSessionID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"request_id": req.ID,
+		"client_id":  req.ClientID,
+		"scope":      strings.Join(req.Scopes, " "),
 	})
 }
 
@@ -1393,9 +1933,51 @@ func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
 // application. If the sign-out cannot be completed the error is shown and the
 // cookie kept, rather than telling the application the person signed out.
 func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	redirect := q.Get("post_logout_redirect_uri")
-	clientID := q.Get("client_id")
+	if err := r.ParseForm(); err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest)
+		return
+	}
+	redirect := r.Form.Get("post_logout_redirect_uri")
+	clientID := r.Form.Get("client_id")
+	state := r.Form.Get("state")
+	hint := r.Form.Get("id_token_hint")
+	sessionID, userID, _, hasSession := h.loginSessionAt(r)
+
+	switch {
+	case hint != "":
+		// The hint names whose sign-in this is: it must be this one.
+		lh, err := h.Service.checkLogoutHint(hint, clientID, sessionID, userID)
+		if err != nil {
+			var oe *oauthError
+			if errors.As(err, &oe) {
+				writeOAuthError(w, oe)
+				return
+			}
+			httpx.WriteError(w, r, err)
+			return
+		}
+		if clientID == "" {
+			clientID = lh.ClientID
+		}
+	case hasSession && !h.Service.confirmedFor(r.Form.Get("logout_confirmation"), sessionID):
+		// No hint and no confirmation: a plain link or image must not sign
+		// anyone out. The hosted login asks, then comes back with the ticket.
+		ticket, err := h.Service.logoutConfirmation(sessionID)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		q := url.Values{"logout_confirmation": {ticket}}
+		for _, k := range []string{"client_id", "post_logout_redirect_uri", "state"} {
+			if v := r.Form.Get(k); v != "" {
+				q.Set(k, v)
+			}
+		}
+		http.Redirect(w, r, h.LoginBaseURL+"/logout?"+q.Encode(), http.StatusFound)
+		return
+	}
+
+	var frontchannel []string
 	if c, err := r.Cookie(auth.LoginSessionCookie); err == nil {
 		in := auth.EndLoginSessionInput{
 			Cookie: c.Value, InitiatedBy: auth.SignOutByApplication,
@@ -1404,18 +1986,51 @@ func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
 		if clientID != "" && h.Service.RegisteredClient(r.Context(), clientID) {
 			in.ClientID = clientID
 		}
-		if _, err := h.Sessions.EndLoginSession(r.Context(), in); err != nil {
+		ended, err := h.Sessions.EndLoginSession(r.Context(), in)
+		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
+		frontchannel = ended.FrontChannelLogoutURIs
 	}
 	auth.ClearLoginSessionCookie(w, h.CookieSecure)
 
+	next := ""
 	if redirect != "" && clientID != "" {
 		if ok, err := h.Service.ValidatePostLogoutRedirect(r.Context(), clientID, redirect); err == nil && ok {
-			http.Redirect(w, r, appendQuery(redirect, "state", q.Get("state")), http.StatusFound)
+			next = appendQuery(redirect, "state", state)
+		}
+	}
+	if len(frontchannel) == 0 {
+		if next != "" {
+			http.Redirect(w, r, next, http.StatusFound)
 			return
 		}
+		http.Redirect(w, r, h.LoginBaseURL+"/logged-out", http.StatusFound)
+		return
+	}
+	// The hosted signed-out page loads each application's front-channel page,
+	// then continues to the validated address through a signed ticket (never
+	// a plain URL it would have to trust).
+	q := url.Values{"frontchannel_logout": frontchannel}
+	if next != "" {
+		ticket, err := h.Service.logoutContinuation(next)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		q.Set("continue", ticket)
+	}
+	http.Redirect(w, r, h.LoginBaseURL+"/logged-out?"+q.Encode(), http.StatusFound)
+}
+
+// endSessionContinue (GET /v1/oauth/logout/continue) sends the browser on to
+// the post-logout address a sign-out validated, from the signed ticket the
+// hosted signed-out page was given; anything else goes to the signed-out page.
+func (h *Handler) endSessionContinue(w http.ResponseWriter, r *http.Request) {
+	if next, ok := h.Service.continuationTarget(r.URL.Query().Get("ticket")); ok {
+		http.Redirect(w, r, next, http.StatusFound)
+		return
 	}
 	http.Redirect(w, r, h.LoginBaseURL+"/logged-out", http.StatusFound)
 }
@@ -1438,6 +2053,19 @@ func (h *Handler) loginSession(r *http.Request) (sessionID, userID uuid.UUID, ok
 		return uuid.Nil, uuid.Nil, false
 	}
 	return sessionID, userID, true
+}
+
+// loginSessionAt is loginSession plus when the person signed in.
+func (h *Handler) loginSessionAt(r *http.Request) (sessionID, userID uuid.UUID, signedInAt time.Time, ok bool) {
+	c, err := r.Cookie(auth.LoginSessionCookie)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, time.Time{}, false
+	}
+	sessionID, userID, signedInAt, err = h.Sessions.ResolveLoginSessionAt(r.Context(), c.Value)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, time.Time{}, false
+	}
+	return sessionID, userID, signedInAt, true
 }
 
 // externalScheme returns the request's public scheme, honoring X-Forwarded-Proto
@@ -1505,6 +2133,12 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 	}
 	var resp *TokenResponse
 	var err error
+	switch gt := r.Form.Get("grant_type"); {
+	case resource != "" && (gt == "urn:ietf:params:oauth:grant-type:device_code" || gt == grantTypeCIBA):
+		// Explicitly refused, never silently dropped: these flows bind no resource.
+		writeOAuthError(w, oauthErr("invalid_target", "resource indicators aren't supported on the device and backchannel flows"))
+		return
+	}
 	switch r.Form.Get("grant_type") {
 	case "authorization_code":
 		resp, err = h.Service.ExchangeCode(r.Context(),
@@ -1525,7 +2159,7 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 		// not required (device clients are typically public). Errors here use the
 		// RFC 6749 §5.2 flat {"error","error_description"} shape OAuth clients
 		// parse, rendered by writeOAuthError.
-		resp, err = h.Service.DeviceToken(r.Context(), clientID, r.Form.Get("device_code"))
+		resp, err = h.Service.DeviceToken(r.Context(), clientID, r.Form.Get("device_code"), httpx.ClientIP(r))
 		if err != nil {
 			var oe *oauthError
 			if errors.As(err, &oe) {
@@ -1556,6 +2190,11 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		var oe *oauthError
+		if errors.As(err, &oe) {
+			writeOAuthError(w, oe)
+			return
+		}
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1585,6 +2224,11 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Service.RevokeToken(r.Context(), clientID, clientSecret, r.Form.Get("token"), r.Form.Get("token_type_hint")); err != nil {
+		var oe *oauthError
+		if errors.As(err, &oe) {
+			writeOAuthError(w, oe)
+			return
+		}
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1606,21 +2250,23 @@ func (h *Handler) introspect(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
-func (h *Handler) userinfo(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil || p.UserID == nil {
-		httpx.WriteError(w, r, errs.ErrUnauthorized)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"sub":       p.UserID,
-		"tenant_id": p.TenantID,
-	})
+func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
+	httpx.WriteJSON(w, http.StatusOK, h.serverMetadata(r))
 }
 
-func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
+// authorizationServerMetadata (GET /.well-known/oauth-authorization-server) is
+// the RFC 8414 document an OAuth-only client, or a model-context-protocol
+// client following the protected-resource document, configures itself from.
+// The same document as the OpenID configuration, so the two can't disagree.
+func (h *Handler) authorizationServerMetadata(w http.ResponseWriter, r *http.Request) {
+	httpx.WriteJSON(w, http.StatusOK, h.serverMetadata(r))
+}
+
+// serverMetadata is the authorization server's metadata, for the request's
+// host.
+func (h *Handler) serverMetadata(r *http.Request) map[string]any {
 	base := externalScheme(r) + "://" + r.Host
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		"issuer":                                base,
 		"authorization_endpoint":                base + "/v1/oauth/authorize",
 		"token_endpoint":                        base + "/v1/oauth/token-code",
@@ -1633,15 +2279,27 @@ func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 		"response_types_supported":              []string{"code"},
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{h.Service.issuer.Alg()},
-		"scopes_supported":                      []string{"openid", "profile", "email"},
+		"scopes_supported":                      scopesSupported,
+		"claims_supported":                      claimsSupported(),
+		"prompt_values_supported":               promptValuesSupported,
+		"response_modes_supported":              responseModesSupported,
+		"request_parameter_supported":           false,
+		"backchannel_logout_supported":          true,
+		"backchannel_logout_session_supported":  true,
+		"frontchannel_logout_supported":         true,
+		"frontchannel_logout_session_supported": true,
+		"request_uri_parameter_supported":       false,
 		"grant_types_supported":                 []string{"authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code", grantTypeTokenExchange, grantTypeCIBA},
 		// OpenID CIBA — poll mode only (no ping/push notification_endpoint).
 		"backchannel_token_delivery_modes_supported": []string{"poll"},
 		"backchannel_authentication_endpoint":        base + "/v1/oauth/bc-authorize",
 		"backchannel_user_code_parameter_supported":  false,
 		"code_challenge_methods_supported":           []string{"S256"},
-		// RFC 9728 — Protected Resource Metadata discovery link
-		"protected_resource_metadata": base + "/.well-known/oauth-protected-resource",
+		// Client authentication: a secret by Basic or form everywhere; "none"
+		// (a public client) only where it may call, and introspection never.
+		"token_endpoint_auth_methods_supported":         []string{"client_secret_basic", "client_secret_post", "none"},
+		"revocation_endpoint_auth_methods_supported":    []string{"client_secret_basic", "client_secret_post", "none"},
+		"introspection_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post"},
 		// RFC 8707 — Resource Indicators
 		"resource_indicators_supported": true,
 		// RFC 9207 — the authorization response carries an `iss` parameter.
@@ -1652,8 +2310,11 @@ func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 		// UUID — see TokenExchange), an agent token self-describes via the
 		// actor_type + agent_id claims, also surfaced on /oauth/introspect.
 		"actor_types_supported": []string{"user", "service", "agent"},
-	})
+	}
 }
+
+// scopesSupported is every scope an application may request.
+var scopesSupported = []string{"openid", "profile", "email", "phone"}
 
 // protectedResourceMetadata implements RFC 9728 §3 — OAuth 2.0 Protected
 // Resource Metadata. MCP authorization servers must advertise this document
@@ -1667,6 +2328,7 @@ func (h *Handler) protectedResourceMetadata(w http.ResponseWriter, r *http.Reque
 		"bearer_methods_supported":              []string{"header"},
 		"resource_signing_alg_values_supported": []string{h.Service.issuer.Alg()},
 		"resource_documentation":                "https://docs.qeet.in/id/api-reference",
+		"scopes_supported":                      scopesSupported,
 	})
 }
 
@@ -1687,17 +2349,59 @@ func (h *Handler) jwks(w http.ResponseWriter, r *http.Request) {
 // are stateless ES256 JWTs and can't be revoked individually, so they're a
 // no-op. Per the RFC, an unknown or already-revoked token is still a success —
 // the only error paths are bad client auth or a DB failure.
+//
+// A refresh token ends the whole grant it belongs to, every rotation of it, so
+// no earlier link stays usable, and is audited. An access token can't be
+// revoked (it is stateless and lasts out its short lifetime, ADR-0017), so it
+// is refused with unsupported_token_type rather than answered with a success
+// that revokes nothing. An unknown token, or another client's, is a 200 no-op
+// (RFC 7009 §2.2), whatever the hint says.
 func (s *Service) RevokeToken(ctx context.Context, clientID, clientSecret, token, hint string) error {
-	if _, err := s.authenticateClient(ctx, clientID, clientSecret); err != nil {
+	client, err := s.authenticateClient(ctx, clientID, clientSecret)
+	if err != nil {
 		return err
 	}
-	if token == "" || hint == "access_token" {
+	if token == "" {
 		return nil
 	}
-	return s.q.RevokeRefreshTokenByHash(ctx, dbgen.RevokeRefreshTokenByHashParams{
+	// Whatever its audience: a token issued for a registered resource is an
+	// access token too.
+	if _, err := s.issuer.VerifyAccessAnyAudience(token); err == nil {
+		return oauthErr("unsupported_token_type", "access tokens can't be revoked; they expire on their own")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	ended, err := s.q.WithTx(tx).RevokeRefreshTokenGrant(ctx, dbgen.RevokeRefreshTokenGrantParams{
 		TokenHash: tokens.HashRefresh(token),
 		ClientID:  clientID,
 	})
+	if err != nil {
+		return err
+	}
+	if len(ended) == 0 {
+		return nil
+	}
+	first := ended[0]
+	tenantID, userID := first.TenantID, first.UserID
+	var grantID *uuid.UUID
+	if first.GrantID.Valid {
+		g := uuid.UUID(first.GrantID.Bytes)
+		grantID = &g
+	}
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID: &tenantID, ActorUserID: &userID, ActorType: "client",
+		Action: "oidc.grant_revoked", ResourceType: "oidc_grant", ResourceID: grantID,
+		IP: httpx.ClientIPFromContext(ctx),
+		Metadata: map[string]any{
+			"client_id": client.ClientID, "tokens_revoked": len(ended), "via": "revocation_endpoint",
+		},
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // Introspect implements RFC 7662. After client authentication it reports
@@ -1705,7 +2409,11 @@ func (s *Service) RevokeToken(ctx context.Context, clientID, clientSecret, token
 // ES256 access tokens (verified statelessly) and stored OIDC refresh tokens.
 // token_type_hint, when given, picks which check to run first/only.
 func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token, hint string) (map[string]any, error) {
-	if _, err := s.authenticateClient(ctx, clientID, clientSecret); err != nil {
+	client, err := s.authenticateClient(ctx, clientID, clientSecret)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireConfidential(ctx, client); err != nil {
 		return nil, err
 	}
 	inactive := map[string]any{"active": false}
@@ -1726,11 +2434,32 @@ func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token,
 	}
 
 	// Access token (stateless JWT) — unless the hint says it's a refresh token.
+	// Whatever its audience: a token issued for a resource is still ours.
 	if hint != "refresh_token" {
-		if claims, err := s.issuer.VerifyAccess(token); err == nil {
-			// Access tokens carry no client_id, so bind at tenant granularity:
-			// a client may only introspect tokens issued within its own tenant.
+		if claims, err := s.issuer.VerifyAccessAnyAudience(token); err == nil {
 			if claims.TenantID != caller.TenantID {
+				return inactive, nil
+			}
+			// Only the application the token was issued to, or the service a
+			// registered resource it names says serves it, may see it.
+			allowed, err := s.mayIntrospect(ctx, caller.TenantID, clientID, claims)
+			if err != nil {
+				return nil, err
+			}
+			if !allowed {
+				s.auditIntrospectionRefused(ctx, caller.TenantID, clientID, claims.ClientID)
+				return inactive, nil
+			}
+			// Introspection is the authoritative answer on revocation
+			// (ADR-0017): a token whose account is suspended or deleted, whose
+			// membership of the organisation has ended, or whose agent is no
+			// longer active, is inactive here though its signature still
+			// verifies. Offline verification stays bounded by its lifetime.
+			live, err := s.tokenSubjectLive(ctx, claims)
+			if err != nil {
+				return nil, err
+			}
+			if !live {
 				return inactive, nil
 			}
 			out := map[string]any{
@@ -1739,7 +2468,13 @@ func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token,
 				"sub":        claims.Subject,
 				"scope":      claims.Scope,
 				"iss":        s.issuer.JWTIssuer(),
-				"aud":        s.issuer.JWTAudience(),
+				"aud":        audienceClaim(claims.Audience),
+			}
+			if claims.ClientID != "" {
+				out["client_id"] = claims.ClientID
+			}
+			if res := resourcesOf(claims.Audience, s.issuer.JWTAudience()); len(res) > 0 {
+				out["resource"] = audienceClaim(res)
 			}
 			if claims.ExpiresAt != nil {
 				out["exp"] = claims.ExpiresAt.Unix()

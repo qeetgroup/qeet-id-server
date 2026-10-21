@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -88,20 +89,28 @@ func (s *Service) ResolveLoginSession(ctx context.Context, raw string) (uuid.UUI
 // session's own id, which the authorization codes minted through it record so
 // that signing out of it can end what it started.
 func (s *Service) ResolveLoginSessionWithID(ctx context.Context, raw string) (sessionID, userID uuid.UUID, err error) {
+	sessionID, userID, _, err = s.ResolveLoginSessionAt(ctx, raw)
+	return sessionID, userID, err
+}
+
+// ResolveLoginSessionAt is ResolveLoginSessionWithID plus when the person
+// signed in to the hosted login: the authentication time (auth_time) an
+// authorization request's max_age and prompt=login are judged by.
+func (s *Service) ResolveLoginSessionAt(ctx context.Context, raw string) (sessionID, userID uuid.UUID, signedInAt time.Time, err error) {
 	if raw == "" {
-		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized
+		return uuid.Nil, uuid.Nil, time.Time{}, errs.ErrUnauthorized
 	}
 	row, err := s.q.GetLoginSession(ctx, tokens.HashRefresh(raw))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized
+		return uuid.Nil, uuid.Nil, time.Time{}, errs.ErrUnauthorized
 	}
 	if err != nil {
-		return uuid.Nil, uuid.Nil, err
+		return uuid.Nil, uuid.Nil, time.Time{}, err
 	}
 	if time.Now().After(row.ExpiresAt) {
-		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized
+		return uuid.Nil, uuid.Nil, time.Time{}, errs.ErrUnauthorized
 	}
-	return row.ID, row.UserID, nil
+	return row.ID, row.UserID, row.CreatedAt, nil
 }
 
 // ResolveLoginSessionUser returns the user behind a live SSO session cookie
@@ -223,7 +232,23 @@ type LoginSessionEnded struct {
 	SessionID                 uuid.UUID
 	AppGrants                 int64
 	ExpiredAuthorizationCodes int64
+	// FrontChannelLogoutURIs are the pages of the applications in the session
+	// that the hosted signed-out page loads to sign the browser out of them
+	// (with iss and sid), as the SignOutNotifier returned them.
+	FrontChannelLogoutURIs []string
 }
+
+// SignOutNotifier tells the applications in an ended hosted-login session
+// (back-channel notices) and returns their front-channel sign-out pages.
+// Satisfied by *oidc.Service; an interface so auth doesn't import it. Wired
+// via SetSignOutNotifier.
+type SignOutNotifier interface {
+	NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID, initiatedBy string) ([]string, error)
+}
+
+// SetSignOutNotifier wires the sign-out notices. Called from
+// internal/bootstrap/dependencies.go.
+func (s *Service) SetSignOutNotifier(n SignOutNotifier) { s.signOutNotifier = n }
 
 // EndLoginSession signs a browser out of the hosted login. In one transaction
 // it deletes the session behind the cookie, spends the authorization codes
@@ -295,6 +320,15 @@ func (s *Service) EndLoginSession(ctx context.Context, in EndLoginSessionInput) 
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return LoginSessionEnded{}, err
+	}
+	// The session has ended whatever happens next; telling the applications
+	// is best effort (a failure is logged, and back-channel notices retry).
+	if s.signOutNotifier != nil {
+		uris, err := s.signOutNotifier.NotifySignOut(ctx, row.ID, row.UserID, in.ClientID)
+		if err != nil {
+			slog.Warn("auth: tell applications of a sign-out", "session_id", row.ID, "err", err)
+		}
+		ended.FrontChannelLogoutURIs = uris
 	}
 	return ended, nil
 }

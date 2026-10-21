@@ -19,6 +19,7 @@ func init() {
 		errs.CodeAuthSelfRegistrationDisabled:    http.StatusForbidden,
 		errs.CodeAuthMethodDisabled:              http.StatusForbidden,
 		errs.CodeAuthApplicationToken:            http.StatusForbidden,
+		errs.CodeAuthInsufficientScope:           http.StatusForbidden,
 		errs.CodeAuthPasswordWeak:                http.StatusUnprocessableEntity,
 		errs.CodeAuthMFAChallengeExpired:         http.StatusUnauthorized,
 		errs.CodeAuthRefreshTokenInvalid:         http.StatusUnauthorized,
@@ -28,5 +29,6 @@ func init() {
 		errs.CodeAuthSessionLimit:                http.StatusForbidden,
 		errs.CodeAuthAccountSuspended:            http.StatusUnauthorized,
 		errs.CodeAuthSignInUnavailable:           http.StatusServiceUnavailable,
+		errs.CodeAuthAddressNotAllowed:           http.StatusForbidden,
 	})
 }

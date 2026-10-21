@@ -6,6 +6,8 @@ package notifier
 import (
 	"context"
 	"log/slog"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 type Message struct {
@@ -41,6 +43,10 @@ type Sender interface {
 //
 // The zero value is safe: Reveal defaults to false, so a LogSender constructed
 // without going through notifier.New never prints a credential.
+//
+// Outside development it also reports the send as failed
+// (errs.ErrEmailProviderUnavailable): the message reached nobody, and calling
+// that a success let a verification code be stored that could never arrive.
 type LogSender struct {
 	// Reveal logs the message body. Development only — see the type comment.
 	Reveal bool
@@ -61,5 +67,8 @@ func (l LogSender) Send(_ context.Context, m Message) error {
 		attrs = append(attrs, "body", "[SUPPRESSED: no provider configured for this channel]")
 	}
 	slog.Info("notify", attrs...)
+	if !l.Reveal {
+		return errs.ErrEmailProviderUnavailable
+	}
 	return nil
 }

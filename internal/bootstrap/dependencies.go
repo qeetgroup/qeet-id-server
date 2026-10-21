@@ -25,6 +25,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/abac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authzen"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decide"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/policy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rebac"
@@ -81,6 +82,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
@@ -133,35 +135,41 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	// KMS-side rotation; see docs/JWT-KEY-ROTATION.md for the same two-phase
 	// shape applied to signing keys.
 	keyProvider = secret.StaticKeyProvider{Key: dataKey}
-	signingKeyPEM := cfg.JWTSigningKey
-	ephemeralSigningKey := signingKeyPEM == ""
-	if signingKeyPEM == "" {
-		if !cfg.IsDev() {
-			slog.Error("JWT_SIGNING_KEY is required outside dev (PEM-encoded EC P-256 private key)")
-			os.Exit(1)
-		}
-		k, err := tokens.GenerateES256KeyPEM()
-		if err != nil {
-			slog.Error("generate ephemeral signing key", "err", err)
-			os.Exit(1)
-		}
-		signingKeyPEM = k
-		slog.Warn("JWT_SIGNING_KEY unset — generated and activated a new development ES256 key")
-	}
 	signingKeyRegistry, err := tokens.NewSigningKeyRegistry(pool, sharedCipher)
 	if err != nil {
 		slog.Error("init signing key registry", "err", err)
 		os.Exit(1)
 	}
-	ephemeralEnvelopeKey := cfg.IsDev() && (cfg.SecretsProvider == "" || cfg.SecretsProvider == "static") && cfg.SecretsKey == ""
-	activateSigningKey := cfg.JWTActivateSigningKey || ephemeralSigningKey || ephemeralEnvelopeKey
-	if err := signingKeyRegistry.Reconcile(rootCtx, signingKeyPEM, cfg.JWTRetiredKeys, activateSigningKey, cfg.JWTSigningKeyRetireGrace); err != nil {
+	if cfg.JWTSigningKey == "" {
+		if !cfg.IsDev() {
+			slog.Error("JWT_SIGNING_KEY is required outside dev (PEM-encoded EC P-256 private key)")
+			os.Exit(1)
+		}
+		// A workstation with no key uses the database's active one, and makes one
+		// only for a database that has none: never a new key per start, which
+		// retired the last one and split instances sharing the database.
+		generated, err := signingKeyRegistry.EnsureDevelopmentKey(rootCtx)
+		if err != nil {
+			slog.Error("JWT_SIGNING_KEY unset and the database's active key can't be used; "+
+				"set SECRETS_KEY to the vault key it was sealed with, or set JWT_SIGNING_KEY (make dev does)", "err", err)
+			os.Exit(1)
+		}
+		if generated {
+			slog.Warn("JWT_SIGNING_KEY unset — generated and activated a development ES256 key (the database had none)")
+		} else {
+			slog.Warn("JWT_SIGNING_KEY unset — signing with the database's active development key")
+		}
+	} else if err := signingKeyRegistry.Reconcile(rootCtx, cfg.JWTSigningKey, cfg.JWTRetiredKeys, cfg.JWTActivateSigningKey, cfg.JWTSigningKeyRetireGrace); err != nil {
+		// Activation is the operator's call alone (JWT_ACTIVATE_SIGNING_KEY): a
+		// configured key never replaces the active one by itself, even when this
+		// process's vault key is ephemeral.
 		slog.Error("reconcile JWT signing key registry", "err", err)
 		os.Exit(1)
 	}
 	issuer, err := signingKeyRegistry.NewIssuer(rootCtx, cfg.JWTIssuer, cfg.JWTAudience, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
 	if err != nil {
-		slog.Error("init token issuer from registry", "err", err)
+		slog.Error("init token issuer from registry; if the active key was sealed with another vault key, set that SECRETS_KEY, "+
+			"or activate the configured key with JWT_ACTIVATE_SIGNING_KEY=true", "err", err)
 		os.Exit(1)
 	}
 	slog.Info("JWT signing key registry ready", "active_kid", issuer.KID())
@@ -207,20 +215,29 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	policyRepo.SetSessionDefaults(cfg.SessionMaxAge, cfg.SessionIdleTimeout)
 
 	sender := notifier.New(notifier.Config{
-		EmailProvider:    cfg.EmailProvider,
-		AWSRegion:        cfg.AWSRegion,
-		SMTPHost:         cfg.SMTPHost,
-		SMTPPort:         cfg.SMTPPort,
-		SMTPUsername:     cfg.SMTPUsername,
-		SMTPPassword:     cfg.SMTPPassword,
-		SMTPFrom:         cfg.SMTPFrom,
-		TwilioAccountSID: cfg.TwilioAccountSID,
-		TwilioAuthToken:  cfg.TwilioAuthToken,
-		TwilioFrom:       cfg.TwilioFrom,
-		Dev:              cfg.IsDev(),
+		EmailProvider:       cfg.EmailProvider,
+		AWSRegion:           cfg.AWSRegion,
+		SMTPHost:            cfg.SMTPHost,
+		SMTPPort:            cfg.SMTPPort,
+		SMTPUsername:        cfg.SMTPUsername,
+		SMTPPassword:        cfg.SMTPPassword,
+		SMTPFrom:            cfg.SMTPFrom,
+		SESConfigurationSet: cfg.SESConfigurationSet,
+		TwilioAccountSID:    cfg.TwilioAccountSID,
+		TwilioAuthToken:     cfg.TwilioAuthToken,
+		TwilioFrom:          cfg.TwilioFrom,
+		Dev:                 cfg.IsDev(),
 	})
 	emailTransport, emailRouter := sender.(notifier.Router)
 	emailTestEnabled := emailRouter && emailTransport.Email != nil
+	// Every email is checked against the suppression list and recorded, right
+	// in front of the transport (after templating and branding).
+	deliveryStore := delivery.NewStore(pool)
+	emailProvider := "none"
+	if emailRouter {
+		emailProvider = emailTransport.EmailProvider()
+	}
+	sender = delivery.Tracker{Next: sender, Store: deliveryStore, Provider: emailProvider}
 	sender = branding.Sender{Source: brandingRepo, Next: sender}
 	sender = email.TemplateSender{Templates: emailTemplateService, Appearance: brandingRepo, Next: sender}
 	// PNG fallback for the email logo (served at the app root): shown in clients
@@ -304,11 +321,14 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	botService := bot.NewService(pool)
 	siemService := siem.NewService(pool, outboundPolicy) // forwards audit events to configured log sinks
 	siemService.SetCipher(sharedCipher)
-	rebacService := rebac.NewService(pool)                       // fine-grained (relationship) authorization
-	abacService := abac.NewService(pool)                         // attribute-based access control (policy store + PDP)
-	authzenService := authzen.NewService(rbacRepo, rebacService) // OpenID AuthZEN PDP facade over RBAC/ReBAC
-	agentService := agent.NewService(pool, issuer)               // AI-agent identities (ephemeral scoped tokens)
-	vcService := vc.NewService(pool, issuer)                     // W3C verifiable credentials (JWT-VC)
+	rebacService := rebac.NewService(pool) // fine-grained (relationship) authorization
+	abacService := abac.NewService(pool)   // attribute-based access control (policy store + PDP)
+	// One decision across the three engines (an ABAC deny refuses, then any
+	// allow): the route guard, /v1/check, the relationship check and AuthZEN.
+	decider := decide.New(rbacRepo, rebacService, abacService)
+	authzenService := authzen.NewService(rbacRepo, rebacService, decider) // OpenID AuthZEN PDP facade
+	agentService := agent.NewService(pool, issuer)                        // AI-agent identities (ephemeral scoped tokens)
+	vcService := vc.NewService(pool, issuer)                              // W3C verifiable credentials (JWT-VC)
 
 	// Qeet AI assistant: the conversation store is created here; the per-tenant
 	// BYOK provider-config service + orchestrator + handler are wired below,
@@ -371,10 +391,16 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	healthHandler := health.New(cfg.ServiceName, cfg.ServiceEnv, startedAt)
 	healthHandler.ServiceProfile = cfg.ServiceProfile
 	healthHandler.AddReadiness("db", health.PingDB(pool))
+	healthHandler.AddReadiness("jwt-keyring", signingKeyRegistry.Ready) // not ready after repeated keyring refresh failures
 	inFlight := httpx.NewInFlight()
 	oidcService := oidc.NewService(pool, issuer)
-	oidcService.SetGrantMaxAge(cfg.SessionMaxAge) // grant bound where the organisation sets none
-	oidcService.SetNotifier(notificationService)  // CIBA async consent prompts
+	oidcService.SetAgentStatus(agentService.AgentStatus)            // a suspended agent's tokens introspect inactive
+	oidcService.SetGrantMaxAge(cfg.SessionMaxAge)                   // grant bound where the organisation sets none
+	oidcService.SetTokenExchangeMaxDepth(cfg.TokenExchangeMaxDepth) // bound a chain of exchanges
+	oidcService.SetClientLockout(oidc.ClientLockout{                // wrong application secrets
+		Threshold: cfg.ClientAuthLockoutThreshold, Window: cfg.ClientAuthLockoutWindow, Duration: cfg.ClientAuthLockoutDuration,
+	})
+	oidcService.SetNotifier(notificationService) // CIBA async consent prompts
 	rpID, rpDisplayName, rpOrigins := cfg.WebAuthnRP()
 	// UserVerification: Required is load-bearing, not a preference.
 	//
@@ -514,6 +540,10 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	scimService.SetProfileMapper(directoryService)
 	ldapService.SetProfileMapper(directoryService)
 	ipAllowService := ipallow.NewService(pool)
+	authService.SetAddressPolicy(ipAllowService) // address rules: every sign-in to an organisation, and every renewal
+	authService.SetSignOutNotifier(oidcService)  // tell applications when someone signs out of the hosted login
+	oidcService.SetLogoutHTTPClient(outboundPolicy)
+	oidcService.SetAddressPolicy(ipAllowService) // address rules: application authorize, device approval and collection
 
 	// Plan enforcement: inject the entitlement checker into every gated create
 	// path. Numeric limits (seats/apps/api keys/custom roles) use SetPlanLimiter;
@@ -604,14 +634,16 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		User:          &user.Handler{Repo: userRepo, Validate: v, PasswordPolicy: authPolicyService.ValidateForTenant, MFA: mfaService, SignIns: authService, Signals: sessionSignals},
 		AuthPolicy:    &authpolicy.Handler{Service: authPolicyService},
 		Auth:          &auth.Handler{Service: authService, Validate: v, CookieSecure: !cfg.IsDev(), Bot: botService, GeoCountryHeader: cfg.GeoCountryHeader},
-		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbacService, Validate: v},
-		RBACChecker:   rbacRepo,
+		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbacService, Validate: v, Decider: decider},
+		RBACChecker:   decider,
 		Verification:  &verification.Handler{Service: verifyService},
 		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService, DevMode: cfg.IsDev(), CookieSecure: !cfg.IsDev()},
 		Retention:     &retention.Handler{Service: retentionService},
 		Invite:        &invite.Handler{Service: inviteService, AuthService: authService, Validate: v},
 		Branding:      &branding.Handler{Repo: brandingRepo},
 		EmailTemplate: &email.Handler{Service: emailTemplateService, Sender: sender, Appearance: brandingRepo, TestEmailEnabled: emailTestEnabled},
+		EmailDelivery: &email.DeliveryHandler{Store: deliveryStore},
+		SESWebhook:    &delivery.Webhook{Store: deliveryStore, TopicARNs: cfg.SESEventsTopicARNs},
 		APIKey:        &apikey.Handler{Service: apikeyService},
 		APIKeyService: apikeyService,
 		Principal:     &principal.Handler{Service: principalService},
@@ -647,7 +679,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		SIEM:          &siem.Handler{Service: siemService},
 		AuthHook:      &authhook.Handler{Service: authHookService},
 		ABAC:          &abac.Handler{Service: abacService},
-		ReBAC:         &rebac.Handler{Service: rebacService},
+		ReBAC:         &rebac.Handler{Service: rebacService, Decider: decider},
 		AuthZEN:       &authzen.Handler{Service: authzenService},
 		Agent:         &agent.Handler{Service: agentService},
 		VC:            &vc.Handler{Service: vcService},
@@ -671,12 +703,19 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	workers := []namedWorker{
 		{name: "jwt-keyring", run: func(ctx context.Context) { signingKeyRegistry.Run(ctx, issuer, cfg.JWTSigningKeyRefreshInterval) }, always: true},
 		{name: "outbox", run: outboxDispatcher.Run},
+		{name: "oidc-logout", run: oidcService.RunLogoutDeliveries},
 		{name: "webhook", run: webhookService.RunDispatcher},
 		{name: "gdpr", run: gdprService.Run},
 		{name: "retention", run: retentionService.Run},
 		{name: "siem", run: siemService.Run},
 		{name: "audit-anomaly", run: auditAnomalyService.Run},
+		// Audit-chain verification and the cleanups, once per interval across
+		// instances (QTID-326).
+		{name: "scheduler", run: func(ctx context.Context) {
+			worker.RunScheduled(ctx, pool, MaintenanceJobs(pool, sessionSignals), worker.SchedulerTick)
+		}},
 	}
+	RegisterMaintenanceMetrics(pool)
 	return deps, workers
 }
 

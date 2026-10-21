@@ -33,6 +33,31 @@ type Invite struct {
 	ExpiresAt  time.Time  `json:"expires_at"`
 	AcceptedAt *time.Time `json:"accepted_at"`
 	CreatedAt  time.Time  `json:"created_at"`
+	// Delivery is set on the invitation Create or Resend returns: whether its
+	// email went out.
+	Delivery *Delivery `json:"delivery,omitempty"`
+}
+
+// Delivery is what happened to an invitation's email: "sent" when a provider
+// accepted it, or "not_sent" with the reason (the address is suppressed after
+// a bounce or complaint, no provider is configured, or the provider refused
+// it). The invitation exists either way, and its link can be shared by hand.
+type Delivery struct {
+	Status  string `json:"status"`
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+func deliveryOf(err error) *Delivery {
+	if err == nil {
+		return &Delivery{Status: "sent"}
+	}
+	d := &Delivery{Status: "not_sent", Code: "email.send_failed", Message: "The email could not be sent."}
+	var e *errs.Error
+	if errors.As(err, &e) {
+		d.Code, d.Message = e.Code, e.Message
+	}
+	return d
 }
 
 type CreateInput struct {
@@ -195,15 +220,16 @@ func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UU
 		return nil, "", err
 	}
 	iv := inviteFromInsertRow(row)
-	s.sendInviteEmail(ctx, in.TenantID, iv.ID, in.Email, raw)
+	iv.Delivery = deliveryOf(s.sendInviteEmail(ctx, in.TenantID, iv.ID, in.Email, raw))
 	return &iv, raw, nil
 }
 
-// sendInviteEmail delivers the accept link. A failure is logged (not swallowed)
-// but does not fail the request — the invite row exists and the admin can
-// resend or copy the returned token. Delivery to unverified recipients fails
-// while Amazon SES is in sandbox mode.
-func (s *Service) sendInviteEmail(ctx context.Context, tenantID, inviteID uuid.UUID, email, rawToken string) {
+// sendInviteEmail delivers the accept link. A failure does not fail the
+// request — the invite row exists and the admin can resend or copy the
+// returned token — but is logged and returned, so the response says the email
+// didn't go (Invite.Delivery). Delivery to unverified recipients fails while
+// Amazon SES is in sandbox mode.
+func (s *Service) sendInviteEmail(ctx context.Context, tenantID, inviteID uuid.UUID, email, rawToken string) error {
 	inviteURL := fmt.Sprintf("%s/invite/accept?token=%s", s.baseAppURL, rawToken)
 	if err := s.sender.Send(ctx, notifier.Message{
 		TemplateKey:       "invite",
@@ -220,8 +246,10 @@ func (s *Service) sendInviteEmail(ctx context.Context, tenantID, inviteID uuid.U
 			"If you weren't expecting this invitation, you can safely ignore this email.",
 		),
 	}); err != nil {
-		slog.Warn("invite email send failed", "err", err, "invite_id", inviteID, "email", email)
+		slog.Warn("invite email send failed", "err", err, "invite_id", inviteID)
+		return err
 	}
+	return nil
 }
 
 // Resend rotates the invite token, extends the expiry, and re-sends the email.
@@ -244,7 +272,7 @@ func (s *Service) Resend(ctx context.Context, tenantID, id uuid.UUID) (*Invite, 
 		return nil, "", err
 	}
 	iv := inviteFromRegenerateRow(row)
-	s.sendInviteEmail(ctx, tenantID, iv.ID, iv.Email, raw)
+	iv.Delivery = deliveryOf(s.sendInviteEmail(ctx, tenantID, iv.ID, iv.Email, raw))
 	return &iv, raw, nil
 }
 
@@ -377,11 +405,8 @@ type ReceivedInvite struct {
 
 // ListForUser returns the pending invitations addressed to the caller's email.
 func (s *Service) ListForUser(ctx context.Context, userID uuid.UUID) ([]ReceivedInvite, error) {
-	email, err := s.q.GetUserEmailByID(ctx, userID)
+	email, err := inboxEmail(ctx, s.q, userID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrUnauthorized
-		}
 		return nil, err
 	}
 	rows, err := s.q.ListInvitesForEmail(ctx, email)
@@ -406,11 +431,8 @@ func (s *Service) ListForUser(ctx context.Context, userID uuid.UUID) ([]Received
 
 // DeclineForUser dismisses a pending invitation addressed to the caller's email.
 func (s *Service) DeclineForUser(ctx context.Context, userID, inviteID uuid.UUID) error {
-	email, err := s.q.GetUserEmailByID(ctx, userID)
+	email, err := inboxEmail(ctx, s.q, userID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errs.ErrUnauthorized
-		}
 		return err
 	}
 	n, err := s.q.DeclineInviteForEmail(ctx, dbgen.DeclineInviteForEmailParams{
@@ -424,6 +446,23 @@ func (s *Service) DeclineForUser(ctx context.Context, userID, inviteID uuid.UUID
 		return errs.ErrInviteInvalid
 	}
 	return nil
+}
+
+// inboxEmail returns the caller's address for the in-app invitations inbox, or
+// ErrInviteEmailNotVerified until they have proven it. The emailed invitation
+// link needs no such check: having the link is the proof.
+func inboxEmail(ctx context.Context, q *dbgen.Queries, userID uuid.UUID) (string, error) {
+	row, err := q.GetInboxEmail(ctx, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", errs.ErrUnauthorized
+		}
+		return "", err
+	}
+	if !row.Verified {
+		return "", errs.ErrInviteEmailNotVerified
+	}
+	return row.Email, nil
 }
 
 // pendingInvite is the minimal invite shape the authed-accept helper needs, fed
@@ -468,6 +507,9 @@ func (s *Service) AcceptAuthenticatedByID(ctx context.Context, userID, inviteID 
 	}
 	defer tx.Rollback(ctx)
 	qtx := s.q.WithTx(tx)
+	if _, err := inboxEmail(ctx, qtx, userID); err != nil {
+		return nil, err
+	}
 	inv, err := qtx.GetInviteByIDForAccept(ctx, inviteID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

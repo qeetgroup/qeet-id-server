@@ -17,7 +17,7 @@ PostgreSQL database, one deployable binary, five bounded contexts as enforced pa
 | | |
 |---|---|
 | Module | `github.com/qeetgroup/qeet-id-server` |
-| Language | Go 1.26.0 (toolchain 1.27.2) |
+| Language | Go 1.26.0 (toolchain 1.27.3) |
 | Router | chi v5 |
 | Database | PostgreSQL, pgx v5, hand-written SQL via sqlc |
 | Binaries | `api`, `worker`, `scheduler`, `migrate`, `seed` |
@@ -249,7 +249,7 @@ violated the pattern and will usually break R1 or R2.
 |---|---|---|
 | `cmd/api` | HTTP API server | Body is `bootstrap.Run()`. Workers run embedded by default |
 | `cmd/worker` | Background workers standalone | Run to scale workers independently of API replicas |
-| `cmd/scheduler` | Scheduled maintenance | Replicas coordinate via **PostgreSQL advisory locks** — safe to run more than one |
+| `cmd/scheduler` | Scheduled maintenance, standalone (the API also runs it embedded) | Each job claimed in `platform.scheduled_job_runs` — once per interval across instances |
 | `cmd/migrate` | golang-migrate wrapper | Structured exit codes for init containers |
 | `cmd/seed` | Demo data | **Development only.** Drives real services, so hashes and audit chains are real |
 
@@ -392,6 +392,7 @@ For the product-level flow narrative, read `qeet-id-context/FLOWS/`.
 | ABAC — deny-overrides, fail-closed | `internal/access/authorization/abac/` |
 | ReBAC — Zanzibar relation tuples | `internal/access/authorization/rebac/` |
 | AuthZEN PDP/PEP | `internal/access/authorization/authzen/` |
+| Composed decision — every check and the route guard ask it | `internal/access/authorization/decide/` |
 | Tenant policy / password rules | `internal/access/authorization/{policy,authpolicy}/` |
 
 The **route → permission map** lives in `internal/bootstrap/permissions.go` and is consumed by
@@ -470,8 +471,12 @@ runs them standalone. Webhook, outbox, and GDPR queues use durable PostgreSQL le
 owner-conditional finalization; retries retain stable event/delivery IDs. Registered workers:
 webhooks, audit anomaly, GDPR, retention, SIEM, outbox dispatch.
 
-`cmd/scheduler` runs low-frequency tenant-wide maintenance, coordinated by PostgreSQL advisory locks
-so multiple replicas are safe.
+Scheduled maintenance (audit-chain verification of every organisation, session, MFA, sign-in
+history and dead-letter cleanup) is `bootstrap.MaintenanceJobs`, run by `worker.RunScheduled`: the
+API runs it as its embedded `scheduler` worker, and `cmd/scheduler` or `cmd/worker` can run it
+standalone. Each job is claimed in `platform.scheduled_job_runs` before it runs, so it runs once per
+interval however many instances run it; each verification is stored in
+`platform.audit_verification_runs`.
 
 **Choose async when** the work is retryable, slow, or must survive a request; **sync when** the
 caller needs the result or the operation must be atomic with the response.
@@ -553,7 +558,7 @@ lint passes.
 
 **This repository builds a container. It does not own its deployment.**
 
-- `Dockerfile` — build on `golang:1.27.2-alpine` (same Go as go.mod's toolchain), ship on `gcr.io/distroless/static-debian12:nonroot`,
+- `Dockerfile` — build on `golang:1.27.3-alpine` (same Go as go.mod's toolchain), ship on `gcr.io/distroless/static-debian12:nonroot`,
   non-root user, `EXPOSE 4001`.
 - `docker-compose.yml` — **local dependencies only**: postgres :5001, nats :4222, mailpit :8025.
 - Terraform, Caddy, compose for production and the rollout live in **`qeet-id-deploy`**.

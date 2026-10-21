@@ -69,6 +69,25 @@ func registerOIDCClient(t *testing.T, ctx context.Context, svc *oidc.Service, te
 	return client, secret
 }
 
+// registerResource registers an RFC 8707 resource for the tenant, served by
+// serverClientID ("" for none).
+func registerResource(t *testing.T, ctx context.Context, svc *oidc.Service, tenantID uuid.UUID, identifier, serverClientID string) *oidc.Resource {
+	t.Helper()
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx)
+	res, err := svc.CreateResource(ctx, tx, tenantID, oidc.CreateResourceInput{Identifier: identifier, ServerClientID: serverClientID})
+	if err != nil {
+		t.Fatalf("register resource %s: %v", identifier, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	return res
+}
+
 func registerOIDCPublicClient(t *testing.T, ctx context.Context, svc *oidc.Service, tenantID uuid.UUID, redirectURI string) *oidc.Client {
 	t.Helper()
 	tx, err := testPool.Begin(ctx)
@@ -113,7 +132,7 @@ func TestOIDCPKCEExchange(t *testing.T) {
 
 	// Authorize WITH a PKCE challenge (S256).
 	verifier, challenge := newPKCE(t)
-	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", challenge, "S256")
+	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, testNonce, challenge, "S256")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
@@ -185,7 +204,7 @@ func TestOIDCPublicClientRequiresStrictPKCE(t *testing.T) {
 		t.Fatalf("malformed PKCE challenge error = %v", err)
 	}
 
-	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", challenge, "S256")
+	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, testNonce, challenge, "S256")
 	if err != nil {
 		t.Fatalf("authorize public client with S256: %v", err)
 	}
@@ -256,11 +275,11 @@ func TestOIDCExchangeRedirectMismatch(t *testing.T) {
 	redirectURI := "https://app.example/cb"
 	client, secret := registerOIDCClient(t, ctx, svc, tenantID, redirectURI)
 
-	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", "", "")
+	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, testNonce, testChallenge, "S256")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
-	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, "https://app.example/other", "", ""); err == nil {
+	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, "https://app.example/other", testVerifier, ""); err == nil {
 		t.Fatal("exchange with a mismatched redirect_uri must fail")
 	}
 }
@@ -278,7 +297,7 @@ func TestOIDCExchangeExpiredCode(t *testing.T) {
 	redirectURI := "https://app.example/cb"
 	client, secret := registerOIDCClient(t, ctx, svc, tenantID, redirectURI)
 
-	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", "", "")
+	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, testNonce, testChallenge, "S256")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
@@ -287,7 +306,7 @@ func TestOIDCExchangeExpiredCode(t *testing.T) {
 		codes.Hash(code)); err != nil {
 		t.Fatalf("expire code: %v", err)
 	}
-	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "", ""); err == nil {
+	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, testVerifier, ""); err == nil {
 		t.Fatal("an expired authorization code must be rejected")
 	}
 }
@@ -306,11 +325,11 @@ func TestOIDCRefreshClientMismatch(t *testing.T) {
 	clientA, secretA := registerOIDCClient(t, ctx, svc, tenantID, redirectURI)
 	clientB, secretB := registerOIDCClient(t, ctx, svc, tenantID, redirectURI)
 
-	code, _, err := svc.Authorize(ctx, userID, clientA.ClientID, redirectURI, []string{"openid"}, "", "", "")
+	code, _, err := svc.Authorize(ctx, userID, clientA.ClientID, redirectURI, []string{"openid"}, testNonce, testChallenge, "S256")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
-	issued, err := svc.ExchangeCode(ctx, clientA.ClientID, secretA, code, redirectURI, "", "")
+	issued, err := svc.ExchangeCode(ctx, clientA.ClientID, secretA, code, redirectURI, testVerifier, "")
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
@@ -340,11 +359,11 @@ func TestOIDCRefreshExpired(t *testing.T) {
 	redirectURI := "https://app.example/cb"
 	client, secret := registerOIDCClient(t, ctx, svc, tenantID, redirectURI)
 
-	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", "", "")
+	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, testNonce, testChallenge, "S256")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
-	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "", "")
+	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, testVerifier, "")
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
@@ -373,11 +392,11 @@ func TestOIDCIntrospectClaims(t *testing.T) {
 	redirectURI := "https://app.example/cb"
 	client, secret := registerOIDCClient(t, ctx, svc, tenantID, redirectURI)
 
-	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid", "profile"}, "", "", "")
+	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid", "profile"}, testNonce, testChallenge, "S256")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
-	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "", "")
+	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, testVerifier, "")
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
@@ -1272,17 +1291,17 @@ func TestVerificationEmailLifecycle(t *testing.T) {
 	rec := &recordSender{}
 	svc := verification.NewService(testPool, rec, 10*time.Minute)
 
-	if err := svc.StartEmail(ctx, userID, email); err != nil {
+	if err := svc.StartEmail(ctx, userID, email, verification.Requester{}); err != nil {
 		t.Fatalf("start email: %v", err)
 	}
 	code := extractCode(t, rec.last.Body)
 
 	// Wrong code is rejected.
-	if err := svc.ConfirmEmail(ctx, userID, "000000"); err == nil {
+	if err := svc.ConfirmEmail(ctx, userID, "000000", verification.Requester{}); err == nil {
 		t.Error("a wrong verification code must be rejected")
 	}
 	// Correct code verifies and stamps email_verified_at.
-	if err := svc.ConfirmEmail(ctx, userID, code); err != nil {
+	if err := svc.ConfirmEmail(ctx, userID, code, verification.Requester{}); err != nil {
 		t.Fatalf("confirm email: %v", err)
 	}
 	var verifiedAt *time.Time
@@ -1293,12 +1312,12 @@ func TestVerificationEmailLifecycle(t *testing.T) {
 		t.Error("email_verified_at should be set after confirmation")
 	}
 	// Single-use.
-	if err := svc.ConfirmEmail(ctx, userID, code); err == nil {
+	if err := svc.ConfirmEmail(ctx, userID, code, verification.Requester{}); err == nil {
 		t.Error("a used verification code must not be reusable")
 	}
 
 	// Expiry path.
-	if err := svc.StartEmail(ctx, userID, email); err != nil {
+	if err := svc.StartEmail(ctx, userID, email, verification.Requester{}); err != nil {
 		t.Fatalf("start email 2: %v", err)
 	}
 	code2 := extractCode(t, rec.last.Body)
@@ -1307,7 +1326,7 @@ func TestVerificationEmailLifecycle(t *testing.T) {
 		codes.Hash(code2)); err != nil {
 		t.Fatalf("expire code: %v", err)
 	}
-	if err := svc.ConfirmEmail(ctx, userID, code2); err == nil {
+	if err := svc.ConfirmEmail(ctx, userID, code2, verification.Requester{}); err == nil {
 		t.Error("an expired verification code must be rejected")
 	}
 }

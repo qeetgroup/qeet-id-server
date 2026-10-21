@@ -399,17 +399,25 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 // sign-out cannot be completed the cookie is kept, so the browser can retry
 // instead of believing it is signed out.
 func (h *Handler) destroySession(w http.ResponseWriter, r *http.Request) {
+	var uris []string
 	if c, err := r.Cookie(LoginSessionCookie); err == nil {
-		if _, err := h.Service.EndLoginSession(r.Context(), EndLoginSessionInput{
+		ended, err := h.Service.EndLoginSession(r.Context(), EndLoginSessionInput{
 			Cookie: c.Value, InitiatedBy: SignOutByHostedLogin,
 			IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
-		}); err != nil {
+		})
+		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
+		uris = ended.FrontChannelLogoutURIs
 	}
 	ClearLoginSessionCookie(w, h.CookieSecure)
-	w.WriteHeader(http.StatusNoContent)
+	if len(uris) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// The hosted login loads these to sign the browser out of each application.
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"frontchannel_logout_uris": uris})
 }
 
 type refreshInput struct {

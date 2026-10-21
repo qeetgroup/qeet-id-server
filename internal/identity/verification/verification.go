@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/verification/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -29,6 +31,27 @@ type Service struct {
 	sender notifier.Sender
 	ttl    time.Duration
 }
+
+// Requester is who asked, for the audit trail: the actor, and the organization
+// their session is in (nil before they belong to one).
+type Requester struct {
+	Actor    audit.Actor
+	TenantID *uuid.UUID
+}
+
+func (r Requester) event(action string, userID uuid.UUID, metadata map[string]any) audit.Event {
+	e := r.Actor.PlatformEvent(action, "user", userID, metadata)
+	e.TenantID = r.TenantID
+	return e
+}
+
+// The two flows that send email codes. A code proves only what its own flow
+// asked: a verify_email code went to the address on file, a change_email code
+// to the address the user wants to move to.
+const (
+	purposeVerifyEmail = "verify_email"
+	purposeChangeEmail = "change_email"
+)
 
 func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration) *Service {
 	if ttl <= 0 {
@@ -70,23 +93,22 @@ func (l latestCode) matches(code string) bool {
 // hash in Go makes "only the most recently sent code is accepted" a property of
 // the lookup itself.
 //
-// Note both email flows (verify-your-address and change-your-address) write to
-// email_verifications, and the table has no column distinguishing them, so the
-// newest code wins across both. That is the intended reading: whichever code we
-// most recently sent the user is the only one that counts.
+// Both email flows (verify-your-address and change-your-address) write to
+// email_verifications; the purpose column keeps them apart, so the newest code
+// is the newest one of the flow being confirmed.
 //
 // Raw SQL because sqlc isn't wired into the build here; fold these into
 // queries.sql at the next `sqlc generate`.
-func newestEmailCode(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (latestCode, error) {
+func newestEmailCode(ctx context.Context, tx pgx.Tx, userID uuid.UUID, purpose string) (latestCode, error) {
 	var l latestCode
 	err := tx.QueryRow(ctx, `
 		SELECT id, code_hash, email, expires_at, used_at, attempts
 		FROM "user".email_verifications
-		WHERE user_id = $1
+		WHERE user_id = $1 AND purpose = $2
 		ORDER BY created_at DESC
 		LIMIT 1
 		FOR UPDATE
-	`, userID).Scan(&l.id, &l.codeHash, &l.value, &l.expiresAt, &l.usedAt, &l.attempts)
+	`, userID, purpose).Scan(&l.id, &l.codeHash, &l.value, &l.expiresAt, &l.usedAt, &l.attempts)
 	return l, err
 }
 
@@ -169,7 +191,7 @@ func checkUsable(l latestCode, code string) error {
 	return nil
 }
 
-func (s *Service) StartEmail(ctx context.Context, userID uuid.UUID, email string) error {
+func (s *Service) StartEmail(ctx context.Context, userID uuid.UUID, email string, who Requester) error {
 	// Default to the address on file so the caller doesn't have to pass their
 	// own email just to verify it (POST .../verify/email/start with no body).
 	if strings.TrimSpace(email) == "" {
@@ -185,16 +207,8 @@ func (s *Service) StartEmail(ctx context.Context, userID uuid.UUID, email string
 	if strings.TrimSpace(email) == "" {
 		return errs.ErrVerifyNoEmail
 	}
-	code, err := codes.Numeric(6)
+	code, err := s.issueEmailCode(ctx, userID, email, purposeVerifyEmail, who)
 	if err != nil {
-		return err
-	}
-	if err := s.q.InsertEmailVerification(ctx, dbgen.InsertEmailVerificationParams{
-		UserID:    userID,
-		Email:     email,
-		CodeHash:  codes.Hash(code),
-		ExpiresAt: time.Now().UTC().Add(s.ttl),
-	}); err != nil {
 		return err
 	}
 	expiry := fmt.Sprintf("%d minutes", int(s.ttl.Minutes()))
@@ -211,14 +225,52 @@ func (s *Service) StartEmail(ctx context.Context, userID uuid.UUID, email string
 	})
 }
 
-func (s *Service) ConfirmEmail(ctx context.Context, userID uuid.UUID, code string) error {
+// issueEmailCode stores a new code for one purpose (expiring the user's open
+// codes for the other) and audits it, in one transaction. It returns the code
+// to send.
+func (s *Service) issueEmailCode(ctx context.Context, userID uuid.UUID, email, purpose string, who Requester) (string, error) {
+	code, err := codes.Numeric(6)
+	if err != nil {
+		return "", err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	if err := s.q.WithTx(tx).InsertEmailVerification(ctx, dbgen.InsertEmailVerificationParams{
+		UserID:    userID,
+		Email:     email,
+		CodeHash:  codes.Hash(code),
+		ExpiresAt: time.Now().UTC().Add(s.ttl),
+		Purpose:   purpose,
+	}); err != nil {
+		return "", err
+	}
+	if err := audit.Record(ctx, tx, who.event("email.verification_started", userID,
+		map[string]any{"purpose": purpose, "email": email})); err != nil {
+		return "", err
+	}
+	return code, tx.Commit(ctx)
+}
+
+// ConfirmEmail verifies the address on file with a verify_email code. The code
+// must have been sent to that address: one sent elsewhere (for an address
+// change, or before the address changed) is the invalid-code error.
+func (s *Service) ConfirmEmail(ctx context.Context, userID uuid.UUID, code string, who Requester) error {
+	err := s.confirmEmail(ctx, userID, code, who)
+	return s.auditRefusal(ctx, userID, purposeVerifyEmail, who, err)
+}
+
+func (s *Service) confirmEmail(ctx context.Context, userID uuid.UUID, code string, who Requester) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	qtx := s.q.WithTx(tx)
 
-	row, err := newestEmailCode(ctx, tx, userID)
+	row, err := newestEmailCode(ctx, tx, userID, purposeVerifyEmail)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errs.ErrVerifyCodeInvalid
@@ -228,20 +280,57 @@ func (s *Service) ConfirmEmail(ctx context.Context, userID uuid.UUID, code strin
 	if err := chargeFailure(ctx, tx, "email_verifications", row, code); err != nil {
 		return err
 	}
-	if err := s.q.WithTx(tx).MarkEmailVerificationUsed(ctx, row.id); err != nil {
+	n, err := qtx.MarkUserEmailVerified(ctx, dbgen.MarkUserEmailVerifiedParams{UserID: userID, Email: row.value})
+	if err != nil {
 		return err
 	}
-	if err := s.q.WithTx(tx).MarkUserEmailVerified(ctx, userID); err != nil {
+	if n == 0 {
+		return errs.ErrVerifyCodeInvalid
+	}
+	if err := qtx.MarkEmailVerificationUsed(ctx, row.id); err != nil {
+		return err
+	}
+	if err := audit.Record(ctx, tx, who.event("email.verified", userID,
+		map[string]any{"email": row.value})); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// auditRefusal records a refused confirm (a wrong, stale, used or exhausted
+// code) as email.verification_failed, in its own transaction since the
+// confirm's own has ended. Any other error, and success, pass through.
+func (s *Service) auditRefusal(ctx context.Context, userID uuid.UUID, purpose string, who Requester, err error) error {
+	e := errs.As(err)
+	if e == nil || !isCodeRefusal(err) {
+		return err
+	}
+	tx, txErr := s.pool.Begin(ctx)
+	if txErr != nil {
+		return txErr
+	}
+	defer tx.Rollback(ctx)
+	if aerr := audit.Record(ctx, tx, who.event("email.verification_failed", userID,
+		map[string]any{"purpose": purpose, "reason": e.Code})); aerr != nil {
+		return aerr
+	}
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return cerr
+	}
+	return err
+}
+
+// isCodeRefusal reports whether err is one of the answers to a bad code.
+func isCodeRefusal(err error) bool {
+	return errors.Is(err, errs.ErrVerifyCodeInvalid) || errors.Is(err, errs.ErrVerifyCodeExpired) ||
+		errors.Is(err, errs.ErrVerifyCodeUsed) || errors.Is(err, errs.ErrVerifyAttemptsExceeded)
 }
 
 // StartEmailChange sends a verification code to a *new* address the user wants
 // to move to. It pre-checks that no other account already owns that address
 // (email is globally unique) and sends the code to the new address, since that's
 // the one whose control we're proving.
-func (s *Service) StartEmailChange(ctx context.Context, userID uuid.UUID, newEmail string) error {
+func (s *Service) StartEmailChange(ctx context.Context, userID uuid.UUID, newEmail string, who Requester) error {
 	newEmail = strings.TrimSpace(newEmail)
 	if newEmail == "" {
 		return errs.ErrVerifyNoEmail
@@ -256,16 +345,8 @@ func (s *Service) StartEmailChange(ctx context.Context, userID uuid.UUID, newEma
 	if taken {
 		return errs.ErrEmailTaken
 	}
-	code, err := codes.Numeric(6)
+	code, err := s.issueEmailCode(ctx, userID, newEmail, purposeChangeEmail, who)
 	if err != nil {
-		return err
-	}
-	if err := s.q.InsertEmailVerification(ctx, dbgen.InsertEmailVerificationParams{
-		UserID:    userID,
-		Email:     newEmail,
-		CodeHash:  codes.Hash(code),
-		ExpiresAt: time.Now().UTC().Add(s.ttl),
-	}); err != nil {
 		return err
 	}
 	expiry := fmt.Sprintf("%d minutes", int(s.ttl.Minutes()))
@@ -282,43 +363,79 @@ func (s *Service) StartEmailChange(ctx context.Context, userID uuid.UUID, newEma
 	})
 }
 
-// ConfirmEmailChange verifies the code sent to the new address and swaps it onto
-// the user (marking it verified). Returns the new email on success. A unique
-// violation (address claimed between start and confirm) maps to ErrEmailTaken.
-func (s *Service) ConfirmEmailChange(ctx context.Context, userID uuid.UUID, code string) (string, error) {
+// ConfirmEmailChange verifies the change_email code sent to the new address and
+// swaps it onto the user (marking it verified), audits both addresses and tells
+// the previous one. Returns the new email on success. A unique violation
+// (address claimed between start and confirm) maps to ErrEmailTaken.
+func (s *Service) ConfirmEmailChange(ctx context.Context, userID uuid.UUID, code string, who Requester) (string, error) {
+	oldEmail, newEmail, err := s.confirmEmailChange(ctx, userID, code, who)
+	if err != nil {
+		return "", s.auditRefusal(ctx, userID, purposeChangeEmail, who, err)
+	}
+	if !strings.EqualFold(oldEmail, newEmail) {
+		s.noticeEmailChanged(ctx, userID, oldEmail, newEmail)
+	}
+	return newEmail, nil
+}
+
+func (s *Service) confirmEmailChange(ctx context.Context, userID uuid.UUID, code string, who Requester) (string, string, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer tx.Rollback(ctx)
 	qtx := s.q.WithTx(tx)
 
-	row, err := newestEmailCode(ctx, tx, userID)
+	row, err := newestEmailCode(ctx, tx, userID, purposeChangeEmail)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", errs.ErrVerifyCodeInvalid
+			return "", "", errs.ErrVerifyCodeInvalid
 		}
-		return "", err
+		return "", "", err
 	}
 	if err := chargeFailure(ctx, tx, "email_verifications", row, code); err != nil {
-		return "", err
+		return "", "", err
+	}
+	oldEmail, err := qtx.GetUserEmail(ctx, userID)
+	if err != nil {
+		return "", "", err
 	}
 	if err := qtx.MarkEmailVerificationUsed(ctx, row.id); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if _, err := qtx.UpdateUserEmail(ctx, dbgen.UpdateUserEmailParams{
 		Email:  row.value,
 		UserID: userID,
 	}); err != nil {
 		if pgxerr.IsUnique(err) {
-			return "", errs.ErrEmailTaken
+			return "", "", errs.ErrEmailTaken
 		}
-		return "", err
+		return "", "", err
+	}
+	if err := audit.Record(ctx, tx, who.event("email.changed", userID,
+		map[string]any{"old_email": oldEmail, "new_email": row.value})); err != nil {
+		return "", "", err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return row.value, nil
+	return oldEmail, row.value, nil
+}
+
+// noticeEmailChanged tells the previous address that the account moved, so its
+// owner learns of a change they didn't make. Best-effort: the change is done.
+func (s *Service) noticeEmailChanged(ctx context.Context, userID uuid.UUID, oldEmail, newEmail string) {
+	intro := fmt.Sprintf("The email address on your Qeet ID account was changed from %s to %s.", oldEmail, newEmail)
+	note := "If you made this change, there is nothing to do. If you didn't, contact your organization's administrator right away."
+	if err := s.sender.Send(ctx, notifier.Message{
+		Channel: "email",
+		To:      oldEmail,
+		Subject: "Your email address was changed",
+		Body:    intro + " " + note,
+		HTML:    emailtmpl.Notice("Your email address was changed", intro, note),
+	}); err != nil {
+		slog.Warn("verification: could not send the email-change notice", "user_id", userID, "err", err)
+	}
 }
 
 func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string) error {

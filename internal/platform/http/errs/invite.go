@@ -2,11 +2,12 @@ package errs
 
 // Invitation (accept-invite) error codes.
 const (
-	CodeInviteLinkInvalid   = "invite.link_invalid"
-	CodeInviteInvalid       = "invite.invalid"
-	CodeInviteExpired       = "invite.expired"
-	CodeInviteAccountExists = "invite.account_exists"
-	CodeInviteEmailMismatch = "invite.email_mismatch"
+	CodeInviteLinkInvalid      = "invite.link_invalid"
+	CodeInviteInvalid          = "invite.invalid"
+	CodeInviteExpired          = "invite.expired"
+	CodeInviteAccountExists    = "invite.account_exists"
+	CodeInviteEmailMismatch    = "invite.email_mismatch"
+	CodeInviteEmailNotVerified = "invite.email_not_verified"
 )
 
 var (
@@ -20,4 +21,8 @@ var (
 	// ErrInviteEmailMismatch: an authenticated accept whose invite was addressed
 	// to a different email than the signed-in user's.
 	ErrInviteEmailMismatch = New(CodeInviteEmailMismatch, "This invitation was sent to a different email address.")
+	// ErrInviteEmailNotVerified: the in-app invitations inbox is keyed on the
+	// account's address, and anyone can sign up with any address, so it opens
+	// only once that address is verified.
+	ErrInviteEmailNotVerified = New(CodeInviteEmailNotVerified, "Verify your email address to see and accept your invitations.")
 )

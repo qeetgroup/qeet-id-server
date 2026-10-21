@@ -13,9 +13,17 @@ SELECT email FROM "user".users WHERE id = $1;
 -- name: GetUserPhone :one
 SELECT phone FROM "user".users WHERE id = $1;
 
+-- InsertEmailVerification issues a code for one purpose (verify_email or
+-- change_email) and expires the user's open codes for the other, so the two
+-- flows can't both be pending; each confirm reads only codes of its own purpose.
 -- name: InsertEmailVerification :exec
-INSERT INTO "user".email_verifications (user_id, email, code_hash, expires_at)
-VALUES ($1, $2, $3, $4);
+WITH retired AS (
+    UPDATE "user".email_verifications
+    SET expires_at = LEAST(expires_at, NOW())
+    WHERE user_id = @user_id AND purpose <> @purpose AND used_at IS NULL
+)
+INSERT INTO "user".email_verifications (user_id, email, code_hash, expires_at, purpose)
+VALUES (@user_id, @email, @code_hash, @expires_at, @purpose);
 
 -- GetLatestEmailVerification selects the most-recent verification row for the
 -- given user + code and locks it for update so concurrent Confirm calls don't race.
@@ -55,10 +63,12 @@ UPDATE "user".users
 SET email = @email, email_verified_at = NOW(), updated_at = NOW()
 WHERE id = @user_id;
 
--- name: MarkUserEmailVerified :exec
+-- MarkUserEmailVerified marks the account's address verified only when it is
+-- the address the code was sent to; zero rows means it isn't.
+-- name: MarkUserEmailVerified :execrows
 UPDATE "user".users
 SET email_verified_at = COALESCE(email_verified_at, NOW()), updated_at = NOW()
-WHERE id = $1;
+WHERE id = @user_id AND lower(email) = lower(@email);
 
 -- name: InsertPhoneVerification :exec
 INSERT INTO "user".phone_verifications (user_id, phone, code_hash, expires_at)

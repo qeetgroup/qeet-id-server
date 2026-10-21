@@ -89,6 +89,13 @@ SELECT id FROM "user".users WHERE email = @email;
 -- name: GetUserEmailByID :one
 SELECT email FROM "user".users WHERE id = @user_id;
 
+-- GetInboxEmail is the address the in-app invitations inbox is keyed on, and
+-- whether the account has proven it. Anyone can sign up with any address, so an
+-- unproven one opens nothing.
+-- name: GetInboxEmail :one
+SELECT email, (email_verified_at IS NOT NULL)::boolean AS verified
+FROM "user".users WHERE id = @user_id AND deleted_at IS NULL;
+
 -- InsertInvitedUser creates a brand-new invited account (no prior user). The
 -- invited email is pre-verified (they proved control by receiving the link).
 -- name: InsertInvitedUser :one

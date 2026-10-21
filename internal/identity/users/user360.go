@@ -239,8 +239,10 @@ func (r *Repository) UserGroupsInTenant(ctx context.Context, id, tenantID uuid.U
 	return out, nil
 }
 
-func (r *Repository) UserOrganization(ctx context.Context, id uuid.UUID) (*OrganizationInfo, error) {
-	row, err := r.q.GetUserOrganization(ctx, id)
+// accessOrganization is the organization an access view describes: the one the
+// admin is viewing the user from.
+func (r *Repository) accessOrganization(ctx context.Context, tenantID uuid.UUID) (*OrganizationInfo, error) {
+	row, err := r.q.GetAccessOrganization(ctx, tenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
@@ -252,7 +254,7 @@ func (r *Repository) UserOrganization(ctx context.Context, id uuid.UUID) (*Organ
 
 // AccessSummary composes the per-user access view for the caller's tenant.
 func (r *Repository) AccessSummary(ctx context.Context, id, tenantID uuid.UUID) (*AccessSummary, error) {
-	org, err := r.UserOrganization(ctx, id)
+	org, err := r.accessOrganization(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -344,7 +346,7 @@ func (h *Handler) getUserTrends(w http.ResponseWriter, r *http.Request) {
 
 // getSecurity → GET /v1/users/{id}/security (user.read).
 func (h *Handler) getSecurity(w http.ResponseWriter, r *http.Request) {
-	id, _, err := h.scopedID(r)
+	id, _, err := h.memberID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -359,7 +361,7 @@ func (h *Handler) getSecurity(w http.ResponseWriter, r *http.Request) {
 
 // getSessions → GET /v1/users/{id}/sessions (user.read).
 func (h *Handler) getSessions(w http.ResponseWriter, r *http.Request) {
-	id, _, err := h.scopedID(r)
+	id, _, err := h.memberID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -440,7 +442,7 @@ func (h *Handler) revokeAllSessions(w http.ResponseWriter, r *http.Request) {
 
 // getAccess → GET /v1/users/{id}/access (user.read).
 func (h *Handler) getAccess(w http.ResponseWriter, r *http.Request) {
-	id, tenantID, err := h.scopedID(r)
+	id, tenantID, err := h.memberID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

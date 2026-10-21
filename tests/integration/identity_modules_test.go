@@ -177,7 +177,7 @@ func TestVerificationService_ResendInvalidatesPreviousCode(t *testing.T) {
 
 	codeOf := func(step string) string {
 		t.Helper()
-		if err := svc.StartEmail(ctx, u, email); err != nil {
+		if err := svc.StartEmail(ctx, u, email, verification.Requester{}); err != nil {
 			t.Fatalf("StartEmail (%s): %v", step, err)
 		}
 		msg, ok := sender.last()
@@ -197,7 +197,7 @@ func TestVerificationService_ResendInvalidatesPreviousCode(t *testing.T) {
 		t.Skip("the two issued codes collided; nothing to distinguish")
 	}
 
-	if err := svc.ConfirmEmail(ctx, u, first); !errors.Is(err, errs.ErrVerifyCodeInvalid) {
+	if err := svc.ConfirmEmail(ctx, u, first, verification.Requester{}); !errors.Is(err, errs.ErrVerifyCodeInvalid) {
 		t.Fatalf("superseded code: err = %v, want ErrVerifyCodeInvalid", err)
 	}
 
@@ -210,7 +210,7 @@ func TestVerificationService_ResendInvalidatesPreviousCode(t *testing.T) {
 		t.Fatal("a superseded code must not verify the account")
 	}
 
-	if err := svc.ConfirmEmail(ctx, u, second); err != nil {
+	if err := svc.ConfirmEmail(ctx, u, second, verification.Requester{}); err != nil {
 		t.Fatalf("ConfirmEmail (latest code): %v", err)
 	}
 }
@@ -228,7 +228,7 @@ func TestVerificationService_WrongCodeAttemptsAreCapped(t *testing.T) {
 
 	sender := &captureSender{}
 	svc := verification.NewService(testPool, sender, time.Hour)
-	if err := svc.StartEmail(ctx, u, email); err != nil {
+	if err := svc.StartEmail(ctx, u, email, verification.Requester{}); err != nil {
 		t.Fatalf("StartEmail: %v", err)
 	}
 	msg, ok := sender.last()
@@ -247,23 +247,23 @@ func TestVerificationService_WrongCodeAttemptsAreCapped(t *testing.T) {
 
 	// Budget is five guesses. The first four are plain wrong answers...
 	for i := 0; i < 4; i++ {
-		if err := svc.ConfirmEmail(ctx, u, wrong(i)); !errors.Is(err, errs.ErrVerifyCodeInvalid) {
+		if err := svc.ConfirmEmail(ctx, u, wrong(i), verification.Requester{}); !errors.Is(err, errs.ErrVerifyCodeInvalid) {
 			t.Fatalf("guess %d: err = %v, want ErrVerifyCodeInvalid", i+1, err)
 		}
 	}
 	// ...and the fifth is the one that spends the budget, so it says so rather
 	// than making the user discover it on a sixth try.
-	if err := svc.ConfirmEmail(ctx, u, wrong(4)); !errors.Is(err, errs.ErrVerifyAttemptsExceeded) {
+	if err := svc.ConfirmEmail(ctx, u, wrong(4), verification.Requester{}); !errors.Is(err, errs.ErrVerifyAttemptsExceeded) {
 		t.Fatalf("guess 5: err = %v, want ErrVerifyAttemptsExceeded", err)
 	}
 
 	// Budget gone: further guesses are refused outright.
-	if err := svc.ConfirmEmail(ctx, u, wrong(99)); !errors.Is(err, errs.ErrVerifyAttemptsExceeded) {
+	if err := svc.ConfirmEmail(ctx, u, wrong(99), verification.Requester{}); !errors.Is(err, errs.ErrVerifyAttemptsExceeded) {
 		t.Fatalf("after budget: err = %v, want ErrVerifyAttemptsExceeded", err)
 	}
 
 	// And the code is dead even if the attacker now lands on the right value.
-	if err := svc.ConfirmEmail(ctx, u, code); !errors.Is(err, errs.ErrVerifyAttemptsExceeded) {
+	if err := svc.ConfirmEmail(ctx, u, code, verification.Requester{}); !errors.Is(err, errs.ErrVerifyAttemptsExceeded) {
 		t.Fatalf("correct code after budget: err = %v, want ErrVerifyAttemptsExceeded", err)
 	}
 	var verifiedAt *time.Time
@@ -276,11 +276,11 @@ func TestVerificationService_WrongCodeAttemptsAreCapped(t *testing.T) {
 	}
 
 	// A fresh code restores a full budget, so a genuine user is not locked out.
-	if err := svc.StartEmail(ctx, u, email); err != nil {
+	if err := svc.StartEmail(ctx, u, email, verification.Requester{}); err != nil {
 		t.Fatalf("StartEmail (new code): %v", err)
 	}
 	msg, _ = sender.last()
-	if err := svc.ConfirmEmail(ctx, u, sixDigitCode.FindString(msg.Body)); err != nil {
+	if err := svc.ConfirmEmail(ctx, u, sixDigitCode.FindString(msg.Body), verification.Requester{}); err != nil {
 		t.Fatalf("confirm with a fresh code: %v", err)
 	}
 }
@@ -295,7 +295,7 @@ func TestVerificationService_EmailConfirm(t *testing.T) {
 	sender := &captureSender{}
 	svc := verification.NewService(testPool, sender, time.Hour)
 
-	if err := svc.StartEmail(ctx, u, email); err != nil {
+	if err := svc.StartEmail(ctx, u, email, verification.Requester{}); err != nil {
 		t.Fatalf("StartEmail: %v", err)
 	}
 	msg, ok := sender.last()
@@ -311,10 +311,10 @@ func TestVerificationService_EmailConfirm(t *testing.T) {
 	if wrong == code {
 		wrong = "111111"
 	}
-	if err := svc.ConfirmEmail(ctx, u, wrong); err == nil {
+	if err := svc.ConfirmEmail(ctx, u, wrong, verification.Requester{}); err == nil {
 		t.Fatal("a wrong verification code should be rejected")
 	}
-	if err := svc.ConfirmEmail(ctx, u, code); err != nil {
+	if err := svc.ConfirmEmail(ctx, u, code, verification.Requester{}); err != nil {
 		t.Fatalf("ConfirmEmail (correct code): %v", err)
 	}
 

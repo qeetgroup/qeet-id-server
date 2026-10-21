@@ -62,6 +62,9 @@ type Claims struct {
 	// device, back-channel and token exchange. Empty on the user's own
 	// (first-party) tokens. The management API refuses tokens that carry it.
 	ClientID string `json:"client_id,omitempty"`
+	// ExchangeDepth counts the RFC 8693 token exchanges that produced this
+	// token (absent: none), so a chain of exchanges can be bounded.
+	ExchangeDepth int `json:"exchange_depth,omitempty"`
 	// Custom carries tenant-supplied claims from a post-login Auth Hook
 	// (authhook.Service.Run), namespaced under "claims" rather than merged into
 	// the top level so a hook can never shadow a reserved/registered claim.
@@ -310,14 +313,14 @@ func (i *Issuer) replaceKeyring(activePrivatePEM string, verificationKeys []veri
 }
 
 func (i *Issuer) IssueAccess(userID, tenantID, sessionID uuid.UUID, scopes string) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, "", nil, "", time.Time{})
+	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, "", nil, "", time.Time{}, 0)
 }
 
 // IssueAccessActor mints an access token like IssueAccess but with an RFC 8693
 // actor (act) claim, marking it a delegated token: the subject's authority is
 // being exercised by actorSubject (e.g. an AI agent acting for a user).
 func (i *Issuer) IssueAccessActor(userID, tenantID, sessionID uuid.UUID, scopes, actorSubject string) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, &ActClaim{Subject: actorSubject}, "", nil, "", time.Time{})
+	return i.issueAccess(userID, tenantID, sessionID, scopes, &ActClaim{Subject: actorSubject}, "", nil, "", time.Time{}, 0)
 }
 
 // IssueAccessResource mints an access token whose audience carries an RFC 8707
@@ -326,21 +329,21 @@ func (i *Issuer) IssueAccessActor(userID, tenantID, sessionID uuid.UUID, scopes,
 // appended, letting a downstream resource server (e.g. an MCP server) confirm
 // the token was minted for it. An empty resource behaves like IssueAccess.
 func (i *Issuer) IssueAccessResource(userID, tenantID, sessionID uuid.UUID, scopes, resource string) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, resource, nil, "", time.Time{})
+	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, resource, nil, "", time.Time{}, 0)
 }
 
 // IssueAccessClaims mints an access token like IssueAccess but with additional
 // tenant-supplied custom claims (see Claims.Custom), sourced from a post-login
 // Auth Hook. A nil/empty map behaves like IssueAccess.
 func (i *Issuer) IssueAccessClaims(userID, tenantID, sessionID uuid.UUID, scopes string, custom map[string]any) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, "", custom, "", time.Time{})
+	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, "", custom, "", time.Time{}, 0)
 }
 
 // IssueSessionAccess mints the access token of a first-party session, like
 // IssueAccessClaims, but never past sessionEnd: a token issued shortly before
 // its session's maximum age ends with the session instead of outliving it.
 func (i *Issuer) IssueSessionAccess(userID, tenantID, sessionID uuid.UUID, custom map[string]any, sessionEnd time.Time) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, "", nil, "", custom, "", sessionEnd)
+	return i.issueAccess(userID, tenantID, sessionID, "", nil, "", custom, "", sessionEnd, 0)
 }
 
 // IssueAccessActorResource combines IssueAccessActor and IssueAccessResource:
@@ -348,7 +351,7 @@ func (i *Issuer) IssueSessionAccess(userID, tenantID, sessionID uuid.UUID, custo
 // resource indicator. This is the token-exchange grant's MCP case — an agent
 // token scoped to one specific downstream resource server.
 func (i *Issuer) IssueAccessActorResource(userID, tenantID, sessionID uuid.UUID, scopes, actorSubject, resource string) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, &ActClaim{Subject: actorSubject}, resource, nil, "", time.Time{})
+	return i.issueAccess(userID, tenantID, sessionID, scopes, &ActClaim{Subject: actorSubject}, resource, nil, "", time.Time{}, 0)
 }
 
 // ClientAccess describes an access token issued to an application on a
@@ -362,6 +365,11 @@ type ClientAccess struct {
 	Resource string
 	// ClientID is the application the token is issued to.
 	ClientID string
+	// NotAfter, when set, is the latest the token may expire (an exchanged
+	// token never outlives the token it was exchanged for).
+	NotAfter time.Time
+	// ExchangeDepth is how many token exchanges produced this token (0: none).
+	ExchangeDepth int
 }
 
 // IssueClientAccess mints the access token an application receives from the
@@ -372,18 +380,21 @@ func (i *Issuer) IssueClientAccess(in ClientAccess) (string, time.Time, error) {
 	if in.ActorSubject != "" {
 		act = &ActClaim{Subject: in.ActorSubject}
 	}
-	return i.issueAccess(in.UserID, in.TenantID, in.SessionID, in.Scopes, act, in.Resource, nil, in.ClientID, time.Time{})
+	return i.issueAccess(in.UserID, in.TenantID, in.SessionID, in.Scopes, act, in.Resource, nil, in.ClientID, in.NotAfter, in.ExchangeDepth)
 }
 
-func (i *Issuer) issueAccess(userID, tenantID, sessionID uuid.UUID, scopes string, act *ActClaim, resource string, custom map[string]any, clientID string, notAfter time.Time) (string, time.Time, error) {
+func (i *Issuer) issueAccess(userID, tenantID, sessionID uuid.UUID, scopes string, act *ActClaim, resource string, custom map[string]any, clientID string, notAfter time.Time, exchangeDepth int) (string, time.Time, error) {
 	now := time.Now().UTC()
 	exp := now.Add(i.accessTTL)
 	if !notAfter.IsZero() && notAfter.Before(exp) {
 		exp = notAfter.UTC()
 	}
+	// RFC 8707: a token issued for a resource is for that resource alone, so
+	// the platform API (which requires its own audience) and every other
+	// service refuse it.
 	aud := jwt.ClaimStrings{i.audience}
-	if resource != "" && resource != i.audience {
-		aud = append(aud, resource) // RFC 8707: bind the token to the requested resource
+	if resource != "" {
+		aud = jwt.ClaimStrings{resource}
 	}
 	claims := Claims{
 		UserID:    userID,
@@ -393,6 +404,8 @@ func (i *Issuer) issueAccess(userID, tenantID, sessionID uuid.UUID, scopes strin
 		Act:       act,
 		Custom:    custom,
 		ClientID:  clientID,
+		// How many exchanges deep the token is, so a chain can be bounded.
+		ExchangeDepth: exchangeDepth,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    i.issuer,
 			Audience:  aud,
@@ -439,11 +452,28 @@ func (i *Issuer) keyFunc(t *jwt.Token) (any, error) {
 var validMethods = []string{"ES256"}
 
 func (i *Issuer) VerifyAccess(raw string) (*Claims, error) {
-	parser := jwt.NewParser(
+	return i.verifyAccess(raw, jwt.WithAudience(i.audience))
+}
+
+// VerifyAccessFor verifies an access token issued for audience: a resource a
+// token was issued for (RFC 8707), as the downstream service serving it checks
+// its own name, or the platform's own audience (VerifyAccess).
+func (i *Issuer) VerifyAccessFor(raw, audience string) (*Claims, error) {
+	return i.verifyAccess(raw, jwt.WithAudience(audience))
+}
+
+// VerifyAccessAnyAudience verifies an access token's signature, issuer and
+// lifetime whatever its audience. Only for introspection, which then decides
+// whether the caller may see the token at all.
+func (i *Issuer) VerifyAccessAnyAudience(raw string) (*Claims, error) {
+	return i.verifyAccess(raw)
+}
+
+func (i *Issuer) verifyAccess(raw string, opts ...jwt.ParserOption) (*Claims, error) {
+	parser := jwt.NewParser(append([]jwt.ParserOption{
 		jwt.WithValidMethods(validMethods),
 		jwt.WithIssuer(i.issuer),
-		jwt.WithAudience(i.audience),
-	)
+	}, opts...)...)
 	tok, err := parser.ParseWithClaims(raw, &Claims{}, i.keyFunc)
 	if err != nil {
 		return nil, err
@@ -472,6 +502,26 @@ func (i *Issuer) VerifyVC(raw string) (jwt.MapClaims, error) {
 	}
 	if !tok.Valid {
 		return nil, errors.New("invalid credential")
+	}
+	return claims, nil
+}
+
+// VerifySignedAnyTime verifies a token this issuer signed (signature and
+// issuer) whatever its lifetime says: for an id_token_hint, which a sign-out
+// request may present after the ID token has expired (OIDC RP-Initiated
+// Logout §2).
+func (i *Issuer) VerifySignedAnyTime(raw string) (jwt.MapClaims, error) {
+	parser := jwt.NewParser(
+		jwt.WithValidMethods(validMethods),
+		jwt.WithIssuer(i.issuer),
+		jwt.WithoutClaimsValidation(),
+	)
+	claims := jwt.MapClaims{}
+	if _, err := parser.ParseWithClaims(raw, claims, i.keyFunc); err != nil {
+		return nil, err
+	}
+	if iss, _ := claims.GetIssuer(); iss != i.issuer {
+		return nil, errors.New("issuer mismatch")
 	}
 	return claims, nil
 }

@@ -53,9 +53,68 @@ func (q *Queries) CheckUserInDeviceTenant(ctx context.Context, arg CheckUserInDe
 	return exists, err
 }
 
+const claimLogoutDeliveries = `-- name: ClaimLogoutDeliveries :many
+UPDATE auth.oidc_logout_deliveries d SET next_attempt_at = NOW() + INTERVAL '5 minutes'
+WHERE d.id IN (
+    SELECT id FROM auth.oidc_logout_deliveries
+    WHERE delivered_at IS NULL AND failed_at IS NULL AND next_attempt_at <= NOW()
+    ORDER BY next_attempt_at LIMIT $1 FOR UPDATE SKIP LOCKED
+)
+RETURNING d.id, d.tenant_id, d.client_id, d.uri, d.logout_token, d.attempts
+`
+
+type ClaimLogoutDeliveriesRow struct {
+	ID          uuid.UUID
+	TenantID    uuid.UUID
+	ClientID    string
+	Uri         string
+	LogoutToken string
+	Attempts    int32
+}
+
+// ClaimLogoutDeliveries takes due notices for one delivery pass, pushing them
+// back so a crashed pass's are retried, not lost.
+func (q *Queries) ClaimLogoutDeliveries(ctx context.Context, maxRows int32) ([]ClaimLogoutDeliveriesRow, error) {
+	rows, err := q.db.Query(ctx, claimLogoutDeliveries, maxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ClaimLogoutDeliveriesRow{}
+	for rows.Next() {
+		var i ClaimLogoutDeliveriesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.ClientID,
+			&i.Uri,
+			&i.LogoutToken,
+			&i.Attempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const clearClientAuthFailures = `-- name: ClearClientAuthFailures :exec
+DELETE FROM auth.oidc_client_auth_lockouts WHERE client_row_id = $1
+`
+
+// ClearClientAuthFailures forgets an application's failures after it
+// authenticates.
+func (q *Queries) ClearClientAuthFailures(ctx context.Context, clientRowID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, clearClientAuthFailures, clientRowID)
+	return err
+}
+
 const consumeAuthorizationCode = `-- name: ConsumeAuthorizationCode :one
 SELECT user_id, tenant_id, redirect_uri, scopes,
-       nonce, code_challenge, code_challenge_method, expires_at, used_at, login_session_id
+       nonce, code_challenge, code_challenge_method, expires_at, used_at, login_session_id, resource, auth_time
 FROM auth.oidc_authorization_codes
 WHERE code_hash = $1 AND client_id = $2
 FOR UPDATE
@@ -77,6 +136,8 @@ type ConsumeAuthorizationCodeRow struct {
 	ExpiresAt           time.Time
 	UsedAt              pgtype.Timestamptz
 	LoginSessionID      pgtype.UUID
+	Resource            *string
+	AuthTime            pgtype.Timestamptz
 }
 
 func (q *Queries) ConsumeAuthorizationCode(ctx context.Context, arg ConsumeAuthorizationCodeParams) (ConsumeAuthorizationCodeRow, error) {
@@ -93,6 +154,8 @@ func (q *Queries) ConsumeAuthorizationCode(ctx context.Context, arg ConsumeAutho
 		&i.ExpiresAt,
 		&i.UsedAt,
 		&i.LoginSessionID,
+		&i.Resource,
+		&i.AuthTime,
 	)
 	return i, err
 }
@@ -144,6 +207,22 @@ func (q *Queries) DeleteOIDCClient(ctx context.Context, arg DeleteOIDCClientPara
 	return client_id, err
 }
 
+const deleteResource = `-- name: DeleteResource :one
+DELETE FROM auth.oidc_resources WHERE id = $1 AND tenant_id = $2 RETURNING identifier
+`
+
+type DeleteResourceParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+func (q *Queries) DeleteResource(ctx context.Context, arg DeleteResourceParams) (string, error) {
+	row := q.db.QueryRow(ctx, deleteResource, arg.ID, arg.TenantID)
+	var identifier string
+	err := row.Scan(&identifier)
+	return identifier, err
+}
+
 const denyCIBARequest = `-- name: DenyCIBARequest :exec
 UPDATE auth.oidc_ciba_requests SET status = 'denied' WHERE id = $1
 `
@@ -162,21 +241,51 @@ func (q *Queries) DenyDevice(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const getAccountStanding = `-- name: GetAccountStanding :one
+SELECT status, (deleted_at IS NOT NULL)::boolean AS deleted FROM "user".users WHERE id = $1
+`
+
+type GetAccountStandingRow struct {
+	Status  string
+	Deleted bool
+}
+
+// GetAccountStanding is what decides whether a user may still be issued tokens:
+// the same suspended-or-deleted rule the first-party refresh applies.
+func (q *Queries) GetAccountStanding(ctx context.Context, id uuid.UUID) (GetAccountStandingRow, error) {
+	row := q.db.QueryRow(ctx, getAccountStanding, id)
+	var i GetAccountStandingRow
+	err := row.Scan(&i.Status, &i.Deleted)
+	return i, err
+}
+
 const getClientForAuth = `-- name: GetClientForAuth :one
-SELECT client_secret_hash, type, grant_types
+SELECT id, tenant_id, client_secret_hash, type, grant_types,
+       (pkce_exempt_until IS NOT NULL AND pkce_exempt_until > NOW())::bool AS pkce_exempt
 FROM auth.oidc_clients WHERE client_id = $1
 `
 
 type GetClientForAuthRow struct {
+	ID               uuid.UUID
+	TenantID         uuid.UUID
 	ClientSecretHash *string
 	Type             string
 	GrantTypes       []string
+	PkceExempt       bool
 }
 
+// pkce_exempt is whether the client's PKCE exemption is in force now.
 func (q *Queries) GetClientForAuth(ctx context.Context, clientID string) (GetClientForAuthRow, error) {
 	row := q.db.QueryRow(ctx, getClientForAuth, clientID)
 	var i GetClientForAuthRow
-	err := row.Scan(&i.ClientSecretHash, &i.Type, &i.GrantTypes)
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.ClientSecretHash,
+		&i.Type,
+		&i.GrantTypes,
+		&i.PkceExempt,
+	)
 	return i, err
 }
 
@@ -189,6 +298,23 @@ func (q *Queries) GetClientGrantTypes(ctx context.Context, clientID string) ([]s
 	var grant_types []string
 	err := row.Scan(&grant_types)
 	return grant_types, err
+}
+
+const getClientLockedUntil = `-- name: GetClientLockedUntil :one
+
+SELECT locked_until FROM auth.oidc_client_auth_lockouts
+WHERE client_row_id = $1 AND locked_until > NOW()
+`
+
+// ==========================================================================
+// Application secret lockout (QTID-215)
+// ==========================================================================
+// GetClientLockedUntil reports a lockout still in force for an application.
+func (q *Queries) GetClientLockedUntil(ctx context.Context, clientRowID uuid.UUID) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, getClientLockedUntil, clientRowID)
+	var locked_until pgtype.Timestamptz
+	err := row.Scan(&locked_until)
+	return locked_until, err
 }
 
 const getClientName = `-- name: GetClientName :one
@@ -219,7 +345,9 @@ func (q *Queries) GetClientPostLogoutURIs(ctx context.Context, clientID string) 
 }
 
 const getClientRedirectInfo = `-- name: GetClientRedirectInfo :one
-SELECT tenant_id, type, scopes, redirect_uris FROM auth.oidc_clients WHERE client_id = $1
+SELECT tenant_id, type, scopes, redirect_uris,
+       (pkce_exempt_until IS NOT NULL AND pkce_exempt_until > NOW())::bool AS pkce_exempt
+FROM auth.oidc_clients WHERE client_id = $1
 `
 
 type GetClientRedirectInfoRow struct {
@@ -227,6 +355,7 @@ type GetClientRedirectInfoRow struct {
 	Type         string
 	Scopes       []string
 	RedirectUris []string
+	PkceExempt   bool
 }
 
 func (q *Queries) GetClientRedirectInfo(ctx context.Context, clientID string) (GetClientRedirectInfoRow, error) {
@@ -237,6 +366,7 @@ func (q *Queries) GetClientRedirectInfo(ctx context.Context, clientID string) (G
 		&i.Type,
 		&i.Scopes,
 		&i.RedirectUris,
+		&i.PkceExempt,
 	)
 	return i, err
 }
@@ -275,6 +405,50 @@ func (q *Queries) GetConsent(ctx context.Context, arg GetConsentParams) ([]strin
 	var scopes []string
 	err := row.Scan(&scopes)
 	return scopes, err
+}
+
+const getConsentRequest = `-- name: GetConsentRequest :one
+SELECT id, user_id, client_id, redirect_uri, scopes, state, nonce, code_challenge, code_challenge_method, resource
+FROM auth.oidc_consent_requests
+WHERE id = $1 AND login_session_id = $2 AND used_at IS NULL AND expires_at > NOW()
+`
+
+type GetConsentRequestParams struct {
+	ID             uuid.UUID
+	LoginSessionID uuid.UUID
+}
+
+type GetConsentRequestRow struct {
+	ID                  uuid.UUID
+	UserID              uuid.UUID
+	ClientID            string
+	RedirectUri         string
+	Scopes              []string
+	State               string
+	Nonce               string
+	CodeChallenge       string
+	CodeChallengeMethod string
+	Resource            string
+}
+
+// GetConsentRequest reads an undecided, unexpired request for the hosted-login
+// session that started it, for the consent screen to show.
+func (q *Queries) GetConsentRequest(ctx context.Context, arg GetConsentRequestParams) (GetConsentRequestRow, error) {
+	row := q.db.QueryRow(ctx, getConsentRequest, arg.ID, arg.LoginSessionID)
+	var i GetConsentRequestRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ClientID,
+		&i.RedirectUri,
+		&i.Scopes,
+		&i.State,
+		&i.Nonce,
+		&i.CodeChallenge,
+		&i.CodeChallengeMethod,
+		&i.Resource,
+	)
+	return i, err
 }
 
 const getDeviceByUserCode = `-- name: GetDeviceByUserCode :one
@@ -325,7 +499,7 @@ func (q *Queries) GetGrantForRevoke(ctx context.Context, arg GetGrantForRevokePa
 
 const getOIDCClient = `-- name: GetOIDCClient :one
 SELECT id, tenant_id, client_id, type, name, redirect_uris,
-       post_logout_uris, grant_types, scopes, created_at
+       post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri
 FROM auth.oidc_clients WHERE id = $1 AND tenant_id = $2
 `
 
@@ -335,16 +509,19 @@ type GetOIDCClientParams struct {
 }
 
 type GetOIDCClientRow struct {
-	ID             uuid.UUID
-	TenantID       uuid.UUID
-	ClientID       string
-	Type           string
-	Name           string
-	RedirectUris   []string
-	PostLogoutUris []string
-	GrantTypes     []string
-	Scopes         []string
-	CreatedAt      time.Time
+	ID                    uuid.UUID
+	TenantID              uuid.UUID
+	ClientID              string
+	Type                  string
+	Name                  string
+	RedirectUris          []string
+	PostLogoutUris        []string
+	GrantTypes            []string
+	Scopes                []string
+	CreatedAt             time.Time
+	PkceExemptUntil       pgtype.Timestamptz
+	BackchannelLogoutUri  *string
+	FrontchannelLogoutUri *string
 }
 
 func (q *Queries) GetOIDCClient(ctx context.Context, arg GetOIDCClientParams) (GetOIDCClientRow, error) {
@@ -361,6 +538,9 @@ func (q *Queries) GetOIDCClient(ctx context.Context, arg GetOIDCClientParams) (G
 		&i.GrantTypes,
 		&i.Scopes,
 		&i.CreatedAt,
+		&i.PkceExemptUntil,
+		&i.BackchannelLogoutUri,
+		&i.FrontchannelLogoutUri,
 	)
 	return i, err
 }
@@ -418,14 +598,50 @@ func (q *Queries) GetUserByEmailInTenant(ctx context.Context, arg GetUserByEmail
 	return id, err
 }
 
+const getUserinfo = `-- name: GetUserinfo :one
+SELECT email, email_verified_at, phone, phone_verified_at, display_name, avatar_url, updated_at,
+       COALESCE(metadata->>'locale', '')::text AS locale
+FROM "user".users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'
+`
+
+type GetUserinfoRow struct {
+	Email           string
+	EmailVerifiedAt pgtype.Timestamptz
+	Phone           *string
+	PhoneVerifiedAt pgtype.Timestamptz
+	DisplayName     *string
+	AvatarUrl       *string
+	UpdatedAt       time.Time
+	Locale          string
+}
+
+// GetUserinfo is what userinfo and the ID token may say about a live account
+// (QTID-165). locale is read from the profile metadata when set.
+func (q *Queries) GetUserinfo(ctx context.Context, id uuid.UUID) (GetUserinfoRow, error) {
+	row := q.db.QueryRow(ctx, getUserinfo, id)
+	var i GetUserinfoRow
+	err := row.Scan(
+		&i.Email,
+		&i.EmailVerifiedAt,
+		&i.Phone,
+		&i.PhoneVerifiedAt,
+		&i.DisplayName,
+		&i.AvatarUrl,
+		&i.UpdatedAt,
+		&i.Locale,
+	)
+	return i, err
+}
+
 const insertAuthorizationCode = `-- name: InsertAuthorizationCode :exec
 
 INSERT INTO auth.oidc_authorization_codes (
     code_hash, client_id, user_id, tenant_id, redirect_uri,
-    scopes, nonce, code_challenge, code_challenge_method, expires_at, login_session_id
+    scopes, nonce, code_challenge, code_challenge_method, expires_at, login_session_id, resource, auth_time
 ) VALUES ($1, $2, $3, $4, $5,
           $6, NULLIF($7,''), NULLIF($8,''), NULLIF($9,''),
-          NOW() + INTERVAL '10 minutes', $10)
+          NOW() + INTERVAL '10 minutes', $10, NULLIF($11::text,''),
+          $12)
 `
 
 type InsertAuthorizationCodeParams struct {
@@ -439,6 +655,8 @@ type InsertAuthorizationCodeParams struct {
 	CodeChallenge       interface{}
 	CodeChallengeMethod interface{}
 	LoginSessionID      pgtype.UUID
+	Resource            string
+	AuthTime            pgtype.Timestamptz
 }
 
 // ==========================================================================
@@ -458,6 +676,8 @@ func (q *Queries) InsertAuthorizationCode(ctx context.Context, arg InsertAuthori
 		arg.CodeChallenge,
 		arg.CodeChallengeMethod,
 		arg.LoginSessionID,
+		arg.Resource,
+		arg.AuthTime,
 	)
 	return err
 }
@@ -493,6 +713,52 @@ func (q *Queries) InsertCIBARequest(ctx context.Context, arg InsertCIBARequestPa
 	return err
 }
 
+const insertConsentRequest = `-- name: InsertConsentRequest :one
+INSERT INTO auth.oidc_consent_requests (
+    login_session_id, user_id, client_id, redirect_uri, scopes, state, nonce,
+    code_challenge, code_challenge_method, expires_at, resource
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7,
+    $8, $9, $10, $11
+)
+RETURNING id
+`
+
+type InsertConsentRequestParams struct {
+	LoginSessionID      uuid.UUID
+	UserID              uuid.UUID
+	ClientID            string
+	RedirectUri         string
+	Scopes              []string
+	State               string
+	Nonce               string
+	CodeChallenge       string
+	CodeChallengeMethod string
+	ExpiresAt           time.Time
+	Resource            string
+}
+
+// InsertConsentRequest stores an authorization request that has passed the
+// authorize checks and is waiting on the hosted consent screen.
+func (q *Queries) InsertConsentRequest(ctx context.Context, arg InsertConsentRequestParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, insertConsentRequest,
+		arg.LoginSessionID,
+		arg.UserID,
+		arg.ClientID,
+		arg.RedirectUri,
+		arg.Scopes,
+		arg.State,
+		arg.Nonce,
+		arg.CodeChallenge,
+		arg.CodeChallengeMethod,
+		arg.ExpiresAt,
+		arg.Resource,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const insertDeviceCode = `-- name: InsertDeviceCode :exec
 
 INSERT INTO auth.oidc_device_codes (
@@ -526,41 +792,69 @@ func (q *Queries) InsertDeviceCode(ctx context.Context, arg InsertDeviceCodePara
 	return err
 }
 
+const insertLogoutDelivery = `-- name: InsertLogoutDelivery :exec
+INSERT INTO auth.oidc_logout_deliveries (tenant_id, client_id, uri, logout_token)
+VALUES ($1, $2, $3, $4)
+`
+
+type InsertLogoutDeliveryParams struct {
+	TenantID    uuid.UUID
+	ClientID    string
+	Uri         string
+	LogoutToken string
+}
+
+func (q *Queries) InsertLogoutDelivery(ctx context.Context, arg InsertLogoutDeliveryParams) error {
+	_, err := q.db.Exec(ctx, insertLogoutDelivery,
+		arg.TenantID,
+		arg.ClientID,
+		arg.Uri,
+		arg.LogoutToken,
+	)
+	return err
+}
+
 const insertOIDCClient = `-- name: InsertOIDCClient :one
 
 
 INSERT INTO auth.oidc_clients (
     tenant_id, client_id, client_secret_hash, type, name,
-    redirect_uris, post_logout_uris, grant_types, scopes
+    redirect_uris, post_logout_uris, grant_types, scopes, backchannel_logout_uri, frontchannel_logout_uri
 ) VALUES ($1, $2, $3, $4, $5,
-          $6, $7, $8, $9)
+          $6, $7, $8, $9,
+          NULLIF($10::text, ''), NULLIF($11::text, ''))
 RETURNING id, tenant_id, client_id, type, name, redirect_uris,
-          post_logout_uris, grant_types, scopes, created_at
+          post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri
 `
 
 type InsertOIDCClientParams struct {
-	TenantID         uuid.UUID
-	ClientID         string
-	ClientSecretHash *string
-	Type             string
-	Name             string
-	RedirectUris     []string
-	PostLogoutUris   []string
-	GrantTypes       []string
-	Scopes           []string
+	TenantID              uuid.UUID
+	ClientID              string
+	ClientSecretHash      *string
+	Type                  string
+	Name                  string
+	RedirectUris          []string
+	PostLogoutUris        []string
+	GrantTypes            []string
+	Scopes                []string
+	BackchannelLogoutUri  string
+	FrontchannelLogoutUri string
 }
 
 type InsertOIDCClientRow struct {
-	ID             uuid.UUID
-	TenantID       uuid.UUID
-	ClientID       string
-	Type           string
-	Name           string
-	RedirectUris   []string
-	PostLogoutUris []string
-	GrantTypes     []string
-	Scopes         []string
-	CreatedAt      time.Time
+	ID                    uuid.UUID
+	TenantID              uuid.UUID
+	ClientID              string
+	Type                  string
+	Name                  string
+	RedirectUris          []string
+	PostLogoutUris        []string
+	GrantTypes            []string
+	Scopes                []string
+	CreatedAt             time.Time
+	PkceExemptUntil       pgtype.Timestamptz
+	BackchannelLogoutUri  *string
+	FrontchannelLogoutUri *string
 }
 
 // Queries for the OIDC domain.
@@ -579,6 +873,8 @@ func (q *Queries) InsertOIDCClient(ctx context.Context, arg InsertOIDCClientPara
 		arg.PostLogoutUris,
 		arg.GrantTypes,
 		arg.Scopes,
+		arg.BackchannelLogoutUri,
+		arg.FrontchannelLogoutUri,
 	)
 	var i InsertOIDCClientRow
 	err := row.Scan(
@@ -592,6 +888,9 @@ func (q *Queries) InsertOIDCClient(ctx context.Context, arg InsertOIDCClientPara
 		&i.GrantTypes,
 		&i.Scopes,
 		&i.CreatedAt,
+		&i.PkceExemptUntil,
+		&i.BackchannelLogoutUri,
+		&i.FrontchannelLogoutUri,
 	)
 	return i, err
 }
@@ -599,26 +898,29 @@ func (q *Queries) InsertOIDCClient(ctx context.Context, arg InsertOIDCClientPara
 const insertRefreshToken = `-- name: InsertRefreshToken :exec
 
 INSERT INTO auth.oidc_refresh_tokens
-    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id, grant_expires_at)
-SELECT $1, $2, $3, $4, $5, LEAST($6::timestamptz, g.ends),
-       $7, $8, g.ends
+    (id, grant_id, token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id,
+     grant_expires_at, authorization_code_hash)
+SELECT $1, $1, $2, $3, $4, $5, $6, LEAST($7::timestamptz, g.ends),
+       $8, $9, g.ends, $10
 FROM (
     SELECT NOW() + COALESCE(
-        (SELECT sp.session_max_age FROM tenant.security_policies sp WHERE sp.tenant_id = $4),
-        make_interval(secs => $9::float8)) AS ends
+        (SELECT sp.session_max_age FROM tenant.security_policies sp WHERE sp.tenant_id = $5),
+        make_interval(secs => $11::float8)) AS ends
 ) g
 `
 
 type InsertRefreshTokenParams struct {
-	TokenHash            string
-	ClientID             string
-	UserID               uuid.UUID
-	TenantID             uuid.UUID
-	Scopes               []string
-	ExpiresAt            time.Time
-	Resource             *string
-	LoginSessionID       pgtype.UUID
-	DefaultMaxAgeSeconds float64
+	ID                    uuid.UUID
+	TokenHash             string
+	ClientID              string
+	UserID                uuid.UUID
+	TenantID              uuid.UUID
+	Scopes                []string
+	ExpiresAt             time.Time
+	Resource              *string
+	LoginSessionID        pgtype.UUID
+	AuthorizationCodeHash *string
+	DefaultMaxAgeSeconds  float64
 }
 
 // ==========================================================================
@@ -629,8 +931,10 @@ type InsertRefreshTokenParams struct {
 // InsertRefreshToken starts a grant. However often it is renewed, it ends at
 // grant_expires_at: the organisation's maximum session age from now, or the
 // platform's when the organisation sets none. No token outlives the grant.
+// A new grant's first token: its id names the grant (grant_id).
 func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshTokenParams) error {
 	_, err := q.db.Exec(ctx, insertRefreshToken,
+		arg.ID,
 		arg.TokenHash,
 		arg.ClientID,
 		arg.UserID,
@@ -639,30 +943,67 @@ func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshToken
 		arg.ExpiresAt,
 		arg.Resource,
 		arg.LoginSessionID,
+		arg.AuthorizationCodeHash,
 		arg.DefaultMaxAgeSeconds,
 	)
 	return err
 }
 
+const insertResource = `-- name: InsertResource :one
+INSERT INTO auth.oidc_resources (tenant_id, identifier, name, server_client_id)
+VALUES ($1, $2, $3, $4)
+RETURNING id, tenant_id, identifier, name, server_client_id, created_at
+`
+
+type InsertResourceParams struct {
+	TenantID       uuid.UUID
+	Identifier     string
+	Name           string
+	ServerClientID *string
+}
+
+func (q *Queries) InsertResource(ctx context.Context, arg InsertResourceParams) (AuthOidcResource, error) {
+	row := q.db.QueryRow(ctx, insertResource,
+		arg.TenantID,
+		arg.Identifier,
+		arg.Name,
+		arg.ServerClientID,
+	)
+	var i AuthOidcResource
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Identifier,
+		&i.Name,
+		&i.ServerClientID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const insertRotatedRefreshToken = `-- name: InsertRotatedRefreshToken :one
 INSERT INTO auth.oidc_refresh_tokens
-    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id, grant_expires_at)
+    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id, grant_expires_at,
+     authorization_code_hash, grant_id)
 VALUES ($1, $2, $3, $4, $5,
         LEAST($6::timestamptz, $7::timestamptz),
-        $8, $9, $7::timestamptz)
+        $8, $9, $7::timestamptz,
+        $10, $11)
 RETURNING id
 `
 
 type InsertRotatedRefreshTokenParams struct {
-	TokenHash      string
-	ClientID       string
-	UserID         uuid.UUID
-	TenantID       uuid.UUID
-	Scopes         []string
-	ExpiresAt      time.Time
-	GrantExpiresAt time.Time
-	Resource       *string
-	LoginSessionID pgtype.UUID
+	TokenHash             string
+	ClientID              string
+	UserID                uuid.UUID
+	TenantID              uuid.UUID
+	Scopes                []string
+	ExpiresAt             time.Time
+	GrantExpiresAt        time.Time
+	Resource              *string
+	LoginSessionID        pgtype.UUID
+	AuthorizationCodeHash *string
+	GrantID               pgtype.UUID
 }
 
 // InsertRotatedRefreshToken continues a grant: it keeps the grant's end, and
@@ -678,10 +1019,54 @@ func (q *Queries) InsertRotatedRefreshToken(ctx context.Context, arg InsertRotat
 		arg.GrantExpiresAt,
 		arg.Resource,
 		arg.LoginSessionID,
+		arg.AuthorizationCodeHash,
+		arg.GrantID,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const listClientAuthFailures = `-- name: ListClientAuthFailures :many
+SELECT created_at, COALESCE(host(ip), '')::text AS ip, COALESCE(metadata->>'reason', '')::text AS reason
+FROM audit.events
+WHERE tenant_id = $1 AND action = 'oidc.client_auth_failed' AND resource_id = $2
+ORDER BY created_at DESC
+LIMIT $3
+`
+
+type ListClientAuthFailuresParams struct {
+	TenantID    pgtype.UUID
+	ClientRowID pgtype.UUID
+	MaxRows     int32
+}
+
+type ListClientAuthFailuresRow struct {
+	CreatedAt time.Time
+	Ip        string
+	Reason    string
+}
+
+// ListClientAuthFailures is an application's recent wrong-secret attempts,
+// newest first, from the audit log (which never holds the secret).
+func (q *Queries) ListClientAuthFailures(ctx context.Context, arg ListClientAuthFailuresParams) ([]ListClientAuthFailuresRow, error) {
+	rows, err := q.db.Query(ctx, listClientAuthFailures, arg.TenantID, arg.ClientRowID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListClientAuthFailuresRow{}
+	for rows.Next() {
+		var i ListClientAuthFailuresRow
+		if err := rows.Scan(&i.CreatedAt, &i.Ip, &i.Reason); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listDevices = `-- name: ListDevices :many
@@ -788,21 +1173,24 @@ func (q *Queries) ListGrants(ctx context.Context, tenantID uuid.UUID) ([]ListGra
 
 const listOIDCClients = `-- name: ListOIDCClients :many
 SELECT id, tenant_id, client_id, type, name, redirect_uris,
-       post_logout_uris, grant_types, scopes, created_at
+       post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri
 FROM auth.oidc_clients WHERE tenant_id = $1 ORDER BY created_at DESC
 `
 
 type ListOIDCClientsRow struct {
-	ID             uuid.UUID
-	TenantID       uuid.UUID
-	ClientID       string
-	Type           string
-	Name           string
-	RedirectUris   []string
-	PostLogoutUris []string
-	GrantTypes     []string
-	Scopes         []string
-	CreatedAt      time.Time
+	ID                    uuid.UUID
+	TenantID              uuid.UUID
+	ClientID              string
+	Type                  string
+	Name                  string
+	RedirectUris          []string
+	PostLogoutUris        []string
+	GrantTypes            []string
+	Scopes                []string
+	CreatedAt             time.Time
+	PkceExemptUntil       pgtype.Timestamptz
+	BackchannelLogoutUri  *string
+	FrontchannelLogoutUri *string
 }
 
 func (q *Queries) ListOIDCClients(ctx context.Context, tenantID uuid.UUID) ([]ListOIDCClientsRow, error) {
@@ -825,6 +1213,9 @@ func (q *Queries) ListOIDCClients(ctx context.Context, tenantID uuid.UUID) ([]Li
 			&i.GrantTypes,
 			&i.Scopes,
 			&i.CreatedAt,
+			&i.PkceExemptUntil,
+			&i.BackchannelLogoutUri,
+			&i.FrontchannelLogoutUri,
 		); err != nil {
 			return nil, err
 		}
@@ -868,6 +1259,38 @@ func (q *Queries) ListPendingCIBA(ctx context.Context, userID uuid.UUID) ([]List
 			&i.BindingMessage,
 			&i.CreatedAt,
 			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listResources = `-- name: ListResources :many
+SELECT id, tenant_id, identifier, name, server_client_id, created_at
+FROM auth.oidc_resources WHERE tenant_id = $1 ORDER BY identifier
+`
+
+func (q *Queries) ListResources(ctx context.Context, tenantID uuid.UUID) ([]AuthOidcResource, error) {
+	rows, err := q.db.Query(ctx, listResources, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AuthOidcResource{}
+	for rows.Next() {
+		var i AuthOidcResource
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.Identifier,
+			&i.Name,
+			&i.ServerClientID,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -991,6 +1414,28 @@ func (q *Queries) LockCIBARequestByHash(ctx context.Context, authReqIDHash strin
 	return i, err
 }
 
+const lockClient = `-- name: LockClient :one
+UPDATE auth.oidc_client_auth_lockouts
+SET locked_until = NOW() + make_interval(secs => $1::float8),
+    failures = 0, window_started_at = NOW()
+WHERE client_row_id = $2 AND (locked_until IS NULL OR locked_until <= NOW())
+RETURNING locked_until
+`
+
+type LockClientParams struct {
+	DurationSeconds float64
+	ClientRowID     uuid.UUID
+}
+
+// LockClient starts a lockout and restarts the count, unless one is already
+// in force: only the attempt that starts it gets a row back.
+func (q *Queries) LockClient(ctx context.Context, arg LockClientParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, lockClient, arg.DurationSeconds, arg.ClientRowID)
+	var locked_until pgtype.Timestamptz
+	err := row.Scan(&locked_until)
+	return locked_until, err
+}
+
 const lockDeviceByCode = `-- name: LockDeviceByCode :one
 SELECT id, client_id, tenant_id, user_id, scopes, status,
        interval_seconds, last_polled_at, expires_at, consumed_at
@@ -1058,7 +1503,7 @@ func (q *Queries) LockDeviceByUserCode(ctx context.Context, userCode string) (Lo
 
 const lockOIDCClientForUpdate = `-- name: LockOIDCClientForUpdate :one
 SELECT id, tenant_id, client_id, type, name, redirect_uris,
-       post_logout_uris, grant_types, scopes, created_at
+       post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri
 FROM auth.oidc_clients WHERE id = $1 AND tenant_id = $2 FOR UPDATE
 `
 
@@ -1068,16 +1513,19 @@ type LockOIDCClientForUpdateParams struct {
 }
 
 type LockOIDCClientForUpdateRow struct {
-	ID             uuid.UUID
-	TenantID       uuid.UUID
-	ClientID       string
-	Type           string
-	Name           string
-	RedirectUris   []string
-	PostLogoutUris []string
-	GrantTypes     []string
-	Scopes         []string
-	CreatedAt      time.Time
+	ID                    uuid.UUID
+	TenantID              uuid.UUID
+	ClientID              string
+	Type                  string
+	Name                  string
+	RedirectUris          []string
+	PostLogoutUris        []string
+	GrantTypes            []string
+	Scopes                []string
+	CreatedAt             time.Time
+	PkceExemptUntil       pgtype.Timestamptz
+	BackchannelLogoutUri  *string
+	FrontchannelLogoutUri *string
 }
 
 func (q *Queries) LockOIDCClientForUpdate(ctx context.Context, arg LockOIDCClientForUpdateParams) (LockOIDCClientForUpdateRow, error) {
@@ -1094,28 +1542,33 @@ func (q *Queries) LockOIDCClientForUpdate(ctx context.Context, arg LockOIDCClien
 		&i.GrantTypes,
 		&i.Scopes,
 		&i.CreatedAt,
+		&i.PkceExemptUntil,
+		&i.BackchannelLogoutUri,
+		&i.FrontchannelLogoutUri,
 	)
 	return i, err
 }
 
 const lockRefreshToken = `-- name: LockRefreshToken :one
 SELECT id, client_id, user_id, tenant_id, scopes, expires_at,
-       used_at, revoked_at, resource, login_session_id, grant_expires_at
+       used_at, revoked_at, resource, login_session_id, grant_expires_at, authorization_code_hash, grant_id
 FROM auth.oidc_refresh_tokens WHERE token_hash = $1 FOR UPDATE
 `
 
 type LockRefreshTokenRow struct {
-	ID             uuid.UUID
-	ClientID       string
-	UserID         uuid.UUID
-	TenantID       uuid.UUID
-	Scopes         []string
-	ExpiresAt      time.Time
-	UsedAt         pgtype.Timestamptz
-	RevokedAt      pgtype.Timestamptz
-	Resource       *string
-	LoginSessionID pgtype.UUID
-	GrantExpiresAt time.Time
+	ID                    uuid.UUID
+	ClientID              string
+	UserID                uuid.UUID
+	TenantID              uuid.UUID
+	Scopes                []string
+	ExpiresAt             time.Time
+	UsedAt                pgtype.Timestamptz
+	RevokedAt             pgtype.Timestamptz
+	Resource              *string
+	LoginSessionID        pgtype.UUID
+	GrantExpiresAt        time.Time
+	AuthorizationCodeHash *string
+	GrantID               pgtype.UUID
 }
 
 func (q *Queries) LockRefreshToken(ctx context.Context, tokenHash string) (LockRefreshTokenRow, error) {
@@ -1133,6 +1586,8 @@ func (q *Queries) LockRefreshToken(ctx context.Context, tokenHash string) (LockR
 		&i.Resource,
 		&i.LoginSessionID,
 		&i.GrantExpiresAt,
+		&i.AuthorizationCodeHash,
+		&i.GrantID,
 	)
 	return i, err
 }
@@ -1143,6 +1598,41 @@ UPDATE auth.oidc_authorization_codes SET used_at = NOW() WHERE code_hash = $1
 
 func (q *Queries) MarkAuthorizationCodeUsed(ctx context.Context, codeHash string) error {
 	_, err := q.db.Exec(ctx, markAuthorizationCodeUsed, codeHash)
+	return err
+}
+
+const markLogoutDelivered = `-- name: MarkLogoutDelivered :exec
+UPDATE auth.oidc_logout_deliveries SET delivered_at = NOW(), attempts = attempts + 1, last_error = ''
+WHERE id = $1
+`
+
+func (q *Queries) MarkLogoutDelivered(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markLogoutDelivered, id)
+	return err
+}
+
+const markLogoutDeliveryFailed = `-- name: MarkLogoutDeliveryFailed :exec
+UPDATE auth.oidc_logout_deliveries
+SET attempts = attempts + 1, last_error = $1,
+    next_attempt_at = NOW() + make_interval(secs => $2::float8),
+    failed_at = CASE WHEN $3::bool THEN NOW() END
+WHERE id = $4
+`
+
+type MarkLogoutDeliveryFailedParams struct {
+	LastError      string
+	RetryInSeconds float64
+	Final          bool
+	ID             uuid.UUID
+}
+
+func (q *Queries) MarkLogoutDeliveryFailed(ctx context.Context, arg MarkLogoutDeliveryFailedParams) error {
+	_, err := q.db.Exec(ctx, markLogoutDeliveryFailed,
+		arg.LastError,
+		arg.RetryInSeconds,
+		arg.Final,
+		arg.ID,
+	)
 	return err
 }
 
@@ -1158,6 +1648,76 @@ type MarkRefreshTokenUsedParams struct {
 func (q *Queries) MarkRefreshTokenUsed(ctx context.Context, arg MarkRefreshTokenUsedParams) error {
 	_, err := q.db.Exec(ctx, markRefreshTokenUsed, arg.NewID, arg.ID)
 	return err
+}
+
+const recordClientAuthFailure = `-- name: RecordClientAuthFailure :one
+INSERT INTO auth.oidc_client_auth_lockouts AS l (client_row_id, failures, window_started_at, last_failure_at)
+VALUES ($1, 1, NOW(), NOW())
+ON CONFLICT (client_row_id) DO UPDATE SET
+    failures = CASE WHEN l.window_started_at <= NOW() - make_interval(secs => $2::float8)
+                    THEN 1 ELSE l.failures + 1 END,
+    window_started_at = CASE WHEN l.window_started_at <= NOW() - make_interval(secs => $2::float8)
+                             THEN NOW() ELSE l.window_started_at END,
+    last_failure_at = NOW()
+RETURNING failures
+`
+
+type RecordClientAuthFailureParams struct {
+	ClientRowID   uuid.UUID
+	WindowSeconds float64
+}
+
+// RecordClientAuthFailure counts one wrong secret, restarting the count when
+// the window it started has passed, and returns the count.
+func (q *Queries) RecordClientAuthFailure(ctx context.Context, arg RecordClientAuthFailureParams) (int32, error) {
+	row := q.db.QueryRow(ctx, recordClientAuthFailure, arg.ClientRowID, arg.WindowSeconds)
+	var failures int32
+	err := row.Scan(&failures)
+	return failures, err
+}
+
+const resourceRegistered = `-- name: ResourceRegistered :one
+
+SELECT EXISTS (
+    SELECT 1 FROM auth.oidc_resources WHERE tenant_id = $1 AND identifier = $2
+)::bool
+`
+
+type ResourceRegisteredParams struct {
+	TenantID   uuid.UUID
+	Identifier string
+}
+
+// ==========================================================================
+// Resources (RFC 8707 resource indicators, QTID-157)
+// ==========================================================================
+func (q *Queries) ResourceRegistered(ctx context.Context, arg ResourceRegisteredParams) (bool, error) {
+	row := q.db.QueryRow(ctx, resourceRegistered, arg.TenantID, arg.Identifier)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const resourceServedBy = `-- name: ResourceServedBy :one
+SELECT EXISTS (
+    SELECT 1 FROM auth.oidc_resources
+    WHERE tenant_id = $1 AND server_client_id = $2 AND identifier = ANY($3::text[])
+)::bool
+`
+
+type ResourceServedByParams struct {
+	TenantID    uuid.UUID
+	ClientID    *string
+	Identifiers []string
+}
+
+// ResourceServedBy reports whether a client serves one of the given resources
+// of its tenant, so it may introspect tokens issued for them.
+func (q *Queries) ResourceServedBy(ctx context.Context, arg ResourceServedByParams) (bool, error) {
+	row := q.db.QueryRow(ctx, resourceServedBy, arg.TenantID, arg.ClientID, arg.Identifiers)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const reviewOIDCClient = `-- name: ReviewOIDCClient :execrows
@@ -1219,19 +1779,24 @@ func (q *Queries) RevokeGrantChain(ctx context.Context, arg RevokeGrantChainPara
 	return err
 }
 
-const revokeRefreshTokenByHash = `-- name: RevokeRefreshTokenByHash :exec
+const revokeGrantFromCode = `-- name: RevokeGrantFromCode :execrows
 UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
-WHERE token_hash = $1 AND client_id = $2 AND revoked_at IS NULL
+WHERE client_id = $1 AND authorization_code_hash = $2 AND revoked_at IS NULL
 `
 
-type RevokeRefreshTokenByHashParams struct {
-	TokenHash string
-	ClientID  string
+type RevokeGrantFromCodeParams struct {
+	ClientID              string
+	AuthorizationCodeHash *string
 }
 
-func (q *Queries) RevokeRefreshTokenByHash(ctx context.Context, arg RevokeRefreshTokenByHashParams) error {
-	_, err := q.db.Exec(ctx, revokeRefreshTokenByHash, arg.TokenHash, arg.ClientID)
-	return err
+// RevokeGrantFromCode ends the grant redeemed from an authorization code,
+// every rotation of it included: the code was presented a second time.
+func (q *Queries) RevokeGrantFromCode(ctx context.Context, arg RevokeGrantFromCodeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeGrantFromCode, arg.ClientID, arg.AuthorizationCodeHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const revokeRefreshTokenChain = `-- name: RevokeRefreshTokenChain :exec
@@ -1247,6 +1812,148 @@ type RevokeRefreshTokenChainParams struct {
 func (q *Queries) RevokeRefreshTokenChain(ctx context.Context, arg RevokeRefreshTokenChainParams) error {
 	_, err := q.db.Exec(ctx, revokeRefreshTokenChain, arg.ClientID, arg.UserID)
 	return err
+}
+
+const revokeRefreshTokenGrant = `-- name: RevokeRefreshTokenGrant :many
+UPDATE auth.oidc_refresh_tokens t SET revoked_at = NOW()
+FROM (SELECT p.grant_id FROM auth.oidc_refresh_tokens p
+      WHERE p.token_hash = $2 AND p.client_id = $1) g
+WHERE t.grant_id = g.grant_id AND t.client_id = $1 AND t.revoked_at IS NULL
+RETURNING t.id, t.user_id, t.tenant_id, t.grant_id
+`
+
+type RevokeRefreshTokenGrantParams struct {
+	ClientID  string
+	TokenHash string
+}
+
+type RevokeRefreshTokenGrantRow struct {
+	ID       uuid.UUID
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+	GrantID  pgtype.UUID
+}
+
+// RevokeRefreshTokenGrant ends the whole grant (every rotation) the
+// presented token belongs to, when it was issued to the calling client, and
+// returns the rows it ended (none: unknown, another client's, or already ended).
+func (q *Queries) RevokeRefreshTokenGrant(ctx context.Context, arg RevokeRefreshTokenGrantParams) ([]RevokeRefreshTokenGrantRow, error) {
+	rows, err := q.db.Query(ctx, revokeRefreshTokenGrant, arg.ClientID, arg.TokenHash)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RevokeRefreshTokenGrantRow{}
+	for rows.Next() {
+		var i RevokeRefreshTokenGrantRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.TenantID,
+			&i.GrantID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sessionClients = `-- name: SessionClients :many
+
+SELECT c.client_id, c.tenant_id, COALESCE(c.backchannel_logout_uri, '')::text AS backchannel_logout_uri,
+       COALESCE(c.frontchannel_logout_uri, '')::text AS frontchannel_logout_uri
+FROM auth.oidc_clients c
+WHERE c.client_id IN (
+    SELECT t.client_id FROM auth.oidc_refresh_tokens t WHERE t.login_session_id = $1
+    UNION
+    SELECT a.client_id FROM auth.oidc_authorization_codes a WHERE a.login_session_id = $1
+)
+ORDER BY c.client_id
+`
+
+type SessionClientsRow struct {
+	ClientID              string
+	TenantID              uuid.UUID
+	BackchannelLogoutUri  string
+	FrontchannelLogoutUri string
+}
+
+// ==========================================================================
+// Sign-out notices (OpenID Connect Back- and Front-Channel Logout, QTID-166)
+// ==========================================================================
+// SessionClients is every application that holds a code or a grant from a
+// hosted-login session, with where it hears of a sign-out.
+func (q *Queries) SessionClients(ctx context.Context, loginSessionID pgtype.UUID) ([]SessionClientsRow, error) {
+	rows, err := q.db.Query(ctx, sessionClients, loginSessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SessionClientsRow{}
+	for rows.Next() {
+		var i SessionClientsRow
+		if err := rows.Scan(
+			&i.ClientID,
+			&i.TenantID,
+			&i.BackchannelLogoutUri,
+			&i.FrontchannelLogoutUri,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const takeConsentRequest = `-- name: TakeConsentRequest :one
+UPDATE auth.oidc_consent_requests SET used_at = NOW()
+WHERE id = $1 AND login_session_id = $2 AND used_at IS NULL AND expires_at > NOW()
+RETURNING id, user_id, client_id, redirect_uri, scopes, state, nonce, code_challenge, code_challenge_method, resource
+`
+
+type TakeConsentRequestParams struct {
+	ID             uuid.UUID
+	LoginSessionID uuid.UUID
+}
+
+type TakeConsentRequestRow struct {
+	ID                  uuid.UUID
+	UserID              uuid.UUID
+	ClientID            string
+	RedirectUri         string
+	Scopes              []string
+	State               string
+	Nonce               string
+	CodeChallenge       string
+	CodeChallengeMethod string
+	Resource            string
+}
+
+// TakeConsentRequest claims an undecided, unexpired request for its own
+// hosted-login session, once: a second decision finds nothing.
+func (q *Queries) TakeConsentRequest(ctx context.Context, arg TakeConsentRequestParams) (TakeConsentRequestRow, error) {
+	row := q.db.QueryRow(ctx, takeConsentRequest, arg.ID, arg.LoginSessionID)
+	var i TakeConsentRequestRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ClientID,
+		&i.RedirectUri,
+		&i.Scopes,
+		&i.State,
+		&i.Nonce,
+		&i.CodeChallenge,
+		&i.CodeChallengeMethod,
+		&i.Resource,
+	)
+	return i, err
 }
 
 const touchCIBAPollTime = `-- name: TouchCIBAPollTime :exec
@@ -1273,33 +1980,49 @@ UPDATE auth.oidc_clients SET
     redirect_uris    = COALESCE($2, redirect_uris),
     post_logout_uris = COALESCE($3, post_logout_uris),
     grant_types      = COALESCE($4, grant_types),
-    scopes           = COALESCE($5, scopes)
-WHERE id = $6 AND tenant_id = $7
+    scopes           = COALESCE($5, scopes),
+    pkce_exempt_until = CASE WHEN $6::bool
+                             THEN $7::timestamptz
+                             ELSE pkce_exempt_until END,
+    backchannel_logout_uri = CASE WHEN $8::bool
+                                  THEN NULLIF($9::text, '') ELSE backchannel_logout_uri END,
+    frontchannel_logout_uri = CASE WHEN $10::bool
+                                   THEN NULLIF($11::text, '') ELSE frontchannel_logout_uri END
+WHERE id = $12 AND tenant_id = $13
 RETURNING id, tenant_id, client_id, type, name, redirect_uris,
-          post_logout_uris, grant_types, scopes, created_at
+          post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri
 `
 
 type UpdateOIDCClientParams struct {
-	Name           *string
-	RedirectUris   []string
-	PostLogoutUris []string
-	GrantTypes     []string
-	Scopes         []string
-	ID             uuid.UUID
-	TenantID       uuid.UUID
+	Name                     *string
+	RedirectUris             []string
+	PostLogoutUris           []string
+	GrantTypes               []string
+	Scopes                   []string
+	SetPkceExemptUntil       bool
+	PkceExemptUntil          pgtype.Timestamptz
+	SetBackchannelLogoutUri  bool
+	BackchannelLogoutUri     string
+	SetFrontchannelLogoutUri bool
+	FrontchannelLogoutUri    string
+	ID                       uuid.UUID
+	TenantID                 uuid.UUID
 }
 
 type UpdateOIDCClientRow struct {
-	ID             uuid.UUID
-	TenantID       uuid.UUID
-	ClientID       string
-	Type           string
-	Name           string
-	RedirectUris   []string
-	PostLogoutUris []string
-	GrantTypes     []string
-	Scopes         []string
-	CreatedAt      time.Time
+	ID                    uuid.UUID
+	TenantID              uuid.UUID
+	ClientID              string
+	Type                  string
+	Name                  string
+	RedirectUris          []string
+	PostLogoutUris        []string
+	GrantTypes            []string
+	Scopes                []string
+	CreatedAt             time.Time
+	PkceExemptUntil       pgtype.Timestamptz
+	BackchannelLogoutUri  *string
+	FrontchannelLogoutUri *string
 }
 
 func (q *Queries) UpdateOIDCClient(ctx context.Context, arg UpdateOIDCClientParams) (UpdateOIDCClientRow, error) {
@@ -1309,6 +2032,12 @@ func (q *Queries) UpdateOIDCClient(ctx context.Context, arg UpdateOIDCClientPara
 		arg.PostLogoutUris,
 		arg.GrantTypes,
 		arg.Scopes,
+		arg.SetPkceExemptUntil,
+		arg.PkceExemptUntil,
+		arg.SetBackchannelLogoutUri,
+		arg.BackchannelLogoutUri,
+		arg.SetFrontchannelLogoutUri,
+		arg.FrontchannelLogoutUri,
 		arg.ID,
 		arg.TenantID,
 	)
@@ -1324,6 +2053,9 @@ func (q *Queries) UpdateOIDCClient(ctx context.Context, arg UpdateOIDCClientPara
 		&i.GrantTypes,
 		&i.Scopes,
 		&i.CreatedAt,
+		&i.PkceExemptUntil,
+		&i.BackchannelLogoutUri,
+		&i.FrontchannelLogoutUri,
 	)
 	return i, err
 }

@@ -6,8 +6,12 @@ package errs
 // is prefixed with the `group` domain so it never collides with another
 // bounded context.
 const (
-	CodeGroupNotFound   = "group.not_found"
-	CodeGroupNameExists = "group.name_exists"
+	CodeGroupNotFound     = "group.not_found"
+	CodeGroupNameExists   = "group.name_exists"
+	CodeGroupUserNotFound = "group.user_not_found"
+	// Nesting: a parent outside the organization, and a move that would loop.
+	CodeGroupParentNotFound = "group.parent_not_found"
+	CodeGroupCycle          = "group.cycle"
 
 	// Reusable group-shape templates.
 	CodeGroupTemplateUnnamed     = "group.template_unnamed"
@@ -27,6 +31,14 @@ const (
 var (
 	ErrGroupNotFound   = New(CodeGroupNotFound, "That group doesn't exist.")
 	ErrGroupNameExists = New(CodeGroupNameExists, "A group with that name already exists.")
+	// ErrGroupUserNotFound is the one answer to adding anyone who isn't a live
+	// member of the organization, whether the id is missing or belongs to
+	// another organization, so the response can't be used to probe for ids.
+	ErrGroupUserNotFound = New(CodeGroupUserNotFound, "That user doesn't exist in this organization.")
+	// ErrGroupParentNotFound is the answer to a parent that is missing or in
+	// another organization alike.
+	ErrGroupParentNotFound = New(CodeGroupParentNotFound, "That parent group doesn't exist in this organization.")
+	ErrGroupCycle          = New(CodeGroupCycle, "A group can't be placed inside itself or one of its own subgroups.")
 
 	ErrGroupTemplateUnnamed     = New(CodeGroupTemplateUnnamed, "Give the template a name.")
 	ErrGroupTemplateNodeUnnamed = New(CodeGroupTemplateNodeUnnamed, "Every group in the template needs a name.")

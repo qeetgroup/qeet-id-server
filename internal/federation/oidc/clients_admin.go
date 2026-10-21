@@ -1,6 +1,8 @@
 package oidc
 
 import (
+	"time"
+
 	"context"
 	"errors"
 	"net/http"
@@ -33,6 +35,8 @@ func (s *Service) ListClients(ctx context.Context, tenantID uuid.UUID) ([]Client
 			ID: r.ID, TenantID: r.TenantID, ClientID: r.ClientID, Type: r.Type, Name: r.Name,
 			RedirectURIs: r.RedirectUris, PostLogoutURIs: r.PostLogoutUris,
 			GrantTypes: r.GrantTypes, Scopes: r.Scopes, CreatedAt: r.CreatedAt,
+			PKCEExemptUntil:      timePtr(r.PkceExemptUntil),
+			BackchannelLogoutURI: derefStr(r.BackchannelLogoutUri), FrontchannelLogoutURI: derefStr(r.FrontchannelLogoutUri),
 		}
 	}
 	return out, nil
@@ -51,6 +55,8 @@ func (s *Service) GetClient(ctx context.Context, tenantID, id uuid.UUID) (*Clien
 		ID: r.ID, TenantID: r.TenantID, ClientID: r.ClientID, Type: r.Type, Name: r.Name,
 		RedirectURIs: r.RedirectUris, PostLogoutURIs: r.PostLogoutUris,
 		GrantTypes: r.GrantTypes, Scopes: r.Scopes, CreatedAt: r.CreatedAt,
+		PKCEExemptUntil:      timePtr(r.PkceExemptUntil),
+		BackchannelLogoutURI: derefStr(r.BackchannelLogoutUri), FrontchannelLogoutURI: derefStr(r.FrontchannelLogoutUri),
 	}
 	return &c, nil
 }
@@ -63,6 +69,14 @@ type UpdateClientInput struct {
 	PostLogoutURIs *[]string `json:"post_logout_uris"`
 	GrantTypes     *[]string `json:"grant_types"`
 	Scopes         *[]string `json:"scopes"`
+	// PKCEExemptUntil sets (a time) or clears (null) a confidential
+	// application's exemption from sending a PKCE code_challenge and a nonce,
+	// ending within 90 days.
+	PKCEExemptUntil OptionalTime `json:"pkce_exempt_until"`
+	// BackchannelLogoutURI and FrontchannelLogoutURI set where the application
+	// hears of a sign-out ("" clears; nil: unchanged).
+	BackchannelLogoutURI  *string `json:"backchannel_logout_uri"`
+	FrontchannelLogoutURI *string `json:"frontchannel_logout_uri"`
 }
 
 // UpdateClient applies a partial update to a tenant's client and returns the
@@ -84,14 +98,52 @@ func (s *Service) UpdateClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 		scopes = *in.Scopes
 	}
 	q := s.q.WithTx(tx)
+	// Hold the edited client to the same rules as registration, checked on the
+	// result of the edit (unset fields keep their stored values).
+	cur, err := q.GetOIDCClient(ctx, dbgen.GetOIDCClientParams{ID: id, TenantID: tenantID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrOIDCClientNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	merged := CreateClientInput{Type: cur.Type, RedirectURIs: cur.RedirectUris, PostLogoutURIs: cur.PostLogoutUris, GrantTypes: cur.GrantTypes}
+	if in.RedirectURIs != nil {
+		merged.RedirectURIs = redirectUris
+	}
+	if in.PostLogoutURIs != nil {
+		merged.PostLogoutURIs = postLogoutUris
+	}
+	if in.GrantTypes != nil {
+		merged.GrantTypes = grantTypes
+	}
+	if err := validateClientInput(merged); err != nil {
+		return nil, err
+	}
+	if in.PKCEExemptUntil.Set {
+		if err := validPKCEExemption(cur.Type, in.PKCEExemptUntil.At, time.Now()); err != nil {
+			return nil, err
+		}
+	}
+	for _, u := range []*string{in.BackchannelLogoutURI, in.FrontchannelLogoutURI} {
+		if u != nil && !validLogoutURI(*u) {
+			return nil, errs.ErrBadRequest.WithDetail("logout URIs must be absolute http(s) URLs without a fragment")
+		}
+	}
 	r, err := q.UpdateOIDCClient(ctx, dbgen.UpdateOIDCClientParams{
-		Name:           in.Name,
-		RedirectUris:   redirectUris,
-		PostLogoutUris: postLogoutUris,
-		GrantTypes:     grantTypes,
-		Scopes:         scopes,
-		ID:             id,
-		TenantID:       tenantID,
+		Name:                     in.Name,
+		RedirectUris:             redirectUris,
+		PostLogoutUris:           postLogoutUris,
+		GrantTypes:               grantTypes,
+		Scopes:                   scopes,
+		SetPkceExemptUntil:       in.PKCEExemptUntil.Set,
+		PkceExemptUntil:          pgTime(in.PKCEExemptUntil.At),
+		SetBackchannelLogoutUri:  in.BackchannelLogoutURI != nil,
+		BackchannelLogoutUri:     derefStr(in.BackchannelLogoutURI),
+		SetFrontchannelLogoutUri: in.FrontchannelLogoutURI != nil,
+		FrontchannelLogoutUri:    derefStr(in.FrontchannelLogoutURI),
+		ID:                       id,
+		TenantID:                 tenantID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrOIDCClientNotFound
@@ -103,6 +155,8 @@ func (s *Service) UpdateClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 		ID: r.ID, TenantID: r.TenantID, ClientID: r.ClientID, Type: r.Type, Name: r.Name,
 		RedirectURIs: r.RedirectUris, PostLogoutURIs: r.PostLogoutUris,
 		GrantTypes: r.GrantTypes, Scopes: r.Scopes, CreatedAt: r.CreatedAt,
+		PKCEExemptUntil:      timePtr(r.PkceExemptUntil),
+		BackchannelLogoutURI: derefStr(r.BackchannelLogoutUri), FrontchannelLogoutURI: derefStr(r.FrontchannelLogoutUri),
 	}
 	return &c, nil
 }
@@ -154,6 +208,8 @@ func (s *Service) RotateClientSecret(ctx context.Context, tx pgx.Tx, tenantID, i
 		ID: r.ID, TenantID: r.TenantID, ClientID: r.ClientID, Type: r.Type, Name: r.Name,
 		RedirectURIs: r.RedirectUris, PostLogoutURIs: r.PostLogoutUris,
 		GrantTypes: r.GrantTypes, Scopes: r.Scopes, CreatedAt: r.CreatedAt,
+		PKCEExemptUntil:      timePtr(r.PkceExemptUntil),
+		BackchannelLogoutURI: derefStr(r.BackchannelLogoutUri), FrontchannelLogoutURI: derefStr(r.FrontchannelLogoutUri),
 	}
 	return secret, &c, nil
 }
@@ -269,6 +325,27 @@ func (h *Handler) getClient(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, c)
 }
 
+// clientAuthFailures is an application's lockout in force (if any) and its
+// recent wrong-secret attempts, with time and address, never the secret.
+func (h *Handler) clientAuthFailures(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	id, err := pathID(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Service.RecentClientAuthFailures(r.Context(), tenantID, id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
 func (h *Handler) patchClient(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := requirePathTenant(r)
 	if err != nil {
@@ -304,7 +381,7 @@ func (h *Handler) patchClient(w http.ResponseWriter, r *http.Request) {
 		TenantID: &tid, ActorUserID: actorID, ActorType: actorType,
 		Action: "oidc.client_updated", ResourceType: "oidc_client", ResourceID: &resourceID,
 		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
-		Metadata: map[string]any{"client_id": c.ClientID, "name": c.Name},
+		Metadata: clientUpdatedMeta(c, in),
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -468,4 +545,14 @@ func (h *Handler) reviewShadowAI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// clientUpdatedMeta is the oidc.client_updated audit metadata; a change to the
+// PKCE exemption is recorded with its new end (nil: cleared).
+func clientUpdatedMeta(c *Client, in UpdateClientInput) map[string]any {
+	meta := map[string]any{"client_id": c.ClientID, "name": c.Name}
+	if in.PKCEExemptUntil.Set {
+		meta["pkce_exempt_until"] = c.PKCEExemptUntil
+	}
+	return meta
 }

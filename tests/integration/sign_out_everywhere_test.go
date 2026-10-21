@@ -126,11 +126,11 @@ func (f *signOutEverywhereFixture) newPerson(t *testing.T, ctx context.Context, 
 // refresh grant for them.
 func (f *signOutEverywhereFixture) grantApp(t *testing.T, ctx context.Context, userID uuid.UUID) *oidc.TokenResponse {
 	t.Helper()
-	code, _, err := f.oidc.Authorize(ctx, userID, f.clientID, f.redirectURI, []string{"openid"}, "", "", "")
+	code, _, err := f.oidc.Authorize(ctx, userID, f.clientID, f.redirectURI, []string{"openid"}, testNonce, testChallenge, "S256")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
-	issued, err := f.oidc.ExchangeCode(ctx, f.clientID, f.secret, code, f.redirectURI, "", "")
+	issued, err := f.oidc.ExchangeCode(ctx, f.clientID, f.secret, code, f.redirectURI, testVerifier, "")
 	if err != nil {
 		t.Fatalf("exchange code: %v", err)
 	}
@@ -333,7 +333,7 @@ func TestSignOutEverywhereMakesTheNextAuthorizationAskToSignIn(t *testing.T) {
 
 	authorize := func() string {
 		t.Helper()
-		q := url.Values{"client_id": {f.clientID}, "redirect_uri": {f.redirectURI}, "scope": {"openid"}, "state": {"s"}}
+		q := url.Values{"client_id": {f.clientID}, "redirect_uri": {f.redirectURI}, "scope": {"openid"}, "state": {"s"}, "response_type": {"code"}, "code_challenge": {testChallenge}, "code_challenge_method": {"S256"}, "nonce": {testNonce}}
 		req := httptest.NewRequest(http.MethodGet, "/v1/oauth/authorize?"+q.Encode(), nil)
 		req.AddCookie(&http.Cookie{Name: auth.LoginSessionCookie, Value: me.browsers[0]})
 		rr := httptest.NewRecorder()

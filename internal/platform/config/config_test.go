@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -170,6 +171,21 @@ func setRequiredEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("DB_URL", "postgres://u:p@localhost:5432/db?sslmode=disable")
 	t.Setenv("JWT_SECRET", "a-32-byte-or-longer-random-server-secret")
+	t.Setenv("SERVICE_ENV", EnvDev)
+}
+
+// A process started without SERVICE_ENV doesn't fall back to dev, where the
+// production gates are off and a signing key is made up: it refuses to start,
+// naming the setting.
+func TestLoad_RequiresServiceEnv(t *testing.T) {
+	setRequiredEnv(t)
+	if err := os.Unsetenv("SERVICE_ENV"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "SERVICE_ENV is not set") {
+		t.Fatalf("Load without SERVICE_ENV: err = %v, want one naming SERVICE_ENV", err)
+	}
 }
 
 func TestLoad_RejectsUnknownEnvironment(t *testing.T) {

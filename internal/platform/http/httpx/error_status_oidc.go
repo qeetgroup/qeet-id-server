@@ -18,13 +18,16 @@ func init() {
 		errs.CodeOIDCClientAuthFailed: http.StatusUnauthorized,
 
 		// Redirect URIs & scopes.
-		errs.CodeOIDCRedirectURIInvalid:  http.StatusBadRequest,
-		errs.CodeOIDCRedirectURIMismatch: http.StatusBadRequest,
-		errs.CodeOIDCScopeNotPermitted:   http.StatusBadRequest,
-		errs.CodeOIDCScopeExceedsSubject: http.StatusForbidden,
+		errs.CodeOIDCRedirectURIInvalid:       http.StatusBadRequest,
+		errs.CodeOIDCRedirectURIMismatch:      http.StatusBadRequest,
+		errs.CodeOIDCRedirectURINotRegistered: http.StatusBadRequest,
+		errs.CodeOIDCConsentRequestInvalid:    http.StatusBadRequest,
+		errs.CodeOIDCScopeNotPermitted:        http.StatusBadRequest,
+		errs.CodeOIDCScopeExceedsSubject:      http.StatusForbidden,
 
 		// Grant types.
 		errs.CodeOIDCGrantTypeUnsupported: http.StatusBadRequest,
+		errs.CodeOIDCUnsupportedFlow:      http.StatusBadRequest,
 		errs.CodeOIDCGrantTypeNotAllowed:  http.StatusForbidden,
 
 		// Authorization code + PKCE.
@@ -36,6 +39,14 @@ func init() {
 		errs.CodeOIDCCodeVerifierRequired:           http.StatusBadRequest,
 		errs.CodeOIDCCodeVerifierInvalid:            http.StatusBadRequest,
 		errs.CodeOIDCCodeChallengeMethodUnsupported: http.StatusBadRequest,
+		errs.CodeOIDCNonceRequired:                  http.StatusBadRequest,
+		errs.CodeOIDCNonceInvalid:                   http.StatusBadRequest,
+		errs.CodeOIDCPKCEExemptionInvalid:           http.StatusUnprocessableEntity,
+		errs.CodeOIDCResourceInvalid:                http.StatusUnprocessableEntity,
+		errs.CodeOIDCExchangeDepthExceeded:          http.StatusBadRequest,
+		errs.CodeOIDCInsufficientScope:              http.StatusForbidden,
+		errs.CodeOIDCResourceExists:                 http.StatusConflict,
+		errs.CodeOIDCResourceNotFound:               http.StatusNotFound,
 
 		// Token exchange (RFC 8693) subject/actor tokens.
 		errs.CodeOIDCSubjectTokenRequired:          http.StatusBadRequest,

@@ -15,6 +15,7 @@ func init() {
 		errs.CodeAPIKeyInvalid:      http.StatusUnauthorized,
 		errs.CodeAPIKeyExpired:      http.StatusUnauthorized,
 		errs.CodeAPIKeyNameRequired: http.StatusUnprocessableEntity,
+		errs.CodeAPIKeyUserNotSelf:  http.StatusForbidden,
 		errs.CodeAPIKeyInvalidID:    http.StatusBadRequest,
 	})
 }

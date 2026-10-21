@@ -29,3 +29,14 @@ func TestProbe(t *testing.T) {
 		t.Error("an unreachable server must fail")
 	}
 }
+
+// TestSchemaCheckCantTell: with no database to read, schema-check exits 2
+// ("can't tell"), never 0, so the host stops rather than switching blind.
+func TestSchemaCheckCantTell(t *testing.T) {
+	if code := schemaCheck(""); code != 2 {
+		t.Errorf("no DB_URL: exit %d, want 2", code)
+	}
+	if code := schemaCheck("postgres://nobody@127.0.0.1:1/none?sslmode=disable&connect_timeout=1"); code != 2 {
+		t.Errorf("unreachable database: exit %d, want 2", code)
+	}
+}

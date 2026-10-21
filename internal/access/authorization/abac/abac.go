@@ -527,9 +527,84 @@ type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 	gate PlanGate
+
+	presenceMu sync.Mutex
+	presence   map[uuid.UUID]presenceEntry
 }
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool, q: dbgen.New(pool)} }
+func NewService(pool *pgxpool.Pool) *Service {
+	return &Service{pool: pool, q: dbgen.New(pool), presence: map[uuid.UUID]presenceEntry{}}
+}
+
+// presenceTTL bounds how long another instance may go on skipping ABAC for a
+// tenant after a policy is added there; this instance forgets at once.
+const presenceTTL = 5 * time.Second
+
+type presenceEntry struct {
+	deny, allow bool
+	at          time.Time
+}
+
+// Presence reports whether the tenant has any enabled deny and any enabled
+// allow policy, so a decision runs ABAC only where it can change the outcome
+// (decide.Decider). Cached per tenant for presenceTTL, and forgotten on every
+// change made through this service.
+func (s *Service) Presence(ctx context.Context, tenantID uuid.UUID) (hasDeny, hasAllow bool, err error) {
+	s.presenceMu.Lock()
+	e, ok := s.presence[tenantID]
+	s.presenceMu.Unlock()
+	if ok && time.Since(e.at) < presenceTTL {
+		return e.deny, e.allow, nil
+	}
+	row, err := s.q.CountEnabledPolicies(ctx, tenantID)
+	if err != nil {
+		return false, false, err
+	}
+	e = presenceEntry{deny: row.Deny > 0, allow: row.Allow > 0, at: time.Now()}
+	s.presenceMu.Lock()
+	s.presence[tenantID] = e
+	s.presenceMu.Unlock()
+	return e.deny, e.allow, nil
+}
+
+func (s *Service) forgetPresence(tenantID uuid.UUID) {
+	s.presenceMu.Lock()
+	delete(s.presence, tenantID)
+	s.presenceMu.Unlock()
+}
+
+// SubjectAttributes is the subject namespace the platform supplies when it
+// decides for a user itself (decide.Decider): who they are, never anything the
+// caller chose, so a deny written against subject.id binds wherever it applies.
+func SubjectAttributes(userID string, tenantID uuid.UUID) map[string]any {
+	return map[string]any{"id": userID, "type": "user", "tenant_id": tenantID.String()}
+}
+
+// Resource and action of the policies that guard managing policies: a deny
+// that matches its own author here would leave nobody able to remove it.
+const (
+	policyResourceType = "policy"
+	policyWriteAction  = "write"
+)
+
+// locksOutAuthor reports whether an enabled deny policy would refuse its own
+// author the right to change policies (policy.write), which would leave the
+// tenant with nobody able to undo it. A condition error counts as a match: the
+// route guard fails closed on it too.
+func locksOutAuthor(effect, resourceType, action string, enabled bool, cond json.RawMessage, tenantID uuid.UUID, actor audit.Actor) bool {
+	if effect != "deny" || !enabled || actor.UserID == nil {
+		return false
+	}
+	if (resourceType != policyResourceType && resourceType != "*") || (action != policyWriteAction && action != "*") {
+		return false
+	}
+	matched, err := EvaluateCondition(cond, AttributeBag{
+		"subject":  SubjectAttributes(actor.UserID.String(), tenantID),
+		"resource": {"type": policyResourceType, "id": ""},
+		"context":  {},
+	})
+	return matched || err != nil
+}
 
 // PlanGate reports whether a plan-gated boolean feature is included in the
 // tenant's plan. Satisfied by operations/entitlements.Service, injected via
@@ -596,12 +671,16 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput
 	if err := validateCondition(cond); err != nil {
 		return nil, errs.ErrABACConditionInvalid
 	}
+	if locksOutAuthor(in.Effect, in.ResourceType, in.Action, in.Enabled, cond, tenantID, actor) {
+		return nil, errs.ErrABACPolicyLocksOut
+	}
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	defer s.forgetPresence(tenantID)
 
 	row, err := s.q.WithTx(tx).CreateAbacPolicy(ctx, dbgen.CreateAbacPolicyParams{
 		TenantID:     tenantID,
@@ -687,12 +766,16 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 	if err := validateCondition(cond); err != nil {
 		return nil, errs.ErrABACConditionInvalid
 	}
+	if locksOutAuthor(in.Effect, in.ResourceType, in.Action, in.Enabled, cond, tenantID, actor) {
+		return nil, errs.ErrABACPolicyLocksOut
+	}
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	defer s.forgetPresence(tenantID)
 
 	row, err := s.q.WithTx(tx).UpdateAbacPolicy(ctx, dbgen.UpdateAbacPolicyParams{
 		Name:         in.Name,
@@ -739,6 +822,7 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audi
 		return err
 	}
 	defer tx.Rollback(ctx)
+	defer s.forgetPresence(tenantID)
 
 	name, err := s.q.WithTx(tx).DeleteAbacPolicy(ctx, dbgen.DeleteAbacPolicyParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {

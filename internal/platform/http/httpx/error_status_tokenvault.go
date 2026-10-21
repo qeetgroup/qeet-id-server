@@ -18,5 +18,6 @@ func init() {
 		errs.CodeTokenVaultGrantNotFound:            http.StatusNotFound,
 		errs.CodeTokenVaultTokenExpired:             http.StatusUnauthorized,
 		errs.CodeTokenVaultScopeRequired:            http.StatusForbidden,
+		errs.CodeTokenVaultPeopleOnly:               http.StatusForbidden,
 	})
 }
