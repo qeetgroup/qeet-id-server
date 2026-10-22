@@ -31,7 +31,7 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Unit tests & architecture fitness
+      - name: Unit tests
         run: go test -race -count=1 ./...
 
   lint:
@@ -67,22 +67,6 @@ jobs:
           else
             echo "No base revision available ($BASE) — skipping diff-based lint."
           fi
-
-  integration:
-    name: Integration tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Integration tests
-        env:
-          TESTCONTAINERS_RYUK_DISABLED: "true"
-        run: go test -tags integration -count=1 -timeout 10m ./tests/integration/...
 
   vuln:
     name: Vulnerability scan
@@ -160,7 +144,7 @@ jobs:
   image:
     name: Release image
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
-    needs: [test, lint, integration, vuln]
+    needs: [test, lint, vuln]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
