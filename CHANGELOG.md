@@ -705,6 +705,15 @@ The changes below are the work staged for that first release.
   starts (`/finish` too, if passkeys were switched off since); nothing is created. Where the method is allowed,
   registration works as before.
 
+**Console passkey sign-up passes the cross-site check (2026-10-22)**
+
+* **csrf:** the console's server forwards the calls it makes before anyone is signed in with no cookie, token or
+  Origin, and passkey sign-up (`POST /v1/signup/passkey/begin` and `/finish`) was never exempt from the cross-site
+  check, so every console passkey sign-up was refused with `csrf_failed` before the browser asked for a passkey.
+  Both are now exempt, as passkey sign-in is: the body's `session_id` carries the ceremony, and no cookie session is
+  set. Adding a passkey to a signed-in account, and the hosted passkey sign-in and registration, which set the
+  hosted-login cookie, stay checked.
+
 **Toolchain (2026-10-21)**
 
 * **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:
