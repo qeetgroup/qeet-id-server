@@ -775,17 +775,32 @@ func (s *Service) BeginLogin(ctx context.Context, email string) (uuid.UUID, *pro
 func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, ip, ua string) (*auth.TokenPair, error) {
 	userID, tenantID, err := s.verifyLogin(ctx, sessionID, credential)
 	if err != nil {
+		s.recordFailure(ctx, userID, tenantID, ip, ua, err)
 		return nil, err
 	}
 	return s.auth.IssuePair(ctx, userID, tenantID, ip, ua, "passkey")
+}
+
+// recordFailure records a passkey sign-in refused for its ceremony or
+// assertion as a failed sign-in, naming the account when it was identified.
+// Errors that aren't a refusal (the store failing) aren't recorded.
+func (s *Service) recordFailure(ctx context.Context, userID, tenantID uuid.UUID, ip, ua string, err error) {
+	refusal := errs.As(err)
+	if refusal == nil || s.auth == nil {
+		return
+	}
+	s.auth.RecordSignInFailure(ctx, auth.SignInFailure{
+		TenantID: tenantID, UserID: userID, Method: "passkey", Reason: refusal.Code, IP: ip, UserAgent: ua,
+	})
 }
 
 // FinishLoginSession verifies the assertion, updates the sign counter, and
 // opens a hosted-login SSO session for the authenticated user instead of
 // issuing a token pair: it returns the user and the raw cookie value to set.
 func (s *Service) FinishLoginSession(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, ip, ua string) (uuid.UUID, string, error) {
-	userID, _, err := s.verifyLogin(ctx, sessionID, credential)
+	userID, tenantID, err := s.verifyLogin(ctx, sessionID, credential)
 	if err != nil {
+		s.recordFailure(ctx, userID, tenantID, ip, ua, err)
 		return uuid.Nil, "", err
 	}
 	raw, err := s.auth.CreatePasskeyLoginSession(ctx, userID, ip, ua)
@@ -796,7 +811,9 @@ func (s *Service) FinishLoginSession(ctx context.Context, sessionID uuid.UUID, c
 }
 
 // verifyLogin takes the login ceremony, verifies the assertion against it and
-// updates the credential's sign counter, returning who signed in.
+// updates the credential's sign counter, returning who signed in. On failure
+// it returns the account (and its organisation) when the ceremony or the
+// assertion identified one.
 func (s *Service) verifyLogin(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage) (uuid.UUID, uuid.UUID, error) {
 	kind, sessUser, sessionData, err := s.takeSession(ctx, sessionID)
 	if err != nil {
@@ -821,11 +838,11 @@ func (s *Service) verifyLogin(ctx context.Context, sessionID uuid.UUID, credenti
 		// The organisation's passkey setting is checked before the assertion
 		// is verified.
 		if err := s.passkeysAllowed(ctx, tid); err != nil {
-			return uuid.Nil, uuid.Nil, err
+			return u.id, tid, err
 		}
 		cred, err = s.wa.ValidateLogin(u, *sessionData, parsed)
 		if err != nil {
-			return uuid.Nil, uuid.Nil, errs.ErrPasskeyLoginFailed
+			return u.id, tid, errs.ErrPasskeyLoginFailed
 		}
 		loginUserID, tenantID = u.id, tid
 	case "login_discoverable":
@@ -843,18 +860,22 @@ func (s *Service) verifyLogin(ctx context.Context, sessionID uuid.UUID, credenti
 			if err != nil {
 				return nil, err
 			}
+			resolved, resolvedTenant = u, tid
 			if refused = s.passkeysAllowed(ctx, tid); refused != nil {
 				return nil, refused
 			}
-			resolved, resolvedTenant = u, tid
 			return u, nil
 		}
 		cred, err = s.wa.ValidateDiscoverableLogin(handler, *sessionData, parsed)
+		var who, whoTenant uuid.UUID
+		if resolved != nil {
+			who, whoTenant = resolved.id, resolvedTenant
+		}
 		if refused != nil {
-			return uuid.Nil, uuid.Nil, refused
+			return who, whoTenant, refused
 		}
 		if err != nil || resolved == nil {
-			return uuid.Nil, uuid.Nil, errs.ErrPasskeyLoginFailed
+			return who, whoTenant, errs.ErrPasskeyLoginFailed
 		}
 		loginUserID, tenantID = resolved.id, resolvedTenant
 	default:
@@ -874,7 +895,7 @@ func (s *Service) verifyLogin(ctx context.Context, sessionID uuid.UUID, credenti
 			"credential_id", base64.RawURLEncoding.EncodeToString(cred.ID),
 			"asserted_sign_count", cred.Authenticator.SignCount,
 		)
-		return uuid.Nil, uuid.Nil, errs.ErrPasskeyCloneDetected
+		return loginUserID, tenantID, errs.ErrPasskeyCloneDetected
 	}
 	if err := s.q.UpdatePasskeySignCount(ctx, dbgen.UpdatePasskeySignCountParams{
 		SignCount:    int64(cred.Authenticator.SignCount),
