@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -156,6 +157,12 @@ func TestSocialSignInTakesTheSecondFactorDecision(t *testing.T) {
 		}
 		if frag.Get("mfa_token") == "" || !strings.Contains(frag.Get("methods"), "totp") || loc.Query().Get("mfa_token") != "" {
 			t.Fatalf("challenge = fragment %q query %q; want mfa_token and methods in the fragment only", loc.Fragment, loc.RawQuery)
+		}
+		// The factors travel with it, as a password sign-in's challenge lists
+		// them, so the hosted login can offer each one.
+		var factors []auth.LoginFactor
+		if err := json.Unmarshal([]byte(frag.Get("factors")), &factors); err != nil || len(factors) == 0 || factors[0].Type != "totp" {
+			t.Fatalf("challenge factors = %q (%v); want the factors the account holds", frag.Get("factors"), err)
 		}
 		if cookieSet(rr) {
 			t.Fatal("the hosted sign-in cookie was set before the factor was met")
