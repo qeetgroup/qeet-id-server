@@ -852,6 +852,7 @@ paths:
         An address the organisation's address rules refuse answers 403
         auth.address_not_allowed, and no account is created.
         A body not sent as JSON is refused (415 unsupported_media_type).
+        Where the organisation has password sign-in switched off, it is refused with 403 auth.method_disabled (the answer password sign-in gives) and nothing is created.
       tags:
         - Auth
       security: []
@@ -1759,7 +1760,7 @@ paths:
   /v1/register/passkey/begin:
     post:
       operationId: post_v1_register_passkey_begin
-      description: 'Starts the passwordless counterpart to hosted tenant signup, returning the WebAuthn credential-creation options for a passkey scoped to the supplied tenant. It is gated by the tenant''s self-registration policy and is refused when self-registration is disabled. Finish the ceremony by returning the signed attestation to the tenant-scoped passkey-register finish call.'
+      description: 'Starts the passwordless counterpart to hosted tenant signup, returning the WebAuthn credential-creation options for a passkey scoped to the supplied tenant. It is gated by the tenant''s self-registration policy and is refused when self-registration is disabled. Finish the ceremony by returning the signed attestation to the tenant-scoped passkey-register finish call. Where the organisation has passkeys switched off, it is refused with 403 passkey.disabled before a ceremony starts.'
       summary: Passkey-first signup begin (tenant-scoped hosted signup)
       tags:
         - Passkeys
@@ -1798,7 +1799,7 @@ paths:
   /v1/register/passkey/finish:
     post:
       operationId: post_v1_register_passkey_finish
-      description: 'Completes passwordless hosted signup by verifying the authenticator attestation and creating the user in the ceremony''s tenant with the passkey as its credential. On success it sets the hosted-login SSO cookie so the browser continues into the OAuth authorize and consent flow rather than returning bearer tokens. The account is passwordless and its passkey satisfies MFA on its own. A body not sent as JSON is refused (415 unsupported_media_type).'
+      description: 'Completes passwordless hosted signup by verifying the authenticator attestation and creating the user in the ceremony''s tenant with the passkey as its credential. On success it sets the hosted-login SSO cookie so the browser continues into the OAuth authorize and consent flow rather than returning bearer tokens. The account is passwordless and its passkey satisfies MFA on its own. A body not sent as JSON is refused (415 unsupported_media_type). A ceremony finished after the organisation switched passkeys off is refused with 403 passkey.disabled and nothing is created.'
       summary: Passkey-first signup finish (tenant-scoped hosted signup)
       tags:
         - Passkeys

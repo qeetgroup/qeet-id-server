@@ -695,6 +695,16 @@ The changes below are the work staged for that first release.
   exchanges are exempt (credentials in the request, no cookie session). Basic credentials, which a browser can
   replay on its own, a cookie change without the token and a cross-site form post are still refused.
 
+**Registration honours the organisation's sign-in methods (2026-10-21)**
+
+* **registration:** an organisation can switch password or passkey sign-in off, but hosted self-registration
+  still made a password account where passwords were off and signed the person straight in, passkey-founded
+  registration still enrolled a passkey where passkeys were off, and an invitation could still be accepted with a
+  password where passwords were off. `POST /v1/auth/register` and `POST /v1/invites/accept` are now refused with
+  `403 auth.method_disabled`, and `POST /v1/register/passkey/begin` with `403 passkey.disabled` before a ceremony
+  starts (`/finish` too, if passkeys were switched off since); nothing is created. Where the method is allowed,
+  registration works as before.
+
 **Toolchain (2026-10-21)**
 
 * **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:

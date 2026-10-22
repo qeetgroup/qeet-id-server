@@ -2419,7 +2419,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: 'Creates the invited account and signs it in. Its address is not verified by this: the invitation link is also returned to the inviter to share, so the account proves the address later with a code or link sent to it (its invitations inbox stays closed until then). The response is a token pair, or, where the organisation requires a second factor, the sign-in''s challenge instead (mfa_required, mfa_token and, for an account with no factor yet, enrollment_required), met as at sign-in.'
+      description: 'Creates the invited account and signs it in. Its address is not verified by this: the invitation link is also returned to the inviter to share, so the account proves the address later with a code or link sent to it (its invitations inbox stays closed until then). The response is a token pair, or, where the organisation requires a second factor, the sign-in''s challenge instead (mfa_required, mfa_token and, for an account with no factor yet, enrollment_required), met as at sign-in. Where the inviting organisation has password sign-in switched off, accepting with a password is refused with 403 auth.method_disabled and nothing is created.'
       responses:
         '201':
           description: Created

@@ -766,8 +766,9 @@ func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, t
 
 // RegisterInTenant creates a new end-user in the given tenant from the hosted
 // signup flow and signs them in by minting the SSO session cookie value. It is
-// gated by the tenant's self_registration_enabled policy and checks the
-// password against that tenant's rules (see RegistrationPolicy). Returns
+// gated by the tenant's self_registration_enabled policy, refused with
+// ErrAuthMethodDisabled where the tenant has password sign-in off, and checks
+// the password against that tenant's rules (see RegistrationPolicy). Returns
 // the created user and either the raw cookie value to write via
 // SetLoginSessionCookie or, when the organisation requires MFA, an enrolment
 // challenge to meet first (see mfapolicy.go).
@@ -781,6 +782,10 @@ func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, emai
 	}
 	if !enabled {
 		return nil, nil, errs.ErrAuthSelfRegistrationDisabled
+	}
+	// A password account isn't made where passwords can't sign in.
+	if err := s.passwordAllowed(ctx, tenantID); err != nil {
+		return nil, nil, err
 	}
 	// Nobody joins an organisation from an address it doesn't allow.
 	if err := s.checkAddress(ctx, tenantID, uuid.Nil, ip, "hosted_signup"); err != nil {
