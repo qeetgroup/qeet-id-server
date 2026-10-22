@@ -183,42 +183,14 @@ func NewRouter(d Deps) http.Handler {
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
-	// CSRF: enforced on browser cookie-bearing requests; bearer-token
-	// (Authorization: Bearer …) traffic bypasses entirely. Lives above the route
-	// groups so every cookie-session mutation inherits the check.
+	// CSRF: enforced on browser cookie-bearing requests; traffic authorised by
+	// a bearer token or an API key bypasses it. Lives above the route groups so
+	// every cookie-session mutation inherits the check.
 	//
 	// CSRFDisabled is an explicit escape hatch for dev/Postman testing only
 	// — main.go refuses to start with CSRF_DISABLED outside SERVICE_ENV=dev.
 	if !d.CSRFDisabled {
-		r.Use(httpx.CSRF(httpx.CSRFConfig{
-			AllowedOrigins: d.AllowedOrigins,
-			CookieSecure:   d.ServiceEnv != config.EnvDev,
-			CookieDomain:   d.CSRFCookieDomain,
-			// Exempt paths, two buckets:
-			//  1. Machine/IdP-driven, authenticated by something other than a
-			//     browser session: SAML ACS (XML-DSig) + IdP SSO POST binding;
-			//     OAuth revoke/introspect (client creds, RFC 7009/7662); the
-			//     code + device-authorization token endpoints (RFC 8628).
-			//  2. Public PRE-AUTH endpoints that bootstrap a *Bearer* token (not a
-			//     cookie session): signup/login/refresh, password recovery, magic
-			//     link, passkey login, social, invite-accept. They carry no cookie
-			//     session to forge; the token response can't be read or stored
-			//     cross-origin by an attacker; and CORS origin-checks + rate limits
-			//     already gate them — so the double-submit only adds friction.
-			//     NB: /v1/auth/session (the cookie-session creator) is deliberately
-			//     NOT exempt — it stays CSRF-protected, as does the hosted
-			//     magic-link exchange (/v1/auth/magic-link/session) and the
-			//     hosted passkey sign-in (/v1/passkeys/login/session), which set
-			//     the same cookie.
-			// Entries are exact paths unless they end in "/" (prefix) or contain
-			// "*" (one path segment). Keep them narrow: a prefix over a whole
-			// feature area also exempts every authenticated mutation later added
-			// under it. Two such cases were found and closed here — "/v1/social/"
-			// was exempting POST /v1/social/providers (a connection.write that
-			// overwrites a tenant's social IdP), and "/v1/oauth/bc-authorize" as
-			// a prefix was exempting the authenticated .../decision endpoint.
-			ExemptPaths: csrfExemptPaths(),
-		}))
+		r.Use(CSRF(d.AllowedOrigins, d.ServiceEnv != config.EnvDev, d.CSRFCookieDomain))
 	}
 
 	// newLimiter builds an in-process limiter, or a Redis-backed one when a
@@ -464,6 +436,40 @@ func LoginSessionRoutes() []string {
 	}
 }
 
+// CSRF is the production cross-site request check (httpx.CSRF) with the
+// production exemptions, as NewRouter mounts it.
+func CSRF(allowedOrigins []string, cookieSecure bool, cookieDomain string) func(http.Handler) http.Handler {
+	return httpx.CSRF(httpx.CSRFConfig{
+		AllowedOrigins: allowedOrigins,
+		CookieSecure:   cookieSecure,
+		CookieDomain:   cookieDomain,
+		// Exempt paths, two buckets:
+		//  1. Machine/IdP-driven, authenticated by something other than a
+		//     browser session: SAML ACS (XML-DSig) + IdP SSO POST binding;
+		//     OAuth revoke/introspect (client creds, RFC 7009/7662); the
+		//     code + device-authorization token endpoints (RFC 8628).
+		//  2. Public PRE-AUTH endpoints that bootstrap a *Bearer* token (not a
+		//     cookie session): signup/login/refresh, password recovery, magic
+		//     link, passkey login, social, invite-accept. They carry no cookie
+		//     session to forge; the token response can't be read or stored
+		//     cross-origin by an attacker; and CORS origin-checks + rate limits
+		//     already gate them — so the double-submit only adds friction.
+		//     NB: /v1/auth/session (the cookie-session creator) is deliberately
+		//     NOT exempt — it stays CSRF-protected, as does the hosted
+		//     magic-link exchange (/v1/auth/magic-link/session) and the
+		//     hosted passkey sign-in (/v1/passkeys/login/session), which set
+		//     the same cookie.
+		// Entries are exact paths unless they end in "/" (prefix) or contain
+		// "*" (one path segment). Keep them narrow: a prefix over a whole
+		// feature area also exempts every authenticated mutation later added
+		// under it. Two such cases were found and closed here — "/v1/social/"
+		// was exempting POST /v1/social/providers (a connection.write that
+		// overwrites a tenant's social IdP), and "/v1/oauth/bc-authorize" as
+		// a prefix was exempting the authenticated .../decision endpoint.
+		ExemptPaths: csrfExemptPaths(),
+	})
+}
+
 // csrfExemptPaths lists the paths that skip the double-submit/origin check.
 // Extracted so TestNoAuthenticatedRouteIsCSRFExempt can assert the list never
 // covers a route in the authenticated tree.
@@ -471,7 +477,9 @@ func csrfExemptPaths() []string {
 	return []string{
 		"/saml/acs/", "/saml/idp/sso", "/oauth/revoke", "/oauth/introspect",
 		"/v1/oauth/token-code", "/v1/oauth/device_authorization",
-		"/v1/oauth/bc-authorize", // exact: .../decision below it is authenticated
+		"/v1/oauth/token",         // service-principal client credentials, in the form or Basic; no cookie session
+		"/v1/ldap/*/authenticate", // directory credentials in the body, answered with a token pair; no cookie session
+		"/v1/oauth/bc-authorize",  // exact: .../decision below it is authenticated
 		"/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh",
 		"/v1/auth/mfa",  // completes a token-flow sign-in: the mfa_token, not a cookie, is the credential
 		"/v1/auth/mfa/", // its helpers (send a code, begin a passkey, send a push) — likewise
