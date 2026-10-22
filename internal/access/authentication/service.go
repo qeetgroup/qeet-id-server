@@ -81,10 +81,12 @@ type Service struct {
 	sessionIdle   time.Duration
 	// uses throttles the record of sessions' use; see SessionUsed.
 	uses sessionUses
+	// failures bounds the record of failed sign-ins; see signinaudit.go.
+	failures failureBound
 }
 
 func NewService(pool *pgxpool.Pool, users *user.Repository, t *tokens.Issuer) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), users: users, tokens: t, lockout: DefaultLockoutConfig()}
+	return &Service{pool: pool, q: dbgen.New(pool), users: users, tokens: t, lockout: DefaultLockoutConfig(), failures: newFailureBound()}
 }
 
 // SetSessionSignals wires the announcement of ended sessions (session.revoked
@@ -327,6 +329,8 @@ type SignInAttempt struct {
 	// ClientID is the OAuth client a hosted login is serving ("" = none). Its
 	// tenant's lockout settings apply (see SignInTenant).
 	ClientID string
+	// UserAgent is the browser's, for the record of a failed attempt.
+	UserAgent string
 }
 
 type SignupInput struct {
@@ -675,7 +679,7 @@ func carrySecondFactor(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID, fact
 // (complete it via CompleteMFALoginWith). Otherwise it returns a full token
 // pair.
 func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error) {
-	u, claims, err := s.CheckPassword(ctx, SignInAttempt{Email: in.Email, Password: in.Password, IP: in.IP})
+	u, claims, err := s.CheckPassword(ctx, SignInAttempt{Email: in.Email, Password: in.Password, IP: in.IP, UserAgent: in.UserAgent})
 	if err != nil {
 		return nil, err
 	}
@@ -726,6 +730,7 @@ func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, t
 	if err := s.checkAddress(ctx, clientTenant, uuid.Nil, in.IP, "hosted_password"); err != nil {
 		return nil, err
 	}
+	in.UserAgent = ua
 	u, _, err := s.CheckPassword(ctx, in)
 	if err != nil {
 		return nil, err
@@ -959,8 +964,9 @@ func (m metChallenge) method() string {
 // confirms the authenticator app started for it, or skipped while the grace
 // period runs (see mfapolicy.go). Shared by the token flow
 // (CompleteMFALoginWith) and the hosted cookie flow
-// (CompleteMFALoginSessionWith).
-func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken string, proof MFAProof) (metChallenge, error) {
+// (CompleteMFALoginSessionWith). A wrong proof is recorded as a failed
+// sign-in, from ip and ua.
+func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken string, proof MFAProof, ip, ua string) (metChallenge, error) {
 	if s.mfa == nil {
 		return metChallenge{}, errs.ErrNotImplemented
 	}
@@ -1083,6 +1089,13 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken str
 		if err := tx.Commit(ctx); err != nil {
 			return metChallenge{}, err
 		}
+		failure := SignInFailure{UserID: userID, Method: "mfa", Reason: FailureCodeInvalid, IP: ip, UserAgent: ua,
+			Metadata: map[string]any{"proof": metProofKind(proof, enrollment, riskEmail), "first_factor": firstFactor,
+				"remaining_attempts": max(min(remaining, accountRemaining), 0)}}
+		if tenantID != nil {
+			failure.TenantID = *tenantID
+		}
+		s.RecordSignInFailure(ctx, failure)
 		if remaining <= 0 || accountRemaining <= 0 {
 			return metChallenge{}, errs.ErrMFAAttemptsExceeded.WithMetadata(map[string]any{"remaining_attempts": 0})
 		}
@@ -1225,7 +1238,7 @@ func (s *Service) CompleteMFALogin(ctx context.Context, mfaToken, code, ip, ua s
 // code confirming the authenticator app set up for it (whose new recovery
 // codes it also returns) or a skip in the grace period.
 func (s *Service) CompleteMFALoginWith(ctx context.Context, mfaToken string, proof MFAProof, ip, ua string) (*TokenPair, []string, error) {
-	met, err := s.verifyAndConsumeMFAChallenge(ctx, mfaToken, proof)
+	met, err := s.verifyAndConsumeMFAChallenge(ctx, mfaToken, proof, ip, ua)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1283,7 +1296,7 @@ func (s *Service) CompleteMFALoginSession(ctx context.Context, mfaToken, code, i
 func (s *Service) CompleteMFALoginSessionWith(ctx context.Context, mfaToken string, proof MFAProof, ip, ua string) (*MFALoginSession, error) {
 	// Any hook claims stashed on the challenge are discarded here — see the
 	// note in BeginLoginSession on why this cookie flow doesn't carry them.
-	met, err := s.verifyAndConsumeMFAChallenge(ctx, mfaToken, proof)
+	met, err := s.verifyAndConsumeMFAChallenge(ctx, mfaToken, proof, ip, ua)
 	if err != nil {
 		return nil, err
 	}
@@ -1325,7 +1338,18 @@ func (s *Service) CheckPassword(ctx context.Context, in SignInAttempt) (*user.Us
 	if err != nil {
 		return nil, nil, err
 	}
+	failure := SignInFailure{TenantID: signInTenant, Method: "password", IP: in.IP, UserAgent: in.UserAgent}
 	if err := s.checkLockout(ctx, attempt); err != nil {
+		if errors.Is(err, errs.ErrAuthAccountLocked) || errors.Is(err, errs.ErrTooManyRequests) {
+			failure.Reason = FailureAccountLocked
+			if errors.Is(err, errs.ErrTooManyRequests) {
+				failure.Reason = FailureSourceThrottled
+			}
+			if locked, lerr := s.users.GetByEmailGlobal(ctx, in.Email); lerr == nil {
+				failure.UserID = locked.ID
+			}
+			s.RecordSignInFailure(ctx, failure)
+		}
 		return nil, nil, err
 	}
 	u, err := s.users.GetByEmailGlobal(ctx, in.Email)
@@ -1333,9 +1357,11 @@ func (s *Service) CheckPassword(ctx context.Context, in SignInAttempt) (*user.Us
 		if errors.Is(err, errs.ErrNotFound) {
 			// No such account: spend a password verification and count the
 			// failure exactly as for a wrong password, so neither the answer,
-			// its timing nor the lockout tells the two apart.
+			// its timing nor the lockout tells the two apart. Its record
+			// names no person.
 			verifyPassword("", in.Password)
-			if err := s.recordFailedSignIn(ctx, attempt); err != nil {
+			failure.Reason = FailureUnknownAccount
+			if err := s.recordFailedSignIn(ctx, attempt, failure); err != nil {
 				return nil, nil, err
 			}
 			return nil, nil, errs.ErrAuthInvalidCredentials
@@ -1350,7 +1376,8 @@ func (s *Service) CheckPassword(ctx context.Context, in SignInAttempt) (*user.Us
 		return nil, nil, err
 	}
 	if !verifyPassword(hash, in.Password) {
-		if err := s.recordFailedSignIn(ctx, attempt); err != nil {
+		failure.UserID, failure.Reason = u.ID, FailureWrongPassword
+		if err := s.recordFailedSignIn(ctx, attempt, failure); err != nil {
 			return nil, nil, err
 		}
 		return nil, nil, errs.ErrAuthInvalidCredentials

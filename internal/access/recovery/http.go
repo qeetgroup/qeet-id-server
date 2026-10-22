@@ -84,6 +84,7 @@ func (h *Handler) forgot(w http.ResponseWriter, r *http.Request) {
 	raw, err := h.Service.StartPasswordResetFrom(r.Context(), in.Email, ResetOrigin{
 		App:      in.App,
 		ReturnTo: authorizeReturnTo(r, in.ReturnTo),
+		Audit:    AuditCtx{IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)},
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -145,11 +146,12 @@ func (h *Handler) magicStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Service.RequestMagicLink(r.Context(), MagicLinkRequest{
-		Email:    in.Email,
-		TenantID: in.TenantID,
-		App:      in.App,
-		ReturnTo: authorizeReturnTo(r, in.ReturnTo),
-		Caller:   httpx.ClientIP(r),
+		Email:     in.Email,
+		TenantID:  in.TenantID,
+		App:       in.App,
+		ReturnTo:  authorizeReturnTo(r, in.ReturnTo),
+		Caller:    httpx.ClientIP(r),
+		UserAgent: r.UserAgent(),
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return

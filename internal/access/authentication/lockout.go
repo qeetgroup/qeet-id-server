@@ -276,14 +276,17 @@ func (s *Service) checkLockout(ctx context.Context, a signInAttempt) error {
 
 // recordFailedSignIn counts a failed attempt on all three counters in one
 // transaction, then reports any lock or throttle it set — once, from the
-// attempt that set it.
-func (s *Service) recordFailedSignIn(ctx context.Context, a signInAttempt) error {
+// attempt that set it — and records the failure and what it set in the audit
+// trail (signinaudit.go).
+func (s *Service) recordFailedSignIn(ctx context.Context, a signInAttempt, f SignInFailure) error {
 	ctx, cancel := lockoutContext(ctx)
 	defer cancel()
 	locks, throttle, err := s.countFailure(ctx, a)
 	if err != nil {
 		return lockoutFailed(stageRecord, err)
 	}
+	s.RecordSignInFailure(ctx, f)
+	s.recordLocks(ctx, f, locks, throttle)
 	for _, lock := range locks {
 		lockoutsSet.WithLabelValues(lock.Counter).Inc()
 		slog.Warn("sign-in lockout: account locked",

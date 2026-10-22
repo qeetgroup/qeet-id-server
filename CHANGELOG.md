@@ -666,6 +666,25 @@ The changes below are the work staged for that first release.
 * **crypto:** opening an envelope-encrypted value with a stored nonce of the wrong length panicked; it is now
   refused with an error.
 
+**Failed sign-ins and recovery requests reach the organisation's trail (2026-10-21)**
+
+* **audit:** an organisation's audit trail, and the log stream built on it, recorded successful sign-ins only, so
+  a credential-stuffing run against its members was invisible to it, and a completed password reset was recorded
+  with no organisation. Now recorded, under the organisation the sign-in was for (or the account's own), naming
+  the account or no one for an address with no account, with the reason and the source and never what was
+  submitted:
+  * `auth.sign_in_failed` for a wrong password, an unknown address, an attempt against a locked account or from a
+    throttled network (method `password`), a wrong second-factor proof (`mfa`, reason `code_invalid`) and a
+    refused passkey ceremony or assertion (`passkey`, reason the error code);
+  * `auth.account_locked` (with `locked_until`, when the lock lifts) and `auth.source_throttled` for the locks and
+    throttles failures set;
+  * `auth.password_reset_requested` and `auth.magic_link_requested` for requests for an account, and
+    `auth.password_reset_confirmed` and the reset's `email.verified` now carry the account's organisation.
+
+  Failure records are bounded per organisation and source network (20, then ten a minute) and per organisation
+  (200, then two a second), counted in `sign_in_failures_unrecorded_total{method}` past the bound; request
+  records per account (ten, then one a minute), counted in `recovery_requests_unrecorded_total{action}`.
+
 **Toolchain (2026-10-21)**
 
 * **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:
