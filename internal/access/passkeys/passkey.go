@@ -511,7 +511,9 @@ func (s *Service) BeginSignup(ctx context.Context, email, displayName string) (u
 
 // BeginTenantSignup starts the same ceremony scoped to a tenant's hosted
 // signup flow — the passwordless counterpart to auth.Service.RegisterInTenant.
-// Gated by the same self_registration_enabled policy.
+// Gated by the same self_registration_enabled policy, and refused with
+// ErrPasskeyDisabled, before a ceremony starts, where the tenant has passkeys
+// off.
 func (s *Service) BeginTenantSignup(ctx context.Context, tenantID uuid.UUID, email, displayName string) (uuid.UUID, *protocol.CredentialCreation, error) {
 	enabled, err := s.auth.SelfRegistrationEnabled(ctx, tenantID)
 	if err != nil {
@@ -519,6 +521,9 @@ func (s *Service) BeginTenantSignup(ctx context.Context, tenantID uuid.UUID, ema
 	}
 	if !enabled {
 		return uuid.Nil, nil, errs.ErrAuthSelfRegistrationDisabled
+	}
+	if err := s.passkeysAllowed(ctx, tenantID); err != nil {
+		return uuid.Nil, nil, err
 	}
 	return s.beginSignup(ctx, tenantID, email, displayName)
 }
@@ -630,6 +635,10 @@ func (s *Service) FinishTenantSignup(ctx context.Context, sessionID uuid.UUID, c
 	}
 	if sess.tenantID == uuid.Nil || sess.inviteID != uuid.Nil {
 		return uuid.Nil, "", errs.ErrPasskeySessionInvalid
+	}
+	// The organisation may have switched passkeys off since the ceremony began.
+	if err := s.passkeysAllowed(ctx, sess.tenantID); err != nil {
+		return uuid.Nil, "", err
 	}
 	userID, err := s.createUserFromSignup(ctx, sess, cred, name, nil)
 	if err != nil {
