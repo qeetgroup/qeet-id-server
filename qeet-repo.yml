@@ -49,8 +49,7 @@ architecture:
     - internal/developer     # API keys, principals, agents, webhooks, vaults
     - internal/operations    # audit, billing, GDPR, analytics, SIEM, retention
   boundary_enforcement:
-    mechanism: build-time-test
-    path: tests/architecture/arch_test.go
+    mechanism: none          # documented rules only; no test enforces them
     rules:
       R1: internal/platform/* imports no bounded context, no cmd/*, not internal/bootstrap
       R2: bounded contexts import neither cmd/* nor internal/bootstrap
@@ -69,7 +68,7 @@ contracts:
     format: openapi-3.1
     documents: 5           # auth, management, federation, developer, operations
     version: "0.2.0"
-    coverage_gate: tests/integration/coverage_test.go
+    coverage_gate: internal/bootstrap/openapi_coverage_test.go
   postman: api/postman/
   ai_tools: api/qeetai/tools.manifest.json
 
@@ -112,7 +111,7 @@ security:
 
 ci:
   workflows: [.github/workflows/ci.yml, .github/workflows/deploy.yml]
-  jobs: [test, lint, integration, vuln, sast, image, deploy]
+  jobs: [test, lint, vuln, sast, image, deploy]
   deploy_trigger: push to main
   release_image: "ci.yml job `image` — push to release/** after all gates: ghcr.io/qeetgroup/qeet-id-server:sha-<commit>, linux/amd64+arm64, OCI + in.qeet.* labels (consumed by the Qeet ID Kit, qeet-id-kit)"
 

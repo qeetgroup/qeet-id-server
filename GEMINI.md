@@ -42,7 +42,7 @@ database, chi router, port 4001.
 
 ## Commands
 
-`make install · dev-secrets · dev · build · test · test-integration · lint · bench · db-up · db-down ·
+`make install · dev-secrets · dev · build · test · lint · db-up · db-down ·
 db-reset · migrate-up · migrate-down · seed · seed-reset · kill`
 
 That list is complete. **Do not invent targets.** `make lint` runs `go vet` only; CI also runs
@@ -52,5 +52,4 @@ That list is complete. **Do not invent targets.** `make lint` runs `go vet` only
 
 ```bash
 go build ./... && go test -race ./... && make lint && git diff
-make test-integration      # if a route changed
 ```

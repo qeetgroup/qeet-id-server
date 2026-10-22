@@ -113,7 +113,7 @@ tests/        architecture · integration · performance · security · fixtures
 docs/llm/     architecture documentation for coding agents
 ```
 
-Two boundary rules are enforced by [tests/architecture](./tests/architecture/) and fail CI:
+Two boundary rules (not enforced by a test):
 `internal/platform/*` must not import a bounded context, `cmd/*` or `internal/bootstrap`; and a
 bounded context must not import `cmd/*` or `internal/bootstrap`.
 
@@ -129,7 +129,7 @@ bounded context must not import `cmd/*` or `internal/bootstrap`.
 | Events | PostgreSQL transactional outbox, optional NATS |
 | Rate limiting | In-process token buckets, optional Redis |
 | Observability | Prometheus metrics, OpenTelemetry tracing, structured logs |
-| Testing | Go test, Testcontainers, k6, gosec, govulncheck |
+| Testing | Go test, Testcontainers, gosec, govulncheck |
 | Container | Multi-stage Docker build, distroless non-root runtime |
 
 ## 🚀 Quick start
@@ -208,10 +208,8 @@ Every target in the [Makefile](./Makefile) — there are no others.
 | `make dev` | Run the API on `:4001` with persistent keys from `.secrets/` |
 | `make dev-secrets` | Generate the local JWT and SAML key material only |
 | `make build` | Compile the API to `bin/qeet-id` |
-| `make test` | Run unit and architecture fitness tests |
-| `make test-integration` | Run integration flows against Testcontainers PostgreSQL; Docker required |
+| `make test` | Run the unit tests |
 | `make lint` | Run `go vet ./...` |
-| `make bench` | Run k6 discovery and authorization checks; needs `make db-up seed dev` first |
 | `make db-up` / `db-down` | Start or stop PostgreSQL, NATS and Mailpit |
 | `make db-reset` | Recreate the local database volume |
 | `make migrate-up` / `migrate-down` | Apply or roll back one migration; needs the `migrate` CLI |
@@ -224,7 +222,6 @@ Before opening a pull request:
 
 ```bash
 go build ./... && go test -race ./... && make lint
-make test-integration      # if the change touched a route
 ```
 
 CI adds race detection, `golangci-lint` on changed code, integration tests, `govulncheck`, and
@@ -238,9 +235,8 @@ an advisory `gosec` scan.
 
 - [api/openapi/](./api/openapi/) holds five self-contained, bounded-context OpenAPI 3.1 documents —
   `auth.yaml` (access), `management.yaml` (identity), `federation.yaml`, `developer.yaml` and
-  `operations.yaml`. There is no monolithic `openapi.yaml`; merge them with
-  `go run ./tools/openapi-split merge`.
-- **A route added without a matching specification entry fails CI** — `tests/integration/coverage_test.go`
+  `operations.yaml`. There is no monolithic `openapi.yaml`.
+- **A route added without a matching specification entry fails CI** — `internal/bootstrap/openapi_coverage_test.go`
   asserts every mounted route is documented. Update the spec in the same change as the route.
 - [api/postman/](./api/postman/) provides an importable collection and environment.
 - [Documentation](https://docs.qeet.in) covers product concepts and integration guidance.
@@ -253,7 +249,6 @@ an advisory `gosec` scan.
 | [docs/llm/architecture-map.md](./docs/llm/architecture-map.md) | "Where is X?" answered in one hop |
 | [docs/llm/context.md](./docs/llm/context.md) | How the backend actually works |
 | [qeet-repo.yml](./qeet-repo.yml) | Machine-readable repository identity |
-| [ROADMAP.md](./ROADMAP.md) | Shipped versus planned |
 
 Three things reliably surprise newcomers:
 

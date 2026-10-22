@@ -24,7 +24,6 @@ cmd/*  →  internal/bootstrap  →  internal/<context>  →  internal/platform
 - **all wiring goes in `internal/bootstrap`**
 
 Contexts: `access` · `identity` · `federation` · `developer` · `operations`.
-Violations fail `tests/architecture/arch_test.go`.
 
 ## Security-critical — review carefully
 
@@ -52,7 +51,7 @@ database catches.
 ## API contracts
 
 `api/openapi/` — five OpenAPI 3.1 documents. **Adding a route without documenting it fails CI**
-(`tests/integration/coverage_test.go`). Update the route and the spec in the same change.
+(`internal/bootstrap/openapi_coverage_test.go`). Update the route and the spec in the same change.
 
 ## Migrations
 
@@ -62,7 +61,6 @@ database catches.
 ## Tests
 
 New behaviour ships with a test. Anything touching tenant scoping needs a cross-tenant denial test.
-`go test -race ./...` includes the architecture fitness test.
 
 ## Do not
 

@@ -17,7 +17,6 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Agent instructions | [`AGENTS.md`](../../AGENTS.md) |
 | Product architecture (L1) | `qeetgroup/qeet-id-context` |
 | Organization standards (L0) | `qeetgroup/qeet-context` |
-| Shipped-vs-planned status | [`ROADMAP.md`](../../ROADMAP.md) — see the staleness note in [context.md](context.md#known-technical-debt) |
 
 ## Entrypoints
 
@@ -204,13 +203,8 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 
 | Kind | Path |
 |---|---|
-| **Architecture fitness (R1/R2)** | `tests/architecture/arch_test.go` |
-| Integration (Testcontainers) | `tests/integration/` — 18 files, `-tags integration` |
-| **OpenAPI route coverage gate** | `tests/integration/coverage_test.go` |
-| Security regression | `tests/security/{auth_bypass,csrf,headers}_test.go` |
-| Semgrep rule — no raw SQL fmt | `tests/security/semgrep/no-raw-sql-fmt.yaml` |
-| k6 performance | `tests/performance/` |
-| Shared harness | `tests/fixtures/` |
+| Unit | `_test.go` beside the source |
+| **OpenAPI route coverage gate** | `internal/bootstrap/openapi_coverage_test.go` |
 
 ## Build, CI, deploy
 
@@ -220,9 +214,8 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Linter config | `.golangci.yml` |
 | Container | `Dockerfile` |
 | Local dependencies | `docker-compose.yml` — postgres :5001, nats :4222, mailpit :8025 |
-| CI | `.github/workflows/ci.yml` — test · lint · integration · vuln · sast |
+| CI | `.github/workflows/ci.yml` — test · lint · vuln · sast |
 | Deploy (on `main`) | `.github/workflows/deploy.yml` |
-| Tooling | `tools/` — openapi-split, migration-tools, qa, scripts |
 
 **Deployment manifests are not in this repository** — Terraform and the rollout live in
 `qeetgroup/qeet-id-deploy`.

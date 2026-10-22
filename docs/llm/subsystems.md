@@ -347,18 +347,14 @@ server.go          30 lines — HTTP server
 `rbac.Enforce` … Only end-user principals are gated (API keys / service principals bypass — see
 `rbac.Enforce`); routes absent here are ungated (public, self-service, or tenant-create)."*
 
-**Tests** **zero unit tests.** `bootstrap` is covered **only** through `tests/integration/`.
-
-> **Consequence:** a mistake in `router.go` or `permissions.go` will not be caught by `go test ./...`.
-> It needs `make test-integration`. This is the least unit-tested and most security-sensitive package
-> in the repository.
+**Tests** `permissions_test.go` and `openapi_coverage_test.go` walk the production router: every
+authenticated route needs an explicit policy, and every route must be in the OpenAPI spec.
 
 ---
 
 ## Cross-context imports — the unguarded seam
 
-`tests/architecture/arch_test.go` enforces R1 and R2 but states verbatim: *"Cross-context imports are
-not yet enforced."*
+No test enforces R1, R2 or cross-context imports.
 
 **Status:** verified · **Evidence:** import-graph scan — 38 import statements across 8 pairs
 

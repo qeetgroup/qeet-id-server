@@ -68,7 +68,7 @@ looking for one.
 
 ### 3. Preserve package boundaries
 
-Two rules are **enforced by a test** (`tests/architecture/arch_test.go`) and will fail CI:
+Two rules (no test enforces them; review does):
 
 - **R1** — `internal/platform/*` must not import a bounded context, `cmd/*`, or `internal/bootstrap`.
 - **R2** — a bounded context must not import `cmd/*` or `internal/bootstrap`.
@@ -84,8 +84,8 @@ workers are wired **there**, not in the package that defines them.
 ### 5. Preserve API contracts
 
 `api/openapi/` is the contract, split into five bounded-context documents. **A route added without
-documenting it fails CI** — `tests/integration/coverage_test.go` asserts every mounted route appears
-in a specification. Update the spec in the same change as the route.
+documenting it fails CI** — `internal/bootstrap/openapi_coverage_test.go` asserts every mounted route
+appears in a specification. Update the spec in the same change as the route.
 
 ### 6. Preserve tenant isolation — the highest-severity rule here
 
@@ -146,18 +146,15 @@ make install          # go mod download
 make dev              # run the API on :4001 (persistent JWT + SAML keys from .secrets/)
 make dev-secrets      # generate local dev key material
 make build            # go build -o bin/qeet-id ./cmd/api
-make test             # go test ./...            (includes the architecture fitness test)
-make test-integration # go test -tags integration ./tests/integration/...
+make test             # go test ./...
 make lint             # go vet ./...             (NOT golangci-lint — see below)
-make bench            # k6 performance run
 make db-up/db-down/db-reset      # docker compose: postgres :5001, nats :4222, mailpit :8025
 make migrate-up/migrate-down     # one migration at a time
 make seed/seed-reset             # demo data (development only)
 make kill                        # free a stuck :4001
 ```
 
-There is no `make help`, no `dev-*` variants beyond `dev-secrets`, and no `test-*` beyond
-`test-integration`.
+There is no `make help`, no `dev-*` variants beyond `dev-secrets`, and no `test-*` variants.
 
 **`make lint` runs `go vet` only.** CI additionally runs `golangci-lint` v2.14.0 on new code, with
 `errcheck`, `govet`, `staticcheck` and `misspell`. Passing `make lint` locally does not mean CI lint
@@ -171,12 +168,11 @@ Single test: `go test ./internal/access/authentication/... -run TestName`
 
 | Job | Runs |
 |---|---|
-| `test` | `go build ./...`, `go vet ./...`, `go test -race -count=1 ./...` — includes architecture fitness |
+| `test` | `go build ./...`, `go vet ./...`, `go test -race -count=1 ./...` — includes the OpenAPI route-coverage gate |
 | `lint` | `golangci-lint` v2.14.0, new code only |
-| `integration` | `go test -tags integration ./tests/integration/...` — **includes the OpenAPI route-coverage gate** |
 | `vuln` | `govulncheck ./cmd/... ./internal/...` blocking, plus an advisory full-tree scan |
 | `sast` | `gosec` — advisory, reports findings as a warning |
-| `image` | On push to `release/**` only, after `test`/`lint`/`integration`/`vuln`: publish `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>` (amd64+arm64) for the Qeet ID Kit (`qeet-id-kit`). Never computes an RC number |
+| `image` | On push to `release/**` only, after `test`/`lint`/`vuln`: publish `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>` (amd64+arm64) for the Qeet ID Kit (`qeet-id-kit`). Never computes an RC number |
 | `deploy` | On push to `main` only: build, deploy to AWS via OIDC, then tag |
 
 ---
@@ -185,12 +181,10 @@ Single test: `go test ./internal/access/authentication/... -run TestName`
 
 ```bash
 go build ./...
-go test -race ./...        # architecture fitness runs here
+go test -race ./...        # includes the OpenAPI route-coverage gate
 make lint
 git diff                   # no secrets, no unrelated changes, no generated junk
 ```
-
-If the change touched a route: also run `make test-integration`, or CI will fail on route coverage.
 
 ---
 

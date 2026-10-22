@@ -2,7 +2,7 @@
 
 **Level:** L2 — repository · **Last verified:** 2026-08-28
 **Verification scope:** ownership derived from the repository tree and from the L1 repository map in
-`qeet-id-context/REPOSITORIES.md`. Enforced boundaries confirmed in `tests/architecture/arch_test.go`.
+`qeet-id-context/REPOSITORIES.md`. Boundary rules R1/R2 are documented, not enforced by a test.
 
 What this repository owns, what it must not touch, and which changes leave it.
 
@@ -87,7 +87,7 @@ breaking until proven otherwise: additive only, or a deprecation window.
 
 ## Enforced internal boundaries
 
-Two rules, checked by `tests/architecture/arch_test.go`, failing CI on violation:
+Two rules (not enforced by a test):
 
 ```text
 cmd/*                  entrypoints

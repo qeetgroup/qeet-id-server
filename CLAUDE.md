@@ -30,9 +30,9 @@ organization or product understanding; this repository does not restate them.
    is **no PostgreSQL RLS**; a missing `WHERE tenant_id = $1` is a cross-tenant data exposure.
 2. **`make lint` is `go vet` only.** CI also runs `golangci-lint` v2.14.0. Passing locally proves
    less than it looks.
-3. **A new route without an OpenAPI entry fails CI** — `tests/integration/coverage_test.go`.
-4. **Wiring goes in `internal/bootstrap`.** `internal/platform` importing a bounded context fails
-   the architecture test.
+3. **A new route without an OpenAPI entry fails CI** — `internal/bootstrap/openapi_coverage_test.go`.
+4. **Wiring goes in `internal/bootstrap`.** `internal/platform` must not import a bounded context
+   (rule R1 in AGENTS.md; no test enforces it).
 5. **Two behaviours that look like bugs are deliberate, with ADRs:** the rate limiter fails **open**
    on store error, and auth hooks default to **fail-open**. Do not "fix" them.
 
@@ -51,7 +51,6 @@ organization or product understanding; this repository does not restate them.
 
 ```bash
 go build ./... && go test -race ./... && make lint && git diff
-make test-integration      # if the change touched a route
 ```
 
 ## Issues and the project board

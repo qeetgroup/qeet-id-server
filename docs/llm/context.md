@@ -187,8 +187,7 @@ Every leaf package additionally carries `queries.sql` + `sqlc.yaml` + a generate
 
 ## Dependency rules
 
-**Status:** verified · **Evidence:** `tests/architecture/arch_test.go` — shells out to `go list` and
-walks the real import graph
+**Status:** documented rule — no test enforces it
 
 ```text
 cmd/*  →  internal/bootstrap  →  internal/<context>  →  internal/platform
@@ -499,7 +498,7 @@ caller needs the result or the operation must be atomic with the response.
 `api/openapi/` — **five OpenAPI 3.1 documents**, split by bounded context, `info.version 0.2.0`.
 There is deliberately no monolithic spec.
 
-**The coverage gate is the important part:** `tests/integration/coverage_test.go` fails the build if
+**The coverage gate is the important part:** `internal/bootstrap/openapi_coverage_test.go` fails the build if
 any mounted route is undocumented. A route cannot silently appear.
 
 **A route change and its spec change belong in the same commit.**
@@ -512,12 +511,7 @@ any mounted route is undocumented. A route cannot silently appear.
 | Suite | Path | Runs |
 |---|---|---|
 | Unit | alongside source | `go test ./...` |
-| **Architecture fitness** | `tests/architecture/` | with unit tests — enforces R1/R2 |
-| Integration | `tests/integration/` (18 files) | `-tags integration`, Testcontainers |
-| **OpenAPI coverage gate** | `tests/integration/coverage_test.go` | integration tag |
-| Security regression | `tests/security/` | auth bypass, CSRF, headers |
-| Semgrep rule | `tests/security/semgrep/no-raw-sql-fmt.yaml` | no `fmt`-built SQL |
-| Performance | `tests/performance/` | k6, not CI-wired |
+| **OpenAPI coverage gate** | `internal/bootstrap/openapi_coverage_test.go` | with unit tests |
 
 CI runs unit tests with `-race`. Unit tests are **colocated** (`_test.go` beside the source,
 in-package) — 69 of them. There is no `testdata/` or `mocks/` directory.
@@ -526,16 +520,14 @@ in-package) — 69 of them. There is no `testdata/` or `mocks/` directory.
 
 | Package | Unit tests |
 |---|---|
-| **`internal/bootstrap`** | **none** — the router, permission map and wiring are covered *only* by `tests/integration/` |
-| `identity/{tenant,groups,invitations,verification}` | none — integration only |
-| `access/recovery`, `access/authorization/authzen` | none — integration only |
-| `developer/principal`, `operations/notifications` | none — integration only |
+| `identity/{tenant,groups,invitations,verification}` | none |
+| `access/recovery`, `access/authorization/authzen` | none |
+| `developer/principal`, `operations/notifications` | none |
 
 `internal/bootstrap/permissions_test.go` walks the exact authenticated production mounts and
 requires an explicit route policy. `internal/bootstrap/openapi_coverage_test.go` walks all three
 production mount helpers and compares them bidirectionally with the union of the five OpenAPI
-documents, including API-auth security classification. Integration tests remain the cross-cutting
-behavioral and database layer — see [subsystems.md](subsystems.md).
+documents, including API-auth security classification.
 
 ## CI/CD
 
@@ -543,7 +535,6 @@ behavioral and database layer — see [subsystems.md](subsystems.md).
 |---|---|
 | `test` | `go build ./...` · `go vet ./...` · `go test -race -count=1 ./...` |
 | `lint` | `golangci-lint` v2.14.0 — new code only |
-| `integration` | `go test -tags integration -timeout 10m ./tests/integration/...` |
 | `vuln` | `govulncheck ./cmd/... ./internal/...` blocking · advisory full-tree scan |
 | `sast` | `gosec` — advisory |
 | `deploy` | On push to `main`: build, deploy to AWS via GitHub OIDC, then tag |
@@ -577,7 +568,7 @@ make seed             # demo data
 make dev              # API on :4001
 ```
 
-Then `make test`, `make test-integration`, `make lint`, `make build`.
+Then `make test`, `make lint`, `make build`.
 **Do not invent Make targets** — the list in `AGENTS.md` is complete.
 
 ## Security-critical areas
@@ -646,20 +637,7 @@ Repository-local documentation inconsistencies found on this revision. Product-l
 
 | Issue | Detail |
 |---|---|
-| `ROADMAP.md` SDK count | Claims 6 SDK packages; three repositories exist (QID-008) |
-| `ROADMAP.md` ✅ rows in the planned table | Two shipped items sit under "Planned" (QID-018) |
-| Old `CLAUDE.md` Make targets | Claimed a "complete" set that omitted `dev-secrets`, `test-integration`, `bench` |
 | Old `CLAUDE.md` `.claude/` agents | Referenced `.claude/agents/*` — **no `.claude/` directory exists** (QID-020) |
-
-## Current vs planned
-
-**Current:** everything described above. **Planned, per `ROADMAP.md`** — auth-hook claims in the
-OIDC ID-token path, remaining i18n, WCAG 2.2 AA on legacy screens, published benchmarks,
-device-bound agent credentials, a `qeetid` CLI, FGA permissions index, Rust SDK, SCIM agent
-extension, Kubernetes + Helm, multi-environment staging, a bundled observability stack.
-
-**A roadmap entry is not implementation evidence.** Verify against source before relying on any
-capability.
 
 ## Documentation authority
 
@@ -667,7 +645,6 @@ capability.
 |---|---|
 | What does the code do? | The source |
 | What is the API contract? | `api/openapi/` |
-| What is shipped vs planned? | `ROADMAP.md` — with the staleness caveats above |
 | What is the security policy? | `SECURITY.md`, then L0 `qeet-context/SECURITY.md` |
 | How does the product work? | L1 `qeet-id-context` |
 | What are the organization rules? | L0 `qeet-context` |
