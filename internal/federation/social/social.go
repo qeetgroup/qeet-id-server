@@ -6,6 +6,7 @@ package social
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -1285,10 +1286,17 @@ type exchangeInput struct {
 
 // challengeFragment is a hosted social sign-in's second-factor challenge as
 // the hosted login reads it from the URL fragment: the challenge token, the
-// methods it offers, and for an enrolment one enrollment_required (and
-// enrollment_due_at while it may be put off).
+// methods it offers, the factors it can be met with (JSON, as a password
+// sign-in's challenge lists them: an email or SMS factor's id and masked
+// destination are what a code is sent with), and for an enrolment one
+// enrollment_required (and enrollment_due_at while it may be put off).
 func challengeFragment(c auth.MFAChallenge) string {
 	v := url.Values{"mfa_token": {c.MFAToken}, "methods": {strings.Join(c.Methods, ",")}}
+	if len(c.Factors) > 0 {
+		if factors, err := json.Marshal(c.Factors); err == nil {
+			v.Set("factors", string(factors))
+		}
+	}
 	if c.EnrollmentRequired {
 		v.Set("enrollment_required", "true")
 		if c.EnrollmentDueAt != nil {
