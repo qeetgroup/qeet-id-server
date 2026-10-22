@@ -235,7 +235,7 @@ INSERT INTO auth.oidc_device_codes (
           @interval_seconds, NOW() + INTERVAL '10 minutes');
 
 -- name: GetDeviceByUserCode :one
-SELECT client_id, scopes, status, expires_at
+SELECT client_id, scopes, status, expires_at, tenant_id
 FROM auth.oidc_device_codes WHERE user_code = @user_code;
 
 -- name: LockDeviceByUserCode :one
@@ -351,7 +351,7 @@ RETURNING id, user_id, client_id, redirect_uri, scopes, state, nonce, code_chall
 SELECT status, (deleted_at IS NOT NULL)::boolean AS deleted FROM "user".users WHERE id = @id;
 
 -- ==========================================================================
--- Application secret lockout (QTID-215)
+-- Application secret lockout
 -- ==========================================================================
 
 -- GetClientLockedUntil reports a lockout still in force for an application.
@@ -396,7 +396,7 @@ ORDER BY created_at DESC
 LIMIT @max_rows;
 
 -- ==========================================================================
--- Resources (RFC 8707 resource indicators, QTID-157)
+-- Resources (RFC 8707 resource indicators)
 -- ==========================================================================
 
 -- name: ResourceRegistered :one
@@ -424,15 +424,15 @@ SELECT EXISTS (
     WHERE tenant_id = @tenant_id AND server_client_id = @client_id AND identifier = ANY(@identifiers::text[])
 )::bool;
 
--- GetUserinfo is what userinfo and the ID token may say about a live account
--- (QTID-165). locale is read from the profile metadata when set.
+-- GetUserinfo is what userinfo and the ID token may say about a live account.
+-- locale is read from the profile metadata when set.
 -- name: GetUserinfo :one
 SELECT email, email_verified_at, phone, phone_verified_at, display_name, avatar_url, updated_at,
        COALESCE(metadata->>'locale', '')::text AS locale
 FROM "user".users WHERE id = @id AND deleted_at IS NULL AND status = 'active';
 
 -- ==========================================================================
--- Sign-out notices (OpenID Connect Back- and Front-Channel Logout, QTID-166)
+-- Sign-out notices (OpenID Connect Back- and Front-Channel Logout)
 -- ==========================================================================
 
 -- SessionClients is every application that holds a code or a grant from a

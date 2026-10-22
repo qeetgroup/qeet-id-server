@@ -21,7 +21,7 @@ import (
 // AuditVerifyInterval is how often every audit chain is verified.
 const AuditVerifyInterval = 6 * time.Hour
 
-// MaintenanceJobs is the scheduled housekeeping (QTID-326). The API runs it as
+// MaintenanceJobs is the scheduled housekeeping. The API runs it as
 // its embedded "scheduler" worker and cmd/scheduler or cmd/worker can run it
 // standalone; either way each job runs once per interval across every
 // instance (worker.RunScheduled). Sessions the cleanup removes that were never

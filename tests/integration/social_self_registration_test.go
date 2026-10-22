@@ -87,7 +87,7 @@ func (f *closedRegFixture) begin(t *testing.T, ctx context.Context) string {
 
 func (f *closedRegFixture) callback(t *testing.T, ctx context.Context) (*social.CallbackResult, error) {
 	t.Helper()
-	return f.svc.CompleteCallback(ctx, f.provider, f.begin(t, ctx), "upstream-code")
+	return f.svc.CompleteCallback(ctx, f.provider, f.begin(t, ctx), "upstream-code", true)
 }
 
 // leftBehind counts what a refused attempt must not leave: the account, the
@@ -196,14 +196,15 @@ func TestSocialSignInWithALinkedIdentityWorksWhenClosed(t *testing.T) {
 }
 
 // TestSocialAdoptsAnInTenantAccountWhenClosed: a verified assertion for an
-// account the organisation already has is adopted exactly as before.
+// account the organisation already has, whose address it has proved, is
+// adopted exactly as before.
 func TestSocialAdoptsAnInTenantAccountWhenClosed(t *testing.T) {
 	requireDB(t)
 	ctx := context.Background()
 	f := newClosedRegFixture(t, ctx, true)
 	setSelfRegistration(t, ctx, f.tenantID, false)
 	member := createUserInTenant(t, ctx, f.tenantID)
-	if _, err := testPool.Exec(ctx, `UPDATE "user".users SET email = $2 WHERE id = $1`, member, f.email); err != nil {
+	if _, err := testPool.Exec(ctx, `UPDATE "user".users SET email = $2, email_verified_at = NOW() WHERE id = $1`, member, f.email); err != nil {
 		t.Fatalf("set member email: %v", err)
 	}
 	res, err := f.callback(t, ctx)
@@ -246,7 +247,7 @@ func TestSocialConcurrentSignUpsIntoAClosedOrganisationAreBothRefused(t *testing
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, results[i] = f.svc.CompleteCallback(ctx, f.provider, st, "upstream-code")
+			_, results[i] = f.svc.CompleteCallback(ctx, f.provider, st, "upstream-code", true)
 		}()
 	}
 	wg.Wait()
@@ -272,7 +273,7 @@ func TestSocialRefusalTellsThePersonRegistrationIsClosed(t *testing.T) {
 	r := chi.NewRouter()
 	r.Route("/v1", h.MountPublic)
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/social/"+f.provider+"/callback?state="+url.QueryEscape(f.begin(t, ctx))+"&code=upstream-code", nil)
+	req := socialCallback(f.provider, f.begin(t, ctx))
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 	loc, err := url.Parse(rr.Header().Get("Location"))

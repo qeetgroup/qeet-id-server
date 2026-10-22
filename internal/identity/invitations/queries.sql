@@ -96,11 +96,13 @@ SELECT email FROM "user".users WHERE id = @user_id;
 SELECT email, (email_verified_at IS NOT NULL)::boolean AS verified
 FROM "user".users WHERE id = @user_id AND deleted_at IS NULL;
 
--- InsertInvitedUser creates a brand-new invited account (no prior user). The
--- invited email is pre-verified (they proved control by receiving the link).
+-- InsertInvitedUser creates a brand-new invited account (no prior user). Its
+-- address is not verified: the invitation link is also handed to the inviter
+-- to share, so having it proves nothing about who owns the address. A code or
+-- link sent to it later does.
 -- name: InsertInvitedUser :one
-INSERT INTO "user".users (tenant_id, email, display_name, status, email_verified_at)
-VALUES (@tenant_id, @email, NULLIF(@display_name, ''), 'active', NOW())
+INSERT INTO "user".users (tenant_id, email, display_name, status)
+VALUES (@tenant_id, @email, NULLIF(@display_name, ''), 'active')
 RETURNING id;
 
 -- name: InsertInviteCredential :exec
@@ -124,9 +126,9 @@ FROM tenant.invites i
 JOIN tenant.tenants t ON t.id = i.tenant_id
 WHERE i.token_hash = @token_hash;
 
--- MarkInvitedAccountVerified records that the account created to accept an
--- invitation owns its address — the invitation reached it there — as the
--- password path's InsertInvitedUser does.
--- name: MarkInvitedAccountVerified :exec
-UPDATE "user".users SET status = 'active', email_verified_at = COALESCE(email_verified_at, NOW())
+-- ActivateInvitedAccount activates the account created to accept an
+-- invitation. Its address stays unverified, as the password path's
+-- InsertInvitedUser leaves it: the link proves nothing about who owns it.
+-- name: ActivateInvitedAccount :exec
+UPDATE "user".users SET status = 'active'
 WHERE id = @user_id;

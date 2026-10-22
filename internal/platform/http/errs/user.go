@@ -14,8 +14,9 @@ const (
 
 	// Who manages an account: a change to the whole account belongs to the
 	// organization the account belongs to.
-	CodeUserManagedElsewhere = "user.managed_elsewhere"
-	CodeUserManagedHere      = "user.managed_here"
+	CodeUserManagedElsewhere  = "user.managed_elsewhere"
+	CodeUserCredentialsShared = "user.credentials_shared"
+	CodeUserManagedHere       = "user.managed_here"
 )
 
 // User errors. The Message is what the end user sees — edit wording here, in
@@ -31,6 +32,10 @@ var (
 	// deletion, signing out everywhere) on a member whose account belongs to
 	// another organization, or to no organization.
 	ErrUserManagedElsewhere = New(CodeUserManagedElsewhere, "This person's account is managed outside this organization. Remove them from this organization instead.")
+	// ErrUserCredentialsShared: an organization tried to set the password or
+	// reset the second factors of an account that also belongs to another
+	// organization — the same credentials open that one too.
+	ErrUserCredentialsShared = New(CodeUserCredentialsShared, "This person also belongs to another organization, so only they can change their password or two-step verification. Ask them to reset their password from the sign-in page.")
 	// ErrUserManagedHere: removing a member whose account this organization
 	// manages; that account is suspended or deleted instead.
 	ErrUserManagedHere = New(CodeUserManagedHere, "This organization manages this person's account. Suspend or delete the account instead.")

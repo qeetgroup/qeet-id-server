@@ -18,7 +18,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
-// Sign-out notices (QTID-166). When a hosted-login session ends, every
+// Sign-out notices. When a hosted-login session ends, every
 // application that holds a code or grant from it is told: server to server by
 // a signed logout token POSTed to its backchannel_logout_uri (OpenID Connect
 // Back-Channel Logout 1.0), retried until delivered, and in the browser by its

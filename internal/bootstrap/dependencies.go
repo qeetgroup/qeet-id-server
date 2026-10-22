@@ -630,8 +630,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		return name
 	})
 	deps := Deps{
-		Tenant:        &tenant.Handler{Repo: tenantRepo, Validate: v, AuthService: authService},
-		User:          &user.Handler{Repo: userRepo, Validate: v, PasswordPolicy: authPolicyService.ValidateForTenant, MFA: mfaService, SignIns: authService, Signals: sessionSignals},
+		Tenant:        &tenant.Handler{Repo: tenantRepo, Validate: v, AuthService: authService, Signals: sessionSignals},
+		User:          &user.Handler{Repo: userRepo, Validate: v, PasswordPolicy: authPolicyService.ValidateForTenant, MFA: mfaService, SignIns: authService, Signals: sessionSignals, Mailer: sender},
 		AuthPolicy:    &authpolicy.Handler{Service: authPolicyService},
 		Auth:          &auth.Handler{Service: authService, Validate: v, CookieSecure: !cfg.IsDev(), Bot: botService, GeoCountryHeader: cfg.GeoCountryHeader},
 		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbacService, Validate: v, Decider: decider},
@@ -639,7 +639,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Verification:  &verification.Handler{Service: verifyService},
 		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService, DevMode: cfg.IsDev(), CookieSecure: !cfg.IsDev()},
 		Retention:     &retention.Handler{Service: retentionService},
-		Invite:        &invite.Handler{Service: inviteService, AuthService: authService, Validate: v},
+		Invite:        &invite.Handler{Service: inviteService, AuthService: authService, Validate: v, GrantCheck: rbacRepo.CheckGrantRole},
 		Branding:      &branding.Handler{Repo: brandingRepo},
 		EmailTemplate: &email.Handler{Service: emailTemplateService, Sender: sender, Appearance: brandingRepo, TestEmailEnabled: emailTestEnabled},
 		EmailDelivery: &email.DeliveryHandler{Store: deliveryStore},
@@ -710,7 +710,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		{name: "siem", run: siemService.Run},
 		{name: "audit-anomaly", run: auditAnomalyService.Run},
 		// Audit-chain verification and the cleanups, once per interval across
-		// instances (QTID-326).
+		// instances.
 		{name: "scheduler", run: func(ctx context.Context) {
 			worker.RunScheduled(ctx, pool, MaintenanceJobs(pool, sessionSignals), worker.SchedulerTick)
 		}},

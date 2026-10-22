@@ -579,6 +579,39 @@ func (q *Queries) PushChallengeForLogin(ctx context.Context, arg PushChallengeFo
 	return i, err
 }
 
+const pushChallengeForStepUp = `-- name: PushChallengeForStepUp :one
+SELECT status, expires_at, action, COALESCE(context->>'session_id', '')::text AS session_id
+FROM auth.mfa_push_challenges
+WHERE id = $1 AND user_id = $2
+FOR UPDATE
+`
+
+type PushChallengeForStepUpParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+type PushChallengeForStepUpRow struct {
+	Status    string
+	ExpiresAt time.Time
+	Action    string
+	SessionID string
+}
+
+// A step-up push request of the user's, under lock, with the session it was
+// raised for.
+func (q *Queries) PushChallengeForStepUp(ctx context.Context, arg PushChallengeForStepUpParams) (PushChallengeForStepUpRow, error) {
+	row := q.db.QueryRow(ctx, pushChallengeForStepUp, arg.ID, arg.UserID)
+	var i PushChallengeForStepUpRow
+	err := row.Scan(
+		&i.Status,
+		&i.ExpiresAt,
+		&i.Action,
+		&i.SessionID,
+	)
+	return i, err
+}
+
 const recordStepUp = `-- name: RecordStepUp :exec
 INSERT INTO auth.mfa_verifications (session_id, user_id, method, verified_at)
 SELECT s.id, s.user_id, $1::text, NOW()
@@ -601,12 +634,22 @@ func (q *Queries) RecordStepUp(ctx context.Context, arg RecordStepUpParams) erro
 	return err
 }
 
+const spendPushChallenge = `-- name: SpendPushChallenge :exec
+DELETE FROM auth.mfa_push_challenges WHERE id = $1
+`
+
+func (q *Queries) SpendPushChallenge(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, spendPushChallenge, id)
+	return err
+}
+
 const stepUpFactorsHeld = `-- name: StepUpFactorsHeld :one
 SELECT
     EXISTS (SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = $1 AND t.confirmed_at IS NOT NULL)::bool AS totp,
     EXISTS (SELECT 1 FROM auth.mfa_otp_factors f WHERE f.user_id = $1 AND f.verified_at IS NOT NULL)::bool AS otp,
     (EXISTS (SELECT 1 FROM auth.passkey_credentials c WHERE c.user_id = $1)
      AND COALESCE((SELECT ap.passkey_enabled FROM tenant.auth_policy ap WHERE ap.tenant_id = $2::uuid), TRUE))::bool AS passkeys,
+    EXISTS (SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = $1)::bool AS push,
     (SELECT sp.step_up_methods FROM tenant.security_policies sp WHERE sp.tenant_id = $2::uuid)::text[] AS step_up_methods
 `
 
@@ -619,6 +662,7 @@ type StepUpFactorsHeldRow struct {
 	Totp          bool
 	Otp           bool
 	Passkeys      bool
+	Push          bool
 	StepUpMethods []string
 }
 
@@ -633,6 +677,7 @@ func (q *Queries) StepUpFactorsHeld(ctx context.Context, arg StepUpFactorsHeldPa
 		&i.Totp,
 		&i.Otp,
 		&i.Passkeys,
+		&i.Push,
 		&i.StepUpMethods,
 	)
 	return i, err

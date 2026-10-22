@@ -21,6 +21,7 @@ const (
 	CodeSocialAccountNotInTenant    = "social.account_not_in_tenant"
 	CodeSocialReturnToInvalid       = "social.return_to_invalid"
 	CodeSocialEmailUnverified       = "social.email_unverified"
+	CodeSocialAccountUnverified     = "social.account_unverified"
 	CodeSocialCodeRequired          = "social.code_required"
 	CodeSocialLoginCodeInvalid      = "social.login_code_invalid"
 	CodeSocialLoginCodeUsed         = "social.login_code_used"
@@ -28,6 +29,9 @@ const (
 	CodeSocialAlreadyLinked         = "social.already_linked"
 	CodeSocialNoAccount             = "social.no_account"
 	CodeSocialProviderInUse         = "social.provider_in_use"
+	CodeSocialBrowserMismatch       = "social.browser_mismatch"
+	CodeSocialLinkCodeInvalid       = "social.link_code_invalid"
+	CodeSocialLinkAccountMismatch   = "social.link_account_mismatch"
 )
 
 // Social-login errors. The Message is what the end user sees. Transient upstream
@@ -64,11 +68,32 @@ var (
 
 	ErrSocialAccountNotInTenant = New(CodeSocialAccountNotInTenant,
 		"That account can't sign in with this provider.")
-	ErrSocialEmailUnverified  = New(CodeSocialEmailUnverified, "The sign-in provider did not verify ownership of that email address. Link it from a signed-in account instead.")
+	ErrSocialEmailUnverified = New(CodeSocialEmailUnverified, "The sign-in provider did not verify ownership of that email address. Link it from a signed-in account instead.")
+	// ErrSocialAccountUnverified: an account already uses the address, but
+	// nobody has proved they own it there, so a provider vouching for the
+	// address doesn't hand that account over — it may have been registered by
+	// someone else.
+	ErrSocialAccountUnverified = New(CodeSocialAccountUnverified,
+		"An account already uses this email address, but the address hasn't been verified. Verify it, or reset the password from the link we email you, then sign in with this provider.")
 	ErrSocialCodeRequired     = New(CodeSocialCodeRequired, "A sign-in code is required.")
 	ErrSocialLoginCodeInvalid = New(CodeSocialLoginCodeInvalid, "That sign-in code is invalid. Please start again.").AsRetryable()
 	ErrSocialLoginCodeUsed    = New(CodeSocialLoginCodeUsed, "That sign-in code has already been used. Please start again.")
 	ErrSocialLoginCodeExpired = New(CodeSocialLoginCodeExpired, "That sign-in code has expired. Please start again.").AsRetryable()
 	ErrSocialAlreadyLinked    = New(CodeSocialAlreadyLinked, "That account is already linked to a different Qeet ID.")
 	ErrSocialNoAccount        = New(CodeSocialNoAccount, "No Qeet ID account uses that provider yet. Sign up first.")
+
+	// ErrSocialBrowserMismatch refuses a provider callback in a browser that
+	// didn't begin the sign-in: a link someone else began would otherwise sign
+	// this browser in to their account.
+	ErrSocialBrowserMismatch = New(CodeSocialBrowserMismatch,
+		"This sign-in was started in a different browser. Please start again here.").AsRetryable()
+	// ErrSocialLinkCodeInvalid: the code that completes connecting a provider
+	// is unknown, used or expired.
+	ErrSocialLinkCodeInvalid = New(CodeSocialLinkCodeInvalid,
+		"That connection has expired or was already completed. Please connect the account again.").AsRetryable()
+	// ErrSocialLinkAccountMismatch: connecting a provider is completed only by
+	// the account that began it, so a connect link sent to someone else can't
+	// attach their provider account to the sender's.
+	ErrSocialLinkAccountMismatch = New(CodeSocialLinkAccountMismatch,
+		"This connection was started from a different account.")
 )

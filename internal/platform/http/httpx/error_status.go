@@ -22,6 +22,7 @@ var statusByCode = map[string]int{
 	errs.CodeValidation:          http.StatusUnprocessableEntity,
 	errs.CodeTooManyRequests:     http.StatusTooManyRequests,
 	errs.CodeRequestBodyTooLarge: http.StatusRequestEntityTooLarge,
+	errs.CodeUnsupportedMedia:    http.StatusUnsupportedMediaType,
 	errs.CodeInternal:            http.StatusInternalServerError,
 	errs.CodeNotImplemented:      http.StatusNotImplemented,
 
@@ -69,7 +70,8 @@ var statusByCode = map[string]int{
 	errs.CodePasskeyLoginFailed: http.StatusUnauthorized,
 
 	// Organization / tenant.
-	errs.CodeOrgSlugTaken: http.StatusConflict,
+	errs.CodeOrgSlugTaken:    http.StatusConflict,
+	errs.CodeTenantLastOwner: http.StatusConflict,
 
 	// Qeet AI.
 	"qeetai_unconfigured": http.StatusConflict,

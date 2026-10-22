@@ -1,0 +1,114 @@
+package rbac
+
+import (
+	"context"
+	"errors"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+)
+
+// Nobody hands out authority they don't hold. Holding role.write or user.write
+// lets a person manage roles or members, not reach beyond themselves: granting
+// a permission to a role needs the caller to hold that permission in the
+// organisation, giving someone a role — directly, through a group, or by an
+// invitation — needs the caller to hold every permission the role carries,
+// and the owner role is given only by an owner. An owner holds the
+// organisation's full authority and may give anything. A machine caller holds
+// only the scopes of its credential, and is never an owner.
+
+// CheckGrantPermission refuses, with ErrRBACGrantExceedsCaller naming it, the
+// caller granting permID to a role of tenantID without holding it there.
+func (r *Repository) CheckGrantPermission(ctx context.Context, caller *httpx.Principal, tenantID, permID uuid.UUID) error {
+	var key string
+	if err := r.pool.QueryRow(ctx, `SELECT key FROM rbac.permissions WHERE id = $1`, permID).Scan(&key); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errs.ErrNotFound
+		}
+		return err
+	}
+	return r.checkGrant(ctx, caller, tenantID, []string{key}, false)
+}
+
+// CheckGrantRole refuses the caller giving roleID of tenantID to anyone: with
+// ErrRBACOwnerOnly when it is the organisation's owner role and the caller
+// isn't an owner, and with ErrRBACGrantExceedsCaller naming a permission the
+// role carries that the caller doesn't hold there.
+func (r *Repository) CheckGrantRole(ctx context.Context, caller *httpx.Principal, tenantID, roleID uuid.UUID) error {
+	var ownerRole bool
+	var keys []string
+	err := r.pool.QueryRow(ctx, `
+		SELECT (ro.is_system AND ro.name = 'owner'),
+		       COALESCE(array_agg(p.key ORDER BY p.key) FILTER (WHERE p.key IS NOT NULL), '{}')
+		FROM rbac.roles ro
+		LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
+		LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
+		WHERE ro.id = $1 AND ro.tenant_id = $2
+		GROUP BY ro.id, ro.is_system, ro.name`, roleID, tenantID).Scan(&ownerRole, &keys)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The assignment itself answers for a role that isn't the tenant's.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return r.checkGrant(ctx, caller, tenantID, keys, ownerRole)
+}
+
+// checkGrant applies the rule above to the permissions being given.
+func (r *Repository) checkGrant(ctx context.Context, caller *httpx.Principal, tenantID uuid.UUID, keys []string, ownerRole bool) error {
+	if caller == nil {
+		return errs.ErrRBACPermissionDenied
+	}
+	held := map[string]bool{}
+	if caller.UserID != nil {
+		owner, err := r.IsOwner(ctx, *caller.UserID, tenantID)
+		if err != nil {
+			return err
+		}
+		if owner {
+			return nil
+		}
+		perms, err := r.EffectivePermissions(ctx, *caller.UserID, tenantID)
+		if err != nil {
+			return err
+		}
+		for _, p := range perms {
+			held[p] = true
+		}
+	} else {
+		for _, s := range caller.Scopes {
+			held[s] = true
+		}
+	}
+	if ownerRole {
+		return errs.ErrRBACOwnerOnly
+	}
+	for _, k := range keys {
+		if !held[k] {
+			return errs.ErrRBACGrantExceedsCaller.WithMetadata(map[string]any{"permission": k})
+		}
+	}
+	return nil
+}
+
+// IsOwner reports whether userID holds tenantID's owner role, directly or
+// through a group.
+func (r *Repository) IsOwner(ctx context.Context, userID, tenantID uuid.UUID) (bool, error) {
+	var owner bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM rbac.user_roles ur
+			JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.is_system AND ro.name = 'owner'
+			WHERE ur.user_id = $1 AND ur.tenant_id = $2 AND ro.tenant_id = $2
+			UNION ALL
+			SELECT 1 FROM tenant.group_members gm
+			JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+			JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.is_system AND ro.name = 'owner'
+			WHERE gm.user_id = $1 AND gm.tenant_id = $2 AND ro.tenant_id = $2
+		)`, userID, tenantID).Scan(&owner)
+	return owner, err
+}

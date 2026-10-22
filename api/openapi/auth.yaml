@@ -15,7 +15,7 @@ info:
 
     ## Authentication
 
-    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to `ssoCookie` sessions; `bearerAuth` requests bypass it.
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /v1/ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it.
 
     ## Related APIs
 
@@ -65,7 +65,7 @@ paths:
   /v1/auth/forgot-password:
     post:
       operationId: post_v1_auth_forgot_password
-      description: 'Sends a password-reset link to the supplied email when it belongs to an account. It always returns a neutral confirmation regardless of whether the address exists, so it cannot be used to enumerate accounts, and it is rate limited. Complete the flow with the reset-password call using the token from the emailed link.'
+      description: 'Sends a password-reset link to the supplied email when it belongs to an account. It always returns a neutral confirmation regardless of whether the address exists, so it cannot be used to enumerate accounts, and it is rate limited. Complete the flow with the reset-password call using the token from the emailed link. A request for an account is recorded in its organisation''s audit trail as auth.password_reset_requested (at most ten per account, then one a minute).'
       summary: Forgot password
       tags:
         - Auth
@@ -113,7 +113,7 @@ paths:
   /v1/auth/login:
     post:
       operationId: post_v1_auth_login
-      description: 'Authenticates a user by email and password and, on success, returns an access and refresh token pair. If the account has a second factor enrolled, tokens are withheld and a short-lived mfa_token with the available methods is returned instead; exchange it for tokens at the complete-MFA call. Passwordless accounts authenticate through passkey login rather than this endpoint, and a registered passkey satisfies MFA on its own. Requests are rate limited to slow credential stuffing. Failed sign-ins are counted per account and source network, per account across networks, and per source network across accounts (see the sign-in lockout on the create-SSO-session call); a locked account answers 429 auth.account_locked whatever the password, a throttled source 429 too_many_requests, and an address with no account answers exactly like a wrong password. When the account''s own organisation has switched password sign-in off, a correct password is refused with 403 auth.method_disabled. Every sign-in is assessed for risk (bot-like clients, and impossible travel and new devices where the organisation turns them on), and its country and device are kept 90 days for later sign-ins to be compared against. A risky sign-in by someone with no second factor answers an mfa_token challenge met by a code sent to their verified email address (methods [email], the factor named by the challenge''s own id), or 403 auth.risk_verification_unavailable when they have no verified address. While the organisation''s address rules are on, a sign-in from an address they refuse is refused with 403 auth.address_not_allowed before any session is issued; the same holds on every other way of signing in to the organisation (passkey, magic link, social, SAML, LDAP, invitation, organisation switch, application authorization and the device flow).'
+      description: 'Authenticates a user by email and password and, on success, returns an access and refresh token pair. If the account has a second factor enrolled, tokens are withheld and a short-lived mfa_token with the available methods is returned instead; exchange it for tokens at the complete-MFA call. Passwordless accounts authenticate through passkey login rather than this endpoint, and a registered passkey satisfies MFA on its own. Requests are rate limited to slow credential stuffing. Failed sign-ins are counted per account and source network, per account across networks, and per source network across accounts (see the sign-in lockout on the create-SSO-session call); a locked account answers 429 auth.account_locked whatever the password, a throttled source 429 too_many_requests, and an address with no account answers exactly like a wrong password. When the account''s own organisation has switched password sign-in off, a correct password is refused with 403 auth.method_disabled. Every sign-in is assessed for risk (bot-like clients, and impossible travel and new devices where the organisation turns them on), and its country and device are kept 90 days for later sign-ins to be compared against. A risky sign-in by someone with no second factor answers an mfa_token challenge met by a code sent to their verified email address (methods [email], the factor named by the challenge''s own id), or 403 auth.risk_verification_unavailable when they have no verified address. While the organisation''s address rules are on, a sign-in from an address they refuse is refused with 403 auth.address_not_allowed before any session is issued; the same holds on every other way of signing in to the organisation (passkey, magic link, social, SAML, LDAP, invitation, organisation switch, application authorization and the device flow). Each failed attempt is recorded in the audit trail of the organisation the sign-in was for (or the account''s own) as auth.sign_in_failed: the account, or no one for an address with no account, the reason (wrong_password, unknown_account, account_locked or source_throttled) and the source, never what was submitted. The records are bounded per source network and per organisation (sign_in_failures_unrecorded_total counts the rest). A lock a failure sets is recorded as auth.account_locked with locked_until, when it lifts; a source throttle as auth.source_throttled.'
       summary: Sign in
       tags:
         - Auth
@@ -158,6 +158,7 @@ paths:
         up for it (POST /v1/auth/mfa/enroll) — the response then carries the account's new
         recovery codes, shown once — or skipped while its grace period runs. A wrong proof
         counts against the challenge's and the account's attempt budgets.
+        A wrong proof is recorded in the organisation's audit trail as auth.sign_in_failed (method mfa, reason code_invalid, with the proof kind and the attempts left).
       tags:
         - Auth
       security: []
@@ -463,7 +464,7 @@ paths:
   /v1/auth/magic-link/start:
     post:
       operationId: post_v1_auth_magic_link_start
-      description: 'Begins passwordless email sign-in by emailing a single-use link to the account holding the address. It answers the same whether or not the address has an account, takes the same minimum time, and sends nothing when it has none. Asked for from an organisation''s sign-in page (tenant_id), it is refused with 403 auth.method_disabled when that organisation has magic links off; from the console (no tenant_id) the account''s own organisation decides, and nothing is sent when it has them off. A link lives for the organisation''s magic_link_ttl_minutes and works once. With app hosted_login the link opens the hosted login''s magic page and, once exchanged at the magic-link session call, continues the sign-in journey at return_to (kept only if it is this service''s authorize endpoint); otherwise it opens the console''s, exchanged at the consume call. Requests are bounded to three per address (then one every five minutes) and ten per caller (then one a minute), counted whether or not the address has an account: 429 past either.'
+      description: 'Begins passwordless email sign-in by emailing a single-use link to the account holding the address. It answers the same whether or not the address has an account, takes the same minimum time, and sends nothing when it has none. Asked for from an organisation''s sign-in page (tenant_id), it is refused with 403 auth.method_disabled when that organisation has magic links off; from the console (no tenant_id) the account''s own organisation decides, and nothing is sent when it has them off. A link lives for the organisation''s magic_link_ttl_minutes and works once. With app hosted_login the link opens the hosted login''s magic page and, once exchanged at the magic-link session call, continues the sign-in journey at return_to (kept only if it is this service''s authorize endpoint); otherwise it opens the console''s, exchanged at the consume call. Requests are bounded to three per address (then one every five minutes) and ten per caller (then one a minute), counted whether or not the address has an account: 429 past either. A link sent is recorded as auth.magic_link_requested in the audit trail of the organisation that asked, or the account''s own.'
       summary: Magic link start
       tags:
         - Auth
@@ -524,6 +525,7 @@ paths:
         spent either way.
         A link for an organisation whose address rules refuse the browser's
         address answers 403 auth.address_not_allowed and opens no session.
+        It is protected against cross-site requests as POST /v1/auth/session is (an allowed Origin, and the qe_csrf token echoed in X-CSRF-Token), and a body not sent as JSON is refused (415 unsupported_media_type).
       tags:
         - Auth
       security: []
@@ -564,6 +566,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/auth/magic-link/resend:
@@ -625,7 +629,7 @@ paths:
   /v1/auth/refresh:
     post:
       operationId: post_v1_auth_refresh
-      description: 'Exchanges a valid refresh token for a new access and refresh token pair. The presented refresh token is rotated and invalidated, so each token may be redeemed only once; persist the returned refresh token for the next rotation. A revoked or already-rotated token is rejected and forces a fresh sign-in. A session ends by itself at its maximum age however active it is, and once it goes longer than its idle timeout without a renewal; each renewal restarts the idle timeout, and the response says when the session ends either way (session_expires_at, idle_expires_at). A renewal after either is refused with 401 auth.session_timed_out and the session ends, recorded as an expiry and announced to session.revoked subscribers with the reason expired. A renewal from an address the organisation''s address rules refuse answers 403 auth.address_not_allowed; the session stays, and renews again from an allowed address.'
+      description: 'Exchanges a valid refresh token for a new access and refresh token pair. The presented refresh token is rotated and invalidated, so each token may be redeemed only once; persist the returned refresh token for the next rotation. A revoked or already-rotated token is rejected and forces a fresh sign-in. A session ends by itself at its maximum age however active it is, and once it goes longer than its idle timeout without a renewal; each renewal restarts the idle timeout, and the response says when the session ends either way (session_expires_at, idle_expires_at). A renewal after either is refused with 401 auth.session_timed_out and the session ends, recorded as an expiry and announced to session.revoked subscribers with the reason expired. A renewal from an address the organisation''s address rules refuse answers 403 auth.address_not_allowed; the session stays, and renews again from an allowed address. A session in a tenant that has since been suspended or deleted is refused (403 auth.tenant_inactive).'
       summary: Refresh
       tags:
         - Auth
@@ -652,7 +656,7 @@ paths:
   /v1/auth/reset-password:
     post:
       operationId: post_v1_auth_reset_password
-      description: 'Completes the password-reset flow started by the forgot-password call by consuming the emailed token and setting the new password. The token is single-use and time-limited, so an expired or already-redeemed token is rejected. The new password is checked against the rules of the organisation the account belongs to (the platform baseline of 8 characters for an account with no organisation), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed and leaves the password and the token unchanged. On success the password is updated and the user can sign in with the new credentials.'
+      description: 'Completes the password-reset flow started by the forgot-password call by consuming the emailed token and setting the new password. The token is single-use and time-limited, so an expired or already-redeemed token is rejected. The new password is checked against the rules of the organisation the account belongs to (the platform baseline of 8 characters for an account with no organisation), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed and leaves the password and the token unchanged. On success the password is updated and the user can sign in with the new credentials. Every hosted sign-in (browser) session of the person ends too, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey; the audit record counts them (revoked_login_sessions). The completed reset is recorded in the account''s organisation''s audit trail as auth.password_reset_confirmed.'
       summary: Reset password
       tags:
         - Auth
@@ -705,7 +709,7 @@ paths:
       description: 'Establishes a hosted-login SSO session and sets the HttpOnly qe_ls cookie so the browser can continue into the OAuth authorize and consent flow. When the account has a second factor enrolled, no cookie is set yet and a short-lived mfa_token is returned; complete it at the session-MFA call before the cookie is issued. Because this is a cookie session, later state-changing calls made with it are subject to CSRF protection. End the session with the corresponding destroy-session call.
 
 
-        Sign-in lockout: failed password sign-ins are counted per account and source network (the client IP behind the trusted proxies; an IPv4 address or an IPv6 /64). Reaching the threshold within the window locks the account for that network for the lock duration, so a stranger on another network cannot lock the owner out. The threshold, window and duration are those of the tenant of the OAuth client named by `client_id` (its authentication policy), or the platform defaults when no client is named. Failures from any mix of networks also lock the account everywhere at a looser cap (the threshold times LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER), and a source network that fails against too many distinct accounts (LOGIN_SPRAY_ACCOUNTS within LOGIN_SPRAY_WINDOW) is refused password sign-in for LOGIN_SPRAY_BLOCK. An address with no account is counted and answered exactly like a wrong password. When the counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable (fail closed). When the organisation of the named client_id has switched password sign-in off, the request is refused with 403 auth.method_disabled before any password is checked (the same answer for any account or none); without a client_id, the account''s own organisation decides once the password is verified. While the address rules of that client''s organisation are on, an address they refuse is answered 403 auth.address_not_allowed before any password is checked, and no cookie is set.'
+        Sign-in lockout: failed password sign-ins are counted per account and source network (the client IP behind the trusted proxies; an IPv4 address or an IPv6 /64). Reaching the threshold within the window locks the account for that network for the lock duration, so a stranger on another network cannot lock the owner out. The threshold, window and duration are those of the tenant of the OAuth client named by `client_id` (its authentication policy), or the platform defaults when no client is named. Failures from any mix of networks also lock the account everywhere at a looser cap (the threshold times LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER), and a source network that fails against too many distinct accounts (LOGIN_SPRAY_ACCOUNTS within LOGIN_SPRAY_WINDOW) is refused password sign-in for LOGIN_SPRAY_BLOCK. An address with no account is counted and answered exactly like a wrong password. When the counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable (fail closed). When the organisation of the named client_id has switched password sign-in off, the request is refused with 403 auth.method_disabled before any password is checked (the same answer for any account or none); without a client_id, the account''s own organisation decides once the password is verified. While the address rules of that client''s organisation are on, an address they refuse is answered 403 auth.address_not_allowed before any password is checked, and no cookie is set. A body not sent as JSON is refused (415 unsupported_media_type). Failed attempts are recorded as for POST /v1/auth/login.'
       summary: Create SSO session
       tags:
         - Auth
@@ -735,6 +739,8 @@ paths:
                   - $ref: '#/components/schemas/MFAChallenge'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -755,6 +761,8 @@ paths:
         POST /v1/auth/mfa), for the SSO cookie (qe_ls). An enrolment challenge is completed by
         a code from the authenticator app set up for it, or skipped while its grace period
         runs, as for POST /v1/auth/mfa; a skipped setup never remembers the device.
+        A body not sent as JSON is refused (415 unsupported_media_type).
+        A wrong proof is recorded in the organisation's audit trail as auth.sign_in_failed (method mfa, reason code_invalid, with the proof kind and the attempts left).
       tags:
         - Auth
       security: []
@@ -823,6 +831,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/Unprocessable'
   /v1/auth/register:
@@ -841,6 +851,8 @@ paths:
 
         An address the organisation's address rules refuse answers 403
         auth.address_not_allowed, and no account is created.
+        A body not sent as JSON is refused (415 unsupported_media_type).
+        Where the organisation has password sign-in switched off, it is refused with 403 auth.method_disabled (the answer password sign-in gives) and nothing is created.
       tags:
         - Auth
       security: []
@@ -886,6 +898,8 @@ paths:
                             format: uuid
         '403':
           $ref: '#/components/responses/Forbidden'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -956,7 +970,7 @@ paths:
     post:
       operationId: post_v1_auth_password
       summary: Change or set my password
-      description: Rotates (or sets) the signed-in user's password. current_password is required only when one is already set; a social/passkey account may set one by omitting it. Other sessions are revoked. The new password must meet the rules of the organisation the account belongs to (not the session's tenant; the platform baseline of 8 characters for an account with no organisation), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed. Self-service.
+      description: 'Rotates (or sets) the signed-in user''s password. current_password is required only when one is already set; a social/passkey account may set one by omitting it. Other sessions are revoked. The new password must meet the rules of the organisation the account belongs to (not the session''s tenant; the platform baseline of 8 characters for an account with no organisation), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed. Self-service. Every hosted sign-in (browser) session of the person ends too, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey; the audit record counts them (revoked_login_sessions). The session the change is made from is kept.'
       tags:
         - Auth
       security:
@@ -1386,7 +1400,7 @@ paths:
   /v1/auth/switch-tenant:
     post:
       operationId: post_v1_auth_switch_tenant
-      description: 'Replaces the caller''s session with one scoped to another tenant they belong to and returns its token pair. The new access token carries the claims the target tenant''s authentication hook adds, and renewals keep them; the hook may also refuse the switch. The session the presented access token belongs to ends: its refresh token is refused from now on, its access token stays valid only until it expires, and the tenant''s session.revoked subscribers are notified with reason tenant_switch. Use the returned pair from now on. The caller''s session list shows the one sign-in, not one entry per switch. Refused, with nothing changed: a tenant the caller does not belong to (403), a refusal by the tenant''s hook, an address the tenant''s address rules refuse (403 auth.address_not_allowed), or an access token whose session has already ended (401). Confirm the active scope afterward with the current-principal call.'
+      description: 'Replaces the caller''s session with one scoped to another tenant they belong to and returns its token pair. The new access token carries the claims the target tenant''s authentication hook adds, and renewals keep them; the hook may also refuse the switch. The session the presented access token belongs to ends: its refresh token is refused from now on, its access token stays valid only until it expires, and the tenant''s session.revoked subscribers are notified with reason tenant_switch. Use the returned pair from now on. The caller''s session list shows the one sign-in, not one entry per switch. Refused, with nothing changed: a tenant the caller does not belong to (403), a refusal by the tenant''s hook, an address the tenant''s address rules refuse (403 auth.address_not_allowed), or an access token whose session has already ended (401). An organisation that requires a second factor of the caller (its security policy, or administrators-only for its administrators) is entered only by a session whose sign-in met one, or that holds a fresh step-up; otherwise 403 step_up_required (step up, then try again) or 403 mfa.enrollment_required (set a factor up first), unless the organisation''s grace period still lets the caller put the setup off. The new session carries the factor on. Confirm the active scope afterward with the current-principal call.'
       summary: Switch tenant
       tags:
         - Auth
@@ -1483,7 +1497,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Begins a passkey sign-in ceremony (an empty body, or no email, for a discoverable one) and returns its session_id and the WebAuthn request options. The browser that begins it is given an HttpOnly binding cookie (qe_passkey, __Host- prefixed outside dev) naming the ceremony; only that browser can finish it at POST /v1/passkeys/login/session. A body not sent as JSON is refused (415 unsupported_media_type).'
       responses:
         '201':
           description: Created
@@ -1494,6 +1508,8 @@ paths:
                 additionalProperties: true
         '404':
           $ref: '#/components/responses/NotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -1513,7 +1529,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: 'Response body summarized; accurate path/method/params/security. Enrich the body later. When the account''s organisation has switched passkeys off, the sign-in is refused with 403 passkey.disabled before the assertion is verified.'
+      description: 'The token form of passkey sign-in: completes the ceremony with the assertion and returns the token pair, setting no cookie, for a caller that keeps tokens on a server (such as the console''s). A browser signs in to the hosted login with POST /v1/passkeys/login/session instead, so no token pair reaches its script. A body not sent as JSON is refused (415 unsupported_media_type). When the account''s organisation has switched passkeys off, the sign-in is refused with 403 passkey.disabled before the assertion is verified. A refused ceremony or assertion is recorded in the organisation''s audit trail as auth.sign_in_failed (method passkey, reason the error code), naming the account when it was identified.'
       responses:
         '201':
           description: Created
@@ -1524,8 +1540,55 @@ paths:
                 additionalProperties: true
         '404':
           $ref: '#/components/responses/NotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/passkeys/login/session:
+    post:
+      operationId: post_v1_passkeys_login_session
+      summary: Login finish (hosted)
+      description: 'The hosted form of passkey sign-in: completes the ceremony with the assertion and sets the hosted-login SSO cookie (qe_ls), so the browser continues into the OAuth authorize flow, answering with the user id only: no token reaches the page''s script. Only the browser that began the ceremony, holding the binding cookie from POST /v1/passkeys/login/begin, finishes it here; any other is refused with 403 passkey.browser_mismatch and the ceremony is left untouched. It is protected against cross-site requests as POST /v1/auth/session is, and a body not sent as JSON is refused (415 unsupported_media_type). When the account''s organisation has switched passkeys off, the sign-in is refused with 403 passkey.disabled before the assertion is verified. A refused ceremony or assertion is recorded in the organisation''s audit trail as auth.sign_in_failed (method passkey, reason the error code), naming the account when it was identified.'
+      tags:
+        - Passkeys
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, credential]
+              properties:
+                session_id:
+                  type: string
+                  format: uuid
+                credential:
+                  type: object
+                  additionalProperties: true
+                  description: The WebAuthn assertion (PublicKeyCredential JSON).
+      responses:
+        '200':
+          description: Signed in to the hosted login (the cookie is set)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                    format: uuid
+                required: [user_id]
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/passkeys/register/begin:
@@ -1697,7 +1760,7 @@ paths:
   /v1/register/passkey/begin:
     post:
       operationId: post_v1_register_passkey_begin
-      description: 'Starts the passwordless counterpart to hosted tenant signup, returning the WebAuthn credential-creation options for a passkey scoped to the supplied tenant. It is gated by the tenant''s self-registration policy and is refused when self-registration is disabled. Finish the ceremony by returning the signed attestation to the tenant-scoped passkey-register finish call.'
+      description: 'Starts the passwordless counterpart to hosted tenant signup, returning the WebAuthn credential-creation options for a passkey scoped to the supplied tenant. It is gated by the tenant''s self-registration policy and is refused when self-registration is disabled. Finish the ceremony by returning the signed attestation to the tenant-scoped passkey-register finish call. Where the organisation has passkeys switched off, it is refused with 403 passkey.disabled before a ceremony starts.'
       summary: Passkey-first signup begin (tenant-scoped hosted signup)
       tags:
         - Passkeys
@@ -1736,7 +1799,7 @@ paths:
   /v1/register/passkey/finish:
     post:
       operationId: post_v1_register_passkey_finish
-      description: 'Completes passwordless hosted signup by verifying the authenticator attestation and creating the user in the ceremony''s tenant with the passkey as its credential. On success it sets the hosted-login SSO cookie so the browser continues into the OAuth authorize and consent flow rather than returning bearer tokens. The account is passwordless and its passkey satisfies MFA on its own.'
+      description: 'Completes passwordless hosted signup by verifying the authenticator attestation and creating the user in the ceremony''s tenant with the passkey as its credential. On success it sets the hosted-login SSO cookie so the browser continues into the OAuth authorize and consent flow rather than returning bearer tokens. The account is passwordless and its passkey satisfies MFA on its own. A body not sent as JSON is refused (415 unsupported_media_type). A ceremony finished after the organisation switched passkeys off is refused with 403 passkey.disabled and nothing is created.'
       summary: Passkey-first signup finish (tenant-scoped hosted signup)
       tags:
         - Passkeys
@@ -1767,6 +1830,8 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -2174,11 +2239,18 @@ paths:
         settings, a user's MFA requirement, factors or password; configuring
         SAML, LDAP, social providers, domains, directory mappings and
         administrator portal links; editing email templates; changing
-        retention, anomaly settings and log streaming; and updating or
+        retention, anomaly settings and log streaming; granting or revoking a
+        role's permissions, assigning or removing user and group roles,
+        creating invitations, and writing relationship tuples and attribute
+        policies; reactivating or restoring a user; starting a change of the
+        caller's own email address while they hold a factor; and updating or
         deleting the organisation, deleting or purging a user, or deleting
         one's own account. An API key, service principal or agent holds no
         session, so it cannot perform these. The hosted login's own sign-in
-        counts as a step-up for the organisation's window after it happens.
+        counts as a step-up for the organisation's window after it happens,
+        when that sign-in proved a second factor itself (a met challenge or a
+        passkey). A linked phone counts as a factor held, and steps a session
+        up through the push step-up calls.
       responses:
         '200':
           description: OK
@@ -2214,6 +2286,69 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/mfa/push/step-up:
+    post:
+      operationId: post_v1_mfa_push_step_up
+      summary: Step up with a linked phone
+      tags:
+        - MFA
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: 'Sends a step-up request for the calling session to every phone the caller has linked, and answers 202 with its challenge_id and expires_at. Once the request is approved on a phone, complete the step-up with the complete call. A caller with no linked phone gets 404 mfa.push_device_not_found; a principal without a session (an API key, agent) cannot step up.'
+      responses:
+        '202':
+          description: Request sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  challenge_id:
+                    type: string
+                    format: uuid
+                  expires_at:
+                    type: string
+                    format: date-time
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/mfa/push/step-up/{id}/complete:
+    post:
+      operationId: post_v1_mfa_push_step_up_complete
+      summary: Complete a phone step-up
+      tags:
+        - MFA
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      description: 'Records the calling session''s step-up (method push) once its request has been approved on a linked phone, and spends the request. 409 mfa.push_pending while it awaits an answer (retry); 409 mfa.push_challenge_invalid for a denied or spent request, or one raised for another session; 410 mfa.push_challenge_expired for one left unanswered past its expiry.'
+      responses:
+        '200':
+          description: Stepped up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - approved
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          description: The request expired unanswered (mfa.push_challenge_expired)
   /v1/mfa/totp:
     get:
       operationId: get_v1_mfa_totp
@@ -2915,7 +3050,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     post:
       operationId: post_v1_roles_ByRoleID_permissions_ByPermID
-      description: 'Grants a permission to a role, so every current and future holder of the role gains it through their effective permissions. The role and permission must both exist, and the grant is idempotent. Reverse it with the revoke-permission-from-role call, and inspect the role''s grants with the list-role-permissions call.'
+      description: 'Grants a permission to a role, so every current and future holder of the role gains it through their effective permissions. The role and permission must both exist, and the grant is idempotent. Reverse it with the revoke-permission-from-role call, and inspect the role''s grants with the list-role-permissions call. The caller must hold the permission in this organization, unless they are an owner (403 rbac.grant_exceeds_caller otherwise).'
       summary: Grant permission to role
       tags:
         - RBAC
@@ -2997,6 +3132,9 @@ paths:
       summary: Grant role to group
       description: >-
         Grant a role to a group. Every member of the group inherits the role's permissions (effective permissions = direct user grants UNION group-derived grants). The role and group must belong to the tenant.
+        The caller must hold every permission the role carries in this organization
+        (403 rbac.grant_exceeds_caller, naming one it lacks), and only an owner gives the
+        owner role (403 rbac.owner_only); an owner may give any role.
       tags:
         - RBAC
       parameters:
@@ -3175,7 +3313,7 @@ paths:
   /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}:
     delete:
       operationId: delete_v1_users_ByUserID_tenants_ByTenantID_roles_ByRoleID
-      description: 'Removes a directly assigned role from a user within the tenant; the user loses that role''s permissions unless a group still confers it. This is the counterpart to the assign-role-to-user call. Confirm the remaining grants with the effective-permissions call.'
+      description: 'Removes a directly assigned role from a user within the tenant; the user loses that role''s permissions unless a group still confers it. This is the counterpart to the assign-role-to-user call. Confirm the remaining grants with the effective-permissions call. Removing the owner role is refused with 409 tenant.last_owner, and nothing changes, when it would leave an organization with no active owner: make someone else an owner first.'
       summary: Unassign role from user
       tags:
         - RBAC
@@ -3211,7 +3349,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     post:
       operationId: post_v1_users_ByUserID_tenants_ByTenantID_roles_ByRoleID
-      description: 'Assigns a role to a user within the tenant, adding the role''s permissions to that user''s effective permissions. The role must belong to the tenant and the user must already be a member of it, or have it as their home tenant; otherwise the call answers 404 rbac.user_or_role_not_found, the same for a missing id as for another tenant''s. The assignment is idempotent. Reverse it with the unassign-role-from-user call, and verify the outcome with the effective-permissions call.'
+      description: 'Assigns a role to a user within the tenant, adding the role''s permissions to that user''s effective permissions. The role must belong to the tenant and the user must already be a member of it, or have it as their home tenant; otherwise the call answers 404 rbac.user_or_role_not_found, the same for a missing id as for another tenant''s. The assignment is idempotent. Reverse it with the unassign-role-from-user call, and verify the outcome with the effective-permissions call. The caller must hold every permission the role carries in this organization (403 rbac.grant_exceeds_caller, naming one it lacks), and only an owner gives the owner role (403 rbac.owner_only); an owner may give any role.'
       summary: Assign role to user
       tags:
         - RBAC
@@ -4519,6 +4657,12 @@ components:
             $ref: '#/components/schemas/Error'
     Unprocessable:
       description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnsupportedMediaType:
+      description: The body was not sent as JSON (`unsupported_media_type`). Routes that sign a browser in accept only an application/json body, which a page on another site cannot make the browser post.
       content:
         application/json:
           schema:

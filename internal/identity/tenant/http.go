@@ -9,9 +9,12 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 
+	"github.com/jackc/pgx/v5"
+
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -26,6 +29,9 @@ type Handler struct {
 	Validate *validator.Validate
 	// Mints a tenant-scoped token after create so the client switches in.
 	AuthService tokenIssuer
+	// Signals announces the sessions suspending or deleting an organisation
+	// ends (nil = announces nothing).
+	Signals *sessionsignal.Signaller
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -178,7 +184,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	t, err := h.Repo.Update(r.Context(), id, in)
+	t, err := h.Repo.Update(r.Context(), id, in, h.lifecycle(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -192,9 +198,62 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
 		return
 	}
-	if err := h.Repo.SoftDelete(r.Context(), id); err != nil {
+	if err := h.Repo.SoftDelete(r.Context(), id, h.lifecycle(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// lifecycle is what an organisation's status change sets off, in its
+// transaction. Suspending or deleting it ends every session in it — a member
+// already signed in loses access at once, and refresh refuses its tokens —
+// and reactivating it lets its members sign in again (the ended sessions stay
+// ended). Each change is audited (tenant.suspended, tenant.reactivated,
+// tenant.deleted, with the status it had) and queued as an event. An access
+// token already issued lasts out its short lifetime, as for a suspended
+// account.
+func (h *Handler) lifecycle(r *http.Request) StatusChange {
+	return func(ctx context.Context, tx pgx.Tx, from, to string) error {
+		var action, reason string
+		switch to {
+		case "suspended":
+			action, reason = "tenant.suspended", sessionsignal.ReasonTenantSuspended
+		case "deleted":
+			action, reason = "tenant.deleted", sessionsignal.ReasonTenantDeleted
+		case "active":
+			action = "tenant.reactivated"
+		default:
+			return nil
+		}
+		id, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+		if err != nil {
+			return errs.ErrBadRequest.WithDetail("invalid tenantID")
+		}
+		ended := 0
+		if reason != "" {
+			sessions, err := sessionsignal.EndTenantSessions(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			h.Signals.Revoked(ctx, tx, reason, sessions...)
+			ended = len(sessions)
+		}
+		var actor *uuid.UUID
+		actorType := "system"
+		if p := httpx.PrincipalFromCtx(ctx); p != nil {
+			actor = p.UserID
+			if p.ActorType != "" {
+				actorType = p.ActorType
+			}
+		}
+		meta := map[string]any{"from": from, "status": to, "sessions_ended": ended}
+		if err := audit.Record(ctx, tx, audit.Event{TenantID: &id, ActorUserID: actor, ActorType: actorType, Action: action,
+			ResourceType: "tenant", ResourceID: &id, IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
+			Metadata: meta}); err != nil {
+			return err
+		}
+		return outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "tenant.events", EventType: action,
+			Payload: map[string]any{"tenant_id": id, "status": to, "from": from}})
+	}
 }

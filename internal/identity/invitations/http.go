@@ -14,14 +14,39 @@ import (
 )
 
 // tokenIssuer is the slice of auth.Service this handler needs (mockable).
+// Entering the organisation an invitation joins is gated on its second-factor
+// requirement: an account the invitation created is signed in as at
+// sign-up, which may answer the enrolment challenge; one already signed in
+// carries its session's factor, and is refused while the organisation
+// requires one it didn't meet.
 type tokenIssuer interface {
-	IssuePair(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, method string) (*auth.TokenPair, error)
+	SignInInvitedAccount(ctx context.Context, userID, tenantID uuid.UUID, ip, ua string) (*auth.LoginResult, error)
+	EnterInvitedTenant(ctx context.Context, userID, tenantID, fromSessionID uuid.UUID, ip, ua string) (*auth.TokenPair, error)
+}
+
+// enterAsSignedIn answers an accept by a signed-in account with the token
+// pair for the organisation it joined.
+func (h *Handler) enterAsSignedIn(w http.ResponseWriter, r *http.Request, p *httpx.Principal, res *AcceptResult) {
+	from := uuid.Nil
+	if p.SessionID != nil {
+		from = *p.SessionID
+	}
+	pair, err := h.AuthService.EnterInvitedTenant(r.Context(), res.UserID, res.TenantID, from, httpx.ClientIP(r), r.UserAgent())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, pair)
 }
 
 type Handler struct {
 	Service     *Service
 	AuthService tokenIssuer
 	Validate    *validator.Validate
+	// GrantCheck refuses an invitation whose role would give the invitee
+	// authority the caller doesn't hold (rbac.Repository.CheckGrantRole).
+	// Without it an invitation that carries a role is refused.
+	GrantCheck func(ctx context.Context, caller *httpx.Principal, tenantID, roleID uuid.UUID) error
 }
 
 // MountAuthed mounts the admin-side CRUD that requires authentication, plus the
@@ -62,6 +87,16 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if err := h.Validate.Struct(in); err != nil {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
+	}
+	if in.RoleID != nil {
+		if h.GrantCheck == nil {
+			httpx.WriteError(w, r, errs.ErrNotImplemented)
+			return
+		}
+		if err := h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tid, *in.RoleID); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
 	}
 	var invitedBy *uuid.UUID
 	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
@@ -149,12 +184,16 @@ func (h *Handler) accept(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	pair, err := h.AuthService.IssuePair(r.Context(), res.UserID, res.TenantID, httpx.ClientIP(r), r.UserAgent(), "invite_accept")
+	out, err := h.AuthService.SignInInvitedAccount(r.Context(), res.UserID, res.TenantID, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, pair)
+	if out.MFARequired {
+		httpx.WriteJSON(w, http.StatusOK, out.Body())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out.Pair)
 }
 
 // listMine returns pending invitations addressed to the signed-in user's email.
@@ -208,12 +247,7 @@ func (h *Handler) acceptMineByID(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	pair, err := h.AuthService.IssuePair(r.Context(), res.UserID, res.TenantID, httpx.ClientIP(r), r.UserAgent(), "invite_accept")
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, pair)
+	h.enterAsSignedIn(w, r, p, res)
 }
 
 type acceptAuthedInput struct {
@@ -242,10 +276,5 @@ func (h *Handler) acceptAuthenticated(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	pair, err := h.AuthService.IssuePair(r.Context(), res.UserID, res.TenantID, httpx.ClientIP(r), r.UserAgent(), "invite_accept")
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, pair)
+	h.enterAsSignedIn(w, r, p, res)
 }
