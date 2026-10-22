@@ -17,21 +17,19 @@ import (
 )
 
 // An invited person without an account may accept with a passkey instead of a
-// password. The ceremony is the passkey service's (POST
-// /invites/accept/passkey/begin and /finish); this side tells it which
-// invitation a link names and accepts it for the account the ceremony creates.
-// The acceptance screen first looks the invitation up to learn which ways of
-// accepting the organisation allows.
+// password. The passkey service runs the ceremony (POST
+// /invites/accept/passkey/begin and /finish); this file finds the invitation a
+// link names and accepts it for the account the ceremony creates.
 
 // AcceptMethods reports which ways of signing in an organisation allows.
-// Satisfied by *authpolicy.Service; an interface so this package does not
-// import it. Wired in internal/bootstrap/dependencies.go.
+// Satisfied by *authpolicy.Service; an interface so this package doesn't import
+// it.
 type AcceptMethods interface {
 	AllowedSignInMethods(ctx context.Context, tenantID uuid.UUID) (password, passkey, magicLink bool, err error)
 }
 
-// SetAcceptMethods wires the organisation's sign-in methods into Lookup (nil:
-// every invitation offers a password only).
+// SetAcceptMethods sets the source of each organisation's sign-in methods, used
+// by Accept and Lookup. Without it every invitation offers a password only.
 func (s *Service) SetAcceptMethods(m AcceptMethods) { s.methods = m }
 
 // InvitationForNewAccount returns the id, organisation and email of the
@@ -68,10 +66,9 @@ func (s *Service) InvitationForNewAccount(ctx context.Context, token string) (uu
 }
 
 // AcceptForNewAccountTx accepts invitation id for userID, the account just
-// created in tx for email in tenantID. The invitation is read under lock and
-// must still be pending, unexpired, and for that email and organisation; then
-// the invited role is granted, the account marked as owning its address, and
-// the invitation marked accepted. Any refusal undoes the caller's transaction.
+// created in tx for email in tenantID. The invitation, read under lock, must be
+// pending, unexpired and for that email and tenant; then the invited role is
+// granted, the account activated and the invitation marked accepted.
 func (s *Service) AcceptForNewAccountTx(ctx context.Context, tx pgx.Tx, id, tenantID, userID uuid.UUID, email string) error {
 	qtx := s.q.WithTx(tx)
 	inv, err := qtx.GetInviteByIDForAccept(ctx, id)
@@ -112,8 +109,8 @@ type InvitationPreview struct {
 	} `json:"organization"`
 	Email     string    `json:"email"`
 	ExpiresAt time.Time `json:"expires_at"`
-	// AccountExists: an account already holds the address, so the invitee
-	// signs in and accepts as themselves instead.
+	// AccountExists reports whether an account already holds the address; if so
+	// the invitee signs in and accepts as themselves.
 	AccountExists bool `json:"account_exists"`
 	// Methods are the ways a new account may accept: a password, a passkey.
 	Methods struct {
@@ -122,10 +119,9 @@ type InvitationPreview struct {
 	} `json:"methods"`
 }
 
-// Lookup previews the invitation token names, refused as Accept would refuse
-// it when it is not pending or has expired. A password is always offered,
-// whatever the organisation's methods, as Accept has always allowed; a
-// passkey only where the organisation allows passkeys.
+// Lookup previews the invitation token names, refusing it as Accept would when
+// it isn't pending or has expired. Methods.Password is always true, even where
+// Accept refuses a password; Methods.Passkey follows the organisation.
 func (s *Service) Lookup(ctx context.Context, token string) (*InvitationPreview, error) {
 	row, err := s.q.LookupInvite(ctx, codes.Hash(token))
 	if errors.Is(err, pgx.ErrNoRows) {

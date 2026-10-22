@@ -1,9 +1,7 @@
-// Package scim implements SCIM 2.0 (RFC 7643/7644) user + group provisioning so
-// IdPs like Okta, Entra ID and Google Workspace can push and deprovision users
-// automatically. Two surfaces: an admin API (under /v1, user-JWT) to manage the
-// per-tenant bearer token the IdP authenticates with, and the SCIM protocol
-// itself (at /scim/v2, bearer-token auth). SCIM writes reuse user.Repository, so
-// provisioned users are ordinary tenant users tagged provisioned_via='scim'.
+// Package scim implements SCIM 2.0 (RFC 7643/7644) provisioning, so IdPs such
+// as Okta and Entra ID can push and deprovision users and groups. The protocol
+// is served at /scim/v2 behind a per-tenant bearer token managed under /v1.
+// Provisioned users are ordinary tenant users tagged provisioned_via='scim'.
 package scim
 
 import (
@@ -44,21 +42,20 @@ const (
 	maxPageCount     = 200
 )
 
+// Service manages SCIM tokens and provisioned users and groups. A nil signals
+// announces no ended sessions; a nil gate leaves token rotation ungated.
 type Service struct {
-	// signals announces the sessions a deprovisioning ends (nil = announces
-	// nothing). Set via SetSessionSignals.
 	signals  *sessionsignal.Signaller
 	pool     *pgxpool.Pool
 	q        *dbgen.Queries
 	users    *user.Repository
 	observer OperationObserver
 	mapper   ProfileMapper
-	// gate enforces the plan SCIM feature on token provisioning (nil = off).
-	gate PlanGate
+	gate     PlanGate
 }
 
-// SetSessionSignals wires the announcement of ended sessions. Called from
-// internal/bootstrap/dependencies.go.
+// SetSessionSignals sets where the sessions ended by a SCIM suspension are
+// announced.
 func (s *Service) SetSessionSignals(sig *sessionsignal.Signaller) { s.signals = sig }
 
 func NewService(pool *pgxpool.Pool, users *user.Repository) *Service {
@@ -66,8 +63,7 @@ func NewService(pool *pgxpool.Pool, users *user.Repository) *Service {
 }
 
 // PlanGate reports whether a plan-gated boolean feature is included in the
-// tenant's plan. Satisfied by operations/entitlements.Service, injected via
-// SetPlanGate.
+// tenant's plan. Satisfied by *entitlements.Service.
 type PlanGate interface {
 	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
 }
@@ -713,8 +709,7 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// IdP can create a user already deactivated. Previously this ignored its
-	// own error, so the response could claim a state the database never had.
+	// An IdP can create a user already deactivated.
 	active := true
 	if p.Active != nil && !*p.Active {
 		active = false
@@ -1004,12 +999,9 @@ func (h *Handler) schemas(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// decodeSCIMBody bounds a SCIM request body before decoding it.
-//
-// SCIM does not go through httpx.DecodeJSON — it needs SCIM-shaped errors, not
-// the platform envelope — so the body caps applied elsewhere were skipped here
-// entirely, leaving the highest-volume provisioning surface reading unbounded
-// JSON straight off the wire. Same ceiling as httpx.MaxJSONBodyBytes.
+// decodeSCIMBody decodes a request body capped at httpx.MaxJSONBodyBytes,
+// writing a SCIM error and returning false on failure. SCIM can't use
+// httpx.DecodeJSON because it needs SCIM-shaped errors.
 func decodeSCIMBody(w http.ResponseWriter, r *http.Request, out any) bool {
 	if r.ContentLength > httpx.MaxJSONBodyBytes {
 		writeSCIMTypedErr(w, http.StatusRequestEntityTooLarge, "tooLarge", "Request body is too large.")
@@ -1028,14 +1020,9 @@ func decodeSCIMBody(w http.ResponseWriter, r *http.Request, out any) bool {
 	return true
 }
 
-// recordUserEvidence writes the audit row and domain event for a SCIM user
-// mutation inside the caller's transaction.
-//
-// SCIM is the highest-volume user-mutation surface in the product — an IdP can
-// create, suspend and deprovision people all day — and it previously wrote no
-// audit row and emitted no outbox event for any of it, leaving that activity
-// invisible to incident response and to every downstream consumer. The actor is
-// the tenant's SCIM credential rather than a user, so it is attributed as such.
+// recordUserEvidence writes the audit row and outbox event for a SCIM user
+// change inside the caller's transaction. The actor is the tenant's SCIM
+// credential, recorded as actor type "scim".
 func recordUserEvidence(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID, userID uuid.UUID, action string, metadata map[string]any) error {
 	tenant := tenantID
 	target := userID
@@ -1068,15 +1055,8 @@ func recordUserEvidence(ctx context.Context, tx pgx.Tx, r *http.Request, tenantI
 // transaction, so a provisioning change is never durable without a record of it.
 func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenantID, userID uuid.UUID, in user.UpdateInput, action string, profiles ...map[string]any) bool {
 	ctx := r.Context()
-	// Confirm the user belongs to this tenant before writing.
-	//
-	// user.Repository.UpdateTx keys on the user id alone (`WHERE id = $n AND
-	// deleted_at IS NULL`) — it carries no tenant predicate and there is no RLS
-	// to catch that. Without this check a SCIM token issued to one tenant could
-	// PATCH /scim/v2/Users/{id} for a user in *any* tenant and flip `active`
-	// (suspending them, which then blocks their refresh) or rewrite their
-	// display name. deleteUser already guards this way; both write paths that
-	// reach here (replaceUser, patchUser) now funnel through the same check.
+	// UpdateTx matches on the user ID alone, so without this check one tenant's
+	// SCIM token could suspend or rename a user in any tenant.
 	if _, err := h.Service.getProvisioned(ctx, tenantID, userID); err != nil {
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return false
@@ -1128,8 +1108,7 @@ func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenant
 }
 
 // deprovision soft-deletes a SCIM-managed user and records it in the same
-// transaction. Deprovisioning is the single most incident-relevant thing an IdP
-// does here, and it was previously the least observable.
+// transaction.
 func (h *Handler) deprovision(r *http.Request, tenantID, userID uuid.UUID) error {
 	ctx := r.Context()
 	tx, err := h.Service.users.Pool().Begin(ctx)

@@ -1,15 +1,10 @@
 package errs
 
-// Group error codes — stable, namespaced machine identifiers for the
-// internal/identity/groups domain. Clients branch and localize on these (never
-// on the message text). Once shipped, a code MUST NOT change. Every identifier
-// is prefixed with the `group` domain so it never collides with another
-// bounded context.
+// Group error codes.
 const (
-	CodeGroupNotFound     = "group.not_found"
-	CodeGroupNameExists   = "group.name_exists"
-	CodeGroupUserNotFound = "group.user_not_found"
-	// Nesting: a parent outside the organization, and a move that would loop.
+	CodeGroupNotFound       = "group.not_found"
+	CodeGroupNameExists     = "group.name_exists"
+	CodeGroupUserNotFound   = "group.user_not_found"
 	CodeGroupParentNotFound = "group.parent_not_found"
 	CodeGroupCycle          = "group.cycle"
 
@@ -26,17 +21,12 @@ const (
 	CodeGroupImportTooLarge = "group.import_too_large"
 )
 
-// Group errors. The Message is what the end user sees — edit wording here, in
-// one place. Handlers just `return errs.ErrGroupNotFound`.
+// Group errors. ErrGroupUserNotFound and ErrGroupParentNotFound give the same
+// answer for missing and other-organization IDs, so IDs can't be probed.
 var (
-	ErrGroupNotFound   = New(CodeGroupNotFound, "That group doesn't exist.")
-	ErrGroupNameExists = New(CodeGroupNameExists, "A group with that name already exists.")
-	// ErrGroupUserNotFound is the one answer to adding anyone who isn't a live
-	// member of the organization, whether the id is missing or belongs to
-	// another organization, so the response can't be used to probe for ids.
-	ErrGroupUserNotFound = New(CodeGroupUserNotFound, "That user doesn't exist in this organization.")
-	// ErrGroupParentNotFound is the answer to a parent that is missing or in
-	// another organization alike.
+	ErrGroupNotFound       = New(CodeGroupNotFound, "That group doesn't exist.")
+	ErrGroupNameExists     = New(CodeGroupNameExists, "A group with that name already exists.")
+	ErrGroupUserNotFound   = New(CodeGroupUserNotFound, "That user doesn't exist in this organization.")
 	ErrGroupParentNotFound = New(CodeGroupParentNotFound, "That parent group doesn't exist in this organization.")
 	ErrGroupCycle          = New(CodeGroupCycle, "A group can't be placed inside itself or one of its own subgroups.")
 

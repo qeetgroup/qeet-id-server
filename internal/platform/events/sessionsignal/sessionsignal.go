@@ -1,26 +1,7 @@
-// Package sessionsignal announces ended API and console sessions
-// (auth.sessions) to the organisations whose applications may hold the user's
-// tokens, as the signed session.revoked webhook. Access tokens are verified
-// offline, so this signal is how a subscribed application learns of a
-// withdrawal before the token lapses.
-//
-// Every path that ends a session calls Signaller.Revoked inside the
-// transaction that ends it, with one of the reasons below. The signals are
-// queued in that transaction (ADR-0009) under a savepoint: when queueing
-// fails, only the savepoint is rolled back — the revocation still commits —
-// and the failure is counted in session_revocation_signal_failures_total.
-//
-// Destination: the session's organisation. A session with no organisation
-// (the normal state after sign-up, and console sessions) is announced to
-// every organisation the user belongs to — their home organisation and each
-// one they hold a role in. A user who belongs to none has no subscriber to
-// tell; nothing is queued.
-//
-// Payload: event_id (new for every signal: a redelivery of the same signal
-// repeats it, and X-Qeet-Delivery-ID, while a new signal has a new one),
-// user_id, session_id, tenant_id (null for a session with no organisation),
-// reason and revoked_at. Deliveries are signed (X-Qeet-Signature) and
-// retried by the webhook dispatcher.
+// Package sessionsignal sends the session.revoked webhook when an API or
+// console session ends, so applications that verify access tokens offline learn
+// of the revocation before the token expires. Signals are queued in the
+// transaction that ends the session, and a failure to queue never blocks it.
 package sessionsignal
 
 import (
@@ -37,55 +18,26 @@ import (
 // EventType is the webhook event a session revocation is announced as.
 const EventType = "session.revoked"
 
-// Reasons a session ends — the documented set a subscriber can rely on.
+// Reasons a session ends, sent as the reason field of session.revoked.
 const (
-	// ReasonLogout: the user signed the session out (or revoked it from
-	// their session list).
-	ReasonLogout = "logout"
-	// ReasonReuseDetected: a refresh token was presented twice; the session
-	// is ended as suspected theft.
-	ReasonReuseDetected = "reuse_detected"
-	// ReasonOtherSessionsRevoked: the user signed out their other sessions.
-	ReasonOtherSessionsRevoked = "other_sessions_revoked"
-	// ReasonAllSessionsRevoked: the user signed out everywhere.
-	ReasonAllSessionsRevoked = "all_sessions_revoked"
-	// ReasonAdminRevokedAll: an administrator force-signed the user out.
-	ReasonAdminRevokedAll = "admin_revoked_all"
-	// ReasonPasswordChanged: the user changed their password; their other
-	// sessions end.
-	ReasonPasswordChanged = "password_changed"
-	// ReasonPasswordReset: a password reset was completed; every session ends.
-	ReasonPasswordReset = "password_reset"
-	// ReasonAdminPasswordSet: an administrator set the user's password; every
-	// session ends.
-	ReasonAdminPasswordSet = "admin_password_set"
-	// ReasonTenantSwitch: the user switched organisation; the session they
-	// switched from is superseded by a new one.
-	ReasonTenantSwitch = "tenant_switch"
-	// ReasonSuspended: the account was suspended.
-	ReasonSuspended = "suspended"
-	// ReasonDeprovisioned: the account was deactivated by SCIM provisioning.
-	ReasonDeprovisioned = "deprovisioned"
-	// ReasonReactivated: the account was reactivated; sessions from before
-	// the suspension stay ended.
-	ReasonReactivated = "reactivated"
-	// ReasonDeleted: the account was deleted (soft-deleted by an
-	// administrator, or erased).
-	ReasonDeleted = "deleted"
-	// ReasonRemovedFromOrganization: the user was removed from the
-	// organisation the session was in; their sessions elsewhere stay.
-	ReasonRemovedFromOrganization = "removed_from_organization"
-	// ReasonTenantSuspended: the organisation the session was in was
-	// suspended; sessions elsewhere stay.
-	ReasonTenantSuspended = "tenant_suspended"
-	// ReasonTenantDeleted: the organisation the session was in was deleted.
-	ReasonTenantDeleted = "tenant_deleted"
-	// ReasonExpired: every refresh token of the session expired without it
-	// being ended; announced when the cleanup removes it.
-	ReasonExpired = "expired"
-	// ReasonSessionLimit: a new sign-in reached the organisation's limit on
-	// simultaneous sessions, and this, the least recently used, was ended.
-	ReasonSessionLimit = "session_limit"
+	ReasonLogout                  = "logout"                    // the user signed the session out
+	ReasonReuseDetected           = "reuse_detected"            // a refresh token was used twice
+	ReasonOtherSessionsRevoked    = "other_sessions_revoked"    // the user signed out their other sessions
+	ReasonAllSessionsRevoked      = "all_sessions_revoked"      // the user signed out everywhere
+	ReasonAdminRevokedAll         = "admin_revoked_all"         // an administrator signed the user out
+	ReasonPasswordChanged         = "password_changed"          // other sessions end; the current one stays
+	ReasonPasswordReset           = "password_reset"            // every session ends
+	ReasonAdminPasswordSet        = "admin_password_set"        // an administrator set the password
+	ReasonTenantSwitch            = "tenant_switch"             // replaced by a session in another organisation
+	ReasonSuspended               = "suspended"                 // the account was suspended
+	ReasonDeprovisioned           = "deprovisioned"             // SCIM deactivated the account
+	ReasonReactivated             = "reactivated"               // sessions from before the suspension stay ended
+	ReasonDeleted                 = "deleted"                   // the account was deleted
+	ReasonRemovedFromOrganization = "removed_from_organization" // the user was removed from the organisation
+	ReasonTenantSuspended         = "tenant_suspended"          // the session's organisation was suspended
+	ReasonTenantDeleted           = "tenant_deleted"            // the session's organisation was deleted
+	ReasonExpired                 = "expired"                   // all refresh tokens expired; sent at cleanup
+	ReasonSessionLimit            = "session_limit"             // ended to stay within the session limit
 )
 
 // Session is one ended session. TenantID is uuid.Nil for a session with no
@@ -136,6 +88,8 @@ func (s *Signaller) Revoked(ctx context.Context, tx pgx.Tx, reason string, sessi
 	}
 }
 
+// queue sends each session's signal to its organisation, or to every
+// organisation the user belongs to when the session has none.
 func (s *Signaller) queue(ctx context.Context, tx pgx.Tx, reason string, sessions []Session) error {
 	now := time.Now().UTC()
 	for _, sess := range sessions {
@@ -166,11 +120,8 @@ func (s *Signaller) queue(ctx context.Context, tx pgx.Tx, reason string, session
 	return nil
 }
 
-// EndUserSessions ends every live session of userID inside tx and returns
-// them, for Revoked. Used where an account change ends all of its sessions:
-// password reset, an administrator setting the password, suspension,
-// reactivation, deprovisioning and erasure. A session past its maximum age or
-// idle timeout has already ended and is left as expired.
+// EndUserSessions ends every live session of userID inside tx and returns them
+// for Revoked. Sessions past their maximum age or idle timeout are left as expired.
 func EndUserSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]Session, error) {
 	rows, err := tx.Query(ctx, `
 		UPDATE auth.sessions SET revoked_at = NOW()
@@ -187,9 +138,8 @@ func EndUserSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]Sessio
 	})
 }
 
-// EndUserSessionsInTenant revokes userID's live sessions in one organisation
-// only, for removing them from it, and returns them for Revoked. Their sessions
-// elsewhere are left alone.
+// EndUserSessionsInTenant ends userID's live sessions in tenantID only and
+// returns them for Revoked.
 func EndUserSessionsInTenant(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID) ([]Session, error) {
 	rows, err := tx.Query(ctx, `
 		UPDATE auth.sessions SET revoked_at = NOW()
@@ -206,12 +156,9 @@ func EndUserSessionsInTenant(ctx context.Context, tx pgx.Tx, userID, tenantID uu
 	})
 }
 
-// EndLoginSessions ends every hosted sign-in (browser) session of userID
-// inside tx — deleting each, as hosted sign-out deletes one — and returns how
-// many had not yet expired. Signing out everywhere uses it, and so does every
-// password reset, change and administrator's password set: a hosted session
-// opened with the old password must not outlive it (it could still start an
-// application's sign-in or enrol a passkey).
+// EndLoginSessions deletes every hosted sign-in (browser) session of userID
+// inside tx and returns how many had not yet expired. Password changes call it
+// so a browser session opened with the old password cannot outlive it.
 func EndLoginSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (int64, error) {
 	var live int64
 	err := tx.QueryRow(ctx, `
@@ -223,8 +170,7 @@ func EndLoginSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (int64, 
 	return live, err
 }
 
-// EndTenantSessions revokes every live session in one organisation, whoever
-// holds it, for suspending or deleting it, and returns them for Revoked.
+// EndTenantSessions ends every live session in tenantID and returns them for Revoked.
 func EndTenantSessions(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) ([]Session, error) {
 	rows, err := tx.Query(ctx, `
 		UPDATE auth.sessions SET revoked_at = NOW()

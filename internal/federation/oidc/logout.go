@@ -18,12 +18,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
-// Sign-out notices. When a hosted-login session ends, every
-// application that holds a code or grant from it is told: server to server by
-// a signed logout token POSTed to its backchannel_logout_uri (OpenID Connect
-// Back-Channel Logout 1.0), retried until delivered, and in the browser by its
-// frontchannel_logout_uri, which the hosted signed-out page loads (Front-
-// Channel Logout 1.0). Both name the session (sid), which ID tokens carry.
+// When a hosted-login session ends, every application holding a code or grant
+// from it is told: by a signed logout token POSTed to its backchannel_logout_uri,
+// and by its frontchannel_logout_uri loaded on the signed-out page (OpenID
+// Connect Back-Channel and Front-Channel Logout 1.0).
 
 const (
 	backchannelLogoutEvent = "http://schemas.openid.net/event/backchannel-logout"
@@ -32,7 +30,7 @@ const (
 )
 
 // SetLogoutHTTPClient sets the outbound policy back-channel notices are sent
-// under (the platform's SSRF guard). Called from internal/bootstrap.
+// under (the platform's SSRF guard).
 func (s *Service) SetLogoutHTTPClient(p *egress.Policy) {
 	s.logoutEgress = p
 	s.logoutClient = p.HTTPClient(5 * time.Second)
@@ -47,11 +45,10 @@ func validLogoutURI(raw string) bool {
 	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" && u.Fragment == ""
 }
 
-// NotifySignOut tells the applications in an ended hosted-login session: it
-// queues a logout token for each with a back-channel address and returns the
-// front-channel addresses (with iss and sid) for the signed-out page, and
-// records which applications were told. initiatedBy is the application whose
-// sign-out request it was ("" for none). Satisfies auth.SignOutNotifier.
+// NotifySignOut tells the applications in an ended hosted-login session. It
+// queues a back-channel logout token for each, records who was told, and returns
+// the front-channel addresses for the signed-out page. initiatedBy is the
+// application that asked for the sign-out ("" for none).
 func (s *Service) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID, initiatedBy string) ([]string, error) {
 	clients, err := s.q.SessionClients(ctx, optionalUUID(sessionID))
 	if err != nil || len(clients) == 0 {

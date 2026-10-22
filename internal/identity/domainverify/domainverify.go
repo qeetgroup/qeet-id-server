@@ -1,6 +1,6 @@
-// Package domainverify lets a tenant claim and prove ownership of an email domain
-// (B2B SSO onboarding) via a DNS TXT record, checked only on an explicit admin
-// action. A verified domain can later gate org SSO / JIT provisioning.
+// Package domainverify lets a tenant prove it owns an email domain with a DNS
+// TXT record, checked only when an admin asks, and reports the DNS state of its
+// custom login hostname.
 package domainverify
 
 import (
@@ -43,14 +43,13 @@ func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), resolver: net.DefaultResolver}
 }
 
-// PlanGate reports whether a plan-gated boolean feature is included in the
-// tenant's plan. Satisfied by operations/entitlements.Service, injected via
-// SetPlanGate.
+// PlanGate reports whether a boolean plan feature is in the tenant's plan.
+// Satisfied by *entitlements.Service.
 type PlanGate interface {
 	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
 }
 
-// SetPlanGate wires the plan-feature gate (nil allows all features).
+// SetPlanGate sets the plan-feature gate (nil allows all features).
 func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 
 type Domain struct {
@@ -137,10 +136,8 @@ func pgtypeToTimePtr(p pgtype.Timestamptz) *time.Time {
 	return &t
 }
 
-// rowToDomain maps the common columns (id, domain, verification_token,
-// verified_at, created_at) to the domain Domain struct. This signature matches
-// the InsertDomainRow, GetDomainForVerifyRow, ListDomainsRow, and MarkDomainVerifiedRow
-// generated types, which all have identical fields.
+// rowToDomain builds a Domain from the columns the generated InsertDomain,
+// GetDomainForVerify and MarkDomainVerified rows share.
 func rowToDomain(id uuid.UUID, domain, token string, verifiedAt pgtype.Timestamptz, createdAt time.Time) Domain {
 	d := Domain{
 		ID:                id,
@@ -207,11 +204,9 @@ func (s *Service) AddWithActor(ctx context.Context, tenantID uuid.UUID, raw stri
 	return &d, nil
 }
 
-// List returns the tenant's domains with their per-domain settings and the
-// outcome of the last verification attempt.
-//
-// Raw SQL because sqlc isn't wired into the build here; fold into queries.sql
-// (replacing ListDomains) at the next `sqlc generate`.
+// List returns the tenant's domains with their settings and the outcome of the
+// last verification attempt. It is hand-written SQL because the generated
+// ListDomains doesn't select those columns.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Domain, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, domain, verification_token, verified_at, created_at,
@@ -296,9 +291,10 @@ func (s *Service) UpdateSettings(
 	return &d, nil
 }
 
-// Verify looks up the DNS TXT record and, if the token is present, marks the
-// domain verified. A missing record returns a friendly 422 (DNS may still be
-// propagating); an already-verified-by-another-tenant collision returns 409.
+// Verify marks the domain verified if its DNS TXT record holds the token. A
+// failed check is recorded and returns the retryable
+// ErrDomainVerifyDNSRecordMissing; a domain another tenant has verified returns
+// ErrDomainVerifyClaimedByOther.
 func (s *Service) Verify(ctx context.Context, id, tenantID uuid.UUID) (*Domain, error) {
 	return s.VerifyWithActor(ctx, id, tenantID, audit.Actor{Type: "system"})
 }

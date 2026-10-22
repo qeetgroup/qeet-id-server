@@ -340,10 +340,8 @@ func main() {
 	fmt.Printf("  • oidc client  %-22q %s (public, PKCE — no secret)\n", "Example SPA", "qci_example_spa")
 
 	// ---- ReBAC tuples (Access → Relationships) ----
-	// Group membership is modelled as tuples too, so a userset resolves recursively:
-	// rohan (∈ engineering) can VIEW the security runbook because engineering#member
-	// is a viewer; sneha (∉ engineering) cannot. Great for the explainable-authz
-	// "Access Tester" demo.
+	// Rohan can view the security runbook through engineering#member, a viewer;
+	// Sneha, outside engineering, cannot. This feeds the "Access Tester" demo.
 	demoTuples := []struct{ object, relation, subject string }{
 		{"group:engineering", "member", "user:" + founder.ID.String()},
 		{"group:engineering", "member", "user:" + staff["aarav@qeet.in"].ID.String()},
@@ -570,7 +568,7 @@ func main() {
 
 	type orgInput struct {
 		slug, name, domain, plan, region, currency string
-		users                                      int // non-owner members
+		users                                      int
 		groups                                     []string
 	}
 	// seedOrg provisions a customer workspace: a fresh, loginable owner (via

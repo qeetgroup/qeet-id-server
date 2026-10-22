@@ -1,7 +1,7 @@
-// Package outbox is the shared transactional outbox helper.
-// Modules call Enqueue inside their own pgx.Tx; the Dispatcher polls
-// committed rows and hands them to a Publisher. For the monolith we ship
-// a logging publisher; swap in Kafka when first integrator needs it.
+// Package outbox is the transactional outbox. Modules call Enqueue inside their
+// own pgx.Tx; a Dispatcher polls committed rows and hands them to a Publisher
+// (NATS, or a log-only default), retrying with backoff and dead-lettering rows
+// that keep failing.
 package outbox
 
 import (
@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// Event is one message to publish once the enqueuing transaction commits.
 type Event struct {
 	ID          uuid.UUID
 	AggregateID uuid.UUID
@@ -40,10 +41,13 @@ func Enqueue(ctx context.Context, tx pgx.Tx, e Event) error {
 	return err
 }
 
+// Publisher delivers an event. A nil error marks the row published; an error
+// makes the Dispatcher retry it.
 type Publisher interface {
 	Publish(ctx context.Context, eventID uuid.UUID, topic, eventType string, payload []byte) error
 }
 
+// LogPublisher logs each event instead of delivering it. It never fails.
 type LogPublisher struct{}
 
 func (LogPublisher) Publish(_ context.Context, eventID uuid.UUID, topic, eventType string, payload []byte) error {
@@ -51,6 +55,8 @@ func (LogPublisher) Publish(_ context.Context, eventID uuid.UUID, topic, eventTy
 	return nil
 }
 
+// Dispatcher leases due outbox rows in batches and publishes them. Leases make
+// concurrent dispatchers safe.
 type Dispatcher struct {
 	pool        *pgxpool.Pool
 	pub         Publisher
@@ -61,13 +67,13 @@ type Dispatcher struct {
 	lease       time.Duration
 }
 
-// DefaultMaxAttempts caps how many times the dispatcher retries before
-// moving the row to the dead-letter table. 10 gives ~17 minutes of
-// exponential backoff (capped at 5 min per step) which is more than
-// enough to ride out a transient publisher outage but stops infinite
-// log spam from a permanently malformed payload.
+// DefaultMaxAttempts is how many publishes are tried before a row moves to the
+// dead-letter table: about 14 minutes of backoff, enough to ride out a
+// publisher outage without retrying a malformed payload forever.
 const DefaultMaxAttempts = 10
 
+// NewDispatcher returns a Dispatcher polling every interval (default 2s) in
+// batches of batchSize (default 50).
 func NewDispatcher(pool *pgxpool.Pool, pub Publisher, interval time.Duration, batchSize int) *Dispatcher {
 	if interval <= 0 {
 		interval = 2 * time.Second
@@ -102,10 +108,8 @@ func (d *Dispatcher) Run(ctx context.Context) {
 func (d *Dispatcher) Sweep(ctx context.Context) error { return d.tick(ctx) }
 
 func (d *Dispatcher) tick(ctx context.Context) error {
-	// Pick rows that are either fresh (last_attempt_at IS NULL) or
-	// whose backoff window has elapsed. We deliberately compute the
-	// minimum gap in Go (via backoff()) rather than in SQL so the
-	// retry curve can change without a migration.
+	// Lease unleased rows that are new or whose backoff (2^attempts seconds,
+	// capped at 300) has elapsed.
 	rows, err := d.pool.Query(ctx, `
 		WITH candidates AS (
 			SELECT id

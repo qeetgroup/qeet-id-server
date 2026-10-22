@@ -1,10 +1,8 @@
 package social
 
-// GitHub OAuth adapter. Unlike Google/Microsoft, GitHub is not an OIDC provider
-// (no discovery document, no userinfo endpoint, no PKCE for OAuth Apps), so it
-// can't use the generic OIDC ceremony in oauthclient.go. This provides GitHub's
-// authorize/token/user endpoints directly and maps the result onto the same
-// userInfo shape the rest of the platform flow consumes.
+// GitHub isn't an OIDC provider (no discovery document or userinfo endpoint,
+// no PKCE for OAuth Apps), so it has its own authorize, token and user calls
+// instead of oauthclient.go, mapped onto the same userInfo.
 
 import (
 	"context"

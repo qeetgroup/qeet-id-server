@@ -1,10 +1,8 @@
-// SCIM 2.0 Groups (RFC 7643 §4.2, RFC 7644): the surface Okta/Entra ID drive to
-// push groups and sync membership. Membership sync arrives as PatchOp add/remove
-// of `members`, so PATCH support here must be exact. Groups map onto the existing
-// tenant.groups / tenant.group_members tables (not a parallel store): SCIM
-// displayName is the group's name, members[].value are user ids, and an optional
-// externalId lets the IdP reconcile on its own key. Scoped by the bearer token's tenant.
 package scim
+
+// SCIM 2.0 Groups (RFC 7643 §4.2, RFC 7644), which IdPs use to push groups and
+// sync membership. They are the tenant's ordinary groups: displayName is the
+// name, members[].value are user IDs, and externalId is the IdP's own key.
 
 import (
 	"context"
@@ -482,11 +480,11 @@ func (h *Handler) replaceGroup(w http.ResponseWriter, r *http.Request) {
 
 // groupPatch is the resolved effect of a PatchOp request on a group.
 type groupPatch struct {
-	setName        *string
-	setExternalID  *string
-	addMembers     []uuid.UUID
-	removeMembers  []uuid.UUID
-	replaceMembers bool // replace the whole member set with addMembers
+	setName        *string     // new display name; nil keeps it
+	setExternalID  *string     // new external ID; nil keeps it
+	addMembers     []uuid.UUID // members to add, or the whole set when replaceMembers
+	removeMembers  []uuid.UUID // members to remove
+	replaceMembers bool        // replace the member set with addMembers
 }
 
 // patchGroup supports the membership-sync flow Okta/Entra drive: op
@@ -523,13 +521,10 @@ func (h *Handler) patchGroup(w http.ResponseWriter, r *http.Request) {
 	writeSCIM(w, http.StatusOK, res)
 }
 
-// parseGroupPatch resolves a SCIM PatchOp body into a groupPatch. It handles
-// the two shapes IdPs send for membership:
-//   - path-scoped:  {"op":"add","path":"members","value":[{"value":"<id>"}]}
-//   - path-scoped remove of one member via a value filter is normalized by
-//     Okta to path `members[value eq "<id>"]` (op remove, no value); we parse
-//     the id out of the path.
-//   - path-less replace: {"op":"replace","value":{"displayName":"x","members":[...]}}
+// parseGroupPatch resolves a SCIM PatchOp body into a groupPatch. It accepts
+// ops on "displayName", "externalId" and "members" (a value-less remove clears
+// them), Okta's `members[value eq "<id>"]` path, and path-less ops whose value
+// holds those attributes. Anything else is ignored.
 func parseGroupPatch(body patchBody) (*groupPatch, error) {
 	p := &groupPatch{}
 	for _, op := range body.Operations {

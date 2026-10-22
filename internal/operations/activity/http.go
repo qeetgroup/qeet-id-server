@@ -24,21 +24,21 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Handler is the HTTP surface for the Live Activity feature: a real-time SSE
-// stream and a cursor-paginated history endpoint, both tenant-scoped.
+// Handler serves the tenant-scoped Live Activity endpoints: the SSE stream,
+// history, summary and related events.
 type Handler struct {
 	Hub  *Hub
 	pool *pgxpool.Pool
 }
 
-// NewHandler constructs an activity Handler. pool is used for the history
-// query (reads from audit.events). hub provides live NATS fan-out.
+// NewHandler returns a Handler that reads history from pool and live events
+// from hub.
 func NewHandler(pool *pgxpool.Pool, hub *Hub) *Handler {
 	return &Handler{pool: pool, Hub: hub}
 }
 
-// Mount registers the activity endpoints on the authenticated router group.
-// Both routes are gated by "audit.read" in the central permissionMap.
+// Mount registers the activity routes. Every route requires the audit.read
+// permission.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/activity", h.history)
 	r.Get("/activity/summary", h.summary)
@@ -46,16 +46,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/activity/{id}/related", h.related)
 }
 
-// stream handles GET /v1/activity/stream.
-//
-// On connect the handler optionally replays recent audit events the client
-// missed (when Last-Event-ID is present), then fans out live events from the
-// hub until the client disconnects. Server-side filters are applied to both the
-// replay and the live stream.
-//
-// The write deadline is extended to 1 hour (HTTP_WRITE_TIMEOUT default of 30s
-// is far too short for a long-lived SSE stream). X-Accel-Buffering is disabled
-// so Nginx/Caddy do not buffer SSE frames.
+// stream serves GET /v1/activity/stream as Server-Sent Events. It replays audit
+// events newer than Last-Event-ID, then forwards live hub events until the
+// client disconnects; the query filters apply to both.
 func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	tenantID, _, ok := h.requireTenantUser(w, r)
 	if !ok {
@@ -68,9 +61,8 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		Category: r.URL.Query().Get("category"),
 	}
 
-	// Extend the write deadline so the long-lived SSE connection is not
-	// truncated by the server's HTTP_WRITE_TIMEOUT (default 30s). Reset to
-	// 1 hour from now; the ticker keep-alive will prevent idle closures.
+	// Extend the write deadline, which HTTP_WRITE_TIMEOUT (30s by default) would
+	// otherwise apply to this long-lived stream.
 	if rc := http.NewResponseController(w); rc != nil {
 		if err := rc.SetWriteDeadline(time.Now().Add(time.Hour)); err != nil {
 			slog.Warn("activity: extend write deadline", "err", err)
@@ -100,9 +92,8 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	// Replay events the client missed since Last-Event-ID. This covers the
-	// reconnect case: the client sends the ID of the last event it received and
-	// we replay everything newer from the audit log before switching to live.
+	// On reconnect the client sends the ID of the last event it received; replay
+	// everything newer before switching to live.
 	if lastID := r.Header.Get("Last-Event-ID"); lastID != "" {
 		h.replayHistory(ctx, sse, tenantID, lastID, f)
 	}
@@ -115,12 +106,8 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		case ev := <-evCh:
-			// Defense-in-depth: verify the event's own TenantID matches the
-			// authenticated connection's tenant. The hub already routes by tenant;
-			// this guard catches any hub mis-routing before it becomes a
-			// cross-tenant SSE leak. Unlike the previous check (which compared
-			// two values derived from the same JWT principal and was a tautology),
-			// this inspects the actual event payload's TenantID field.
+			// Defence in depth: drop an event whose own TenantID is not the
+			// connection's, in case the hub ever mis-routes one.
 			if ev.TenantID != tenantID {
 				slog.Error("activity: cross-tenant event dropped at write boundary",
 					"connection_tenant", tenantID,
@@ -135,13 +122,9 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// replayHistory fetches audit events newer than the cursor encoded in
-// lastEventID and streams them to the client in chronological order (oldest
-// first), mirroring the order a continuously-connected client would have seen.
-//
-// lastEventID is a base64url-encoded cursor of the form
-// "<RFC3339Nano created_at>:<uuid>". Anything that fails to decode is silently
-// skipped so a reconnect with an invalid / stale ID just starts live.
+// replayHistory sends the audit events newer than the lastEventID cursor,
+// oldest first, as a connected client would have seen them. A lastEventID that
+// does not decode skips the replay, so the stream just starts live.
 func (h *Handler) replayHistory(ctx context.Context, sse *sseWriter, tenantID uuid.UUID, lastEventID string, f StreamFilter) {
 	afterTs, afterID, err := decodeCursor(lastEventID)
 	if err != nil {
@@ -167,10 +150,8 @@ func (h *Handler) replayHistory(ctx context.Context, sse *sseWriter, tenantID uu
 	}
 }
 
-// history handles GET /v1/activity.
-//
-// Returns a cursor-paginated list of ActivityEvent mapped from the audit log.
-// Tenant is derived from the JWT principal only (never from the URL or body).
+// history serves GET /v1/activity: one cursor-paginated page of events from
+// the audit log.
 func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := httpx.RequireTenant(r)
 	if err != nil {
@@ -198,11 +179,9 @@ func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
-// listHistory executes the static audit-events query and returns ActivityEvents.
-//
-// The cursor is an opaque base64url token encoding (created_at, id) of the
-// last event on the previous page. Severity and Category are post-fetch filters
-// because they are derived values not stored in audit.events.
+// listHistory returns a page of up to limit events (50 when limit is not in
+// 1..200) and the next page's cursor, or "" on the last page. Severity and
+// Category are filtered after the fetch, so it over-fetches when they are set.
 func (h *Handler) listHistory(ctx context.Context, tenantID uuid.UUID, f ListFilter, cursor string, limit int) ([]ActivityEvent, string, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -213,9 +192,8 @@ func (h *Handler) listHistory(ctx context.Context, tenantID uuid.UUID, f ListFil
 		fetchLimit = min(limit*3+1, 201)
 	}
 
-	// Build the typed params for the sqlc query. Null-able nargs are expressed
-	// via pgtype wrappers: a zero-value (Valid=false) passes NULL to the DB,
-	// which the IS NULL predicate treats as "no filter on this dimension."
+	// A zero-value pgtype (Valid=false) passes NULL, which the query treats as
+	// "no filter on this dimension".
 	params := dbgen.ListActivityHistoryParams{
 		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
 		Actions:  f.Types, // nil slice → NULL → no filter
@@ -275,10 +253,8 @@ func (h *Handler) listHistory(ctx context.Context, tenantID uuid.UUID, f ListFil
 	return out, next, nil
 }
 
-// parseListFilter builds a ListFilter from the request's query params. It is
-// shared by history and summary so both honour identical predicates
-// (types, severity, category, actor, subject, q, from, to). limit and cursor are
-// history-only and parsed by the caller.
+// parseListFilter builds the ListFilter shared by history and summary from the
+// query string. Values that do not parse (actor, subject, from, to) are ignored.
 func parseListFilter(r *http.Request) ListFilter {
 	f := ListFilter{
 		Types:    splitCSV(r.URL.Query().Get("types")),
@@ -309,13 +285,12 @@ func parseListFilter(r *http.Request) ListFilter {
 	return f
 }
 
-// Summary window bounds. Without an explicit `from`, the summary defaults to the
-// last 24h; the window is hard-capped at 90d so a per-tenant aggregate (notably
-// count(DISTINCT actor_user_id)) can never scan unbounded history.
+// Summary window and bucket bounds. The window defaults to the last 24h and is
+// capped at 90 days, so the per-tenant aggregates never scan unbounded history.
 const (
 	summaryDefaultWindow = 24 * time.Hour
 	summaryMaxWindow     = 90 * 24 * time.Hour
-	summaryDefaultBucket = int64(3600) // 1h buckets
+	summaryDefaultBucket = int64(3600)
 	summaryMinBucket     = int64(60)
 	summaryMaxBucket     = int64(86400)
 	summaryTargetBuckets = 48
@@ -334,12 +309,11 @@ type activitySummaryResponse struct {
 	Window         summaryWindow    `json:"window"`
 }
 
-// summaryBucket is one time slice of the sparkline series. Total is all events
-// in the bucket; the remaining fields are per-outcome/severity breakdowns so the
-// console can draw a distinct sparkline per metric card.
+// summaryBucket is one time slice of the summary series: Count is every event
+// in the slice, and the other fields break it down by outcome or severity.
 type summaryBucket struct {
 	At       time.Time `json:"at"`
-	Count    int64     `json:"count"` // total (kept as `count` for back-compat)
+	Count    int64     `json:"count"`
 	Success  int64     `json:"success"`
 	Warning  int64     `json:"warning"`
 	Failed   int64     `json:"failed"`
@@ -352,15 +326,10 @@ type summaryWindow struct {
 	To   time.Time `json:"to"`
 }
 
-// summary handles GET /v1/activity/summary.
-//
-// It returns aggregate counts over the SAME filter predicates as history
-// (types, actor, subject, from/to, q) but deliberately IGNORES the severity and
-// category filters — its job is to PRODUCE the severity/category/outcome
-// distribution, so filtering by them would be self-contradictory. Severity,
-// category and outcome are derived from the action string (not columns), so the
-// per-action GROUP BY is folded into buckets in Go via severityOf/categoryOf/
-// outcomeOf — the single source of truth for that derivation.
+// summary serves GET /v1/activity/summary: counts by severity, category and
+// outcome, plus a time series, under the same filters as history. It ignores the
+// severity and category filters, because those are what it reports. The query
+// groups by action; severityOf and categoryOf fold the groups in Go.
 func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := httpx.RequireTenant(r)
 	if err != nil {
@@ -370,8 +339,7 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 
 	f := parseListFilter(r)
 
-	// Resolve and bound the aggregation window. A missing lower bound defaults to
-	// now-24h; the span is clamped to summaryMaxWindow.
+	// The window defaults to the last 24h and is clamped to summaryMaxWindow.
 	to := time.Now().UTC()
 	if f.To != nil {
 		to = f.To.UTC()
@@ -471,8 +439,7 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fold the per-(bucket, action) rows into per-outcome buckets. Rows arrive
-	// ordered by bucket ASC so same-bucket rows are contiguous; we mutate the
-	// tail bucket by index (no pointer aliasing across appends).
+	// ordered by bucket, so rows of one bucket are contiguous.
 	out := make([]summaryBucket, 0)
 	for _, s := range series {
 		at := s.Bucket.UTC()
@@ -529,12 +496,9 @@ type activityRelatedSet struct {
 	ByActor     []ActivityEvent `json:"by_actor"`
 }
 
-// related handles GET /v1/activity/{id}/related.
-//
-// It resolves the anchor event (tenant-scoped — an unknown id or a foreign
-// tenant's id both surface as 404, never a cross-tenant leak), then returns
-// events correlated by the anchor's request_id and by the same actor within a
-// symmetric time window. An event never appears in both lists.
+// related serves GET /v1/activity/{id}/related: the anchor event, the events
+// sharing its request_id, and the same actor's events within the time window.
+// An unknown or other-tenant id is a 404; no event appears in both lists.
 func (h *Handler) related(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := httpx.RequireTenant(r)
 	if err != nil {
@@ -656,24 +620,20 @@ func nargSearch(s string) *string {
 	return &s
 }
 
-// encodeCursor packs (createdAt, id) into an opaque base64url token. The
-// format is "<RFC3339Nano>:<uuid>" — sufficient precision for a timestamptz
-// cursor and unambiguous when split on the first colon.
+// encodeCursor packs (createdAt, id) into an opaque base64url token whose text
+// is "<RFC3339Nano>:<uuid>".
 func encodeCursor(createdAt time.Time, id uuid.UUID) string {
 	raw := createdAt.UTC().Format(time.RFC3339Nano) + ":" + id.String()
 	return base64.RawURLEncoding.EncodeToString([]byte(raw))
 }
 
-// decodeCursor is the inverse of encodeCursor. Returns a non-nil error for
-// any malformed input; callers pass the error straight to the handler.
+// decodeCursor parses a cursor token, splitting its text at the first colon. It
+// returns errs.ErrBadRequest for malformed input.
 func decodeCursor(cursor string) (time.Time, uuid.UUID, error) {
 	b, err := base64.RawURLEncoding.DecodeString(cursor)
 	if err != nil {
 		return time.Time{}, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid cursor")
 	}
-	// Split on the first colon only — RFC3339Nano timestamps contain no colons
-	// beyond the time-separator, but we split on index rather than strings.Cut
-	// to stay robust if a future UUID format ever includes colons.
 	idx := strings.Index(string(b), ":")
 	if idx < 0 {
 		return time.Time{}, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid cursor")
@@ -832,9 +792,8 @@ func relatedActorRowToAuditRow(r dbgen.ListRelatedByActorRow) auditRow {
 	return row
 }
 
-// requireTenantUser extracts and validates the tenant and user from the JWT
-// principal. Handlers MUST use this; they must NEVER accept tenant/user from
-// the URL or request body (QID-18 multi-tenancy invariant).
+// requireTenantUser returns the tenant and user of the authenticated principal.
+// If either is missing it writes the error response and returns ok=false.
 func (h *Handler) requireTenantUser(w http.ResponseWriter, r *http.Request) (tenantID uuid.UUID, userID uuid.UUID, ok bool) {
 	tenantID, err := httpx.RequireTenant(r)
 	if err != nil {
@@ -869,20 +828,10 @@ func splitCSV(s string) []string {
 	return out
 }
 
-// sseWriter writes SSE frames to an http.ResponseWriter and flushes after each.
-// It mirrors qeetai/sse.go — not imported because qeetai is not a shared
-// library; copying the ~30-line writer keeps the package dependency graph clean.
-// sseWriter serializes writes to a streaming ResponseWriter.
-//
-// An http.ResponseWriter is not safe for concurrent use, and SSE inherently has
-// two writers: the handler goroutine emitting events, and the keep-alive
-// goroutine emitting pings on a ticker. Unsynchronized, those interleave — a
-// ": keep-alive" spliced into the middle of a "data:" line breaks the client's
-// frame parser — and race on net/http's chunked-writer state.
-//
-// mu also makes the shutdown handshake possible: stopKeepAlive waits for the
-// ping goroutine to finish, so nothing touches w after ServeHTTP returns (which
-// net/http explicitly forbids, and which can write into a recycled connection).
+// sseWriter writes SSE frames to a ResponseWriter, flushing after each. Its
+// mutex serialises the handler's events with the keep-alive goroutine's pings,
+// which would otherwise interleave mid-frame. It copies the qeetai writer rather
+// than importing that package.
 type sseWriter struct {
 	mu      sync.Mutex
 	w       http.ResponseWriter
@@ -891,8 +840,7 @@ type sseWriter struct {
 	pingDone chan struct{} // closed by the keep-alive goroutine on exit
 }
 
-// newSSEWriter wraps w for SSE use. Returns nil when w does not implement
-// http.Flusher (should never happen with a real net/http response).
+// newSSEWriter wraps w for SSE use. It returns nil if w is not an http.Flusher.
 func newSSEWriter(w http.ResponseWriter) *sseWriter {
 	f, ok := w.(http.Flusher)
 	if !ok {
@@ -905,9 +853,8 @@ func newSSEWriter(w http.ResponseWriter) *sseWriter {
 func (s *sseWriter) write(frame string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// A failed frame write means the client has gone. There is nothing useful to
-	// do about it here — the handler already returns when the request context is
-	// cancelled — so the error is discarded explicitly rather than ignored.
+	// A failed write means the client has gone; the handler returns when the
+	// request context is cancelled, so there is nothing to do here.
 	_, _ = fmt.Fprint(s.w, frame)
 	s.flusher.Flush()
 }
@@ -922,14 +869,14 @@ func (s *sseWriter) sendActivity(ev ActivityEvent) {
 	s.write(fmt.Sprintf("event: activity\ndata: %s\n\n", raw))
 }
 
-// keepAlive sends a comment ping (":\n\n") to prevent proxy timeouts on idle
-// connections — identical to the qeetai keep-alive pattern.
+// keepAlive sends an SSE comment frame so proxies do not close an idle
+// connection.
 func (s *sseWriter) keepAlive() {
 	s.write(": keep-alive\n\n")
 }
 
-// startKeepAlive launches a goroutine that sends keep-alive pings every d
-// until stop is closed. Pair every call with stopKeepAlive.
+// startKeepAlive starts a goroutine that sends a keep-alive every d until stop
+// is closed. Pair every call with stopKeepAlive.
 func (s *sseWriter) startKeepAlive(stop <-chan struct{}, d time.Duration) {
 	s.pingDone = make(chan struct{})
 	go func() {
@@ -947,12 +894,9 @@ func (s *sseWriter) startKeepAlive(stop <-chan struct{}, d time.Duration) {
 	}()
 }
 
-// stopKeepAlive blocks until the keep-alive goroutine has returned.
-//
-// Closing the stop channel alone is not enough: if the ticker fires as the
-// handler unwinds, the goroutine can still be inside a write when ServeHTTP
-// returns. Waiting here is what makes "no writes after the handler returns"
-// actually true.
+// stopKeepAlive blocks until the keep-alive goroutine has returned, so nothing
+// writes to the ResponseWriter after the handler returns. Closing the stop
+// channel alone does not wait for a ping already in progress.
 func (s *sseWriter) stopKeepAlive() {
 	if s.pingDone != nil {
 		<-s.pingDone

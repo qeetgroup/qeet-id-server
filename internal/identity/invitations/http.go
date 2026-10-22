@@ -13,12 +13,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// tokenIssuer is the slice of auth.Service this handler needs (mockable).
-// Entering the organisation an invitation joins is gated on its second-factor
-// requirement: an account the invitation created is signed in as at
-// sign-up, which may answer the enrolment challenge; one already signed in
-// carries its session's factor, and is refused while the organisation
-// requires one it didn't meet.
+// tokenIssuer is the part of auth.Service this handler needs. Both methods honour
+// the joined organisation's second-factor requirement: a new account may get the
+// enrolment challenge, and a signed-in one is refused if its session lacks a
+// required factor.
 type tokenIssuer interface {
 	SignInInvitedAccount(ctx context.Context, userID, tenantID uuid.UUID, ip, ua string) (*auth.LoginResult, error)
 	EnterInvitedTenant(ctx context.Context, userID, tenantID, fromSessionID uuid.UUID, ip, ua string) (*auth.TokenPair, error)

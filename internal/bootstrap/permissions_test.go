@@ -92,11 +92,9 @@ func TestAuthenticatedRoutesHaveExplicitPolicies(t *testing.T) {
 	}
 }
 
-// TestEveryRouteNamesAnApplicationScope fails when an authenticated route's
-// policy names no scope for an application's token: without one, opening the
-// route to applications would let any of them act there with the user's whole
-// role set. Administrative routes need their permission as the scope, and the
-// routes open to applications need one too.
+// TestEveryRouteNamesAnApplicationScope checks that every authenticated route's
+// policy names the scope an application's token needs, so no application can act
+// there with the user's whole role set.
 func TestEveryRouteNamesAnApplicationScope(t *testing.T) {
 	policies := RoutePolicies()
 	var unscoped, mismatched []string
@@ -131,14 +129,9 @@ func TestEveryRouteNamesAnApplicationScope(t *testing.T) {
 	}
 }
 
-// TestNoAuthenticatedRouteIsCSRFExempt is the guard for the exemption class of
-// bug: a CSRF exemption written as a prefix over a public feature area also
-// covers any authenticated mutation later mounted underneath it. Two such
-// routes existed — POST /v1/social/providers under "/v1/social/", and
-// POST /v1/oauth/bc-authorize/decision under "/v1/oauth/bc-authorize".
-//
-// Every route in the authenticated tree is reachable with a cookie session, so
-// none of them may be exempt.
+// TestNoAuthenticatedRouteIsCSRFExempt checks that no authenticated route is
+// CSRF-exempt, since every one is reachable with a cookie session. Prefix
+// exemptions over public areas are the usual cause.
 func TestNoAuthenticatedRouteIsCSRFExempt(t *testing.T) {
 	router := chi.NewRouter()
 	router.Route("/v1", func(r chi.Router) {
@@ -249,11 +242,9 @@ func TestApplicationTokenRoutesStayNarrow(t *testing.T) {
 	}
 }
 
-// sensitiveLooking matches the paths of routes that change factors, machine
-// credentials, secrets, sign-in or security policy, single sign-on, retention
-// or audit streaming, hand out authority (roles, permissions, invitations,
-// relationship rules, attribute policies), bring an account back, move an
-// account's email address, or destroy an account or organisation.
+// sensitiveLooking matches paths of routes that change credentials, factors,
+// secrets, security policy, SSO, retention or authority, restore accounts, move
+// email addresses, or destroy accounts or organisations.
 var sensitiveLooking = regexp.MustCompile(`/mfa/|/passkeys|/api-keys|/service-principals|/agents|` +
 	`/roles|/permissions|/invites|/relation-tuples|/abac|/reactivate|/restore|/email|` +
 	`/oidc/clients|/scim/token|/credentials|/webhooks|/auth-hooks|/secrets|/vault/tokens|/provider-config|` +
@@ -343,12 +334,9 @@ func TestLinkedPhoneCallsPassCSRF(t *testing.T) {
 	}
 }
 
-// TestHostedLoginCookieRoutesKeepTheCSRFCheck: the routes that give a browser
-// the hosted-login cookie must not skip the CSRF check, or a page on another
-// site could sign a visitor's browser in to an account of its choosing. The
-// hosted magic-link exchange sat under the magic-link exemption, and the hosted
-// passkey sign-in sits beside the passkey token steps; the bearer steps still
-// skip the check.
+// TestHostedLoginCookieRoutesKeepTheCSRFCheck checks that the routes setting the
+// hosted-login cookie keep the CSRF check, so another site can't sign a visitor
+// in to an account of its choosing.
 func TestHostedLoginCookieRoutesKeepTheCSRFCheck(t *testing.T) {
 	reached := false
 	h := httpx.CSRF(httpx.CSRFConfig{AllowedOrigins: []string{"https://login.example"}, ExemptPaths: csrfExemptPaths()})(
@@ -376,11 +364,9 @@ func TestHostedLoginCookieRoutesKeepTheCSRFCheck(t *testing.T) {
 	}
 }
 
-// TestServerCallersPassTheCSRFCheck: the production check let only a bearer
-// token skip it, so writes the server libraries make with an API key, and back
-// ends exchanging service-principal or directory credentials, were refused for
-// sending no Origin. Those pass now; a cookie change without the token, a
-// cross-site form post and Basic credentials still don't.
+// TestServerCallersPassTheCSRFCheck checks that API-key and server credential
+// calls pass the CSRF check, while cookie changes without the token, cross-site
+// form posts and Basic credentials still don't.
 func TestServerCallersPassTheCSRFCheck(t *testing.T) {
 	reached := false
 	h := CSRF([]string{"https://console.example"}, true, "")(

@@ -27,7 +27,7 @@ type userInfo struct {
 	Email         string `json:"email"`
 	EmailVerified bool   `json:"email_verified"`
 	Name          string `json:"name"`
-	Picture       string `json:"picture"` // provider avatar URL (e.g. Google)
+	Picture       string `json:"picture"`
 }
 
 type cachedDoc struct {

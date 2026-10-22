@@ -1,11 +1,10 @@
 //go:build integration
 
-// DB-backed lifecycle tests for SCIM 2.0 Groups, driving the real HTTP
-// handlers through MountPublic against an ephemeral Postgres (testcontainers),
-// migrated with the repo's own migration files. Gated behind the `integration`
-// build tag so the default `go test ./...` stays Docker-free; skips cleanly if
-// Docker is unavailable.
 package scim
+
+// Database tests for SCIM groups and users, driving the real handlers through
+// MountPublic against a migrated testcontainers Postgres. They build only with
+// the integration tag and skip when Docker is unavailable.
 
 import (
 	"bytes"
@@ -393,11 +392,8 @@ func urlFilter(name string) string {
 
 const schemaPatchOp = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
 
-// TestSCIMUserMutationsEmitAtomicEvidence covers the residual half of
-// QID-AUD-018: SCIM is the highest-volume user-mutation surface in the product
-// and previously wrote no audit row and emitted no domain event for create,
-// replace, patch or delete — leaving IdP-driven provisioning and, more
-// importantly, deprovisioning invisible to incident response.
+// TestSCIMUserMutationsEmitAtomicEvidence checks that SCIM user create,
+// replace, patch and delete each write an audit row and a domain event.
 func TestSCIMUserMutationsEmitAtomicEvidence(t *testing.T) {
 	requireDB(t)
 	ctx := context.Background()
@@ -528,16 +524,9 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
-// TestSCIMUserWriteTenantIsolation is the regression test for the cross-tenant
-// user-write hole: user.Repository.UpdateTx keys on the user id alone and
-// carries no tenant predicate, so before applyUserUpdate re-checked ownership,
-// tenant B's SCIM token could suspend or rename any user in tenant A.
-//
-// Suspending is the damaging half — status "suspended" blocks the victim's
-// refresh in access/authentication, so a cross-tenant PATCH is an account
-// lockout. Both write verbs (PUT replace, PATCH) must 404, and — crucially —
-// the victim's row must be unchanged afterwards, because the pre-fix bug
-// committed the write and only *then* failed to reload it.
+// TestSCIMUserWriteTenantIsolation checks that one tenant's SCIM token can't
+// suspend or rename another tenant's user: PUT and PATCH both return 404 and
+// leave the victim's row unchanged.
 func TestSCIMUserWriteTenantIsolation(t *testing.T) {
 	requireDB(t)
 	ctx := context.Background()

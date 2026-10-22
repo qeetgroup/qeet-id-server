@@ -21,11 +21,9 @@ import (
 // AuditVerifyInterval is how often every audit chain is verified.
 const AuditVerifyInterval = 6 * time.Hour
 
-// MaintenanceJobs is the scheduled housekeeping. The API runs it as
-// its embedded "scheduler" worker and cmd/scheduler or cmd/worker can run it
-// standalone; either way each job runs once per interval across every
-// instance (worker.RunScheduled). Sessions the cleanup removes that were never
-// ended are announced through signals (session.revoked, reason expired).
+// MaintenanceJobs returns the scheduled housekeeping jobs. Each runs once per
+// interval across all instances. Expired sessions the cleanup removes are
+// announced through signals as session.revoked (reason expired).
 func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller) []worker.Scheduled {
 	verifier := audit.NewVerifier(pool)
 	return []worker.Scheduled{

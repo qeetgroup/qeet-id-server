@@ -14,11 +14,8 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// A linked phone is a second factor at sign-in, so it is one for step-up too:
-// it counts as a factor held (an account whose only factor is a phone is asked
-// to step up like any other), and a session steps up by approving a request
-// on it. An organisation that counts only push for step-up can then be
-// satisfied.
+// A linked phone is a step-up factor too: holding one means a step-up can be
+// asked for, and approving a request on it steps the session up.
 
 const pushActionStepUp = "step_up"
 
@@ -58,10 +55,9 @@ func (h *Handler) startStepUpPush(w http.ResponseWriter, r *http.Request) {
 }
 
 // completeStepUpPush (POST /v1/mfa/push/step-up/{id}/complete) records the
-// calling session's step-up once its request has been approved on the phone,
-// and spends the request. 409 mfa.push_pending while it awaits an answer; a
-// denied, spent or other session's request is invalid; an unanswered one past
-// its expiry has expired.
+// calling session's step-up once its request is approved, and spends it.
+// 409 mfa.push_pending while unanswered; a denied, spent or other session's
+// request is invalid, and a pending one past its expiry has expired.
 func (h *Handler) completeStepUpPush(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil || p.SessionID == nil {

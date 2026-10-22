@@ -25,10 +25,9 @@ const maxImportRows = 1000
 // runBulkImport so the aggregation logic is unit-testable without a DB.
 type userCreator func(ctx context.Context, in CreateInput) (*User, error)
 
-// runBulkImport validates and creates each row, continuing past per-row
-// failures (partial success). `create` writes each user's own audit and outbox
-// evidence, so only the summary comes back here. HTTP/DB specifics are kept
-// out — `create` is injected — so this is pure and testable.
+// runBulkImport validates each row and creates it with create, carrying on past
+// failed rows, and returns the per-row summary. create records each user's own
+// audit and outbox evidence.
 func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUID, rows []BulkUserInput, create userCreator) BulkImportResult {
 	var res BulkImportResult
 	for i, row := range rows {
@@ -88,9 +87,8 @@ func firstValidationMsg(err error) string {
 	return "validation failed"
 }
 
-// bulkCreate handles POST /v1/users/bulk. Admin-gated on user.write (see
-// permissionMap). Each row is attempted independently — a bad or duplicate row
-// is reported in the response rather than failing the whole batch.
+// bulkCreate handles POST /v1/users/bulk. Each row is attempted on its own: a
+// bad or duplicate row is reported in the response rather than failing the batch.
 func (h *Handler) bulkCreate(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := httpx.RequireTenant(r)
 	if err != nil {
@@ -137,12 +135,9 @@ func (h *Handler) bulkCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 // bulkImportFromVendor handles POST /v1/users/bulk/import?source=auth0|cognito|azure_b2c.
-// The request body is that vendor's own raw user-export file (NDJSON/CSV/JSON
-// per source — see import_adapters.go); it's converted to the same
-// BulkUserInput shape bulkCreate accepts and run through the identical
-// per-row partial-success pipeline. No vendor exports a portable password
-// hash, so every imported row lands with no password credential (passkey,
-// magic link, OTP, or an admin-triggered reset are how they first sign in).
+// The body is the vendor's own export file, parsed by ParseVendorExport and
+// imported like bulkCreate. Vendors don't export password hashes, so imported
+// users have no password.
 func (h *Handler) bulkImportFromVendor(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := httpx.RequireTenant(r)
 	if err != nil {

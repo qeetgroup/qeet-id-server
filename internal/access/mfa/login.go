@@ -16,13 +16,12 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// The second factor of a sign-in (auth.MFAEnroller): every factor a person has
-// confirmed can be challenged — an authenticator app (with its recovery codes),
-// email and SMS code factors, passkeys while their organisation allows them,
-// and push devices — not only the authenticator app.
+// Sign-in second factors (auth.MFAEnroller). Any confirmed factor can be
+// challenged: an authenticator app with its recovery codes, email and SMS
+// codes, passkeys where the organisation allows them, and push devices.
 
-// SetWebAuthn wires passkey assertions as a sign-in second factor (nil:
-// passkeys are not offered as one). Called from internal/bootstrap.
+// SetWebAuthn sets the passkey verifier for sign-in second factors (nil:
+// passkeys are not offered as one).
 func (s *Service) SetWebAuthn(v WebAuthnVerifier) { s.webauthn = v }
 
 // LoginFactors lists the second factors userID can meet a sign-in challenge

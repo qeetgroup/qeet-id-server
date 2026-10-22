@@ -25,58 +25,38 @@ type mfaResetter interface {
 	ResetForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (map[string]int64, error)
 }
 
-// signInEnder ends, inside tx, every way a user is signed in — API and console
-// sessions, hosted-login browser sessions and applications' refresh grants —
-// and reports how many of each it ended (admin force sign-out). Kept as an
-// interface because the authentication package imports this one.
+// signInEnder ends, inside tx, every way a user is signed in and reports how
+// many of each it ended. An interface because the authentication package
+// imports this one.
 type signInEnder interface {
 	EndAllSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID, reason string) (SignInsEnded, error)
 }
 
-// SignInsEnded counts what ending every way a person is signed in ended
-// (signInEnder.EndAllSignIns, the administrator's force sign-out and the
-// person's own sign out everywhere).
+// SignInsEnded counts, by kind, what ending every way a person is signed in
+// ended.
 type SignInsEnded struct {
-	// Sessions are API and console sessions; ending one is what makes its
-	// refresh tokens stop working.
-	Sessions int64
-	// LoginSessions are hosted-login browser sessions.
-	LoginSessions int64
-	// AppGrants are the refresh grants applications hold, counted once per
-	// grant.
-	AppGrants int64
-	// TrustedDevices are devices remembered so they skip the second factor.
-	TrustedDevices int64
-	// PendingAuthorizations are unredeemed authorisation codes and device or
-	// back-channel sign-in requests that were pending or approved but not yet
-	// collected.
-	PendingAuthorizations int64
+	Sessions              int64 // API and console sessions, with their refresh tokens
+	LoginSessions         int64 // hosted-login browser sessions
+	AppGrants             int64 // applications' refresh grants
+	TrustedDevices        int64 // devices remembered to skip the second factor
+	PendingAuthorizations int64 // unredeemed codes and uncollected device or CIBA requests
 }
 
-// Total is the number of sign-ins ended, all places together.
+// Total is the number of sessions, login sessions and app grants ended.
 func (e SignInsEnded) Total() int64 { return e.Sessions + e.LoginSessions + e.AppGrants }
 
+// Handler serves the /users and /me routes. PasswordPolicy checks every
+// password it sets; without it setting one fails with 501 rather than store an
+// unchecked password. Routes that need MFA or SignIns answer 501 without them,
+// and a nil Signals or Mailer announces or emails nothing.
 type Handler struct {
-	Repo     *Repository
-	Validate *validator.Validate
-	// PasswordPolicy is the password check every password this handler sets
-	// goes through (admin create, bulk import, admin set-password): the
-	// tenant's rules, the offline strength baseline and, when enabled, the
-	// breach check. Required to set a password — nil refuses (501) rather than
-	// store an unchecked one. A function so the user package needn't depend on
-	// the authpolicy package (authpolicy.Service.ValidateForTenant).
+	Repo           *Repository
+	Validate       *validator.Validate
 	PasswordPolicy func(ctx context.Context, tenantID uuid.UUID, email, password string) error
-	// MFA resets a user's second factors (admin recovery). Optional.
-	MFA mfaResetter
-	// Signals announces the sessions an account change ends (nil = announces
-	// nothing).
-	Signals *sessionsignal.Signaller
-	// SignIns ends every way a user is signed in (admin force sign-out).
-	// Without it that route answers 501.
-	SignIns signInEnder
-	// Mailer tells a person when an administrator changes their password or
-	// second factors (nil = tells nobody).
-	Mailer notifier.Sender
+	MFA            mfaResetter
+	Signals        *sessionsignal.Signaller
+	SignIns        signInEnder
+	Mailer         notifier.Sender
 }
 
 // hashNewPassword checks a password for an account in tenantID with the given
@@ -92,11 +72,9 @@ func (h *Handler) hashNewPassword(ctx context.Context, tenantID uuid.UUID, email
 }
 
 func (h *Handler) Mount(r chi.Router) {
-	// Self-service: the authenticated caller's own account. Resolves the target
-	// from the auth principal, so it needs NO tenant — a tenant-less user (fresh
-	// signup, before they create/join a workspace) can still read/update their
-	// own profile. Deliberately absent from permissionMap so rbac.Enforce lets it
-	// through, and it carries no {tenantID} param so EnforceTenantScope ignores it.
+	// /me is the caller's own account, resolved from the principal, so it needs no
+	// tenant: a user who belongs to no organisation yet can still use it. Its route
+	// policy is user-only, with no permission.
 	r.Get("/me", h.me)
 	r.Patch("/me", h.updateMe)
 
@@ -119,7 +97,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Delete("/users/{id}/membership", h.removeMembership)
 	r.Delete("/users/{id}/purge", h.purge)
 
-	// User 360 — admin read surfaces (+ one force-sign-out mutation). See user360.go.
+	// User 360 views and actions (user360.go).
 	r.Get("/users/{id}/security", h.getSecurity)
 	r.Get("/users/{id}/sessions", h.getSessions)
 	r.Post("/users/{id}/sessions/revoke-all", h.revokeAllSessions)
@@ -160,10 +138,9 @@ func (h *Handler) memberID(r *http.Request) (id, tenantID uuid.UUID, err error) 
 	return id, tenantID, nil
 }
 
-// scopedID resolves {id} for an action on the whole account (status,
-// password, MFA, deletion, signing out everywhere): only the tenant the
-// account belongs to may take one. A member whose account belongs elsewhere
-// is ErrUserManagedElsewhere (the tenant removes them instead); anyone else is
+// scopedID resolves {id} for an action on the whole account (status, password,
+// MFA, deletion, signing out everywhere), which only the account's home tenant
+// may take. A member from elsewhere is ErrUserManagedElsewhere; anyone else is
 // ErrNotFound.
 func (h *Handler) scopedID(r *http.Request) (id, tenantID uuid.UUID, err error) {
 	id, tenantID, home, member, err := h.standing(r)
@@ -180,12 +157,10 @@ func (h *Handler) scopedID(r *http.Request) (id, tenantID uuid.UUID, err error) 
 	}
 }
 
-// removeMembership removes a member whose account belongs elsewhere from the
-// caller's tenant, in one transaction: their roles and groups here, their
-// sessions here (announced), the application grants and API keys they hold
-// here, an audit row and an event. Their account and their other tenants are
-// left alone. The tenant's own accounts are suspended or deleted instead
-// (ErrUserManagedHere).
+// removeMembership removes a member whose home is another tenant from the
+// caller's tenant: their roles, groups, sessions, app grants and API keys here,
+// with an audit row and event, in one transaction. A home account gets
+// ErrUserManagedHere; it is suspended or deleted instead.
 func (h *Handler) removeMembership(w http.ResponseWriter, r *http.Request) {
 	id, tenantID, home, member, err := h.standing(r)
 	if err != nil {
@@ -240,8 +215,8 @@ func (h *Handler) removeMembershipWithEvidence(r *http.Request, tenantID, userID
 	return &Removal{ID: userID, RolesRemoved: roles, SessionsEnded: len(ended)}, nil
 }
 
-// resetMFA clears a user's MFA factors so a locked-out user can re-enroll.
-// Admin-only (gated on user.write by the RBAC enforcer); audited.
+// resetMFA clears a user's MFA factors so a locked-out user can enrol again.
+// It is audited and the user is emailed.
 func (h *Handler) resetMFA(w http.ResponseWriter, r *http.Request) {
 	id, tenantID, err := h.scopedID(r)
 	if err != nil {
@@ -501,9 +476,8 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, u)
 }
 
-// me returns the authenticated caller's own user record. Unlike get, it resolves
-// the id from the auth principal (not the path) and needs no tenant — this is the
-// "My Account" self-service read, usable before a user belongs to any workspace.
+// me returns the caller's own user record, resolved from the principal rather
+// than the path. It needs no tenant.
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
@@ -518,10 +492,9 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, u)
 }
 
-// updateMe patches the caller's own profile. Only self-editable fields are
-// honoured (display name + avatar); privileged fields on UpdateInput (status,
-// phone, metadata) are ignored here, so a user can't change their own standing
-// through the self-service surface.
+// updateMe updates the caller's own display name, avatar and locale. Other
+// UpdateInput fields in the body (status, phone, metadata) are ignored, so a
+// user can't change their own standing.
 func (h *Handler) updateMe(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
@@ -604,11 +577,9 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, d)
 }
 
-// softDeleteWithEvidence soft-deletes a user the way suspend suspends one, in
-// one transaction: the deletion (recording who did it), every session ended and
-// announced, an audit row and a user.deleted event. A deleted user is cut off at
-// once, not when their access token runs out; restoring the account brings none
-// of those sessions back.
+// softDeleteWithEvidence, in one transaction, soft-deletes a user (recording who
+// did it), ends and announces all their sessions, and records an audit row and
+// a user.deleted event. Restoring the account brings no session back.
 func (h *Handler) softDeleteWithEvidence(r *http.Request, tenantID, userID uuid.UUID) (*Deletion, error) {
 	ctx := r.Context()
 	tx, err := h.Repo.pool.Begin(ctx)
@@ -679,13 +650,10 @@ func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// setPasswordWithEvidence writes the credential, evicts the target's sessions,
-// and records the act — all in one transaction.
-//
-// An administrator resetting a password is nearly always incident response, so
-// leaving the compromised sessions live defeats the point of the reset. This is
-// the same guarantee ChangePassword gives for self-service; the two paths had
-// drifted, and this one additionally recorded nothing at all.
+// setPasswordWithEvidence, in one transaction, sets userID's password hash, ends
+// all their sessions and hosted-login sessions, and records an audit row and a
+// user.password_set event. An administrator's reset is usually incident
+// response, so no session survives it.
 func (h *Handler) setPasswordWithEvidence(r *http.Request, tenantID, userID uuid.UUID, hash string) error {
 	ctx := r.Context()
 	tx, err := h.Repo.Pool().Begin(ctx)

@@ -128,12 +128,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		slog.Error("init domain encryption", "err", err)
 		os.Exit(1)
 	}
-	// Pin the unwrapped DEK for the process lifetime. Both vaults and every
-	// envelope-encrypted column derive from this one key, so re-unwrapping per
-	// call would buy nothing — the plaintext key is already resident. The
-	// consequence is that rotating a KMS-backed DEK needs a restart, not just a
-	// KMS-side rotation; see docs/JWT-KEY-ROTATION.md for the same two-phase
-	// shape applied to signing keys.
+	// Keep the unwrapped data key for the process lifetime; every vault and
+	// encrypted column derives from it. Rotating a KMS-backed key therefore needs a
+	// restart.
 	keyProvider = secret.StaticKeyProvider{Key: dataKey}
 	signingKeyRegistry, err := tokens.NewSigningKeyRegistry(pool, sharedCipher)
 	if err != nil {
@@ -252,24 +249,18 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	authService := auth.NewService(pool, userRepo, issuer)
 	authPolicyService := authpolicy.NewService(pool)
 
-	// One password check for every path that sets or replaces a password:
-	// authPolicyService.ValidateForTenant (the organisation's rules, or the
-	// platform baseline for a tenant-less account; the offline strength
-	// baseline; the breach check). Sign-up, hosted registration and
-	// self-service change reach it through SetRegistrationPolicy below; admin
-	// create / set-password / bulk import through user.Handler.PasswordPolicy.
+	// One password check for every path that sets a password:
+	// authPolicyService.ValidateForTenant (organisation rules or platform baseline,
+	// strength baseline, breach check).
 	recoveryService.SetPasswordRules(authPolicyService)   // password reset
 	recoveryService.SetMagicLinkPolicy(authPolicyService) // magic links only where the tenant allows them, with its lifetime
 	inviteService.SetPasswordRules(authPolicyService)     // invite accept
 	inviteService.SetAcceptMethods(authPolicyService)     // which ways of accepting the acceptance screen offers
 
-	// Breached-password detection (Have I Been Pwned k-anonymity). OFF by
-	// default (BREACHED_PASSWORD_CHECK unset) so dev/CI/offline deploys are
-	// unaffected; when enabled the password check above runs it on every
-	// password-setting path, and it is fail-open at runtime (a HIBP outage
-	// allows the password and is counted in
-	// breached_password_check_allowed_on_error_total). Only the 5-char SHA-1
-	// prefix ever leaves the process — never the plaintext.
+	// Breached-password check (Have I Been Pwned k-anonymity), off by default. It
+	// fails open on a HIBP outage, counted in
+	// breached_password_check_allowed_on_error_total, and only the 5-character
+	// SHA-1 prefix leaves the process.
 	if cfg.BreachedPasswordCheck {
 		breachChecker := hibp.New(&http.Client{Timeout: 3 * time.Second}, cfg.BreachedPasswordAPIURL, cfg.BreachedPasswordMinCount)
 		authPolicyService.SetBreachChecker(breachChecker)
@@ -285,12 +276,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	authService.SetMethodPolicy(authPolicyService)       // password sign-in only where the tenant allows it
 	authService.SetDevicePolicy(authPolicyService)       // gate adaptive MFA (trusted-device skip)
 
-	// Sign-in lockout (authentication/lockout.go): failures counted per account
-	// + source network (the tenant-configurable lock), per account at a looser
-	// cap, and per source across accounts (spraying). The platform defaults and
-	// the bounds a tenant may choose within come from LOGIN_LOCKOUT_* /
-	// LOGIN_SPRAY_* (validated by config.Load); a tenant's own settings live in
-	// its authentication policy and apply on the next attempt.
+	// Sign-in lockout: platform defaults and the bounds a tenant may choose come
+	// from LOGIN_LOCKOUT_* and LOGIN_SPRAY_*; a tenant's own settings live in its
+	// authentication policy.
 	lockoutDefaults := authpolicy.Lockout{Threshold: cfg.LoginLockoutThreshold, Window: cfg.LoginLockoutWindow, Duration: cfg.LoginLockoutDuration}
 	authPolicyService.SetLockoutLimits(authpolicy.LockoutLimits{
 		Defaults: lockoutDefaults,
@@ -367,11 +355,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	// middleware deny suspended/decommissioned agents' tokens per request.
 	agentService.SetEmitter(webhookService.Enqueue)
 	verifier.AgentStatus = agentService.AgentStatus
-	// CAEP/SSF-shaped signals over the existing webhook dispatcher: a tenant
-	// that subscribes to these can react to a revoked session or a changed
-	// role grant immediately, instead of waiting out the access-token TTL.
-	// Every path that ends a session announces it (session.revoked) in the
-	// transaction that ends it; see sessionsignal for reasons and destinations.
+	// Session and role-change signals over the webhook dispatcher, so subscribers
+	// can react before access tokens expire.
 	sessionSignals := sessionsignal.New(webhookService.EnqueueTx)
 	authService.SetSessionSignals(sessionSignals)
 	authService.SetSessionLifetime(cfg.SessionMaxAge, cfg.SessionIdleTimeout) // session bounds where the organisation sets none
@@ -402,19 +387,10 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	})
 	oidcService.SetNotifier(notificationService) // CIBA async consent prompts
 	rpID, rpDisplayName, rpOrigins := cfg.WebAuthnRP()
-	// UserVerification: Required is load-bearing, not a preference.
-	//
-	// go-webauthn copies Config.AuthenticatorSelection.UserVerification into the
-	// assertion and then gates on `session.UserVerification == Required` — a
-	// strict equality. Left unset (or at "preferred") the UV flag in
-	// authenticatorData is never checked, so a passkey proves only POSSESSION of
-	// the authenticator. Accounts created through passkey signup have no
-	// password at all, which made the passkey the entire credential and reduced
-	// a "phishing-resistant MFA" product to a single touch on a borrowed device.
-	//
-	// Setting it here covers both login ceremonies (BeginLogin and
-	// BeginDiscoverableLogin read it from the config); the two registration
-	// ceremonies override AuthenticatorSelection explicitly and set it there.
+	// UserVerification must be Required: go-webauthn checks the UV flag only on
+	// strict equality, and without it a passkey proves possession alone. Passkey-only
+	// accounts have no password, so this is the whole credential. The registration
+	// ceremonies set it themselves.
 	wa, err := webauthn.New(&webauthn.Config{
 		RPID:          rpID,
 		RPDisplayName: rpDisplayName,
@@ -476,11 +452,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		os.Exit(1)
 	}
 
-	// Qeet AI provider config: per-tenant BYOK keys encrypted with the same data
-	// key as the secrets vault. When a tenant hasn't set its own key, the
-	// deployment-level QEETAI_* env acts as the platform fallback. Because a
-	// tenant can bring its own key even when no platform key is set, the
-	// orchestrator is always constructed (configured state is resolved per-tenant).
+	// Qeet AI provider config: per-tenant keys, encrypted with the vault data key,
+	// with QEETAI_* as the platform fallback. The orchestrator is always built,
+	// since a tenant can bring its own key.
 	qeetaiProviderCfg, err := qeetai.NewProviderConfig(rootCtx, pool, keyProvider, qeetai.PlatformProvider{
 		Provider:  cfg.QeetaiProvider,
 		APIKey:    cfg.QeetaiAPIKey,
@@ -719,12 +693,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	return deps, workers
 }
 
-// secretsKeyProvider builds the vault data-key provider selected by
-// SECRETS_PROVIDER. "static" decodes SECRETS_KEY (or generates an ephemeral key
-// in dev when unset); "aws-kms" unwraps the DEK from AWS KMS at boot.
 // billingOrgProvisioner adapts the tenant repository to billing.OrgProvisioner,
-// so billing can create an organization once a signup checkout is paid without
-// importing the identity/tenant package (keeping the dependency direction clean).
+// so billing can create an organization after a paid checkout.
 type billingOrgProvisioner struct{ tenants *tenant.Repository }
 
 func (p billingOrgProvisioner) ProvisionOrg(ctx context.Context, ownerID uuid.UUID, name, slug, region, plan string) (uuid.UUID, error) {
@@ -735,12 +705,8 @@ func (p billingOrgProvisioner) ProvisionOrg(ctx context.Context, ownerID uuid.UU
 	return t.ID, nil
 }
 
-// entitlementPlanResolver resolves a tenant's effective plan code for the
-// entitlements service. It prefers the billing subscription (the paid source of
-// truth), falls back to the tenant's plan label, and defaults to free — so an
-// in-app upgrade takes effect immediately (subscription) even before/without the
-// label sync, and a plain free org (no subscription row) reads as free.
-// Implemented here because only the composition root may touch both contexts.
+// entitlementPlanResolver returns a tenant's effective plan: the billing
+// subscription first, then the tenant's plan label, otherwise free.
 type entitlementPlanResolver struct {
 	billing *billing.Service
 	tenants *tenant.Repository
@@ -810,6 +776,9 @@ func (u entitlementUsageResolver) Usage(ctx context.Context, tenantID uuid.UUID)
 	return out, nil
 }
 
+// SecretsKeyProvider returns the vault data-key provider selected by
+// SECRETS_PROVIDER: "static" decodes SECRETS_KEY (or generates an ephemeral key
+// in dev), and "aws-kms" unwraps the key with AWS KMS at startup.
 func SecretsKeyProvider(ctx context.Context, cfg *config.Config) (secret.KeyProvider, error) {
 	switch cfg.SecretsProvider {
 	case "aws-kms":

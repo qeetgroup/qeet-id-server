@@ -1,9 +1,6 @@
 package errs
 
-// Audit-log & anomaly error codes — stable, namespaced machine identifiers
-// shared by the operations/audit and operations/audit/anomaly packages (one
-// `audit` domain covers the hash-chained audit log and its anomaly detection).
-// Clients branch and localize on these codes, never on the message text.
+// Audit log and anomaly detection error codes.
 const (
 	CodeAuditCursorInvalid         = "audit.cursor_invalid"
 	CodeAuditTenantInvalid         = "audit.tenant_invalid"

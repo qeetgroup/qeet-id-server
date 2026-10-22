@@ -1,16 +1,7 @@
-// Package delivery records what happened to each email the platform sends and
-// keeps the list of addresses no mail goes to.
-//
-// Tracker wraps the email transport: an address on the suppression list is
-// refused before any provider sees it (errs.ErrEmailSuppressed), and every
-// send is recorded (sent, or failed with the reason). The provider's later
-// reports — delivered, bounced, complained — arrive at the SES webhook
-// (Webhook) and update the record. A hard bounce or a complaint suppresses
-// the address, platform-wide; a soft bounce is only recorded.
-//
-// Addresses are stored as a SHA-256 of the trimmed, lower-cased address
-// (HashAddress) for lookups, and a masked hint (Hint) for people; never in
-// plain text.
+// Package delivery records the outcome of every email sent and keeps the
+// suppression list. Tracker refuses suppressed addresses and records each send;
+// SES reports via Webhook update the record, and a hard bounce or complaint
+// suppresses the address. Addresses are stored only hashed and masked.
 package delivery
 
 import (
@@ -34,7 +25,8 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
-// Message statuses, in the order a message moves through them.
+// Message statuses. Suppressed and failed are set when sending; a sent message
+// can later become delivered, bounced or complained.
 const (
 	StatusSent       = "sent"
 	StatusDelivered  = "delivered"
@@ -84,6 +76,7 @@ type Store struct {
 	q    *dbgen.Queries
 }
 
+// NewStore returns a Store over pool.
 func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool, q: dbgen.New(pool)} }
 
 // Suppression is an address no mail goes to.
@@ -115,10 +108,10 @@ func (s *Store) Suppressed(ctx context.Context, address string) (*Suppression, e
 // Record is one email as it left (or didn't leave) the platform.
 type Record struct {
 	TenantID          string // the message's organisation; "" for none
-	To, Template      string
-	Provider          string
-	ProviderMessageID string
-	Status, Reason    string
+	To, Template      string // the recipient and the template key
+	Provider          string // the provider that sent it
+	ProviderMessageID string // the provider's ID for the message
+	Status, Reason    string // the delivery status and why
 }
 
 // RecordSend stores one send.
@@ -139,13 +132,10 @@ func (s *Store) RecordSend(ctx context.Context, r Record) (uuid.UUID, error) {
 
 // Event is one provider report about a message it accepted.
 type Event struct {
-	Provider, ProviderMessageID string
-	// Status is delivered, bounced or complained.
-	Status string
-	Reason string
-	// Suppress lists the addresses to stop mailing (a hard bounce's or a
-	// complaint's recipients); a soft bounce suppresses nothing.
-	Suppress []string
+	Provider, ProviderMessageID string   // the provider and its message ID
+	Status                      string   // delivered, bounced or complained
+	Reason                      string   // the provider's reason
+	Suppress                    []string // addresses to stop mailing; none for a soft bounce
 }
 
 // Apply records ev against the message it reports on, and suppresses its
@@ -267,11 +257,9 @@ type idSender interface {
 // Tracker is the email transport with the suppression list in front and a
 // record of every send behind. Other channels pass straight through.
 type Tracker struct {
-	Next  notifier.Sender
-	Store *Store
-	// Provider names the email transport in the records ("ses", "smtp";
-	// "none" when there is none).
-	Provider string
+	Next     notifier.Sender // the wrapped sender
+	Store    *Store          // where sends are recorded
+	Provider string          // the email transport in records: "ses", "smtp" or "none"
 }
 
 func (t Tracker) Send(ctx context.Context, m notifier.Message) error {

@@ -1,3 +1,6 @@
+// Package tenant manages organisations (tenants): creating one with its owner,
+// listing the organisations a user belongs to, and updating, suspending or
+// deleting one.
 package tenant
 
 import (
@@ -34,13 +37,12 @@ type CreateInput struct {
 	Metadata map[string]any `json:"metadata"`
 }
 
+// UpdateInput is a partial tenant update. It has no Plan: the plan changes only
+// through billing (billing.Service.ChangePlan), so an admin can't move their
+// tenant onto a paid tier for free.
 type UpdateInput struct {
-	Name   *string `json:"name,omitempty" validate:"omitempty,min=1,max=200"`
-	Status *string `json:"status,omitempty" validate:"omitempty,oneof=active suspended"`
-	// Plan is intentionally NOT updatable here. It changes only through billing
-	// (checkout / subscription change), which keeps tenants.plan in sync with what
-	// the tenant actually pays for — otherwise an admin could PATCH themselves onto
-	// a paid tier for free. See operations/billing ChangePlan → SetTenantPlan.
+	Name     *string        `json:"name,omitempty" validate:"omitempty,min=1,max=200"`
+	Status   *string        `json:"status,omitempty" validate:"omitempty,oneof=active suspended"`
 	Region   *string        `json:"region,omitempty" validate:"omitempty,max=64"`
 	LogoURL  *string        `json:"logo_url,omitempty" validate:"omitempty,max=3000000"`
 	Metadata map[string]any `json:"metadata,omitempty"`

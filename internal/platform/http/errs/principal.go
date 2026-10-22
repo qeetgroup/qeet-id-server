@@ -1,10 +1,6 @@
 package errs
 
-// Service-principal error codes — stable, namespaced machine identifiers for
-// the internal/developer/principal domain (OAuth client_credentials callers).
-// Clients branch and localize on these (never on the message text). Once
-// shipped, a code MUST NOT change. Every identifier is prefixed with the
-// `principal` domain so it never collides with another bounded context.
+// Service principal (OAuth client_credentials caller) error codes.
 const (
 	CodePrincipalNotFound           = "principal.not_found"
 	CodePrincipalInvalidCredentials = "principal.invalid_credentials"

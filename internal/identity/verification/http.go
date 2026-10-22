@@ -13,9 +13,7 @@ import (
 
 type Handler struct {
 	Service *Service
-	// Throttle wraps the message-sending routes with a tight per-user rate limit
-	// (SMS/email are attacker-controlled destinations — see email/phone start).
-	// Nil = no extra throttle.
+	// Throttle, if set, wraps the code-sending routes in a tighter per-user limit.
 	Throttle func(http.Handler) http.Handler
 }
 

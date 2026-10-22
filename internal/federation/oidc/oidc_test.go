@@ -32,11 +32,8 @@ func testIssuer(t *testing.T) *tokens.Issuer {
 	return i
 }
 
-// TestPKCE_S256ChallengeDerivation pins the exact relationship the
-// authorization-code exchange relies on: the stored code_challenge equals
-// BASE64URL(SHA256(verifier)) with no padding — i.e. codes.Hash(verifier).
-// ExchangeCode accepts a presented verifier iff codes.Hash(verifier) matches
-// the stored challenge, so this is the heart of PKCE S256 verification.
+// TestPKCE_S256ChallengeDerivation checks that the stored code_challenge is
+// BASE64URL(SHA256(verifier)) without padding, which ExchangeCode relies on.
 func TestPKCE_S256ChallengeDerivation(t *testing.T) {
 	verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk" // RFC 7636 §A.1 verifier
 	challenge := codes.Hash(verifier)
@@ -276,8 +273,8 @@ func TestValidateRegisteredRedirectURI(t *testing.T) {
 	}
 }
 
-// A public client authenticates with a client_id alone, which is in every
-// sign-in link, so it can't hold the flows that rely on client authentication.
+// TestPublicClientsCantHoldConfidentialFlows checks that a public client, which
+// authenticates with a client_id alone, can't hold flows that need client auth.
 func TestPublicClientsCantHoldConfidentialFlows(t *testing.T) {
 	base := CreateClientInput{Type: "public", RedirectURIs: []string{"https://spa.example/cb"}}
 	for _, grant := range []string{"token_exchange", grantTypeTokenExchange, grantTypeCIBA} {
@@ -293,8 +290,8 @@ func TestPublicClientsCantHoldConfidentialFlows(t *testing.T) {
 	}
 }
 
-// Discovery states which client authentication each endpoint accepts: a secret
-// (Basic or form) everywhere, and none only where a public client may call.
+// TestDiscovery_AdvertisesClientAuthMethods checks that discovery lists the
+// client authentication each endpoint accepts.
 func TestDiscovery_AdvertisesClientAuthMethods(t *testing.T) {
 	h := &Handler{Service: NewService(nil, testIssuer(t))}
 	r := chi.NewRouter()

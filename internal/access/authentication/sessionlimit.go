@@ -15,14 +15,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// An organisation may cap how many live sessions one person holds in it at
-// once (tenant.security_policies.max_sessions; none by default). Opening a
-// session at the cap either ends the person's least recently used session in
-// the organisation ('evict_oldest', the default) or refuses the sign-in
-// ('refuse'). Counting and ending happen in the transaction that opens the
-// session, holding the account's lock, so two sign-ins at once cannot both
-// pass. An ended session's renewal stops at once; an access token it already
-// issued lasts out its own short lifetime.
+// An organisation may cap the live sessions one person holds in it
+// (max_sessions). At the cap a new sign-in either ends the least recently used
+// session (evict_oldest, the default) or is refused. The check runs under the
+// account's lock, so concurrent sign-ins can't both pass.
 
 const (
 	sessionLimitEvict  = "evict_oldest"

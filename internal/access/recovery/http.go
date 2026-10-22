@@ -15,23 +15,20 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// tokenIssuer is the slice of auth.Service this handler needs (mockable): a
-// consumed magic link signs in through the same second-factor decision as a
-// password (see auth's magiclink.go).
+// tokenIssuer is the part of auth.Service this handler needs. A consumed magic
+// link signs in through the same second-factor decision as a password.
 type tokenIssuer interface {
 	BeginMagicLinkSignIn(ctx context.Context, userID, tenantID uuid.UUID, ip, ua string) (*auth.LoginResult, error)
 	BeginMagicLinkSession(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, trustedToken, country string) (*auth.LoginSessionResult, error)
 }
 
+// Handler serves the password-reset and magic-link routes. DevMode, for local
+// development only, returns the reset token in the forgot-password response;
+// CookieSecure marks the hosted-login session cookie Secure.
 type Handler struct {
-	Service     *Service
-	AuthService tokenIssuer
-	// DevMode surfaces the reset token in the forgot-password response for local
-	// development (SERVICE_ENV=dev), so the flow is completable without a real
-	// email provider. Never enabled in production.
-	DevMode bool
-	// CookieSecure marks the hosted-login session cookie a hosted magic link
-	// opens Secure; set from SERVICE_ENV != "dev".
+	Service      *Service
+	AuthService  tokenIssuer
+	DevMode      bool
 	CookieSecure bool
 }
 
@@ -44,25 +41,20 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/auth/magic-link/resend", h.magicResend)
 }
 
+// forgotInput is the forgot-password body. TenantID is accepted, because hosted
+// login and the React SDK send it, but unused: email is globally unique. App
+// "hosted_login" sends the link to hosted login's reset page, continuing at
+// ReturnTo if authorizeReturnTo keeps it.
 type forgotInput struct {
-	Email string `json:"email"`
-	// TenantID is accepted because hosted login and the React SDK send it, and
-	// is not used: email is unique platform-wide, so the look-up needs no tenant.
+	Email    string `json:"email"`
 	TenantID string `json:"tenant_id,omitempty"`
-	// App is where the reset was requested from: "hosted_login" makes the
-	// emailed link open hosted login's reset page. Anything else, or nothing,
-	// keeps the console link — the documented default.
-	App string `json:"app,omitempty"`
-	// ReturnTo (hosted login only) is where to continue after the reset. It is
-	// kept only if it is this service's own OAuth authorize endpoint.
+	App      string `json:"app,omitempty"`
 	ReturnTo string `json:"return_to,omitempty"`
 }
 
-// authorizeReturnTo keeps a return_to only if it points at this service's own
-// OAuth authorize endpoint — the URL the authorize redirect gives hosted login
-// (same host as this request), and the same rule hosted login applies. Anything
-// else returns "" (dropped), so an emailed link can never send the user to a
-// caller-chosen site.
+// authorizeReturnTo returns raw if it is this service's own OAuth authorize
+// endpoint on this request's host, and "" otherwise, so an emailed link can't
+// send the user to a caller-chosen site.
 func authorizeReturnTo(r *http.Request, raw string) string {
 	if raw == "" {
 		return ""
@@ -123,15 +115,14 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// magicStartInput is the magic-link request body. TenantID is the organisation
+// whose sign-in page asks, omitted from the console's. App "hosted_login" opens
+// the link in hosted login, continuing at ReturnTo if authorizeReturnTo keeps it.
 type magicStartInput struct {
-	// TenantID is the organisation whose sign-in page asks; omitted from the
-	// console's.
 	TenantID uuid.UUID `json:"tenant_id"`
 	Email    string    `json:"email"`
-	// App "hosted_login" opens the link in the hosted login, continuing at
-	// ReturnTo (kept only if it is this service's authorize endpoint).
-	App      string `json:"app,omitempty"`
-	ReturnTo string `json:"return_to,omitempty"`
+	App      string    `json:"app,omitempty"`
+	ReturnTo string    `json:"return_to,omitempty"`
 }
 
 // magicFloor is how long a magic-link request takes at least, so its timing

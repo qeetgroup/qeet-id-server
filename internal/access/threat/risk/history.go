@@ -13,12 +13,9 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/risk/dbgen"
 )
 
-// deviceKey normalizes a User-Agent string to a coarse browser+OS pair (e.g.
-// "chrome-macos"). It's a proxy for "device identity" — this codebase has no
-// fingerprinting library on the frontend and adding one is a separate,
-// larger, privacy-sensitive undertaking — but browser+OS is already more
-// specific than the raw bot.Score(ua) heuristic and is enough to tell "a
-// completely new device" from "the same one as always."
+// deviceKey reduces a User-Agent to a coarse browser-OS pair such as
+// "chrome-macos": a stand-in for device identity, without fingerprinting, that
+// is enough to tell a new device from a familiar one.
 func deviceKey(ua string) string {
 	u := strings.ToLower(ua)
 
@@ -74,10 +71,8 @@ func (s *Service) lastCountry(ctx context.Context, tenantID, userID uuid.UUID) (
 	return *row.Country, row.SeenAt, true
 }
 
-// deviceSeenBefore reports whether this exact device key has ever been
-// recorded for this user, at any point in the (unbounded) history — device
-// reputation, once earned, doesn't expire the way a trusted-device cookie
-// does.
+// deviceSeenBefore reports whether device key dk is in the user's sign-in
+// history, which keeps entries for SignInHistoryRetention.
 func (s *Service) deviceSeenBefore(ctx context.Context, tenantID, userID uuid.UUID, dk string) (bool, error) {
 	return s.q.DeviceSeenBefore(ctx, dbgen.DeviceSeenBeforeParams{
 		TenantID:  tenantID,
@@ -105,9 +100,8 @@ func (s *Service) recordLogin(ctx context.Context, tenantID, userID uuid.UUID, d
 }
 
 // SignInHistoryRetention is how long a sign-in's country and device are kept
-// for later sign-ins to be compared against. Older entries no longer inform
-// impossible travel (hours) or device reputation (a device unused this long is
-// new again).
+// for later sign-ins to be compared against. Older entries can't matter for
+// impossible travel (hours), and a device unused this long counts as new again.
 const SignInHistoryRetention = 90 * 24 * time.Hour
 
 // PurgeSignInHistory deletes sign-in history older than retention and returns

@@ -486,9 +486,9 @@ func TestEvaluateCondition_CrossNamespace(t *testing.T) {
 	}
 }
 
-// TestLocksOutAuthor: an enabled deny that would refuse its own author
-// policy.write is refused at save, since nobody could then remove it; a deny
-// aimed at someone else, at other resources, disabled, or an allow, is not.
+// TestLocksOutAuthor checks that an enabled deny refusing its own author
+// policy.write is refused at save, since nobody could then remove it, while a
+// deny aimed elsewhere, a disabled one, or an allow is not.
 func TestLocksOutAuthor(t *testing.T) {
 	author, other, tenantID := uuid.New(), uuid.New(), uuid.New()
 	actor := audit.Actor{UserID: &author}

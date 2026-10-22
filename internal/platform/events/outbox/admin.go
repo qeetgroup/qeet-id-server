@@ -10,15 +10,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Reader exposes the dead-letter table for ops triage. The live queue
-// is intentionally not exposed — operators inspect it via direct DB
-// access on the rare occasion they need to.
+// Reader reads the dead-letter table for operator triage.
 type Reader struct {
 	pool *pgxpool.Pool
 }
 
+// NewReader returns a Reader over pool.
 func NewReader(pool *pgxpool.Pool) *Reader { return &Reader{pool: pool} }
 
+// DLQRow is one dead-lettered event.
 type DLQRow struct {
 	ID             uuid.UUID       `json:"id"`
 	AggregateID    uuid.UUID       `json:"aggregate_id"`
@@ -31,10 +31,8 @@ type DLQRow struct {
 	DeadLetteredAt time.Time       `json:"dead_lettered_at"`
 }
 
-// ListDLQ returns the most recent dead-lettered events, newest first.
-// Limit is clamped to 200 — heavier triage should query the DB
-// directly. No cursor: by the time DLQ has more than 200 rows you
-// have a much bigger ops problem than pagination.
+// ListDLQ returns up to limit dead-lettered events, newest first. A limit
+// outside 1..200 becomes 50.
 func (r *Reader) ListDLQ(ctx context.Context, limit int) ([]DLQRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -62,27 +60,12 @@ func (r *Reader) ListDLQ(ctx context.Context, limit int) ([]DLQRow, error) {
 	return out, rows.Err()
 }
 
+// Handler holds the dead-letter Reader; its Mount serves nothing.
 type Handler struct {
 	Reader *Reader
 }
 
-// Mount registers nothing.
-//
-// This package previously exposed the DLQ at GET /v1/admin/outbox/dlq, with a
-// comment saying the caller was "expected to gate this behind a platform-admin
-// permission check at the router level". No such gate existed, and none could:
-// the route was mapped to the `audit.read` permission, which rbac.Enforce
-// evaluates against *the caller's own tenant*. Every customer's org owner/admin
-// holds it, so any of them could read every other tenant's dead-lettered event
-// payloads — user records, group names, verified domains, credential subjects.
-// platform.outbox_dead_letter has no tenant_id column, so the query could not
-// be scoped either.
-//
-// The DLQ is now operator-only, inspected via direct database access. That is
-// already how the live queue is handled (see the Reader doc comment) — this
-// simply applies the same rule to the dead-letter table. Reader is retained for
-// that use and for tests.
-//
-// Do not re-mount this on the tenant-scoped API without either a real
-// platform-operator principal or a tenant_id column to filter on.
+// Mount registers no routes. The dead-letter table has no tenant_id, so it
+// can't be served on the tenant-scoped API; operators read it from the
+// database. Mount it only with a platform-operator principal or a tenant column.
 func (h *Handler) Mount(chi.Router) {}

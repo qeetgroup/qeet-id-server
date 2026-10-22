@@ -31,6 +31,8 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
+// Subscription is a tenant's webhook endpoint and the event types it receives.
+// Secret is returned only on create.
 type Subscription struct {
 	ID         uuid.UUID  `json:"id"`
 	TenantID   uuid.UUID  `json:"tenant_id"`
@@ -38,13 +40,11 @@ type Subscription struct {
 	Events     []string   `json:"events"`
 	DisabledAt *time.Time `json:"disabled_at"`
 	CreatedAt  time.Time  `json:"created_at"`
-	// Secret is returned only on create.
-	Secret string `json:"secret,omitempty"`
+	Secret     string     `json:"secret,omitempty"`
 }
 
 // PlanGate reports whether a plan-gated boolean feature is included in the
-// tenant's plan. Satisfied by operations/entitlements.Service, injected via
-// SetPlanGate.
+// tenant's plan. Satisfied by *entitlements.Service.
 type PlanGate interface {
 	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
 }
@@ -211,8 +211,9 @@ func (s *Service) Disable(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID
 	return row.TenantID, row.Url, nil
 }
 
-// Delivery is one attempt-tracked dispatch of an event to a subscription,
-// projected for the admin delivery viewer (payload + response for debugging).
+// Delivery is one event's dispatch to a subscription, with the payload and
+// response for the admin delivery viewer. DeadAt is set once it has failed
+// maxDeliveryAttempts times; RetryDelivery clears it.
 type Delivery struct {
 	ID            uuid.UUID  `json:"id"`
 	EventType     string     `json:"event_type"`
@@ -223,11 +224,8 @@ type Delivery struct {
 	ResponseBody  *string    `json:"response_body,omitempty"`
 	DeliveredAt   *time.Time `json:"delivered_at,omitempty"`
 	NextAttemptAt *time.Time `json:"next_attempt_at,omitempty"`
-	// DeadAt is set once the delivery exhausted maxDeliveryAttempts without
-	// succeeding — a dead-lettered delivery the dispatcher no longer retries.
-	// Retryable via RetryDelivery, which clears it.
-	DeadAt    *time.Time `json:"dead_at,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
+	DeadAt        *time.Time `json:"dead_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 // int32PtrToInt converts a *int32 to *int for the domain Delivery type.
@@ -273,9 +271,10 @@ func (s *Service) ListDeliveries(ctx context.Context, subscriptionID, tenantID u
 	return out, nil
 }
 
-// RetryDelivery re-queues a delivery for immediate redelivery by the dispatcher
-// (clears delivered_at + error and sets next_attempt_at to now). Tenant-scoped
-// via the subscription join. ErrWebhookDeliveryNotFound when the delivery isn't the tenant's.
+// RetryDelivery re-queues one of the tenant's deliveries for immediate
+// redelivery, clearing delivered_at, dead_at and error. It fails with
+// ErrWebhookDeliveryNotFound when the delivery isn't the tenant's or a
+// dispatcher currently holds its lease.
 func (s *Service) RetryDelivery(ctx context.Context, deliveryID, tenantID uuid.UUID) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE tenant.webhook_deliveries AS delivery
@@ -301,7 +300,7 @@ func (s *Service) Enqueue(ctx context.Context, tenantID uuid.UUID, eventType str
 }
 
 // EnqueueTx is Enqueue inside the caller's transaction, so the deliveries are
-// committed — or rolled back — with the change they describe (ADR-0009).
+// committed, or rolled back, with the change they describe.
 func (s *Service) EnqueueTx(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, eventType string, payload any) error {
 	return s.enqueue(ctx, s.q.WithTx(tx), tenantID, eventType, payload)
 }

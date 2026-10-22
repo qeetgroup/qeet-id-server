@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// Readiness fails only after SyncFailuresUntilNotReady refreshes in a row
-// fail, and one successful refresh makes the instance ready again.
+// TestReadyFollowsRefreshesInARow checks that Ready fails only after
+// SyncFailuresUntilNotReady failed refreshes in a row, and recovers on a success.
 func TestReadyFollowsRefreshesInARow(t *testing.T) {
 	r := &SigningKeyRegistry{}
 	ctx := context.Background()

@@ -9,16 +9,10 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-// NATSPublisher publishes drained outbox events to NATS core. The event Topic is
-// the NATS subject (topics are already dot-namespaced, e.g. "user.events"), the
-// payload is the raw event JSON, and the event type rides in a header so
-// subscribers can filter without decoding the body.
-//
-// At-least-once durability is owned by the outbox, not NATS core: a row is only
-// marked published once Publish returns nil, so Publish flushes synchronously —
-// a broken connection surfaces as an error and the dispatcher retries with
-// backoff (and eventually dead-letters). This keeps the delivery contract
-// identical to the LogPublisher path while adding a real broker.
+// NATSPublisher publishes outbox events to NATS core: the topic is the subject,
+// the payload the raw JSON, and the event ID and type ride in headers. Publish
+// flushes before returning, so a broken connection is an error the dispatcher
+// retries; at-least-once delivery comes from the outbox, not NATS.
 type NATSPublisher struct {
 	nc           *nats.Conn
 	flushTimeout time.Duration
@@ -72,10 +66,8 @@ func (p *NATSPublisher) Close() error {
 	return nil
 }
 
-// NewPublisher returns a NATS-backed publisher when natsURL is non-empty, and
-// otherwise the dependency-free log-only publisher (the default). The returned
-// close func should be deferred by the caller; it is a no-op for LogPublisher.
-// This keeps both entrypoints (cmd/api, cmd/worker) on one code path.
+// NewPublisher returns a NATSPublisher when natsURL is set, else LogPublisher,
+// with a close func for the caller to defer (a no-op for LogPublisher).
 func NewPublisher(natsURL string) (Publisher, func() error, error) {
 	if natsURL == "" {
 		return LogPublisher{}, func() error { return nil }, nil

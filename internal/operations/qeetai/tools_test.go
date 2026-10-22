@@ -31,9 +31,8 @@ func manifestTools(t *testing.T) []struct {
 	return m.Tools
 }
 
-// Every tool says whether it changes anything, and one that looks like a
-// change (destructive, or gated on a .write capability) can't say it doesn't:
-// a new change tool can't slip past the read-only switch by leaving it out.
+// TestEveryToolDeclaresWhetherItChangesAnything checks that every tool sets
+// mutates, and that a destructive or .write-capability tool doesn't say false.
 func TestEveryToolDeclaresWhetherItChangesAnything(t *testing.T) {
 	for _, tool := range manifestTools(t) {
 		if tool.Mutates == nil {
@@ -47,8 +46,8 @@ func TestEveryToolDeclaresWhetherItChangesAnything(t *testing.T) {
 	}
 }
 
-// While change tools are switched off, the model is offered only the tools
-// that read or explain, and still every one of those.
+// TestTheModelIsOfferedNoChangeTool checks that, with change tools off, the
+// model is offered every read-only tool and no change tool.
 func TestTheModelIsOfferedNoChangeTool(t *testing.T) {
 	defs, err := loadToolDefs()
 	if err != nil {
@@ -76,8 +75,8 @@ func TestTheModelIsOfferedNoChangeTool(t *testing.T) {
 	}
 }
 
-// The standing instruction doesn't tell the model it can make changes, and
-// tells it what to do when asked to.
+// TestTheSystemPromptDescribesAReadOnlyAssistant checks that the system prompt
+// says the assistant can't make changes and claims no change abilities.
 func TestTheSystemPromptDescribesAReadOnlyAssistant(t *testing.T) {
 	lower := strings.ToLower(systemPrompt)
 	for _, claim := range []string{"manage roles", "create oidc clients", "destructive operations", "confirmation dialog"} {

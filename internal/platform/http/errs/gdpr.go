@@ -1,8 +1,6 @@
 package errs
 
-// GDPR / compliance error codes — stable, namespaced machine identifiers for
-// the operations/gdpr context (data-subject requests, exports, and compliance
-// evidence runs). Clients branch and localize on these codes, not the message.
+// GDPR error codes: data-subject requests, exports and compliance evidence.
 const (
 	CodeGDPRFrameworkInvalid = "gdpr.framework_invalid"
 	CodeGDPRTenantInvalid    = "gdpr.tenant_invalid"

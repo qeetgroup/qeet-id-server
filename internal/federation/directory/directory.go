@@ -1,3 +1,7 @@
+// Package directory gives administrators one view of a tenant's directory
+// connections (its SCIM endpoint and LDAP connections): sync activity and
+// errors, failure alerts, and the attribute mappings applied to the profiles
+// they provision.
 package directory
 
 import (

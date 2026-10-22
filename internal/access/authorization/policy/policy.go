@@ -22,47 +22,41 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
+// Policy is a tenant's security policy. Session and step-up settings left
+// zero on update take the defaults; session settings apply to sessions opened
+// after they are set.
 type Policy struct {
 	TenantID           uuid.UUID `json:"tenant_id"`
 	PasswordMinLength  int       `json:"password_min_length"`
 	PasswordComplexity string    `json:"password_complexity"`
-	// SessionMaxAge ends a session that long after sign-in however active it
-	// is, and bounds an application's grant; SessionIdleTimeout ends a
-	// session that goes that long without being renewed. Both apply to
-	// sessions opened after they are set. Zero on update = the platform
-	// default.
+
+	// A session ends SessionMaxAge after sign-in however active, which also
+	// bounds an application's grant, or after SessionIdleTimeout unrenewed.
 	SessionMaxAge      Duration `json:"session_max_age"`
 	SessionIdleTimeout Duration `json:"session_idle_timeout"`
-	// MaxSessions caps how many live sessions one person may hold in the
-	// organisation at once (nil: no limit). SessionLimitAction is what a
-	// sign-in at the cap does: "evict_oldest" ends their least recently used
-	// session, "refuse" refuses the sign-in. An ended session's renewal stops
-	// at once; an access token it already issued lasts out its own short
-	// lifetime (ACCESS_TOKEN_TTL).
+
+	// MaxSessions caps one person's live sessions here (nil: no limit). At the
+	// cap a sign-in ends their least recently used one ("evict_oldest"; its
+	// access tokens last out their short TTL) or is refused ("refuse").
 	MaxSessions        *int   `json:"max_sessions"`
 	SessionLimitAction string `json:"session_limit_action"`
-	// MFAEnforcement is who must use a second factor to sign in: "optional"
-	// (whoever set one up), "required" (everyone), "admin_only" (anyone
-	// holding a role that grants a write permission). Enforced at password
-	// sign-in; an account without a factor sets one up before its session.
-	MFAEnforcement string `json:"mfa_enforcement"`
-	// MFAGraceDays (0–90) lets accounts that existed when the requirement was
-	// turned on put the setup off for that many days after MFAEnforcedSince.
-	// MFAEnforcedSince is read-only: set when the requirement is turned on,
-	// cleared when it goes back to optional.
+
+	// Who must sign in with a second factor: "optional", "required" or
+	// "admin_only" (holders of a write permission). Existing accounts may defer
+	// setup MFAGraceDays (0–90) past MFAEnforcedSince, which is read-only.
+	MFAEnforcement   string     `json:"mfa_enforcement"`
 	MFAGraceDays     int        `json:"mfa_grace_days"`
 	MFAEnforcedSince *time.Time `json:"mfa_enforced_since"`
-	// StepUpWindow is how long a step-up keeps a session's sensitive actions
-	// unlocked, 1m–60m (zero on update: 5m). StepUpMethods are the factor
-	// types that count as a step-up; nil or empty: every one.
+
+	// A step-up lasts StepUpWindow (1m–60m, default 5m); StepUpMethods are the
+	// factor types that count (empty: all).
 	StepUpWindow  Duration       `json:"step_up_window"`
 	StepUpMethods []string       `json:"step_up_methods"`
 	Settings      map[string]any `json:"settings"`
 }
 
 // Duration is a time.Duration written to JSON as a duration string ("720h",
-// "30m"), the form the console edits. It reads that form, or a number of
-// nanoseconds (how earlier responses wrote it).
+// "30m"), the form the console edits. It also reads a number of nanoseconds.
 type Duration time.Duration
 
 func (d Duration) MarshalJSON() ([]byte, error) {
@@ -94,8 +88,7 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// The values password_complexity and mfa_enforcement may take (the table's
-// CHECK constraints).
+// The values the enumerated settings may take.
 var (
 	passwordComplexities = map[string]bool{"relaxed": true, "standard": true, "strict": true}
 	sessionLimitActions  = map[string]bool{"evict_oldest": true, "refuse": true}
@@ -111,10 +104,11 @@ const (
 	stepUpWindowDefault = 5 * time.Minute
 )
 
+// Repository stores security policies. sessionMaxAge and sessionIdle are the
+// session bounds of an organisation that sets none (SESSION_MAX_AGE and
+// SESSION_IDLE_TIMEOUT, via SetSessionDefaults).
 type Repository struct {
-	pool *pgxpool.Pool
-	// The session bounds of an organisation that has not set its own
-	// (config SESSION_MAX_AGE, SESSION_IDLE_TIMEOUT). Set by SetSessionDefaults.
+	pool          *pgxpool.Pool
 	sessionMaxAge time.Duration
 	sessionIdle   time.Duration
 }
@@ -123,16 +117,15 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool, sessionMaxAge: 30 * 24 * time.Hour, sessionIdle: 24 * time.Hour}
 }
 
-// SetSessionDefaults sets the session bounds reported for an organisation
-// that has not set its own, and stored for one that saves its policy without
-// them. Called from internal/bootstrap/dependencies.go.
+// SetSessionDefaults sets the session bounds reported for an organisation that
+// has not set its own, and stored for one that saves its policy without them.
 func (r *Repository) SetSessionDefaults(maxAge, idle time.Duration) {
 	r.sessionMaxAge, r.sessionIdle = maxAge, idle
 }
 
-// normalize fills what an update left out — session bounds left zero (the
-// platform defaults, the idle timeout no longer than the maximum age) — and
-// reports the fields that are out of range.
+// normalize fills what an update left zero (the platform session bounds, with
+// the idle timeout capped at the maximum age, and the default step-up window)
+// and reports the fields that are out of range.
 func (r *Repository) normalize(p *Policy) []errs.FieldError {
 	if p.SessionLimitAction == "" {
 		p.SessionLimitAction = "evict_oldest"
@@ -283,9 +276,8 @@ func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, p Policy) (*time.Tim
 	return enforcedSince, err
 }
 
-// policyUpdate is the body of PUT /tenants/{id}/policy. The policy's own IP
-// allow and deny lists were never enforced and are gone; address rules are the
-// one address control. A console that still sends them empty is accepted;
+// policyUpdate is the body of PUT /tenants/{id}/policy. Address rules are the
+// only address control: empty ip_allowlist and ip_denylist are accepted, but
 // entries are refused, so nobody believes a list protects them.
 type policyUpdate struct {
 	Policy

@@ -20,19 +20,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
-// Magic links: a one-time link, emailed on request, that signs the account
-// holding the address in. A link opens where it was asked for — the console
-// (which exchanges it for tokens) or the hosted login (which opens a
-// hosted-login session and continues the sign-in journey it came from) — and
-// is exchanged only there. It lives as long as the organisation's
-// magic_link_ttl_minutes and works once; its token is stored hashed.
-//
-// Asking for one answers the same whether or not the address has an account,
-// and sends nothing when it has none. An organisation with magic links off
-// refuses links asked for from its sign-in page; a console request for an
-// account whose organisation has them off sends nothing. Requests are bounded
-// per address and per caller (SetMagicLinkLimits), counted whether or not the
-// address has an account, so the bound reveals nothing either.
+// A magic link is a one-time emailed link that signs in the account holding the
+// address. It opens, and is exchanged, only where it was asked for: the console
+// or hosted login. Requests answer the same whether or not the address has an
+// account, and are bounded per address and per caller.
 
 // Where a magic link opens.
 const (
@@ -42,21 +33,12 @@ const (
 
 // MagicLinkRequest is a request for a sign-in link.
 type MagicLinkRequest struct {
-	Email string
-	// TenantID is the organisation whose sign-in page asked (uuid.Nil: the
-	// console's).
-	TenantID uuid.UUID
-	// App is where the link opens: MagicLinkHostedLogin, or anything else for
-	// the console.
-	App string
-	// ReturnTo (hosted login only) is where the sign-in journey continues; the
-	// caller has already kept it only if it is this service's authorize
-	// endpoint.
-	ReturnTo string
-	// Caller identifies the requester for the per-caller bound (its IP).
-	Caller string
-	// UserAgent is the requester's, for the record of the request.
-	UserAgent string
+	Email     string    // the address to send the link to
+	TenantID  uuid.UUID // organisation whose sign-in page asked; uuid.Nil for the console
+	App       string    // MagicLinkHostedLogin, or anything else for the console
+	ReturnTo  string    // hosted login only: where the journey continues, checked by the caller
+	Caller    string    // requester's IP, for the per-caller bound
+	UserAgent string    // requester's User-Agent, for the audit record
 }
 
 // Limiter bounds how often something may happen per key. Satisfied by
@@ -66,7 +48,7 @@ type Limiter interface {
 }
 
 // SetMagicLinkLimits bounds magic-link requests per address and per caller
-// (nil: unbounded). Called from internal/bootstrap/dependencies.go.
+// (nil: unbounded).
 func (s *Service) SetMagicLinkLimits(perAddress, perCaller Limiter) {
 	s.magicPerAddress, s.magicPerCaller = perAddress, perCaller
 }
@@ -91,10 +73,10 @@ func (s *Service) StartMagicLink(ctx context.Context, tenantID uuid.UUID, email 
 	return s.RequestMagicLink(ctx, MagicLinkRequest{Email: email, TenantID: tenantID})
 }
 
-// RequestMagicLink emails a sign-in link to the account holding req.Email,
-// if there is one; see the package notes for what is refused and when nothing
-// is sent. ErrTooManyRequests past the bounds; ErrAuthMethodDisabled when the
-// organisation that asked has magic links off.
+// RequestMagicLink emails a sign-in link to the account holding req.Email, if
+// any. It returns ErrTooManyRequests past the bounds, and ErrAuthMethodDisabled
+// when the asking organisation has magic links off; a console request for an
+// account whose organisation has them off sends nothing.
 func (s *Service) RequestMagicLink(ctx context.Context, req MagicLinkRequest) error {
 	req.Email = strings.TrimSpace(req.Email)
 	if req.Email == "" {

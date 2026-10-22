@@ -1,3 +1,5 @@
+// Package config loads the server's settings from environment variables and
+// checks them for the deployment environment (SERVICE_ENV).
 package config
 
 import (
@@ -11,35 +13,27 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/tracing"
 )
 
-// Recognised SERVICE_ENV values. Load rejects anything else, so the production
-// gates in Validate are switched on by an explicit value — never by a typo that
-// happens not to equal "dev".
+// Recognised SERVICE_ENV values. Load rejects anything else, so Validate's
+// production gates switch on by an explicit value, never by a typo. Local keeps
+// every gate, but its browser-facing hosts must be loopback names or https on
+// its own kit zone (see kitZoneSuffix), so it can't be deployed publicly.
 const (
-	// EnvDev is a developer workstation. Validate's gates are off, missing keys
-	// are generated ephemerally, and cookies are not marked Secure.
-	EnvDev = "dev"
-	// EnvLocal is a Local-tier runtime of the Qeet ID Kit (qeet-id-kit; the DEV,
-	// TEST and STAGING environments, selected by SERVICE_PROFILE).
-	// Every production gate applies; the only difference from prod is that its
-	// browser-facing hosts must be loopback names (localhost / *.localhost) or,
-	// over https, the environment's own kit zone (see kitZoneSuffix), so it
-	// cannot be deployed publicly by mistake.
-	EnvLocal = "local"
-	// EnvProd is production.
-	EnvProd = "prod"
+	EnvDev   = "dev"   // a developer workstation: gates off, missing keys generated, cookies not Secure
+	EnvLocal = "local" // a Qeet ID Kit runtime (SERVICE_PROFILE dev, test or staging)
+	EnvProd  = "prod"  // production
 )
 
 // serviceProfiles are the SERVICE_PROFILE values accepted with SERVICE_ENV=local:
 // the local DEV, TEST (QA testing) and STAGING (UAT testing) environments.
 var serviceProfiles = map[string]bool{"dev": true, "test": true, "staging": true} //nolint:gochecknoglobals // fixed allowlist
 
-// kitZoneSuffix completes a local environment's public kit zone:
-// <profile>.id.qeet.in (test.id.qeet.in, ...). Public DNS points every name in
-// those zones at 127.0.0.1, so they reach only the computer running the kit,
-// and real https callbacks (Google, Microsoft, Apple sign-in) can be
-// registered for them, which *.localhost cannot.
+// kitZoneSuffix completes a local profile's public kit zone, <profile>.id.qeet.in.
+// Public DNS points those names at 127.0.0.1, so they reach only the machine
+// running the kit, yet unlike *.localhost they can register real https callbacks
+// (Google, Microsoft, Apple sign-in).
 const kitZoneSuffix = ".id.qeet.in"
 
+// Config is the server configuration, read from the environment by Load.
 type Config struct {
 	ServiceName string `envconfig:"SERVICE_NAME" default:"qeet-id"`
 	// ServiceEnv is one of EnvDev, EnvLocal or EnvProd (L0 QEET_ENV mapping:
@@ -51,21 +45,15 @@ type Config struct {
 	// is only valid with SERVICE_ENV=local, and is reported on /healthz and in logs.
 	ServiceProfile string `envconfig:"SERVICE_PROFILE" default:""`
 	HTTPPort       string `envconfig:"HTTP_PORT" default:"4001"`
-	// TrustedProxyHops is the number of reverse proxies in front of this server
-	// that APPEND to X-Forwarded-For (Caddy, nginx, ALB all do). It decides how
-	// the client IP is read — see httpx.ClientIP.
-	//
-	// 0 (default) ignores X-Forwarded-For entirely and uses the transport peer.
-	// That is the safe default: the header is attacker-controlled unless a
-	// trusted hop rewrote it, and the client IP keys the login rate limiter and
-	// every audit record. A deployment behind exactly one proxy must set 1, or
-	// every request will be attributed to the proxy's own address.
+	// TrustedProxyHops is how many reverse proxies in front of this server append
+	// to X-Forwarded-For (see httpx.ClientIP). The default 0 ignores the header,
+	// which callers control; behind one proxy set 1, or every request is
+	// attributed to the proxy's own address.
 	TrustedProxyHops int `envconfig:"TRUSTED_PROXY_HOPS" default:"0"`
-	// RelayKeysRaw is a comma-separated list of keys that first-party relays
-	// (the console's and hosted login's servers) present to have the client
-	// address they forward trusted (see httpx.SetRelayKeys). Empty: no relay is
-	// trusted, and relayed requests are judged by the relay's own address. More
-	// than one lets a key be rotated without downtime.
+	// RelayKeysRaw is a comma-separated list of keys that first-party relays (the
+	// console's and hosted login's servers) present to have the client address
+	// they forward trusted (see httpx.SetRelayKeys); several allow rotation.
+	// Empty: no relay is trusted.
 	RelayKeysRaw string `envconfig:"RELAY_KEYS" default:""`
 	LogLevel     string `envconfig:"LOG_LEVEL" default:"info"`
 	// LogFormat controls the log output format. "json" forces JSON lines (good
@@ -94,21 +82,15 @@ type Config struct {
 	JWTSecret   string `envconfig:"JWT_SECRET" required:"true"`
 	JWTIssuer   string `envconfig:"JWT_ISSUER" default:"qeet-id"`
 	JWTAudience string `envconfig:"JWT_AUDIENCE" default:"qeet-id"`
-	// AccessTokenTTL bounds how long a revoked-but-not-yet-expired access token
-	// stays usable to a verifier that checks it offline (signature and expiry
-	// only): this TTL is the ceiling on that exposure window. Introspection
-	// (POST /oauth/introspect) is the authoritative answer and reports a token
-	// inactive as soon as its account, membership or agent is revoked; the
-	// session.revoked / token.claims_change webhook signals let a relying party
-	// react at once. The contract is ADR-0017 (qeet-id-files).
+	// AccessTokenTTL caps how long a revoked access token stays usable to a
+	// verifier that checks it offline. Introspection (POST /oauth/introspect) and
+	// the session.revoked and token.claims_change signals report revocation at once.
 	AccessTokenTTL  time.Duration `envconfig:"ACCESS_TOKEN_TTL" default:"10m"`
 	RefreshTokenTTL time.Duration `envconfig:"REFRESH_TOKEN_TTL" default:"720h"`
-	// SessionMaxAge and SessionIdleTimeout bound the API and console sessions
-	// of an organisation whose security policy sets no bounds of its own, and
-	// of accounts with no organisation: a session ends SessionMaxAge after
-	// sign-in however active it is, and once it goes SessionIdleTimeout without
-	// being renewed. SessionMaxAge also bounds an application's grant. The
-	// limits an organisation may set are the same (see checkSessionLifetime).
+	// SessionMaxAge and SessionIdleTimeout bound API and console sessions when the
+	// organisation's policy sets none (or there is no organisation): a session ends
+	// SessionMaxAge after sign-in, or after SessionIdleTimeout without renewal.
+	// SessionMaxAge also bounds an application's grant. See checkSessionLifetime.
 	SessionMaxAge      time.Duration `envconfig:"SESSION_MAX_AGE" default:"720h"`
 	SessionIdleTimeout time.Duration `envconfig:"SESSION_IDLE_TIMEOUT" default:"24h"`
 
@@ -117,9 +99,9 @@ type Config struct {
 	// dev, where an ephemeral key is generated at startup (tokens won't
 	// survive a restart). Required outside dev (enforced in config gates).
 	JWTSigningKey string `envconfig:"JWT_SIGNING_KEY" default:""`
-	// JWTRetiredKeys holds one or more concatenated PEM public keys (SPKI or
-	// certificate) of previously-active signing keys. They stay verifiable
-	// during the rotation grace window; new tokens are never signed with them.
+	// JWTRetiredKeys holds concatenated PEM public keys (SPKI or certificate) of
+	// retired signing keys: they verify tokens during the rotation grace window but
+	// never sign new ones.
 	JWTRetiredKeys string `envconfig:"JWT_RETIRED_KEYS" default:""`
 	// JWTActivateSigningKey promotes JWT_SIGNING_KEY from candidate to active in
 	// the shared registry. Leave false while pre-staging a key on every replica;
@@ -130,11 +112,10 @@ type Config struct {
 	JWTSigningKeyRetireGrace     time.Duration `envconfig:"JWT_SIGNING_KEY_RETIRE_GRACE" default:"720h"`
 	JWTSigningKeyRefreshInterval time.Duration `envconfig:"JWT_SIGNING_KEY_REFRESH_INTERVAL" default:"5s"`
 
-	// SAMLIdPKey / SAMLIdPCert are the RSA private key + X.509 certificate (PEM)
-	// used to sign issued SAML assertions when Qeet acts as an IdP (an SSO
-	// source). Empty in dev → an ephemeral self-signed cert is generated at boot
-	// (SPs must re-import metadata after a restart). Set both in prod so the IdP
-	// metadata/cert stay stable across restarts.
+	// SAMLIdPKey and SAMLIdPCert are the PEM RSA key and X.509 certificate that
+	// sign SAML assertions when Qeet ID is the IdP. Both are required outside dev;
+	// in dev, leaving either empty generates an ephemeral self-signed pair, and SPs
+	// must re-import the metadata after each restart.
 	SAMLIdPKey  string `envconfig:"SAML_IDP_KEY" default:""`
 	SAMLIdPCert string `envconfig:"SAML_IDP_CERT" default:""`
 
@@ -185,10 +166,9 @@ type Config struct {
 	// SalesEmail receives in-app "Contact sales" lead notifications (Enterprise).
 	SalesEmail string `envconfig:"SALES_EMAIL" default:"sales@qeet.in"`
 
-	// Platform-level social login for the console's own Qeet ID accounts
-	// (tenant-less — distinct from the per-tenant social providers admins
-	// configure for their end users). Each provider is OFF until its client
-	// id/secret are set. Google only for now.
+	// Platform social login (Google, Microsoft, GitHub, Apple) for the console's
+	// own Qeet ID accounts, distinct from the per-tenant providers admins set up
+	// for their users. Each provider is off until its credentials are set.
 	GoogleClientID        string `envconfig:"GOOGLE_CLIENT_ID" default:""`
 	GoogleClientSecret    string `envconfig:"GOOGLE_CLIENT_SECRET" default:""`
 	MicrosoftClientID     string `envconfig:"MICROSOFT_CLIENT_ID" default:""`
@@ -203,13 +183,10 @@ type Config struct {
 	AppleKeyID      string `envconfig:"APPLE_KEY_ID" default:""`
 	ApplePrivateKey string `envconfig:"APPLE_PRIVATE_KEY" default:""`
 
-	// GeoCountryHeader is the request header a trusted upstream proxy (e.g.
-	// Cloudflare's CF-IPCountry) sets to the client's resolved country, used
-	// as the sole geo signal for impossible-travel risk assessment. Empty
-	// (the default) disables that signal — there is no server-side GeoIP
-	// lookup, by design. Only meaningful when the deployment actually sits
-	// behind a proxy that sets it; an unrecognized header name is
-	// indistinguishable from "unset" (always empty), which is safe (fail-open).
+	// GeoCountryHeader names the header a trusted upstream proxy sets to the
+	// client's country (e.g. CF-IPCountry); see httpx.SetGeoCountryHeader. It is the
+	// only geo signal, for risk checks and sessions; there is no server-side GeoIP.
+	// Empty, or a header the proxy doesn't set, means no country.
 	GeoCountryHeader string `envconfig:"GEO_COUNTRY_HEADER" default:""`
 
 	// EmailProvider selects the email transport: "smtp" (default) or "ses-api".
@@ -262,10 +239,9 @@ type Config struct {
 	RazorpayWebhookSecret string `envconfig:"RAZORPAY_WEBHOOK_SECRET" default:""`
 
 	// Provider routing by billing country. PaymentDefaultProvider ("stripe" or
-	// "razorpay") serves any country without an explicit route in
-	// PaymentCountryRoutes, a comma-separated "CC:provider" list (e.g.
-	// "IN:razorpay,US:stripe"). When checkout sends no country, routing falls back
-	// to currency (INR → Razorpay, else the default).
+	// "razorpay") serves countries without a route in PaymentCountryRoutes, a
+	// comma-separated "CC:provider" list such as "IN:razorpay,US:stripe". Checkout
+	// without a country routes by currency: INR to Razorpay, anything else to Stripe.
 	PaymentDefaultProvider string `envconfig:"PAYMENT_DEFAULT_PROVIDER" default:"stripe"`
 	PaymentCountryRoutes   string `envconfig:"PAYMENT_COUNTRY_ROUTES" default:"IN:razorpay"`
 
@@ -293,10 +269,10 @@ type Config struct {
 	// sandbox mock-checkout URL the browser is redirected to.
 	PaymentSandboxBaseURL string `envconfig:"PAYMENT_SANDBOX_BASE_URL" default:"http://localhost:4001"`
 
-	// BreachedPasswordCheck enables breached-password detection (Have I Been
-	// Pwned k-anonymity range API) on every password-setting flow. OFF by
-	// default so dev/CI and offline deploys are unaffected, and FAIL-OPEN at
-	// runtime so a HIBP outage never blocks signups (see internal/platform/hibp).
+	// BreachedPasswordCheck turns on breached-password detection (the Have I Been
+	// Pwned k-anonymity range API) in every password-setting flow. It is off by
+	// default and fails open, so a HIBP outage never blocks sign-up (see
+	// internal/platform/crypto/hibp).
 	BreachedPasswordCheck bool `envconfig:"BREACHED_PASSWORD_CHECK" default:"false"`
 	// BreachedPasswordMinCount is the breach-sighting threshold at or above
 	// which a password is rejected (1 = reject anything seen even once).
@@ -305,25 +281,21 @@ type Config struct {
 	// self-hosted mirrors). Empty uses the public api.pwnedpasswords.com.
 	BreachedPasswordAPIURL string `envconfig:"BREACHED_PASSWORD_API_URL" default:""`
 
-	// Application secret lockout (internal/federation/oidc/client_lockout.go).
-	// After CLIENT_AUTH_LOCKOUT_THRESHOLD wrong secrets for one confidential
-	// application within CLIENT_AUTH_LOCKOUT_WINDOW, on any endpoint that takes
-	// one, the application is refused for CLIENT_AUTH_LOCKOUT_DURATION.
 	// TokenExchangeMaxDepth is how many token exchanges deep a token may still
 	// be exchanged (an exchanged token's exchange is depth 2).
 	TokenExchangeMaxDepth int `envconfig:"TOKEN_EXCHANGE_MAX_DEPTH" default:"2"`
 
+	// Application secret lockout: after CLIENT_AUTH_LOCKOUT_THRESHOLD wrong
+	// secrets for one confidential application within CLIENT_AUTH_LOCKOUT_WINDOW,
+	// on any endpoint that takes one, it is refused for CLIENT_AUTH_LOCKOUT_DURATION.
 	ClientAuthLockoutThreshold int           `envconfig:"CLIENT_AUTH_LOCKOUT_THRESHOLD" default:"10"`
 	ClientAuthLockoutWindow    time.Duration `envconfig:"CLIENT_AUTH_LOCKOUT_WINDOW" default:"15m"`
 	ClientAuthLockoutDuration  time.Duration `envconfig:"CLIENT_AUTH_LOCKOUT_DURATION" default:"15m"`
 
-	// Sign-in lockout (internal/access/authentication/lockout.go). After
-	// LOGIN_LOCKOUT_THRESHOLD failed password sign-ins to one account from one
-	// network, each within LOGIN_LOCKOUT_WINDOW of the last, the account is
-	// locked for that network for LOGIN_LOCKOUT_DURATION. These are the
-	// platform defaults; a tenant may set its own within the _MIN/_MAX bounds
-	// through its authentication policy. Windows and durations are whole
-	// minutes; Load refuses a default outside its bounds.
+	// Sign-in lockout defaults: LOGIN_LOCKOUT_THRESHOLD failed password sign-ins to
+	// one account from one network, each within LOGIN_LOCKOUT_WINDOW of the last,
+	// lock it there for LOGIN_LOCKOUT_DURATION. A tenant policy may override them
+	// within the _MIN/_MAX bounds. Windows and durations are whole minutes.
 	LoginLockoutThreshold    int           `envconfig:"LOGIN_LOCKOUT_THRESHOLD" default:"5"`
 	LoginLockoutWindow       time.Duration `envconfig:"LOGIN_LOCKOUT_WINDOW" default:"15m"`
 	LoginLockoutDuration     time.Duration `envconfig:"LOGIN_LOCKOUT_DURATION" default:"15m"`
@@ -360,14 +332,10 @@ type Config struct {
 	// enhanced push security is turned on for the mobile app's project.
 	ExpoAccessToken string `envconfig:"EXPO_ACCESS_TOKEN" default:""`
 
-	// AI Qeetai (enterprise feature). Empty QeetaiProvider disables the
-	// feature: /status returns configured=false, conversation CRUD still works,
-	// and .../messages returns 409 qeetai_unconfigured.
-	//
-	// QeetaiProvider selects the backend: "anthropic" (default when set) or
-	// "openai" (also any OpenAI-compatible endpoint: Groq, OpenRouter, Gemini …
-	// via QeetaiBaseURL). QeetaiAPIKey is held server-side only — never
-	// serialized to any response.
+	// Qeet AI platform provider, used by organisations without their own key; with
+	// QeetaiProvider empty there is none and such organisations get 409
+	// qeetai_unconfigured. QeetaiProvider is "anthropic", "openai" (or any compatible
+	// API via QeetaiBaseURL) or "azure"; QeetaiAPIKey never leaves the server.
 	QeetaiProvider  string `envconfig:"QEETAI_PROVIDER" default:""`
 	QeetaiAPIKey    string `envconfig:"QEETAI_API_KEY" default:""`
 	QeetaiModel     string `envconfig:"QEETAI_MODEL" default:"claude-sonnet-5"`
@@ -375,6 +343,9 @@ type Config struct {
 	QeetaiBaseURL   string `envconfig:"QEETAI_BASE_URL" default:""`
 }
 
+// Load reads the Config from the environment and rejects an unknown SERVICE_ENV
+// or SERVICE_PROFILE and unsafe sign-in lockout or session lifetime settings.
+// Validate applies the production gates.
 func Load() (*Config, error) {
 	var c Config
 	if err := envconfig.Process("", &c); err != nil {
@@ -492,11 +463,10 @@ func (c *Config) checkEnvironment() error {
 	return nil
 }
 
-// Validate enforces production-safety invariants. Inside SERVICE_ENV=dev it is
-// a no-op (dev needs the escape hatches and self-signed defaults); in local and
-// prod it refuses to start when a dev-only convenience or an insecure default
-// is still in place. Failing loudly here is far cheaper than discovering a
-// production deploy shipped with CSRF off or a placeholder secret.
+// Validate refuses, outside SERVICE_ENV=dev, any dev-only convenience or
+// insecure default still in place, such as CSRF off, dev trust headers, the
+// payment sandbox, weak or missing keys, wildcard origins, or hosts wrong for
+// the environment. In dev it only checks SERVICE_ENV and SERVICE_PROFILE.
 func (c *Config) Validate() error {
 	if err := c.checkEnvironment(); err != nil {
 		return err
@@ -653,6 +623,8 @@ func (c *Config) RelayKeys() []string {
 	return out
 }
 
+// AllowedOrigins returns the ALLOWED_ORIGINS entries, trimmed, or ["*"] when
+// the variable is empty.
 func (c *Config) AllowedOrigins() []string {
 	if c.AllowedOriginsRaw == "" {
 		return []string{"*"}

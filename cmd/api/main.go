@@ -1,15 +1,7 @@
-// Command api is the Qeet ID HTTP API server entrypoint; all wiring (the
-// composition root) lives in internal/bootstrap.
-//
-// `qeet-id-server healthcheck` probes the running server's /readyz on loopback
-// and exits 0 only on HTTP 200. The image is distroless (no shell, no curl), so
-// this is what a container HEALTHCHECK runs.
-//
-// `qeet-id-server schema-check` reads DB_URL's migration and exits 0 only if
-// this build can run on it: 1 when a later release has migrated the database
-// past this build (or a migration is half-applied), with the recovery step;
-// 2 when it can't tell. It changes nothing. The host runs it with the image it
-// is about to switch to, before stopping anything (redeploy.sh).
+// Command api runs the Qeet ID HTTP API server. With "healthcheck" it exits 0
+// only if /readyz on loopback answers 200 (the distroless image has no curl).
+// With "schema-check" it exits 0 if this build can run on DB_URL's schema, 1 if
+// not (newer or half-applied migrations), or 2 if it can't tell.
 package main
 
 import (

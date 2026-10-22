@@ -26,6 +26,7 @@ type named struct {
 	fn   Func
 }
 
+// New returns a Supervisor with no workers.
 func New() *Supervisor { return &Supervisor{} }
 
 // Register adds a named worker to be launched by Start.
@@ -45,15 +46,10 @@ const (
 	restartResetAfter = 5 * time.Minute
 )
 
-// Start launches every registered worker with ctx and returns a wait func that
-// blocks until all of them have returned (call it after cancelling ctx).
-//
-// Each worker runs under a recover(). Without it a panic in any single worker
-// unwinds past this goroutine and takes down the entire process — including the
-// HTTP server and every in-flight request — because chi's Recoverer only covers
-// handler goroutines. These loops unmarshal JSON into `any` and dereference
-// pointers from database rows, so a panic is a realistic outcome of one bad row
-// rather than a theoretical one. Isolating it keeps the API serving.
+// Start launches every registered worker with ctx and returns a func that waits
+// for all of them to return (call it after cancelling ctx). A worker that panics
+// is recovered and restarted with backoff, so one bad row can't take down the
+// process.
 func (s *Supervisor) Start(ctx context.Context) (wait func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

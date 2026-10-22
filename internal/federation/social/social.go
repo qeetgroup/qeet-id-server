@@ -1,7 +1,7 @@
-// Package social manages tenant-configured external identity providers
-// (Google, Microsoft, Okta, ...) and the externally-issued identity rows that
-// link to a Qeet user. It also drives the OIDC authorization-code login
-// ceremony for discovery-based providers (see oauthclient.go).
+// Package social manages each organisation's external identity providers
+// (Google, Microsoft, Okta, …) and the identities linked through them, and runs
+// the OAuth 2.0 / OIDC sign-in with them, both per organisation and for the
+// console's own tenant-less sign-in (platform.go).
 package social
 
 import (
@@ -50,28 +50,23 @@ type ExternalIdentity struct {
 	LinkedAt time.Time `json:"linked_at"`
 }
 
+// Service manages social providers and runs social sign-in. platform holds the
+// console's env-configured tenant-less providers (platform.go); returnOrigins is
+// the return_to allowlist, keyed by normalized "scheme://host[:port]".
 type Service struct {
-	pool       *pgxpool.Pool
-	q          *dbgen.Queries
-	auth       *auth.Service
-	appBaseURL string
-	oauth      *oauthClient
-	egress     *egress.Policy
-	box        *envelope.Cipher
-	// platform holds tenant-less social providers for the console's own Qeet ID
-	// sign-in (env-configured, e.g. Google). Distinct from the per-tenant
-	// social_providers table used for tenants' end users. See platform.go.
-	platform map[string]providerConfig
-	// returnOrigins is the allowlist for the hosted flow's `return_to`, keyed by
-	// normalized "scheme://host[:port]". Empty means only root-relative paths
-	// are accepted. See SetAllowedReturnOrigins and validateReturnTo.
+	pool          *pgxpool.Pool
+	q             *dbgen.Queries
+	auth          *auth.Service
+	appBaseURL    string
+	oauth         *oauthClient
+	egress        *egress.Policy
+	box           *envelope.Cipher
+	platform      map[string]providerConfig
 	returnOrigins map[string]struct{}
 }
 
-// SetAllowedReturnOrigins declares the origins a `return_to` may point at.
-// Wired from the composition root with the app + hosted-login base URLs and the
-// configured browser origins, which are already validated (production refuses to
-// start with a wildcard).
+// SetAllowedReturnOrigins sets the origins a return_to may point at. With none,
+// only root-relative paths are accepted.
 func (s *Service) SetAllowedReturnOrigins(origins ...string) {
 	set := make(map[string]struct{}, len(origins))
 	for _, o := range origins {
@@ -92,19 +87,10 @@ func normalizeOrigin(raw string) string {
 	return strings.ToLower(u.Scheme + "://" + u.Host)
 }
 
-// validateReturnTo rejects a `return_to` that would send the browser somewhere
-// we do not control.
-//
-// The callback sets the hosted-login SSO cookie and THEN redirects here, so an
-// unvalidated value is an open redirect on the authentication domain: an
-// attacker sends a victim to /v1/social/google/start?return_to=https://evil… and
-// the victim lands on the attacker's page having just authenticated, from a
-// first-party origin. The hosted flow only ever needs to return to the login or
-// console app.
-//
-// Accepted: "" (non-hosted flow), a root-relative path, or an absolute URL whose
-// origin is allowlisted. A protocol-relative "//evil.example" is rejected — it
-// looks relative but is not.
+// validateReturnTo accepts "" (no hosted flow), a root-relative path, or an
+// absolute URL on an allowed origin. The callback redirects there just after
+// setting the SSO cookie, so anything else is an open redirect from the sign-in
+// domain; "//host" and "/\" look relative but aren't.
 func (s *Service) validateReturnTo(returnTo string) error {
 	if returnTo == "" {
 		return nil
@@ -142,14 +128,14 @@ func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string, po
 // CreateProviderInput adds a provider, or replaces the settings of one the
 // organisation already has. Replacing keeps whether it is switched on, and an
 // empty ClientSecret keeps the stored secret (a new provider needs one).
+// ChangedBy is who saved it, for the audit record.
 type CreateProviderInput struct {
 	TenantID     uuid.UUID `json:"tenant_id"`
 	Provider     string    `json:"provider"`
 	ClientID     string    `json:"client_id"`
 	ClientSecret string    `json:"client_secret"`
 	DiscoveryURL string    `json:"discovery_url"`
-	// ChangedBy is who saved it, for the audit record.
-	ChangedBy ChangedBy `json:"-"`
+	ChangedBy    ChangedBy `json:"-"`
 }
 
 func (s *Service) UpsertProvider(ctx context.Context, in CreateProviderInput) (*Provider, error) {
@@ -396,20 +382,18 @@ const (
 	socialScopes   = "openid email profile"
 )
 
-// providerConfig is the stored config for one provider. For discovery-based
-// OIDC providers (google, microsoft, tenant providers) discoveryURL is set and
-// kind is "oidc"/""; GitHub isn't OIDC so kind is "github" and it uses a
-// dedicated adapter (github.go) with hardcoded endpoints instead.
+// providerConfig is one provider's settings. kind is "oidc" (or "" for an
+// organisation's provider) when discoveryURL drives the generic OIDC flow, or
+// "github" or "apple" for the adapters in github.go and apple.go. Only Apple
+// uses teamID, keyID and privateKey, to sign its short-lived client secret.
 type providerConfig struct {
 	clientID     string
 	clientSecret string
 	discoveryURL string
 	kind         string
-	// Apple only (kind == "apple"): the client secret is a short-lived ES256 JWT
-	// derived from these, not a static string.
-	teamID     string
-	keyID      string
-	privateKey string
+	teamID       string
+	keyID        string
+	privateKey   string
 }
 
 // resolveTenant maps a tenant id (uuid) or slug to a tenant id.
@@ -544,9 +528,9 @@ func (s *Service) BeginLogin(ctx context.Context, provider, tenantRef, redirectU
 	return doc.AuthorizationEndpoint + sep + q.Encode(), nil
 }
 
-// CallbackResult is what a successful provider callback yields: a one-time code
-// the SPA trades for a session, plus the hosted return_to and the resolved user
-// (used by the hosted flow to set an SSO cookie and redirect).
+// CallbackResult is a successful callback's outcome: a one-time code the SPA
+// trades for a session and, for the hosted flow, the return_to and the user and
+// tenant to set the SSO cookie for.
 type CallbackResult struct {
 	Code     string
 	ReturnTo string
@@ -554,11 +538,10 @@ type CallbackResult struct {
 	TenantID uuid.UUID
 }
 
-// CompleteCallback consumes the CSRF state, exchanges the code with the upstream
-// provider, find-or-creates the local user + external identity, and mints a
-// one-time code the SPA trades for a session. startedHere says the browser that
-// arrived is the one that began the sign-in; without it the sign-in is refused
-// with ErrSocialBrowserMismatch (the return_to comes back with the refusal).
+// CompleteCallback consumes the state, exchanges the code, finds or creates the
+// user and linked identity, and returns a one-time code the SPA trades for a
+// session. Without startedHere it fails with ErrSocialBrowserMismatch; that error
+// and a closed organisation still return the result's ReturnTo.
 func (s *Service) CompleteCallback(ctx context.Context, provider, state, code string, startedHere bool) (*CallbackResult, error) {
 	if state == "" || code == "" {
 		return nil, errs.ErrSocialCallbackParamsMissing
@@ -691,15 +674,9 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 		if err := s.requireSelfRegistration(ctx, tenantID); err != nil {
 			return uuid.Nil, err
 		}
-		// Provisioning a fresh account. An unverified assertion may *name* the
-		// account — refusing would lock out every provider that omits the claim
-		// — but it must not mark the address verified. Other flows treat a
-		// verified address as proof of control, so the provider's word is only
-		// carried through when the provider actually vouched for it.
-		//
-		// Written as raw SQL rather than InsertUserWithEmail because that query
-		// hardcodes email_verified_at = NOW(); fold this parameter into
-		// queries.sql at the next `sqlc generate`.
+		// An unverified assertion may name a new account (refusing would lock out
+		// providers that omit the claim) but never marks the address verified. Raw SQL
+		// because InsertUserWithEmail always sets email_verified_at = NOW().
 		var displayName *string
 		if ui.Name != "" {
 			displayName = &ui.Name
@@ -719,23 +696,15 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 	case err != nil:
 		return uuid.Nil, err
 	default:
-		// Adopting an account that already exists. Two things have to hold.
-		//
-		// First, the assertion must be verified: otherwise anyone who can
-		// persuade a provider to emit the victim's address inherits their
-		// account.
+		// Adopting an existing account needs three things. First, a verified
+		// assertion, or anyone who gets a provider to emit the victim's address
+		// inherits their account.
 		if !ui.EmailVerified {
 			return uuid.Nil, errs.ErrSocialEmailUnverified
 		}
-		// Second — and this is the one a verified assertion does NOT cover —
-		// the account must already belong to the tenant this login is for.
-		// Emails are globally unique platform-wide (migration 0022), so
-		// GetUserByEmail above can return a user owned by a completely
-		// different tenant. Without this check, a tenant admin could register
-		// an IdP they control, assert another tenant's user's address with
-		// email_verified=true, and be handed a token pair carrying that user's
-		// id — enough to change their password, read their profile, and
-		// switch-tenant into their org.
+		// Second, the account must belong to this tenant. Emails are unique across
+		// tenants, so otherwise a tenant admin's own IdP could assert another tenant's
+		// user's address and be handed that user's tokens.
 		belongs, err := userInTenant(ctx, tx, userID, tenantID)
 		if err != nil {
 			return uuid.Nil, err
@@ -743,11 +712,8 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 		if !belongs {
 			return uuid.Nil, errs.ErrSocialAccountNotInTenant
 		}
-		// Third, the account must own the address: someone may have registered
-		// the victim's address without proving it (open hosted sign-up), and
-		// adopting it would hand the real person an account whose password the
-		// squatter keeps. Until a code or link sent to the address is used, the
-		// provider's word doesn't adopt it.
+		// Third, the account must have proved owning the address, or a squatter who
+		// registered it unverified keeps a working password on the adopted account.
 		if err := requireVerifiedAddress(ctx, tx, userID); err != nil {
 			return uuid.Nil, err
 		}
@@ -852,14 +818,12 @@ func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*a
 	return s.auth.BeginSocialSignIn(ctx, row.UserID, row.TenantID, ip, ua)
 }
 
+// Handler serves the social endpoints. CookieSecure marks the SSO and binding
+// cookies Secure (HTTPS-only). LoginBaseURL is the hosted login app's origin,
+// where browser-facing failures are sent with a generic error code.
 type Handler struct {
-	Service *Service
-	// CookieSecure marks the hosted-login SSO cookie Secure (HTTPS-only); set
-	// from SERVICE_ENV != "dev".
+	Service      *Service
 	CookieSecure bool
-	// LoginBaseURL is the hosted login app origin (qeetid-login). Browser-facing
-	// ceremony failures redirect here with a generic error code rather than
-	// dumping a JSON error body at a top-level redirect.
 	LoginBaseURL string
 }
 
@@ -1077,12 +1041,10 @@ func (h *Handler) unlinkMine(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// redirectSocialError sends a failed browser-facing social ceremony back to the
-// hosted login app with a generic error code, rather than rendering a raw JSON
-// error body at a top-level redirect. The underlying detail is intentionally
-// not leaked to the URL; the structured error is still logged server-side. The
-// return_to (present on start, encoded in state on callback) is preserved when
-// available so the user can retry into the same app.
+// redirectSocialError sends a failed browser-facing ceremony back to the hosted
+// login with a generic error code, never the detail, keeping the request's
+// return_to so the person can retry. Without LoginBaseURL it writes the error
+// as JSON.
 func (h *Handler) redirectSocialError(w http.ResponseWriter, r *http.Request, err error) {
 	if h.LoginBaseURL == "" {
 		// No hosted login app configured — fall back to the JSON error.
@@ -1124,11 +1086,10 @@ func stateOf(authURL string) string {
 	return u.Query().Get("state")
 }
 
-// start redirects the browser to the provider's authorization endpoint.
-// Tenant is supplied as ?tenant=<slug> or ?tenant_id=<uuid> (no JWT here).
-// ?return_to=<url> opts into the hosted flow: the callback sets the SSO cookie
-// and bounces back there instead of handing a one-time code to the SPA. The
-// browser is given the binding the callback checks.
+// start redirects the browser to the provider and gives it the binding the
+// callback checks. ?tenant=<slug> or ?tenant_id=<uuid> names the organisation
+// (none means the console's platform sign-in); ?return_to opts into the hosted
+// flow.
 func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
 	tenantRef := r.URL.Query().Get("tenant")
@@ -1158,11 +1119,10 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
-// callback handles the provider redirect. In the hosted flow (return_to set) it
-// establishes the SSO cookie and bounces back to the authorize URL; otherwise it
-// bounces to the SPA with a one-time code (tokens are never placed in the URL).
-// A sign-in completes only in the browser start gave the binding to: the same
-// return link opened anywhere else is refused, and nothing is issued.
+// callback handles the provider's redirect. The hosted flow (return_to set) sets
+// the SSO cookie and returns to return_to; otherwise the SPA gets a one-time
+// code, never tokens in the URL. A sign-in completes only in the browser start
+// gave the binding to.
 func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
 	// Apple uses response_mode=form_post (params in the POST body); the other
@@ -1290,12 +1250,10 @@ type exchangeInput struct {
 	Code string `json:"code"`
 }
 
-// challengeFragment is a hosted social sign-in's second-factor challenge as
-// the hosted login reads it from the URL fragment: the challenge token, the
-// methods it offers, the factors it can be met with (JSON, as a password
-// sign-in's challenge lists them: an email or SMS factor's id and masked
-// destination are what a code is sent with), and for an enrolment one
-// enrollment_required (and enrollment_due_at while it may be put off).
+// challengeFragment encodes a hosted social sign-in's second-factor challenge
+// for the hosted login's URL fragment: mfa_token, methods, factors (JSON, as a
+// password sign-in lists them) and, for an enrolment, enrollment_required and
+// enrollment_due_at.
 func challengeFragment(c auth.MFAChallenge) string {
 	v := url.Values{"mfa_token": {c.MFAToken}, "methods": {strings.Join(c.Methods, ",")}}
 	if len(c.Factors) > 0 {
@@ -1361,13 +1319,9 @@ func requireVerifiedAddress(ctx context.Context, db interface {
 	return nil
 }
 
-// userInTenant reports whether a user is one this tenant can sign in.
-//
-// Two things count: the user's home tenant (users.tenant_id, which is what a
-// social-provisioned user gets and what a repeat login has to match), and an
-// rbac.user_roles grant (which is how a guest becomes a member). Requiring only
-// the latter would reject a user this very flow provisioned, since provisioning
-// grants no role.
+// userInTenant reports whether tenantID can sign userID in: it is the user's
+// home tenant, or the user holds a role there. The home tenant counts because
+// accounts this flow provisions get no role.
 func userInTenant(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID) (bool, error) {
 	var ok bool
 	err := tx.QueryRow(ctx, `

@@ -6,9 +6,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// API-key (internal/developer/api-keys) code→status mappings. Registered from
-// an init() so this bounded context owns its own transport mappings without
-// editing the shared error_status.go.
+// init registers the HTTP statuses of the API-key error codes.
 func init() {
 	registerStatuses(map[string]int{
 		errs.CodeAPIKeyNotFound:     http.StatusNotFound,

@@ -1,9 +1,7 @@
-// Package saml implements SP-initiated SAML 2.0 single sign-on. A tenant registers
-// an IdP connection (issuer, SSO URL, signing cert); users are sent to the IdP, the
-// signed assertion returns to the ACS, and a Qeet ID user is JIT-provisioned.
-// Signature/condition validation is delegated to gosaml2 + goxmldsig — we never
-// hand-roll XML-DSig. Like social login, the ACS hands the SPA a one-time code
-// (never a token in a URL) to trade at /saml/exchange for a token pair.
+// Package saml implements SAML 2.0 single sign-on in both directions. As a
+// service provider it signs people in through a tenant's IdP connection, using
+// gosaml2 and goxmldsig to validate assertions; as an identity provider
+// (idp.go) it issues signed assertions to the tenant's registered SPs.
 package saml
 
 import (
@@ -45,35 +43,32 @@ const (
 	replayIDTTL     = 24 * time.Hour
 )
 
+// Connection is a tenant's connection to an external SAML IdP.
+// AllowIdPInitiated isn't in the generated queries, so it is read separately.
 type Connection struct {
-	ID             uuid.UUID `json:"id"`
-	TenantID       uuid.UUID `json:"tenant_id"`
-	Name           string    `json:"name"`
-	IdpEntityID    string    `json:"idp_entity_id"`
-	IdpSSOURL      string    `json:"idp_sso_url"`
-	IdpCertificate string    `json:"idp_certificate"`
-	EmailAttribute string    `json:"email_attribute"`
-	NameAttribute  string    `json:"name_attribute"`
-	Status         string    `json:"status"`
-	// AllowIdPInitiated is read separately from the generated row until the
-	// column folds into queries.sql at the next `sqlc generate`.
+	ID                uuid.UUID  `json:"id"`
+	TenantID          uuid.UUID  `json:"tenant_id"`
+	Name              string     `json:"name"`
+	IdpEntityID       string     `json:"idp_entity_id"`
+	IdpSSOURL         string     `json:"idp_sso_url"`
+	IdpCertificate    string     `json:"idp_certificate"`
+	EmailAttribute    string     `json:"email_attribute"`
+	NameAttribute     string     `json:"name_attribute"`
+	Status            string     `json:"status"`
 	AllowIdPInitiated bool       `json:"allow_idp_initiated"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
 	LastLoginAt       *time.Time `json:"last_login_at"`
 }
 
+// Service manages a tenant's IdP connections and runs SP-initiated sign-in.
+// nextRequestSweep and nextReplaySweep throttle deleting expired AuthnRequest and
+// replay rows, separately so a busy login or ACS path can't starve the other.
 type Service struct {
-	pool       *pgxpool.Pool
-	q          *dbgen.Queries
-	auth       *auth.Service
-	appBaseURL string
-	// Throttles for collecting expired correlation and replay rows. Both tables
-	// are pure anti-replay ledgers keyed by expiry, so collecting them lazily is
-	// safe — and far cheaper than the full-table DELETE on every single SSO
-	// ceremony that the hot path used to do. They are tracked separately because
-	// they sit on different code paths (login start vs. ACS), and a shared
-	// counter would let a busy path starve the other table's collection.
+	pool             *pgxpool.Pool
+	q                *dbgen.Queries
+	auth             *auth.Service
+	appBaseURL       string
 	nextRequestSweep atomic.Int64
 	nextReplaySweep  atomic.Int64
 }
@@ -213,8 +208,8 @@ func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Connection,
 	return out, nil
 }
 
-// getByID loads a connection without tenant scoping — used by the public SSO
-// endpoints, where the (unguessable) connection UUID in the path is the key.
+// getByID loads a connection without tenant scoping, for the public SSO
+// endpoints, where the unguessable connection ID in the path is the key.
 func (s *Service) getByID(ctx context.Context, id uuid.UUID) (*Connection, error) {
 	r, err := s.q.GetSamlConnectionByID(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -226,17 +221,17 @@ func (s *Service) getByID(ctx context.Context, id uuid.UUID) (*Connection, error
 	return toConnection(r), nil
 }
 
+// UpdateInput changes a connection; a nil field is kept. AllowIdPInitiated opts
+// into unsolicited assertions (see AllowsIdPInitiated).
 type UpdateInput struct {
-	Name           *string `json:"name"`
-	IdpEntityID    *string `json:"idp_entity_id"`
-	IdpSSOURL      *string `json:"idp_sso_url"`
-	IdpCertificate *string `json:"idp_certificate"`
-	EmailAttribute *string `json:"email_attribute"`
-	NameAttribute  *string `json:"name_attribute"`
-	Status         *string `json:"status"`
-	// AllowIdPInitiated opts this connection into unsolicited assertions. See
-	// AllowsIdPInitiated for what the opt-in does and does not relax.
-	AllowIdPInitiated *bool `json:"allow_idp_initiated"`
+	Name              *string `json:"name"`
+	IdpEntityID       *string `json:"idp_entity_id"`
+	IdpSSOURL         *string `json:"idp_sso_url"`
+	IdpCertificate    *string `json:"idp_certificate"`
+	EmailAttribute    *string `json:"email_attribute"`
+	NameAttribute     *string `json:"name_attribute"`
+	Status            *string `json:"status"`
+	AllowIdPInitiated *bool   `json:"allow_idp_initiated"`
 }
 
 func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, in UpdateInput) (*Connection, error) {
@@ -257,8 +252,7 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 	if err != nil {
 		return nil, err
 	}
-	// allow_idp_initiated is written separately because the generated update
-	// predates the column; fold it in at the next `sqlc generate`.
+	// The generated update doesn't include allow_idp_initiated.
 	if in.AllowIdPInitiated != nil {
 		if _, err := tx.Exec(ctx, `
 			UPDATE tenant.saml_connections
@@ -277,13 +271,9 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 	return out, nil
 }
 
-// AllowsIdPInitiated reports whether this connection accepts an assertion that
-// carries no InResponseTo, i.e. one the IdP sent without this SP asking.
-//
-// The opt-in relaxes request correlation only. Signature, issuer, audience,
-// destination, and time-condition checks are unchanged, and the response and
-// assertion IDs are still consumed against auth.saml_replay_ids, so an
-// assertion still cannot be replayed inside its validity window.
+// AllowsIdPInitiated reports whether the connection accepts an assertion with no
+// InResponseTo, sent by the IdP unasked. The opt-in relaxes only request
+// correlation: every other check still runs, and replayed IDs are still refused.
 func (s *Service) AllowsIdPInitiated(ctx context.Context, connectionID uuid.UUID) (bool, error) {
 	var allowed bool
 	err := s.pool.QueryRow(ctx, `
@@ -429,12 +419,10 @@ func (s *Service) storeAuthnRequest(ctx context.Context, connectionID uuid.UUID,
 	return err
 }
 
-// ConsumeValidatedResponse atomically reserves every signed SAML identifier
-// and consumes the matching SP-initiated request. Callers must invoke it only
-// after cryptographic signature and assertion-condition validation succeeds.
-// An empty requestID means the IdP sent this assertion unsolicited. That is
-// only acceptable when the connection opted into it (see AllowsIdPInitiated);
-// the replay-ID reservation below still runs either way.
+// ConsumeValidatedResponse atomically reserves the response and assertion IDs
+// against replay and consumes the matching AuthnRequest. Call it only after the
+// signature and conditions are validated. An empty requestID (IdP-initiated) is
+// refused with ErrSAMLRequestCorrelation unless allowIdPInitiated.
 func (s *Service) ConsumeValidatedResponse(ctx context.Context, connectionID uuid.UUID, requestID, responseID string, assertionIDs []string, allowIdPInitiated bool) error {
 	idpInitiated := strings.TrimSpace(requestID) == ""
 	if idpInitiated && !allowIdPInitiated {
@@ -497,9 +485,9 @@ func (s *Service) ConsumeValidatedResponse(ctx context.Context, connectionID uui
 	return tx.Commit(ctx)
 }
 
-// findOrCreateUser links the SAML NameID to an existing user (by linked
-// identity, then by globally-unique email) or provisions a new one. Mirrors
-// social.findOrCreateUser; one tx so concurrent logins can't duplicate rows.
+// findOrCreateUser returns the user linked to the NameID subject, else the user
+// with the asserted email (who must belong to tenantID), else a new user, and
+// links the subject. One transaction, so concurrent logins can't duplicate rows.
 func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, subject, email, name string) (uuid.UUID, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -537,14 +525,10 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, subj
 	} else if err != nil {
 		return uuid.Nil, err
 	} else {
-		// An existing user matched the asserted email. Emails are globally
-		// unique (migration 0022), so that row may belong to a different
-		// tenant — and a SAML assertion proves only that *this* connection's
-		// IdP vouched for the address, not that the address belongs here.
-		// Without this check, anyone who can register a SAML connection (it is
-		// not plan-gated) could point it at an IdP they control, assert a
-		// victim's address, and be handed a token pair carrying the victim's
-		// user id. See internal/federation/identitylink.
+		// The email may be another tenant's user's (emails are globally unique), and
+		// the assertion only proves this connection's IdP vouched for it. Otherwise
+		// anyone with a connection to an IdP they control could assert a victim's
+		// address and receive the victim's tokens.
 		belongs, berr := identitylink.UserInTenant(ctx, tx, userID, tenantID)
 		if berr != nil {
 			return uuid.Nil, berr
@@ -618,13 +602,12 @@ func (s *Service) touchLastLogin(ctx context.Context, connID uuid.UUID) {
 	_ = s.q.TouchSamlLastLogin(ctx, connID)
 }
 
+// Handler serves both SAML sides. IdP is optional: when nil, the /saml/idp/*
+// endpoints fail with ErrSAMLIdPNotConfigured and the SP-registry admin routes
+// aren't mounted. CookieSecure is currently unused: no handler here sets a cookie.
 type Handler struct {
-	Service *Service
-	// IdP is the SAML *identity-provider* side (Qeet as an SSO source). Optional;
-	// when nil the /saml/idp/* endpoints report 501 and the SP-registry admin
-	// routes are not mounted.
-	IdP *IdP
-	// CookieSecure marks browser cookies Secure; set from SERVICE_ENV != "dev".
+	Service      *Service
+	IdP          *IdP
 	CookieSecure bool
 }
 
@@ -891,10 +874,8 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 
 // --- public SSO ceremony ---
 //
-// These endpoints are browser/IdP-facing. Success paths return SAML XML or a
-// 302 redirect (kept as-is). Error paths emit the standard JSON error envelope
-// via httpx.WriteError — consistent with the rest of the API and carrying a
-// request_id for support — rather than bare http.Error plain text.
+// These endpoints are browser- and IdP-facing. Success returns SAML XML or a
+// redirect; errors use the standard JSON error envelope (httpx.WriteError).
 
 func (h *Handler) metadata(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))

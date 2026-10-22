@@ -19,16 +19,12 @@ import (
 )
 
 // A phone is linked to an account with a pairing code: the signed-in person
-// asks for one (after a step-up), the console shows it, and the mobile app
-// exchanges it once for its device credential. Nobody copies an access token.
+// asks for one, the console shows it, and the mobile app exchanges it once for
+// its device credential, so no access token is ever copied.
 const (
-	// pushPairingTTL is how long a pairing code can link a phone.
-	pushPairingTTL = 5 * time.Minute
-	// pushPairingsPerHour is how many codes one person may ask for in an hour.
-	pushPairingsPerHour = 10
-	// pairingCodeLength is the code's length in characters, five bits each:
-	// 50 bits, against a claim route throttled per address.
-	pairingCodeLength = 10
+	pushPairingTTL      = 5 * time.Minute // how long a code can link a phone
+	pushPairingsPerHour = 10              // codes one person may ask for per hour
+	pairingCodeLength   = 10              // 5 bits per character: 50 bits against a throttled claim route
 )
 
 // pairingAlphabet is Crockford's base32: no I, L, O or U, so a code read
@@ -86,11 +82,9 @@ func normalizePairingCode(raw string) string {
 	return out.String()
 }
 
-// CreatePushPairing issues a pairing code that links a phone to userID's
-// account, and returns it with the code, which is shown only now. The code
-// works once, for pushPairingTTL; it replaces the person's earlier unused
-// codes. Past pushPairingsPerHour in an hour it is refused (retry_after).
-// Audited as mfa.push_pairing_created.
+// CreatePushPairing issues a single-use code that can link a phone to userID's
+// account for pushPairingTTL, ending their earlier unused codes. The code is
+// returned only here. Past pushPairingsPerHour it fails with retry_after.
 func (s *Service) CreatePushPairing(ctx context.Context, userID uuid.UUID, tenantID *uuid.UUID, ip, ua string) (PushPairing, string, error) {
 	code, err := newPairingCode()
 	if err != nil {
@@ -208,8 +202,8 @@ type PushPairingClaim struct {
 
 // ClaimPushPairing links the phone presenting code to the account that asked
 // for it, as RegisterPushDevice does, and uses the code up. A wrong, used or
-// expired code — or one whose account is no longer active — is refused with
-// ErrMFAPairingCodeInvalid, all alike. Audited as mfa.push_device_linked.
+// expired code, or one for an inactive account, gets the same
+// ErrMFAPairingCodeInvalid. Audited as mfa.push_device_linked.
 func (s *Service) ClaimPushPairing(ctx context.Context, code, name, pushToken, platform, ip, ua string) (PushPairingClaim, error) {
 	normalized := normalizePairingCode(code)
 	if normalized == "" {

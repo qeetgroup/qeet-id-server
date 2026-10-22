@@ -1,8 +1,7 @@
-// Package notification is the in-app notification inbox shown in the admin
-// header bell. Notifications are per-user and append-only; the owner reads them
-// and marks them read. Other packages emit via Service.Notify (e.g. a security
-// alert when an account is locked), kept behind a small interface so callers
-// don't import this package directly.
+// Package notification is the in-app notification inbox behind the console's
+// header bell. Notifications are per user and append-only; their owner reads
+// them and marks them read. Other packages call Service.Notify through their own
+// small interfaces, such as for a locked-account alert.
 package notification
 
 import (
@@ -20,15 +19,18 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
+// Service stores and reads in-app notifications.
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 }
 
+// NewService returns a Service over pool.
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool)}
 }
 
+// Notification is one entry of a user's inbox; ReadAt is nil while unread.
 type Notification struct {
 	ID          uuid.UUID  `json:"id"`
 	Kind        string     `json:"kind"`
@@ -39,14 +41,14 @@ type Notification struct {
 	ReadAt      *time.Time `json:"read_at,omitempty"`
 }
 
-// Notify appends a notification for a user. Best-effort callers (event hooks)
-// should log and swallow the error so a notification write never breaks the
-// originating action. tenantID may be uuid.Nil for tenant-less context.
+// Notify appends a notification for a user; an empty kind means "info".
+// tenantID may be uuid.Nil. Callers should log and drop the error, so a failed
+// notification never breaks the action that caused it.
 func (s *Service) Notify(ctx context.Context, tenantID, userID uuid.UUID, kind, title, description, href string) error {
 	if kind == "" {
 		kind = "info"
 	}
-	// tenant_id is nullable in auth.notifications; pass Valid=false for uuid.Nil.
+	// tenant_id is nullable; uuid.Nil is stored as NULL.
 	tid := pgtype.UUID{Bytes: tenantID, Valid: tenantID != uuid.Nil}
 	return s.q.InsertNotification(ctx, dbgen.InsertNotificationParams{
 		UserID:      userID,
@@ -58,7 +60,8 @@ func (s *Service) Notify(ctx context.Context, tenantID, userID uuid.UUID, kind, 
 	})
 }
 
-// List returns a user's most recent notifications plus the unread count.
+// List returns up to limit of the user's newest notifications (50 if limit is
+// not in 1..100) and the user's unread count.
 func (s *Service) List(ctx context.Context, userID uuid.UUID, limit int) ([]Notification, int, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
@@ -76,7 +79,7 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, limit int) ([]Noti
 			ID: r.ID, Kind: r.Kind, Title: r.Title,
 			Description: r.Description, Href: r.Href, CreatedAt: r.CreatedAt,
 		}
-		// read_at is nullable timestamptz; pgtype.Timestamptz.Valid signals NULL.
+		// A NULL read_at means unread.
 		if r.ReadAt.Valid {
 			t := r.ReadAt.Time
 			n.ReadAt = &t
@@ -90,15 +93,17 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, limit int) ([]Noti
 	return out, int(count), nil
 }
 
-// MarkAllRead clears the unread state for all of a user's notifications.
+// MarkAllRead marks all of the user's notifications read.
 func (s *Service) MarkAllRead(ctx context.Context, userID uuid.UUID) error {
 	return s.q.MarkAllNotificationsRead(ctx, userID)
 }
 
+// Handler serves the signed-in user's notification inbox.
 type Handler struct {
 	Service *Service
 }
 
+// Mount registers the notification routes.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/notifications", h.list)
 	r.Post("/notifications/mark-all-read", h.markAllRead)

@@ -92,7 +92,7 @@ func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
 }
 
 // SetTokenExchangeMaxDepth sets how many exchanges deep a token may be
-// exchanged again (at least 1). Called from internal/bootstrap/dependencies.go.
+// exchanged again (at least 1).
 func (s *Service) SetTokenExchangeMaxDepth(n int) {
 	if n < 1 {
 		n = 1
@@ -100,9 +100,9 @@ func (s *Service) SetTokenExchangeMaxDepth(n int) {
 	s.exchangeMaxDepth = n
 }
 
-// SetGrantMaxAge sets how long an application's grant lasts however often it
-// is renewed, where its organisation sets no maximum session age (config
-// SESSION_MAX_AGE). Called from internal/bootstrap/dependencies.go.
+// SetGrantMaxAge sets how long an application's grant lasts however often it is
+// renewed, where its organisation sets no maximum session age (config
+// SESSION_MAX_AGE).
 func (s *Service) SetGrantMaxAge(d time.Duration) { s.grantMaxAge = d }
 
 // PlanLimiter returns the numeric cap for a plan-gated resource (negative =
@@ -255,11 +255,9 @@ func validateClientInput(in CreateClientInput) error {
 	return nil
 }
 
-// validateRegisteredRedirectURI accepts the three redirect forms RFC 8252
-// sanctions: an HTTPS URL, an HTTP loopback URL, and a private-use scheme for
-// native apps. A fragment or userinfo component is rejected everywhere — the
-// authorization response owns the fragment, and credentials in a registered
-// URI would leak through logs and referrers.
+// validateRegisteredRedirectURI accepts the redirect forms RFC 8252 allows: an
+// HTTPS URL, an HTTP loopback URL or a private-use scheme. A fragment or
+// userinfo component is always rejected.
 func validateRegisteredRedirectURI(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || !u.IsAbs() || u.User != nil || u.Fragment != "" {
@@ -318,11 +316,9 @@ func isPrivateUseScheme(scheme string) bool {
 	return true
 }
 
-// ShadowAICandidate is an OIDC client capable of unattended machine access
-// (client_credentials or token-exchange) that hasn't been explicitly reviewed —
-// the same "unmanaged non-human identity" risk the agents/service-accounts
-// registries close, for a client that picked up a machine grant sideways.
-// LiveGrants counts its active (unexpired, unrevoked) refresh tokens.
+// ShadowAICandidate is an unreviewed OIDC client that can act unattended
+// (client_credentials or token exchange). LiveGrants counts its active refresh
+// tokens.
 type ShadowAICandidate struct {
 	ID         uuid.UUID `json:"id"`
 	ClientID   string    `json:"client_id"`
@@ -375,12 +371,10 @@ func (s *Service) ReviewShadowAIClient(ctx context.Context, tenantID, id, review
 	return nil
 }
 
-// Authorize validates an authorization request for an already-authenticated
-// user and mints a one-time authorization code. The client's tenant is derived
-// from the client itself (the browser-facing flow has no user JWT to carry it).
-// Returns the raw code and the resolved tenant id. The code is tied to no
-// hosted-login session, and no address is known, so an organisation with its
-// address rules on refuses it; the browser flow uses AuthorizeInLoginSession.
+// Authorize validates an authorization request for an authenticated user and
+// returns a one-time authorization code and the client's tenant ID. The code is
+// tied to no hosted-login session, so organisations with address rules refuse
+// it; the browser flow uses AuthorizeInLoginSession.
 func (s *Service) Authorize(ctx context.Context, userID uuid.UUID, clientID, redirectURI string, scopes []string, nonce, challenge, challengeMethod string) (string, uuid.UUID, error) {
 	return s.AuthorizeInLoginSession(ctx, AuthorizeInput{
 		UserID: userID, ClientID: clientID, RedirectURI: redirectURI, Scopes: scopes,
@@ -550,14 +544,9 @@ func (s *Service) RegisteredRedirect(ctx context.Context, clientID, redirectURI 
 	return contains(info.RedirectUris, redirectURI)
 }
 
-// activeTenantPrincipal reports whether a user is live enough to be granted a
-// tenant-stamped token: the user is active and not deleted, and the tenant is
-// active and not deleted.
-//
-// It deliberately does not assert *which* membership model the caller uses —
-// the authorization-code path keys off rbac.user_roles while device and CIBA
-// key off users.tenant_id (see the note on activeClientTenantMember). This
-// covers the liveness half, which every flow needs regardless.
+// activeTenantPrincipal reports whether userID and tenantID are both active and
+// not deleted, so the user may receive a token for that tenant. Each flow checks
+// membership separately.
 func (s *Service) activeTenantPrincipal(ctx context.Context, userID, tenantID uuid.UUID) (bool, error) {
 	var live bool
 	err := s.pool.QueryRow(ctx, `
@@ -754,13 +743,9 @@ func (s *Service) auditClientAuthFailure(ctx context.Context, c authedClient, re
 	}
 }
 
-// TokenExchange implements RFC 8693 in its downscoping form: a confidential
-// client exchanges a valid Qeet access token (subject_token) for a fresh
-// access token carrying a SUBSET of the subject's scopes. It never escalates
-// scope and never crosses subject/tenant, so it's safe for handing a
-// narrowed-down credential to a less-trusted component. The client must be
-// granted "token_exchange". Only access tokens are supported as subject and
-// requested token type.
+// TokenExchange implements RFC 8693 downscoping: a confidential client with the
+// token_exchange grant swaps a valid access token for a new one with a subset of
+// its scopes. It never adds scopes or changes the subject or tenant.
 func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, subjectToken, subjectTokenType, requestedTokenType, scope, actorToken, actorTokenType, resource string) (*TokenResponse, error) {
 	client, err := s.authenticateClient(ctx, clientID, clientSecret)
 	if err != nil {
@@ -789,15 +774,8 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 	if err != nil {
 		return nil, errs.ErrOIDCSubjectTokenInvalid
 	}
-	// The subject token must belong to the calling client's own tenant.
-	//
-	// This function's contract says it "never crosses subject/tenant", and it is
-	// true that the issued token preserves claims.TenantID. What was missing is
-	// the check that the CALLER is entitled to the subject at all: any
-	// confidential client in any tenant that holds the token_exchange grant could
-	// present a live access token captured from another tenant and mint a fresh,
-	// full-TTL one — repeatedly. That turns a single stolen access token into
-	// indefinite renewal without ever holding a refresh token.
+	// The subject token must belong to the calling client's tenant; otherwise any
+	// client could keep renewing an access token stolen from another tenant.
 	caller, err := s.q.GetClientName(ctx, clientID)
 	if err != nil {
 		return nil, err
@@ -1055,13 +1033,10 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	}, nil
 }
 
-// issueRefreshToken persists a refresh token bound to the client+user and
-// returns the raw value. resource (may be empty) is the RFC 8707 resource
-// indicator, if any, bound to the access token this refresh token accompanies
-// — persisted so a later rotation can re-bind the same resource.
-// loginSessionID is the hosted-login session the grant was started through
-// (NULL for none), and codeHash the authorization code it was redeemed from
-// ("" for none). q is the caller's querier, so it can run in its transaction.
+// issueRefreshToken stores a refresh token for the client and user and returns
+// it. resource is the RFC 8707 resource bound to the access token ("" for none),
+// loginSessionID the hosted-login session (NULL for none) and codeHash the
+// redeemed code ("" for none). q lets it run in the caller's transaction.
 func (s *Service) issueRefreshToken(ctx context.Context, q *dbgen.Queries, clientID string, userID, tenantID uuid.UUID, scopes []string, resource string, loginSessionID pgtype.UUID, codeHash string) (string, error) {
 	raw, hash, err := tokens.NewRefreshToken()
 	if err != nil {
@@ -1083,12 +1058,10 @@ func (s *Service) issueRefreshToken(ctx context.Context, q *dbgen.Queries, clien
 	return raw, nil
 }
 
-// RefreshToken handles the refresh_token grant: it rotates the presented
-// token and re-issues tokens scoped to the original grant. Replay of a used
-// token revokes every live token for the (client, user). resource (RFC 8707,
-// may be empty) lets the caller explicitly switch the bound resource on the
-// reissued access token; when empty, the resource originally bound at
-// issuance (if any) carries forward unchanged.
+// RefreshToken handles the refresh_token grant: it rotates the token and
+// reissues tokens for the original grant. Replaying a used token revokes every
+// live token for the client and user. A non-empty resource (RFC 8707) replaces
+// the bound resource; otherwise the bound one carries forward.
 func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawRefresh, resource string) (*TokenResponse, error) {
 	if _, err := s.authenticateClient(ctx, clientID, clientSecret); err != nil {
 		return nil, err
@@ -1713,11 +1686,9 @@ func (h *Handler) registerClient(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, resp)
 }
 
-// authorize is the browser-facing GET /oauth/authorize. The user is identified
-// by the hosted-login SSO cookie (not a JWT). If not signed in, the browser is
-// sent to the hosted login; if signed in but the client lacks consent, to the
-// hosted consent screen; otherwise a code is minted and the browser bounced
-// back to the RP's redirect_uri.
+// authorize handles GET /oauth/authorize. It identifies the user by the SSO
+// cookie and redirects to the hosted login, to the consent screen, or back to
+// the client's redirect_uri with a code.
 func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	clientID := q.Get("client_id")
@@ -1814,11 +1785,9 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, appendQuery(redirect, "code", code, "state", state, "iss", h.Service.issuer.JWTIssuer()), http.StatusFound)
 }
 
-// authorizeError reports a failure that happened before a code was minted.
-// RFC 6749 §4.1.2.1 wants these delivered to the client's registered
-// redirect_uri so the RP can react; we only render the error here when the URI
-// can't be confirmed as registered, since bouncing to an unverified URI would
-// make this endpoint an open redirect.
+// authorizeError reports a failure before a code was issued. Per RFC 6749
+// §4.1.2.1 it redirects to the client's redirect_uri, but only when that URI is
+// registered; otherwise it renders the error, so it is never an open redirect.
 func (h *Handler) authorizeError(w http.ResponseWriter, r *http.Request, clientID, redirect, state string, err error) {
 	if redirect == "" || !h.Service.RegisteredRedirect(r.Context(), clientID, redirect) {
 		httpx.WriteError(w, r, err)
@@ -1875,12 +1844,9 @@ func (in decisionInput) matches(req *ConsentRequest) bool {
 		same(in.CodeChallenge, req.CodeChallenge) && same(in.CodeChallengeMethod, req.CodeChallengeMethod)
 }
 
-// decision records the consent decision from the hosted consent screen. The
-// user is identified by the SSO cookie and the request by the id authorize
-// stored it under; the request's values come from storage, so neither answer
-// can be pointed at an address the client never registered. It returns (as
-// JSON) the URL the consent SPA should navigate to: a code on approval, or
-// error=access_denied on deny.
+// decision records the user's choice on the hosted consent screen and returns,
+// as JSON, the URL to navigate to: a code on approval, or error=access_denied.
+// The request's values come from storage, never from the browser.
 func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
 	loginSessionID, userID, ok := h.loginSession(r)
 	if !ok {
@@ -1966,14 +1932,9 @@ func (h *Handler) consentRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 // endSession is the OIDC RP-Initiated Logout endpoint. It ends the browser's
-// hosted SSO session and what it started — the application grants and unspent
-// codes minted through it (auth.Service.EndLoginSession) — and clears the
-// cookie, then — if the client supplied a registered post_logout_redirect_uri —
-// redirects there (carrying state); otherwise it shows the hosted logged-out
-// page. Only the cookie says which session to end: without it nothing is
-// ended. The sign-out record names client_id only when it is a registered
-// application. If the sign-out cannot be completed the error is shown and the
-// cookie kept, rather than telling the application the person signed out.
+// hosted SSO session and what it started, clears the cookie, and redirects to a
+// registered post_logout_redirect_uri or shows the signed-out page. If sign-out
+// fails, the error is shown and the cookie kept.
 func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		httpx.WriteError(w, r, errs.ErrBadRequest)
@@ -2126,11 +2087,9 @@ func (h *Handler) loginSessionAt(r *http.Request) (sessionID, userID uuid.UUID, 
 	return sessionID, userID, signedInAt, true
 }
 
-// externalScheme returns the request's public scheme, honoring X-Forwarded-Proto
-// set by a TLS-terminating reverse proxy (Caddy/ALB), then the request's own TLS
-// state, defaulting to https for non-localhost hosts. This keeps the OIDC issuer
-// and discovery URLs https when the app runs behind a proxy that terminates TLS
-// (the backend itself is reached over plain HTTP on the internal network).
+// externalScheme returns the request's public scheme: X-Forwarded-Proto from a
+// TLS-terminating proxy, then the request's own TLS state, defaulting to https
+// for non-localhost hosts.
 func externalScheme(r *http.Request) string {
 	if p := r.Header.Get("X-Forwarded-Proto"); p == "https" || p == "http" {
 		return p
@@ -2212,11 +2171,8 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 			r.Form.Get("requested_token_type"), r.Form.Get("scope"),
 			r.Form.Get("actor_token"), r.Form.Get("actor_token_type"), resource)
 	case "urn:ietf:params:oauth:grant-type:device_code":
-		// RFC 8628 §3.4 polling. The device authenticates with its client_id +
-		// device_code; the device_code itself is the proof, so a client_secret is
-		// not required (device clients are typically public). Errors here use the
-		// RFC 6749 §5.2 flat {"error","error_description"} shape OAuth clients
-		// parse, rendered by writeOAuthError.
+		// RFC 8628 §3.4 polling: the device_code is the proof, so no client_secret is
+		// needed. Errors use the RFC 6749 §5.2 shape.
 		resp, err = h.Service.DeviceToken(r.Context(), clientID, r.Form.Get("device_code"), httpx.ClientIP(r))
 		if err != nil {
 			var oe *oauthError
@@ -2362,11 +2318,8 @@ func (h *Handler) serverMetadata(r *http.Request) map[string]any {
 		"resource_indicators_supported": true,
 		// RFC 9207 — the authorization response carries an `iss` parameter.
 		"authorization_response_iss_parameter_supported": true,
-		// Non-standard: advertises first-class non-human principals. Rather
-		// than a sub-prefix convention (which would break RFC 8693 token
-		// exchange's assumption that subject_token's sub is a parseable user
-		// UUID — see TokenExchange), an agent token self-describes via the
-		// actor_type + agent_id claims, also surfaced on /oauth/introspect.
+		// Non-standard: agent tokens describe themselves with the actor_type and
+		// agent_id claims rather than a sub prefix, which would break token exchange.
 		"actor_types_supported": []string{"user", "service", "agent"},
 	}
 }
@@ -2402,18 +2355,10 @@ func (h *Handler) jwks(w http.ResponseWriter, r *http.Request) {
 // OAuth 2.0 token revocation (RFC 7009) & introspection (RFC 7662)
 // =====================================================================
 
-// RevokeToken implements RFC 7009. After client authentication, the presented
-// refresh token is revoked if it belongs to the calling client. Access tokens
-// are stateless ES256 JWTs and can't be revoked individually, so they're a
-// no-op. Per the RFC, an unknown or already-revoked token is still a success —
-// the only error paths are bad client auth or a DB failure.
-//
-// A refresh token ends the whole grant it belongs to, every rotation of it, so
-// no earlier link stays usable, and is audited. An access token can't be
-// revoked (it is stateless and lasts out its short lifetime, ADR-0017), so it
-// is refused with unsupported_token_type rather than answered with a success
-// that revokes nothing. An unknown token, or another client's, is a 200 no-op
-// (RFC 7009 §2.2), whatever the hint says.
+// RevokeToken implements RFC 7009 for refresh tokens: it ends the whole grant,
+// every rotation included, and audits it. An access token is refused with
+// unsupported_token_type because it can't be revoked. An unknown token, or
+// another client's, is a no-op success (RFC 7009 §2.2).
 func (s *Service) RevokeToken(ctx context.Context, clientID, clientSecret, token, hint string) error {
 	client, err := s.authenticateClient(ctx, clientID, clientSecret)
 	if err != nil {
@@ -2479,13 +2424,9 @@ func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token,
 		return inactive, nil
 	}
 
-	// RFC 7662 §2.1 requires the endpoint to establish that the token was issued
-	// to the client presenting it. Without that this endpoint is a token oracle:
-	// a `public` client authenticates with only a client_id (no secret, and the
-	// id is visible in every authorize URL), so anyone could confirm liveness and
-	// read sub / tenant_id / scope / sid / agent_id for tokens belonging to OTHER
-	// tenants. A mismatch returns `active: false` rather than an error, which is
-	// the RFC's own answer and avoids leaking that the token exists at all.
+	// RFC 7662 §2.1: the token must have been issued to the calling client, or this
+	// endpoint becomes a token oracle for other tenants. A mismatch returns
+	// active: false, which reveals nothing.
 	caller, err := s.q.GetClientName(ctx, clientID)
 	if err != nil {
 		return nil, err
@@ -2508,11 +2449,9 @@ func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token,
 				s.auditIntrospectionRefused(ctx, caller.TenantID, clientID, claims.ClientID)
 				return inactive, nil
 			}
-			// Introspection is the authoritative answer on revocation
-			// (ADR-0017): a token whose account is suspended or deleted, whose
-			// membership of the organisation has ended, or whose agent is no
-			// longer active, is inactive here though its signature still
-			// verifies. Offline verification stays bounded by its lifetime.
+			// Introspection is authoritative on revocation: a token whose account,
+			// membership or agent is no longer active is inactive here, even though its
+			// signature still verifies.
 			live, err := s.tokenSubjectLive(ctx, claims)
 			if err != nil {
 				return nil, err

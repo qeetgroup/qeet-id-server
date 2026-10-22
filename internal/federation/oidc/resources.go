@@ -18,11 +18,9 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Resource is a downstream service an organisation's tokens may be issued for
-// (RFC 8707 resource indicator). A token issued for it names it alone as its
-// audience, so the platform API and every other service refuse it.
-// ServerClientID is the application that serves it, which may introspect
-// tokens issued for it ("" for none).
+// Resource is a downstream service tokens may be issued for (RFC 8707). A token
+// for it names it as the only audience. ServerClientID is the application that
+// serves it and may introspect its tokens ("" for none).
 type Resource struct {
 	ID             uuid.UUID `json:"id"`
 	TenantID       uuid.UUID `json:"tenant_id"`

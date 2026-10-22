@@ -1,7 +1,6 @@
-// Package activity provides the Live Activity backend: a tenant-filtered SSE
-// stream (live, from the NATS outbox) and a cursor-paginated history endpoint
-// (from the hash-chained audit.events table). Raw-event to ActivityEvent mapping
-// is centralised here so live and history present a consistent view.
+// Package activity serves the Live Activity feed: a tenant-filtered SSE stream
+// of live events from the NATS outbox, and paginated history from audit.events.
+// Both sources map to ActivityEvent, so live and history look the same.
 package activity
 
 import (
@@ -13,8 +12,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// Severity values mirror common log/security conventions and match the
-// frontend ActivityEvent severity discriminant.
+// Severity levels of an ActivityEvent, lowest first. They match the console's
+// ActivityEvent severity values.
 const (
 	SeverityInfo     = "info"
 	SeveritySuccess  = "success"
@@ -23,8 +22,7 @@ const (
 	SeverityCritical = "critical"
 )
 
-// Category groups event types into coarse operational domains shown in the
-// console activity filter pill.
+// Categories group event types into the coarse domains the console filters by.
 const (
 	CategoryAuthentication = "authentication"
 	CategoryAuthorization  = "authorization"
@@ -34,19 +32,15 @@ const (
 	CategorySystem         = "system"
 )
 
-// ActivityEvent is the unified wire representation of a domain event, whether
-// sourced from the live NATS outbox stream or the durable audit log.
-//
-// TenantID is populated by both mapOutboxEvent and mapAuditRow. The SSE stream
-// handler uses it as a defense-in-depth guard: any event whose TenantID does
-// not match the authenticated connection's tenant is dropped before the SSE
-// write, catching any hub mis-routing before it becomes a cross-tenant leak.
+// ActivityEvent is the wire form of a domain event, from either the live NATS
+// stream or the audit log. The SSE handler drops any event whose TenantID is not
+// the connection's tenant, in case the hub ever mis-routes one.
 type ActivityEvent struct {
 	ID          uuid.UUID       `json:"id"`
 	TenantID    uuid.UUID       `json:"tenant_id"`
 	Type        string          `json:"type"`
 	Category    string          `json:"category"`
-	Severity    string          `json:"severity"` // info|success|warning|error|critical
+	Severity    string          `json:"severity"`
 	Title       string          `json:"title"`
 	Description *string         `json:"description,omitempty"`
 	Actor       *ActivityActor  `json:"actor,omitempty"`
@@ -84,9 +78,8 @@ type StreamFilter struct {
 	Category string   // exact category match; empty = all
 }
 
-// ListFilter narrows the history query. SQL-pushable fields are applied at
-// the DB level; Severity and Category are post-fetch (they are computed
-// values, not stored in audit.events).
+// ListFilter narrows the history query. Severity and Category are applied after
+// the fetch, because they are derived from the action rather than stored.
 type ListFilter struct {
 	Types    []string   // filter by exact audit action values; empty = all
 	Severity string     // post-fetch: minimum severity
@@ -98,11 +91,8 @@ type ListFilter struct {
 	To       *time.Time // inclusive upper bound on created_at
 }
 
-// categoryOf and severityOf are the authoritative action to (category, severity)
-// mappings, used by both the live stream and the history API so callers see a
-// consistent view. Category: first matching prefix wins, so order matters.
-// Severity: critical > warning > success > info (highest applicable wins).
-
+// categoryPrefixes maps an action prefix to its category. The first match wins,
+// so order matters.
 var categoryPrefixes = []struct {
 	prefix   string
 	category string
@@ -144,10 +134,9 @@ var categoryPrefixes = []struct {
 	{"system.", CategorySystem},
 }
 
-// severityCriticalInfix are substrings that — wherever they appear in the
-// action string — indicate a security incident. Checked before suffix rules.
-// "reuse" covers both "revoked_for_reuse" (the outbox event) and any future
-// "reuse_detected" naming.
+// severityCriticalInfix lists substrings that mark an action as a security
+// incident wherever they appear, such as "reuse" in
+// "auth.session.revoked_for_reuse".
 var severityCriticalInfix = []string{
 	"reuse",
 	"breach",
@@ -155,9 +144,8 @@ var severityCriticalInfix = []string{
 	"malicious",
 }
 
-// severityErrorSuffixes are action suffixes that indicate an outright failure or
-// denial — the outcome an operator reads as "Failed" (red). Checked before the
-// (softer) warning suffixes.
+// severityErrorSuffixes are action suffixes for a failure or denial, which the
+// console shows as "Failed".
 var severityErrorSuffixes = []string{
 	".failed",
 	".locked",
@@ -166,8 +154,8 @@ var severityErrorSuffixes = []string{
 	".rejected",
 }
 
-// severityWarningSuffixes are action suffixes for destructive-but-expected
-// operations — the outcome an operator reads as "Warning" (amber).
+// severityWarningSuffixes are action suffixes for destructive but expected
+// operations, which the console shows as "Warning".
 var severityWarningSuffixes = []string{
 	".deleted",
 	".purged",
@@ -196,8 +184,8 @@ var severitySuccessSuffixes = []string{
 	".restored",
 }
 
-// categoryOf derives the category from the audit action string.
-// The first matching prefix wins; unknown actions fall through to "system".
+// categoryOf returns the category of an audit action: the first matching entry
+// in categoryPrefixes, or CategorySystem.
 func categoryOf(action string) string {
 	for _, rule := range categoryPrefixes {
 		if strings.HasPrefix(action, rule.prefix) {
@@ -207,8 +195,9 @@ func categoryOf(action string) string {
 	return CategorySystem
 }
 
-// severityOf derives the severity from the audit action string.
-// Critical > warning > success > info (highest applicable wins).
+// severityOf returns the severity of an audit action. threat.* actions and
+// critical substrings come first, then the error, warning and success suffixes,
+// in that order; anything else is info.
 func severityOf(action string) string {
 	// All threat.* actions represent detected security events.
 	if strings.HasPrefix(action, "threat.") {
@@ -237,11 +226,8 @@ func severityOf(action string) string {
 	return SeverityInfo
 }
 
-// outcomeOf collapses a derived severity into the coarse outcome bucket the
-// console's summary strip and Outcome facet use. It reuses severityOf's result
-// so there is a single source of truth for the derivation.
-//
-//	success → success · warning → warning · error/critical → failed · info → info
+// outcomeOf maps a severity to the outcome bucket of the console's summary:
+// error and critical become "failed"; success, warning and info are unchanged.
 func outcomeOf(sev string) string {
 	switch sev {
 	case SeveritySuccess:
@@ -270,10 +256,8 @@ func titleOf(action string) string {
 	return strings.Join(parts, " ")
 }
 
-// severityMeets reports whether candidate satisfies minimum. When minimum is
-// empty, all candidates satisfy it.
-//
-//	order: info(0) < success(1) < warning(2) < error(3) < critical(4)
+// severityMeets reports whether candidate is at least minimum, in the order
+// info < success < warning < error < critical. An empty minimum matches all.
 func severityMeets(candidate, minimum string) bool {
 	if minimum == "" {
 		return true
@@ -315,8 +299,8 @@ func matchesListFilter(ev ActivityEvent, f ListFilter) bool {
 	return severityMeets(ev.Severity, f.Severity)
 }
 
-// auditRow is the local scan target for the history/replay queries. Columns
-// must match the SELECT list in replayHistory and listHistory exactly.
+// auditRow is the common shape of the activity query rows, which mapAuditRow
+// turns into an ActivityEvent.
 type auditRow struct {
 	ID           uuid.UUID
 	ActorUserID  *uuid.UUID
@@ -327,14 +311,13 @@ type auditRow struct {
 	IP           *string
 	UserAgent    *string
 	RequestID    *string
-	ActorName    *string // LEFT-joined display_name/email; nil for non-user actors
+	ActorName    *string
 	CreatedAt    time.Time
 	Metadata     []byte
-	TenantID     uuid.UUID // scanned last; used to populate ActivityEvent.TenantID
+	TenantID     uuid.UUID
 }
 
-// firstNonEmpty returns the first non-nil, non-empty pointer value (used to
-// prefer display_name over email for the actor name).
+// firstNonEmpty returns the first non-nil, non-empty value, or nil.
 func firstNonEmpty(vals ...*string) *string {
 	for _, v := range vals {
 		if v != nil && *v != "" {
@@ -390,8 +373,7 @@ func mapAuditRow(r auditRow) ActivityEvent {
 		}
 	}
 
-	// request_id is nullable and often empty on older rows; surface only when set
-	// so it drives correlation/copy in the console without adding noise.
+	// request_id may be NULL or empty; surface it only when set.
 	if r.RequestID != nil && *r.RequestID != "" {
 		rid := *r.RequestID
 		ev.RequestID = &rid
@@ -418,20 +400,18 @@ func parseBrowser(ua string) string {
 	}
 }
 
-// outboxPayload is a best-effort extraction struct for the common fields
-// embedded in domain event JSON payloads. All domain events include tenant_id;
-// actor and resource fields vary by domain and are extracted opportunistically.
+// outboxPayload holds the common fields of a domain event payload. Every event
+// carries tenant_id; the other fields are present only for some domains.
 type outboxPayload struct {
 	TenantID    *uuid.UUID `json:"tenant_id"`
 	ID          *uuid.UUID `json:"id"`
-	UserID      *uuid.UUID `json:"user_id"`       // auth.session.* events
-	ActorUserID *uuid.UUID `json:"actor_user_id"` // future-proofing
+	UserID      *uuid.UUID `json:"user_id"`
+	ActorUserID *uuid.UUID `json:"actor_user_id"`
 	IP          string     `json:"ip"`
 }
 
-// mapOutboxEvent converts a raw NATS outbox message into an ActivityEvent.
-// eventType comes from the Qeet-Event-Type header; tenantID was already
-// extracted by the hub dispatcher. The full payload is attached as metadata.
+// mapOutboxEvent converts a NATS outbox message into an ActivityEvent, with the
+// whole payload as metadata. eventType comes from the Qeet-Event-Type header.
 func mapOutboxEvent(subject, eventType string, tenantID uuid.UUID, payload []byte) ActivityEvent {
 	var raw outboxPayload
 	_ = json.Unmarshal(payload, &raw)

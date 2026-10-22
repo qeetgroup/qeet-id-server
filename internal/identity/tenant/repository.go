@@ -226,10 +226,9 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit int, curs
 // audit row, the event — commit together or not at all.
 type StatusChange func(ctx context.Context, tx pgx.Tx, from, to string) error
 
-// Update applies a partial update. The SET clause is built dynamically from the
-// non-nil fields, so it intentionally stays hand-written (sqlc has no good story
-// for optional-column updates); it shares the domain's error/RETURNING conventions.
-// onStatus (nil: none) runs in the same transaction when the status changes.
+// Update applies the non-nil fields of in to tenant id. The SET clause is built
+// at run time, so this is hand-written rather than sqlc. When the status
+// changes, onStatus (if non-nil) runs in the same transaction.
 func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput, onStatus StatusChange) (*Tenant, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {

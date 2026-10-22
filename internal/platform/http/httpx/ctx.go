@@ -17,6 +17,7 @@ type ctxKey string
 
 const ctxKeyPrincipal ctxKey = "qeet.principal"
 
+// Principal is the authenticated caller of a request.
 type Principal struct {
 	UserID    *uuid.UUID
 	TenantID  *uuid.UUID
@@ -30,43 +31,37 @@ type Principal struct {
 	// authorization server (its client_id claim); empty for the user's own
 	// tokens. See RefuseApplicationTokens.
 	ClientID string
-	// SignedInAt is set for a principal authenticated by the hosted login's
-	// session cookie, which has no API session, when that sign-in proved a
-	// second factor (a met challenge or a passkey): when it happened. A fresh
-	// one counts as a step-up (see mfa.Service.StepUpGate).
+	// SignedInAt is when a principal authenticated by the hosted login's session
+	// cookie (no API session) proved a second factor, such as a passkey; nil
+	// otherwise. A recent one counts as step-up (see mfa.Service.StepUpGate).
 	SignedInAt *time.Time
 }
 
+// WithPrincipal returns a copy of ctx carrying p.
 func WithPrincipal(ctx context.Context, p *Principal) context.Context {
 	return context.WithValue(ctx, ctxKeyPrincipal, p)
 }
 
+// PrincipalFromCtx returns the Principal in ctx, or nil if there is none.
 func PrincipalFromCtx(ctx context.Context) *Principal {
 	p, _ := ctx.Value(ctxKeyPrincipal).(*Principal)
 	return p
 }
 
+// RequestID returns the ID chi's RequestID middleware gave r, or "".
 func RequestID(r *http.Request) string {
 	return middleware.GetReqID(r.Context())
 }
 
-// trustedProxyHops is the number of reverse proxies that sit in front of this
-// server and APPEND to X-Forwarded-For. Set once at startup from
-// TRUSTED_PROXY_HOPS (see SetTrustedProxyHops); read on every request.
-//
-// It is package-level because ClientIP is called from ~90 sites and threading
-// configuration through all of them would buy nothing: the value is written
-// once during composition, before the listener accepts a connection, and is
-// read-only thereafter. atomic.Int32 keeps that write/read pair race-free.
+// trustedProxyHops is how many reverse proxies in front of this server append to
+// X-Forwarded-For. It is package-level because ClientIP has many callers; it is
+// set once by SetTrustedProxyHops before serving and read on every request.
 var trustedProxyHops atomic.Int32
 
-// SetTrustedProxyHops declares how many trusted reverse proxies front this
-// server. Call it from the composition root before serving.
-//
-// 0 (the default) means "no trusted proxy": X-Forwarded-For is ignored
-// entirely and the client IP is the transport peer. That is the only safe
-// default — the header is attacker-controlled unless something we trust
-// rewrote it.
+// SetTrustedProxyHops sets how many trusted reverse proxies front this server
+// (negative means 0); call it before serving. The default 0 ignores
+// X-Forwarded-For entirely, the only safe choice, as the header is
+// caller-controlled unless a trusted proxy rewrote it.
 func SetTrustedProxyHops(n int) {
 	if n < 0 {
 		n = 0
@@ -74,39 +69,10 @@ func SetTrustedProxyHops(n int) {
 	trustedProxyHops.Store(int32(n))
 }
 
-// ClientIP resolves the originating client IP for rate limiting, audit records
-// and access logs.
-//
-// # Why this is positional rather than left-most
-//
-// X-Forwarded-For is a client-supplied header. Reverse proxies conventionally
-// APPEND the peer they received the connection from rather than replacing the
-// header, so a request arriving as
-//
-//	X-Forwarded-For: 1.2.3.4          (attacker-chosen)
-//
-// is forwarded by one proxy as
-//
-//	X-Forwarded-For: 1.2.3.4, <real client>
-//
-// Taking the LEFT-most entry therefore returns whatever the caller typed. That
-// is what this function used to do, and it made the per-IP login limiter
-// trivially bypassable (a fresh token bucket per forged value = unlimited
-// credential stuffing) and let a caller forge the source IP recorded in the
-// tenant's audit log.
-//
-// Counting from the RIGHT is spoof-resistant: the last N entries are the ones
-// our own N trusted proxies appended, so the entry immediately left of them is
-// the address the outermost trusted proxy actually saw. Anything further left
-// is caller-supplied and ignored.
-//
-// X-Real-IP is deliberately NOT consulted. It carries a single value with no
-// positional structure, so there is no way to distinguish a proxy-set value
-// from a caller-set one, and the common proxies pass a caller-supplied one
-// through untouched.
-//
-// A trusted relay (see relay.go) that presents a valid relay key names the
-// person's address itself, and that address wins.
+// ClientIP returns the client's IP for rate limiting, audit and logs: the
+// address a keyed relay names (see SetRelayKeys), else the X-Forwarded-For entry
+// just left of those our trusted proxies appended (anything further left is
+// caller-chosen), else the transport peer. X-Real-IP is never trusted.
 func ClientIP(r *http.Request) string {
 	if ip := relayedClientIP(r); ip != "" {
 		return ip

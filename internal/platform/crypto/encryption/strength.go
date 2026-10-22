@@ -2,12 +2,9 @@ package password
 
 import "strings"
 
-// commonPasswords is a small, offline denylist of the most frequently breached
-// passwords (drawn from public "top passwords" lists). It is intentionally
-// lightweight — the authoritative check is the HIBP k-anonymity lookup wired in
-// via BREACHED_PASSWORD_CHECK — but this baseline runs everywhere, with no
-// network, so obvious choices like "password" or "12345678" are rejected even
-// in dev or during a HIBP outage. Entries are compared case-insensitively.
+// commonPasswords is a small offline denylist of the most breached passwords,
+// compared case-insensitively. It needs no network, so obvious choices are
+// refused even in dev or during a HIBP outage.
 var commonPasswords = map[string]struct{}{}
 
 func init() {
@@ -26,15 +23,9 @@ func init() {
 	}
 }
 
-// WeakReason returns a human-facing reason if plain is an obviously weak
-// password, or "" if it passes the baseline checks. It catches common breached
-// passwords, passwords equal to the account email (or its local part), and
-// trivially uniform/sequential strings. email may be empty.
-//
-// This is a baseline only. It runs inside the one password check every
-// password-setting path uses (authpolicy ValidateForTenant), after the
-// organisation's length and character-class rules and before the HIBP
-// breach check (see hibp.Checker); this function does not check length.
+// WeakReason returns a user-facing reason if plain is obviously weak, or "".
+// It rejects common passwords, the account email or its local part (email may
+// be empty), and uniform or sequential strings. It does not check length.
 func WeakReason(plain, email string) string {
 	lower := strings.ToLower(strings.TrimSpace(plain))
 

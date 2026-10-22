@@ -21,24 +21,16 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// OAuth 2.0 Device Authorization Grant (RFC 8628), for input-constrained clients
-// (CLI/TV/IoT) that can't open a browser locally. The device asks for a
-// (device_code, user_code) pair, shows the user_code + a verification_uri, then
-// polls the token endpoint with the device_code while the user approves on a
-// second device (hosted-login /device → POST /oauth/device/decision, SSO-gated).
+// OAuth 2.0 Device Authorization Grant (RFC 8628) for clients that can't open a
+// browser (CLI, TV, IoT): the device shows a user_code and polls the token
+// endpoint while the user approves on another device.
 
 const (
-	// deviceCodeTTL is how long a (device_code, user_code) pair stays valid.
-	deviceCodeTTL = 10 * time.Minute
-	// devicePollInterval is the minimum number of seconds a device must wait
-	// between polls (RFC 8628 §3.2 "interval"). Polling faster yields slow_down.
-	devicePollInterval = 5
-	// userCodeAlphabet excludes visually ambiguous characters (0/O, 1/I) so the
-	// human-typed user_code is unambiguous (RFC 8628 §6.1).
-	userCodeAlphabet = "BCDFGHJKLMNPQRSTVWXZ"
-	// userCodeGroup/userCodeGroups define the "XXXX-XXXX" shape (8 chars).
-	userCodeGroup  = 4
-	userCodeGroups = 2
+	deviceCodeTTL      = 10 * time.Minute       // how long a device_code/user_code pair stays valid
+	devicePollInterval = 5                      // minimum seconds between polls (RFC 8628 §3.2)
+	userCodeAlphabet   = "BCDFGHJKLMNPQRSTVWXZ" // no ambiguous characters (RFC 8628 §6.1)
+	userCodeGroup      = 4                      // characters per group, as in "XXXX-XXXX"
+	userCodeGroups     = 2                      // groups per user code
 )
 
 // oauthError is an RFC 6749 §5.2 / RFC 8628 §3.5 token-endpoint error. Unlike
@@ -232,11 +224,8 @@ func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode s
 	if !ok {
 		return errs.ErrOIDCUserTenantMismatch
 	}
-	// CheckUserInDeviceTenant only compares users.tenant_id; it says nothing
-	// about whether the user or tenant is still active. Without this, a
-	// suspended user holding a live SSO cookie could still approve a device
-	// grant and be issued a tenant-stamped token — which the authorization-code
-	// path already refuses.
+	// CheckUserInDeviceTenant doesn't check that the user and tenant are still
+	// active, so refuse suspended users here, as the authorization-code path does.
 	live, err := s.activeTenantPrincipal(ctx, userID, row.TenantID)
 	if err != nil {
 		return err
@@ -265,13 +254,10 @@ func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode s
 	return tx.Commit(ctx)
 }
 
-// DeviceToken implements the RFC 8628 §3.5 token-polling exchange for
-// grant_type=urn:ietf:params:oauth:grant-type:device_code. It enforces the poll
-// interval (slow_down) via last_polled_at, surfaces the pending/denied/expired
-// states as RFC errors, and on success consumes the device_code one-time and
-// issues the SAME token pair the authorization_code flow does. ip is the
-// device's address: the tokens go there, so the organisation's address rules
-// must allow it as well as the approver's.
+// DeviceToken implements the RFC 8628 §3.5 polling exchange. It enforces the
+// poll interval (slow_down) and, on approval, consumes the device_code and
+// issues the same tokens as the authorization-code flow. ip is the device's
+// address, which the organisation's address rules must also allow.
 func (s *Service) DeviceToken(ctx context.Context, clientID, rawDeviceCode, ip string) (*TokenResponse, error) {
 	if rawDeviceCode == "" {
 		return nil, oauthErr("invalid_request", "device_code required")

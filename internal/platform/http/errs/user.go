@@ -1,19 +1,13 @@
 package errs
 
-// User error codes — stable, namespaced machine identifiers for the
-// internal/identity/users domain (currently the bulk-import surface; the
-// "email already exists" case reuses ErrAuthEmailExists). Clients branch and
-// localize on these (never on the message text). Once shipped, a code MUST NOT
-// change. Every identifier is prefixed with the `user` domain so it never
-// collides with another bounded context.
+// User error codes. "Email already exists" reuses ErrAuthEmailExists.
 const (
 	CodeUserImportSourceInvalid = "user.import_source_invalid"
 	CodeUserImportFileTooLarge  = "user.import_file_too_large"
 	CodeUserImportEmpty         = "user.import_empty"
 	CodeUserImportBatchTooLarge = "user.import_batch_too_large"
 
-	// Who manages an account: a change to the whole account belongs to the
-	// organization the account belongs to.
+	// Who manages an account.
 	CodeUserManagedElsewhere  = "user.managed_elsewhere"
 	CodeUserCredentialsShared = "user.credentials_shared"
 	CodeUserManagedHere       = "user.managed_here"
@@ -28,15 +22,7 @@ var (
 	ErrUserImportEmpty         = New(CodeUserImportEmpty, "We couldn't find any user records in that export.")
 	ErrUserImportBatchTooLarge = New(CodeUserImportBatchTooLarge, "That import is too large. Import at most 1000 users per request.")
 
-	// ErrUserManagedElsewhere: an account-wide action (status, password, MFA,
-	// deletion, signing out everywhere) on a member whose account belongs to
-	// another organization, or to no organization.
-	ErrUserManagedElsewhere = New(CodeUserManagedElsewhere, "This person's account is managed outside this organization. Remove them from this organization instead.")
-	// ErrUserCredentialsShared: an organization tried to set the password or
-	// reset the second factors of an account that also belongs to another
-	// organization — the same credentials open that one too.
+	ErrUserManagedElsewhere  = New(CodeUserManagedElsewhere, "This person's account is managed outside this organization. Remove them from this organization instead.")
 	ErrUserCredentialsShared = New(CodeUserCredentialsShared, "This person also belongs to another organization, so only they can change their password or two-step verification. Ask them to reset their password from the sign-in page.")
-	// ErrUserManagedHere: removing a member whose account this organization
-	// manages; that account is suspended or deleted instead.
-	ErrUserManagedHere = New(CodeUserManagedHere, "This organization manages this person's account. Suspend or delete the account instead.")
+	ErrUserManagedHere       = New(CodeUserManagedHere, "This organization manages this person's account. Suspend or delete the account instead.")
 )

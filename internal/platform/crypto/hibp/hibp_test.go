@@ -260,9 +260,8 @@ func allowedOnErrorCount(t *testing.T) float64 {
 	return -1
 }
 
-// Every allowed-on-error evaluation (the provider could not be
-// reached, so the password was let through) is counted in a metric; a
-// definite answer and a disabled checker are not.
+// TestPwnedAllowOnError_CountsEveryFailOpen checks that every fail-open is
+// counted, and that a definite answer or a disabled checker is not.
 func TestPwnedAllowOnError_CountsEveryFailOpen(t *testing.T) {
 	down := New(fakeClient(func(_ *http.Request) (*http.Response, error) {
 		return nil, errors.New("dial tcp: connection refused")

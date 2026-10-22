@@ -1,10 +1,7 @@
-// Package password hashes and verifies secrets with Argon2id — the modern,
-// memory-hard default — while still verifying legacy bcrypt hashes so existing
-// credentials keep working. After a successful Verify, call NeedsRehash to
-// transparently upgrade a stored hash to current Argon2id parameters.
-//
-// The same helpers protect user passwords, OIDC/principal client secrets, API
-// keys, and MFA recovery codes, so the bcrypt→Argon2id transition is uniform.
+// Package password hashes secrets with Argon2id and verifies both Argon2id and
+// legacy bcrypt hashes; after a successful Verify, NeedsRehash says when to store
+// a fresh Hash. It protects passwords, client secrets, API keys and MFA recovery
+// codes alike.
 package password
 
 import (
@@ -19,10 +16,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// Argon2id parameters — OWASP "Password Storage" baseline (19 MiB, t=2, p=1).
-// Bump these over time; NeedsRehash upgrades older hashes on next use.
+// Argon2id parameters: the OWASP "Password Storage" baseline (19 MiB, t=2,
+// p=1). Raise them over time; NeedsRehash flags hashes made with weaker ones.
 const (
-	argonMemKiB  uint32 = 19 * 1024 // 19456 KiB ≈ 19 MiB
+	argonMemKiB  uint32 = 19 * 1024
 	argonTime    uint32 = 2
 	argonThreads uint8  = 1
 	argonSaltLen        = 16

@@ -79,8 +79,9 @@ func TestWebAuthnRPDefaults(t *testing.T) {
 	}
 }
 
-// The hosted login runs passkey sign-in, sign-up and enrolment ceremonies from
-// its own origin, so the default origins include it beside the app's.
+// TestWebAuthnRPDefaultOriginsIncludeHostedLogin checks that the default origins
+// include LoginBaseURL beside AppBaseURL, once if they are the same origin, since
+// the hosted login runs passkey ceremonies from its own origin.
 func TestWebAuthnRPDefaultOriginsIncludeHostedLogin(t *testing.T) {
 	c := &Config{ServiceName: "qeet-id", AppBaseURL: "http://localhost:3002", LoginBaseURL: "http://localhost:3003"}
 	_, _, origins := c.WebAuthnRP()
@@ -138,8 +139,8 @@ func TestValidate_LocalHappyPath(t *testing.T) {
 	}
 }
 
-// The kit can also serve an environment on its own public zone
-// (<profile>.id.qeet.in, which public DNS points at 127.0.0.1) over https.
+// TestValidate_LocalAcceptsItsKitZoneOverHTTPS checks that a local runtime may
+// use https hosts on its own profile's kit zone (<profile>.id.qeet.in).
 func TestValidate_LocalAcceptsItsKitZoneOverHTTPS(t *testing.T) {
 	for _, profile := range []string{"dev", "test", "staging"} {
 		c := localOK()
@@ -153,7 +154,9 @@ func TestValidate_LocalAcceptsItsKitZoneOverHTTPS(t *testing.T) {
 	}
 }
 
-// Local keeps every production gate; it only differs in requiring loopback hosts.
+// TestValidate_LocalRejectsInsecureAndPublicHosts checks that local keeps every
+// production gate and refuses public hosts, its kit zone over http, another
+// profile's zone, lookalike hosts and unknown profiles.
 func TestValidate_LocalRejectsInsecureAndPublicHosts(t *testing.T) {
 	cases := map[string]func(*Config){
 		"csrf disabled":          func(c *Config) { c.CSRFDisabled = true },
@@ -201,9 +204,8 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("SERVICE_ENV", EnvDev)
 }
 
-// A process started without SERVICE_ENV doesn't fall back to dev, where the
-// production gates are off and a signing key is made up: it refuses to start,
-// naming the setting.
+// TestLoad_RequiresServiceEnv checks that Load fails without SERVICE_ENV,
+// naming it, rather than defaulting to dev with its gates off.
 func TestLoad_RequiresServiceEnv(t *testing.T) {
 	setRequiredEnv(t)
 	if err := os.Unsetenv("SERVICE_ENV"); err != nil {

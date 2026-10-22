@@ -14,16 +14,15 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery"
 )
 
-// DeliveryHandler answers whether the organisation's mail arrived, and lets an
-// administrator lift a suppression its mail caused:
-//
-//	GET    /tenants/{tenantID}/email/messages?to=<address>   messages to an address, and its suppression
-//	GET    /tenants/{tenantID}/email/suppressions            addresses suppressed by the organisation's mail
-//	DELETE /tenants/{tenantID}/email/suppressions/{id}       clear one (audited)
+// DeliveryHandler answers whether an organisation's mail arrived, and lets an
+// administrator lift a suppression the organisation's mail caused.
 type DeliveryHandler struct {
 	Store *delivery.Store
 }
 
+// Mount registers, under /tenants/{tenantID}/email: GET messages?to=<address>
+// (messages to an address and its suppression), GET suppressions, and
+// DELETE suppressions/{id}, which is audited.
 func (h *DeliveryHandler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/email/messages", h.messages)
 	r.Get("/tenants/{tenantID}/email/suppressions", h.suppressions)

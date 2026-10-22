@@ -142,11 +142,9 @@ func TestNewService_TrimsTrailingSlash(t *testing.T) {
 	}
 }
 
-// TestValidateReturnTo covers the open-redirect guard on the hosted flow.
-//
-// The social callback sets the hosted-login SSO cookie and then redirects to
-// return_to, so an unvalidated value hands an attacker a redirect from a
-// first-party, just-authenticated origin — high-credibility phishing.
+// TestValidateReturnTo checks that return_to accepts only "", root-relative
+// paths and allowed origins, since the callback redirects there just after
+// setting the SSO cookie.
 func TestValidateReturnTo(t *testing.T) {
 	s := &Service{}
 	s.SetAllowedReturnOrigins("https://login.qeet.in", "https://console.qeet.in/")

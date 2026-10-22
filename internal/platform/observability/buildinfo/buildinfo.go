@@ -1,15 +1,6 @@
-// Package buildinfo exposes the binary's build metadata. The values are stamped
-// at build time via -ldflags (-X) by the Dockerfile (VERSION/COMMIT/DATE build
-// args, set by .github/workflows/image.yml);
-// they keep their defaults under `go run`/`go test`, so dev and tests always
-// work without a build step.
-//
-// Stamp with, e.g.:
-//
-//	go build -ldflags "\
-//	  -X github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo.Version=v1.2.3 \
-//	  -X github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo.Commit=$(git rev-parse --short HEAD) \
-//	  -X github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+// Package buildinfo reports the binary's build metadata. Version, Commit and
+// Date are stamped with -ldflags -X when the Dockerfile builds the image, and
+// keep their defaults under go run and go test.
 package buildinfo
 
 import "runtime/debug"

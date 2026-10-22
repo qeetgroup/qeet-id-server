@@ -12,24 +12,20 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// InFlight tracks the number of HTTP requests currently being processed.
-// Used during graceful shutdown to report (and bound) the number of
-// requests still in flight when the server begins draining.
+// InFlight counts the HTTP requests being served, so graceful shutdown can
+// report how many were still running.
 type InFlight struct {
 	n atomic.Int64
 }
 
+// NewInFlight returns an InFlight with no requests counted.
 func NewInFlight() *InFlight { return &InFlight{} }
 
-// Count returns the number of in-flight requests at the call site. Safe
-// for concurrent use.
+// Count returns the number of requests in flight. It is safe for concurrent use.
 func (i *InFlight) Count() int64 { return i.n.Load() }
 
-// Middleware increments the in-flight counter on entry and decrements on
-// exit, even when the handler panics (the deferred decrement runs before
-// Recoverer's recover() catches the panic in the caller's frame, so
-// place this middleware INSIDE Recoverer in the chain to keep counts
-// accurate when handlers panic).
+// Middleware counts each request as in flight until its handler returns,
+// including by panicking.
 func (i *InFlight) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		i.n.Add(1)

@@ -1,7 +1,7 @@
-// Package billing is an internal (no external processor) subscription model: a
-// platform-managed plan catalogue with per-currency pricing, one subscription
-// per tenant, and internally-generated invoices. Money is stored as integer
-// minor units plus an ISO-4217 currency code, so any currency is supported.
+// Package billing manages subscriptions: a platform plan catalogue with prices
+// per currency, one subscription per tenant, invoices, and hosted card checkouts
+// through Stripe, Razorpay or a dev sandbox. Money is integer minor units plus
+// an ISO 4217 currency code.
 package billing
 
 import (
@@ -38,6 +38,8 @@ func normalizeCurrency(c string) (string, bool) {
 	return c, currencyRe.MatchString(c)
 }
 
+// Plan is a subscription plan. Prices maps a currency code to the price in
+// minor units.
 type Plan struct {
 	ID          uuid.UUID        `json:"id"`
 	Code        string           `json:"code"`
@@ -45,9 +47,12 @@ type Plan struct {
 	Description string           `json:"description"`
 	Interval    string           `json:"interval"`
 	Features    []string         `json:"features"`
-	Prices      map[string]int64 `json:"prices"` // currency → minor units
+	Prices      map[string]int64 `json:"prices"`
 }
 
+// Subscription is a tenant's subscription; Status is "none" if it has none.
+// TrialEnd is set while Status is "trialing", after which entitlements revert
+// to free.
 type Subscription struct {
 	PlanCode           string     `json:"plan_code"`
 	PlanName           string     `json:"plan_name"`
@@ -58,13 +63,13 @@ type Subscription struct {
 	CurrentPeriodStart *time.Time `json:"current_period_start"`
 	CurrentPeriodEnd   *time.Time `json:"current_period_end"`
 	CancelAtPeriodEnd  bool       `json:"cancel_at_period_end"`
-	// TrialEnd is set while Status == "trialing"; the trial reverts to free after it.
-	TrialEnd *time.Time `json:"trial_end"`
+	TrialEnd           *time.Time `json:"trial_end"`
 }
 
+// Invoice is an issued invoice. AmountMinor is the total charged: TaxableMinor
+// plus TaxMinor.
 type Invoice struct {
-	ID uuid.UUID `json:"id"`
-	// AmountMinor is the total charged (taxable + tax).
+	ID            uuid.UUID `json:"id"`
 	PlanCode      string    `json:"plan_code"`
 	Currency      string    `json:"currency"`
 	AmountMinor   int64     `json:"amount_minor"`
@@ -94,65 +99,61 @@ type BillingProfile struct {
 	TaxID        string `json:"tax_id"`
 }
 
+// Service manages plans, subscriptions, invoices and checkouts. Without a card
+// provider, Checkout refuses a paid plan unless invoice-only billing is enabled.
+// Invoice tax is off until SetTaxConfig configures it.
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
-	// payments is the optional card-payment provider set (Stripe/Razorpay). nil or
-	// empty = no card processing; a paid plan change then needs
-	// allowUnpaidActivation or it is refused. Set via SetPayments.
-	payments *Payments
-	// allowUnpaidActivation enables manual/invoice-only billing: a paid plan with
-	// no usable card provider activates directly instead of being refused. OFF by
-	// default, so a paid plan is never granted without a real payment.
-	allowUnpaidActivation bool
-	// orgProvisioner creates the organization behind a *signup* checkout once its
-	// payment completes (see StartSignupCheckout). Injected by the composition
-	// root so billing doesn't import the identity/tenant package. nil until wired.
-	orgProvisioner OrgProvisioner
-	// tax is the invoice tax configuration (disabled by default — no tax charged
-	// until an operator configures their jurisdiction). Set via SetTaxConfig.
-	tax TaxConfig
+
+	payments              *Payments      // card providers; nil means none
+	allowUnpaidActivation bool           // invoice-only billing; off by default
+	orgProvisioner        OrgProvisioner // creates a signup checkout's organization
+	tax                   TaxConfig      // invoice tax; the zero value charges none
 }
 
-// OrgProvisioner creates an organization (tenant) owned by ownerID. It backs the
-// signup-checkout flow, where the org must not exist until the plan is paid for.
-// Implemented by identity/tenant and injected via SetOrgProvisioner.
+// OrgProvisioner creates an organization (tenant) owned by ownerID. It completes
+// a signup checkout, whose organization must not exist until the plan is paid.
 type OrgProvisioner interface {
 	ProvisionOrg(ctx context.Context, ownerID uuid.UUID, name, slug, region, plan string) (uuid.UUID, error)
 }
 
+// NewService returns a Service with no card providers and tax disabled.
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool)}
 }
 
+// Pool returns the service's database pool.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
-// SetPayments wires the card-payment providers.
+// SetPayments sets the card-payment providers.
 func (s *Service) SetPayments(p *Payments) { s.payments = p }
 
-// SetAllowUnpaidActivation toggles manual/invoice-only billing (see field doc).
+// SetAllowUnpaidActivation enables invoice-only billing: Checkout activates a
+// paid plan that no card provider can charge, instead of refusing it.
 func (s *Service) SetAllowUnpaidActivation(v bool) { s.allowUnpaidActivation = v }
 
-// SetOrgProvisioner wires the organization creator used to complete signup checkouts.
+// SetOrgProvisioner sets the organization creator that completes signup
+// checkouts.
 func (s *Service) SetOrgProvisioner(p OrgProvisioner) { s.orgProvisioner = p }
 
-// SetTaxConfig wires invoice tax settings. Zero value (disabled) means no tax.
+// SetTaxConfig sets the invoice tax configuration. The zero value charges no
+// tax.
 func (s *Service) SetTaxConfig(c TaxConfig) { s.tax = c }
 
 // SandboxEnabled reports whether the dev-only sandbox payment provider is active.
 func (s *Service) SandboxEnabled() bool { return s.payments.SandboxEnabled() }
 
-// CheckoutResult is either an immediately-active subscription (free plan, or a
-// paid plan under manual/invoice-only billing) or a hosted-checkout URL to
-// redirect the payer to.
+// CheckoutResult is either an active subscription (a free plan, or a paid plan
+// under invoice-only billing) or a hosted-checkout URL to send the payer to.
 type CheckoutResult struct {
-	Status      string `json:"status"` // "active" | "checkout"
-	CheckoutURL string `json:"checkout_url,omitempty"`
-	Provider    string `json:"provider,omitempty"`
+	Status      string `json:"status"`                 // "active" or "checkout"
+	CheckoutURL string `json:"checkout_url,omitempty"` // where to send the payer, for "checkout"
+	Provider    string `json:"provider,omitempty"`     // the payment provider handling it
 }
 
-// SignupCheckoutInput is a paid plan chosen during signup, before any org exists.
-// The org is created only when the payment completes.
+// SignupCheckoutInput is a paid plan chosen during signup, before the
+// organization exists. The organization is created when the payment completes.
 type SignupCheckoutInput struct {
 	OrgName    string
 	OrgSlug    string
@@ -195,11 +196,8 @@ var builtins = []builtinPlan{
 		prices:   map[string]int64{"USD": 29900, "EUR": 27900, "GBP": 24900, "INR": 2490000, "JPY": 45000, "AUD": 45000, "CAD": 39900},
 	},
 
-	// Annual variants of the paid self-serve tiers. Same tier + features, billed
-	// once a year at 10× the monthly price (two months free ≈ 17% off). The
-	// console groups a "<tier>" (month) and its "<tier>_year" plan under one card
-	// with a Monthly/Yearly toggle. Free needs no annual plan; Enterprise is
-	// contact-sales, so neither has a "_year" variant.
+	// Annual plans of the paid self-serve tiers: the same features, billed yearly
+	// at 10× the monthly price. Free and Enterprise (contact sales) have none.
 	{
 		code: "starter_year", name: "Starter", description: "For teams shipping to production. Billed yearly.", interval: "year", sort: 5,
 		features: []string{"Up to 25,000 MAU", "All MFA methods (SMS, email, passkey)", "Custom branding & domain", "Webhooks & 30-day audit log", "Email support · 99.9% uptime"},
@@ -212,8 +210,8 @@ var builtins = []builtinPlan{
 	},
 }
 
-// SeedBuiltins upserts the default plan catalogue. Idempotent — safe to run on
-// every boot (mirrors rbac.Repository.SeedBuiltins).
+// SeedBuiltins upserts the default plan catalogue. It is idempotent, so it runs
+// on every boot.
 func (s *Service) SeedBuiltins(ctx context.Context) error {
 	for _, b := range builtins {
 		feat, err := json.Marshal(b.features)
@@ -246,6 +244,7 @@ func (s *Service) SeedBuiltins(ctx context.Context) error {
 
 // --- plans ---
 
+// ListPlans returns the active plans in display order, with their prices.
 func (s *Service) ListPlans(ctx context.Context) ([]Plan, error) {
 	planRows, err := s.q.ListBillingPlans(ctx)
 	if err != nil {
@@ -309,6 +308,8 @@ func (s *Service) priceFor(ctx context.Context, planID uuid.UUID, currency strin
 
 // --- subscription ---
 
+// GetSubscription returns the tenant's subscription, or one with Status "none"
+// if it has none.
 func (s *Service) GetSubscription(ctx context.Context, tenantID uuid.UUID) (*Subscription, error) {
 	row, err := s.q.GetSubscription(ctx, tenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -338,10 +339,9 @@ func (s *Service) GetSubscription(ctx context.Context, tenantID uuid.UUID) (*Sub
 // trialDuration is the length of a no-card trial.
 const trialDuration = 14 * 24 * time.Hour
 
-// StartTrial begins a no-card trial of a paid tier. Eligible only when the
-// tenant has no subscription yet (one trial per org); the trial grants the
-// tier's entitlements until trial_end, after which it reverts to free unless
-// the tenant converts to paid (via Checkout/ChangePlan). No invoice is issued.
+// StartTrial starts a 14-day no-card trial of Starter or Pro for a tenant that
+// has never had a subscription. The tier's entitlements last until the trial
+// ends, then revert to free unless the tenant pays. No invoice is issued.
 func (s *Service) StartTrial(ctx context.Context, tenantID uuid.UUID, planCode, currency string) (*Subscription, error) {
 	tier := strings.TrimSuffix(planCode, "_year")
 	if tier != "starter" && tier != "pro" {
@@ -378,7 +378,7 @@ func (s *Service) StartTrial(ctx context.Context, tenantID uuid.UUID, planCode, 
 	}); err != nil {
 		return nil, err
 	}
-	// Reflect the trial tier on the tenant label (billing is the sole writer).
+	// Billing is the only writer of the tenant's plan label.
 	if err := qTx.SetTenantPlan(ctx, dbgen.SetTenantPlanParams{Plan: tier, TenantID: tenantID}); err != nil {
 		return nil, err
 	}
@@ -395,8 +395,8 @@ func (s *Service) StartTrial(ctx context.Context, tenantID uuid.UUID, planCode, 
 
 var gstinRe = regexp.MustCompile(`^[0-9A-Z]{15}$`)
 
-// GetBillingProfile returns the tenant's billing/tax details, or an empty
-// profile (tax_id_type "none") when none has been saved yet.
+// GetBillingProfile returns the tenant's billing and tax details, or an empty
+// profile with tax_id_type "none" if none has been saved.
 func (s *Service) GetBillingProfile(ctx context.Context, tenantID uuid.UUID) (*BillingProfile, error) {
 	row, err := s.q.GetBillingProfile(ctx, tenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -419,7 +419,7 @@ func (s *Service) GetBillingProfile(ctx context.Context, tenantID uuid.UUID) (*B
 	}, nil
 }
 
-// UpsertBillingProfile validates and persists a tenant's billing/tax details.
+// UpsertBillingProfile validates and saves the tenant's billing and tax details.
 func (s *Service) UpsertBillingProfile(ctx context.Context, tenantID uuid.UUID, p BillingProfile) error {
 	if p.TaxIDType == "" {
 		p.TaxIDType = "none"
@@ -462,8 +462,8 @@ func periodEnd(start time.Time, interval string) time.Time {
 	return start.AddDate(0, 1, 0)
 }
 
-// ChangePlan sets (or switches) the tenant's subscription and issues an invoice
-// for the new period. Validates the plan is priced in the chosen currency.
+// ChangePlan sets or switches the tenant's subscription within tx and issues an
+// invoice for the new period. The plan must have a price in currency.
 func (s *Service) ChangePlan(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, planCode, currency string) (*Subscription, error) {
 	cur, ok := normalizeCurrency(currency)
 	if !ok {
@@ -493,11 +493,10 @@ func (s *Service) ChangePlan(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID,
 	}); err != nil {
 		return nil, err
 	}
-	// Compute tax from the tenant's billing profile (GST/VAT). Disabled by
-	// default, so tr is a zero-tax pass-through until an operator configures a
-	// jurisdiction. The invoice records the breakdown; amount_minor is the total.
+	// Tax comes from the tenant's billing profile and is zero until a tax
+	// configuration is set. amount_minor is the total including tax.
 	tr := s.taxFor(ctx, tenantID, amt)
-	// Issue an invoice for the period (zero-amount plans still get a record).
+	// Zero-amount plans still get an invoice record.
 	if err := qTx.InsertInvoice(ctx, dbgen.InsertInvoiceParams{
 		TenantID:           tenantID,
 		PlanCode:           planCode,
@@ -513,9 +512,8 @@ func (s *Service) ChangePlan(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID,
 	}); err != nil {
 		return nil, err
 	}
-	// Keep the tenant's plan label in sync with the subscription tier (strip the
-	// annual "_year" suffix). Billing is the sole writer of tenants.plan now, so
-	// the label stays truthful for anything that reads it (team switcher, admin).
+	// Billing is the only writer of tenants.plan, which holds the tier without
+	// the "_year" suffix.
 	if err := qTx.SetTenantPlan(ctx, dbgen.SetTenantPlanParams{
 		Plan:     strings.TrimSuffix(planCode, "_year"),
 		TenantID: tenantID,
@@ -529,6 +527,8 @@ func (s *Service) ChangePlan(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID,
 	}, nil
 }
 
+// Cancel sets the tenant's subscription to end with its current period, within
+// tx. It returns errs.ErrBillingNoActiveSubscription if there is no subscription.
 func (s *Service) Cancel(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
 	ct, err := s.q.WithTx(tx).CancelSubscription(ctx, tenantID)
 	if err != nil {
@@ -540,13 +540,10 @@ func (s *Service) Cancel(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) err
 	return nil
 }
 
-// Checkout starts a paid plan change. For a free plan or a currency no card
-// provider serves, it activates the subscription immediately (invoice-only,
-// the existing behaviour). Otherwise it records a pending checkout and opens a
-// hosted payment, returning the URL to redirect the admin to; the provider's
-// webhook later completes it via CompleteCheckout. The provider is chosen by
-// billing country (config-driven, see Payments.forCountry); an empty country
-// falls back to currency-based routing.
+// Checkout starts a plan change. A free plan activates at once. A paid plan gets
+// a pending checkout and the provider's hosted-payment URL; its webhook later
+// calls CompleteCheckout. The provider is chosen by country, else by currency;
+// with none, the plan is refused unless invoice-only billing is enabled.
 func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, currency, country, successURL, cancelURL string) (*CheckoutResult, error) {
 	cur, ok := normalizeCurrency(currency)
 	if !ok {
@@ -572,7 +569,7 @@ func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, cu
 		if country != "" {
 			provider = s.payments.forCountry(country)
 		} else {
-			provider = s.payments.forCurrency(cur) // legacy fallback when no country given
+			provider = s.payments.forCurrency(cur) // no country given
 		}
 	}
 
@@ -581,9 +578,8 @@ func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, cu
 		return s.activateDirect(ctx, tenantID, planCode, cur)
 	}
 
-	// Paid plan but no usable card provider. Never grant a paid plan for free:
-	// refuse unless the operator has explicitly opted into manual/invoice-only
-	// billing (allowUnpaidActivation).
+	// Never grant a paid plan for free, unless the operator opted into
+	// invoice-only billing.
 	if provider == nil {
 		if !s.allowUnpaidActivation {
 			return nil, errs.ErrUnprocessable.
@@ -593,7 +589,7 @@ func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, cu
 		return s.activateDirect(ctx, tenantID, planCode, cur)
 	}
 
-	// Paid plan with a provider → pending checkout + hosted payment.
+	// Paid plan with a provider: record a pending checkout and open a payment.
 	checkoutID, err := s.q.InsertBillingCheckout(ctx, dbgen.InsertBillingCheckoutParams{
 		TenantID:    tenantID,
 		Provider:    provider.Name(),
@@ -614,10 +610,9 @@ func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, cu
 	})
 	if err != nil {
 		_ = s.q.UpdateCheckoutFailed(ctx, checkoutID)
-		// Wrap, not WithDetail: err carries the provider's raw HTTP response
-		// body (see payments.go), which can run to a megabyte and embeds account
-		// identifiers, request ids and echoed parameters. Detail is serialized to
-		// the client; a wrapped cause is logged server-side instead.
+		// Wrap, not WithDetail: err holds the provider's raw response body, which
+		// can be large and contains account identifiers. Detail goes to the client;
+		// a wrapped cause is only logged.
 		return nil, errs.ErrInternalServer.WithMessage("Couldn't start the payment. Please try again.").Wrap(err)
 	}
 	_ = s.q.UpdateCheckoutProviderRef(ctx, dbgen.UpdateCheckoutProviderRefParams{
@@ -627,8 +622,8 @@ func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, cu
 	return &CheckoutResult{Status: "checkout", CheckoutURL: redirectURL, Provider: provider.Name()}, nil
 }
 
-// activateDirect switches the plan in a single transaction without a payment
-// step — used for free plans and, when enabled, manual/invoice-only billing.
+// activateDirect changes the plan in one transaction with no payment, for free
+// plans and invoice-only billing.
 func (s *Service) activateDirect(ctx context.Context, tenantID uuid.UUID, planCode, currency string) (*CheckoutResult, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -644,9 +639,9 @@ func (s *Service) activateDirect(ctx context.Context, tenantID uuid.UUID, planCo
 	return &CheckoutResult{Status: "active"}, nil
 }
 
-// CompleteCheckout activates the plan behind a paid checkout. It is idempotent:
-// the pending→completed transition is claimed atomically, so webhook retries
-// (or a duplicate event) activate the subscription exactly once.
+// CompleteCheckout activates the plan behind a paid checkout, tenant or signup.
+// The pending-to-completed transition is claimed atomically, so webhook retries
+// activate it exactly once; an unknown ref is a no-op.
 func (s *Service) CompleteCheckout(ctx context.Context, ref string) error {
 	id, err := uuid.Parse(ref)
 	if err != nil {
@@ -659,8 +654,8 @@ func (s *Service) CompleteCheckout(ctx context.Context, ref string) error {
 	defer tx.Rollback(ctx)
 	row, err := s.q.WithTx(tx).CompleteCheckout(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// Not a tenant checkout — it may be a signup (pre-tenant) checkout, whose
-		// organization is created here, on payment. Unknown refs are a no-op.
+		// Not a tenant checkout: it may be a signup checkout, whose organization is
+		// created now.
 		return s.completeSignupCheckout(ctx, id)
 	}
 	if err != nil {
@@ -672,12 +667,10 @@ func (s *Service) CompleteCheckout(ctx context.Context, ref string) error {
 	return tx.Commit(ctx)
 }
 
-// completeSignupCheckout finishes a paid signup checkout: it atomically claims
-// the pending row, creates the organization (via the injected provisioner), and
-// activates its subscription. Idempotent — a webhook retry finds the row already
-// completed and no-ops. If provisioning fails after the claim, the row is
-// reverted to pending so a retry can try again (CreateWithOwner is atomic, so a
-// failure leaves no partial org).
+// completeSignupCheckout claims a pending signup checkout, creates its
+// organization and activates the subscription. An unknown or completed checkout
+// is a no-op. If creating the organization fails, the checkout returns to
+// pending so a retry can try again.
 func (s *Service) completeSignupCheckout(ctx context.Context, id uuid.UUID) error {
 	if s.orgProvisioner == nil {
 		return nil
@@ -700,13 +693,12 @@ func (s *Service) completeSignupCheckout(ctx context.Context, id uuid.UUID) erro
 		return err
 	}
 
-	// The org's plan column tracks the tier; the subscription keeps the full code
-	// (e.g. "starter_year") so its interval/price are right.
+	// The tenant's plan label is the tier; the subscription keeps the full code
+	// (such as "starter_year") so its interval and price are right.
 	tier := strings.TrimSuffix(planCode, "_year")
-	// The slug can be claimed between staging the checkout and this (post-payment)
-	// provisioning. If so, retry with a uniquified slug rather than reverting to
-	// pending forever — otherwise the customer is charged but the org never
-	// appears (a deterministic failure the webhook would retry endlessly).
+	// The slug may have been taken since the checkout was staged. Retry with a
+	// unique slug: reverting to pending would fail the same way forever, with the
+	// customer already charged.
 	var tenantID uuid.UUID
 	var provErr error
 	for attempt := 0; attempt < 5; attempt++ {
@@ -743,11 +735,10 @@ func (s *Service) completeSignupCheckout(ctx context.Context, id uuid.UUID) erro
 	return tx.Commit(ctx)
 }
 
-// StartSignupCheckout opens a hosted payment for a paid plan chosen during
-// signup, before any organization exists. The org spec is staged (not created);
-// the tenant is created only when the payment completes (completeSignupCheckout),
-// so an abandoned payment leaves nothing behind. Free plans must not use this
-// path — they create the org directly, with no payment.
+// StartSignupCheckout opens a hosted payment for a paid plan chosen at signup,
+// before the organization exists. It only stages the organization, which
+// completeSignupCheckout creates once the payment completes. A free plan returns
+// errs.ErrBadRequest; it creates its organization directly.
 func (s *Service) StartSignupCheckout(ctx context.Context, ownerID uuid.UUID, in SignupCheckoutInput) (*CheckoutResult, error) {
 	cur, ok := normalizeCurrency(in.Currency)
 	if !ok {
@@ -767,14 +758,13 @@ func (s *Service) StartSignupCheckout(ctx context.Context, ownerID uuid.UUID, in
 	if !priced {
 		return nil, errs.ErrBillingPlanNotPriced
 	}
-	// A free plan has nothing to charge; it must go through the direct org-create
-	// path, not this one.
+	// A free plan has nothing to charge.
 	if amt == 0 {
 		return nil, errs.ErrBadRequest
 	}
 
-	// Fail fast if the slug is already taken, so we never charge for an org we
-	// then can't create. (Still re-checked atomically at creation time.)
+	// Fail fast if the slug is taken, so we never charge for an organization we
+	// cannot create. Creation checks again atomically.
 	var slugTaken bool
 	if err := s.pool.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM tenant.tenants WHERE slug = $1)`, in.OrgSlug).Scan(&slugTaken); err != nil {
@@ -825,9 +815,9 @@ func (s *Service) StartSignupCheckout(ctx context.Context, ownerID uuid.UUID, in
 	return &CheckoutResult{Status: "checkout", CheckoutURL: redirectURL, Provider: provider.Name()}, nil
 }
 
-// HandleWebhook verifies a provider webhook and completes the referenced
-// checkout on a successful payment. Non-payment events are acknowledged
-// (no-op). An unknown provider returns ErrNotFound; a bad signature ErrUnauthorized.
+// HandleWebhook verifies a provider webhook and, for a successful payment,
+// completes its checkout; other events are a no-op. An unknown provider returns
+// errs.ErrNotFound and a bad signature errs.ErrBillingWebhookVerificationFailed.
 func (s *Service) HandleWebhook(ctx context.Context, providerName string, body []byte, signature string) error {
 	if s.payments == nil {
 		return errs.ErrNotFound
@@ -846,8 +836,8 @@ func (s *Service) HandleWebhook(ctx context.Context, providerName string, body [
 	return s.CompleteCheckout(ctx, ref)
 }
 
-// WebhookSignatureHeader returns the HTTP signature header for a provider, or
-// "" if the provider isn't configured.
+// WebhookSignatureHeader returns the webhook signature header of a provider, or
+// "" if the provider is not configured.
 func (s *Service) WebhookSignatureHeader(providerName string) string {
 	if s.payments == nil {
 		return ""
@@ -858,11 +848,9 @@ func (s *Service) WebhookSignatureHeader(providerName string) string {
 	return ""
 }
 
-// CompleteRazorpayCallback verifies a Razorpay payment-link redirect and, on a
-// paid callback, completes the referenced checkout — creating the org behind a
-// signup checkout. Idempotent with the webhook, and the path that actually
-// completes a checkout in local development (where the async webhook can't reach
-// the server).
+// CompleteRazorpayCallback verifies a Razorpay payment-link redirect and, if it
+// was paid, completes its checkout. It is idempotent with the webhook, and is
+// what completes checkouts in local development, which the webhook cannot reach.
 func (s *Service) CompleteRazorpayCallback(ctx context.Context, params map[string]string) error {
 	if s.payments == nil || s.payments.razorpay == nil {
 		return errs.ErrNotFound
@@ -877,6 +865,7 @@ func (s *Service) CompleteRazorpayCallback(ctx context.Context, params map[strin
 	return s.CompleteCheckout(ctx, ref)
 }
 
+// ListInvoices returns the tenant's 100 most recent invoices, newest first.
 func (s *Service) ListInvoices(ctx context.Context, tenantID uuid.UUID) ([]Invoice, error) {
 	rows, err := s.q.ListInvoices(ctx, tenantID)
 	if err != nil {
@@ -905,14 +894,15 @@ func (s *Service) ListInvoices(ctx context.Context, tenantID uuid.UUID) ([]Invoi
 
 // --- handlers ---
 
+// Handler serves the billing endpoints.
 type Handler struct {
 	Service *Service
 }
 
+// Mount registers the authenticated billing routes.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/billing/plans", h.listPlans)
-	// Pre-tenant paid checkout: a user picks a paid plan at signup and the org is
-	// created only when the payment completes. User-scoped (no tenant yet).
+	// A paid plan chosen at signup, before the user has an organization.
 	r.Post("/signup/checkout", h.signupCheckout)
 	r.Get("/tenants/{tenantID}/billing/subscription", h.getSubscription)
 	r.Put("/tenants/{tenantID}/billing/subscription", h.changePlan)
@@ -924,23 +914,21 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/billing/invoices", h.listInvoices)
 }
 
-// MountPublic mounts the provider webhook endpoints. They authenticate via the
-// provider's signature (not a user session), so they live in the public group
-// and are CSRF-exempt (see router.go).
+// MountPublic registers the payment provider routes. They authenticate by the
+// provider's signature rather than a session, so they are public and CSRF-exempt.
 func (h *Handler) MountPublic(r chi.Router) {
 	r.Post("/billing/webhooks/{provider}", h.webhook)
-	// Razorpay payment-link redirect verification: the browser posts the signed
-	// callback params here to complete a checkout, since the async webhook can't
-	// reach a local server (idempotent with the webhook). Signature-authenticated.
+	// The browser posts the signed Razorpay redirect parameters here, because the
+	// webhook cannot reach a local server.
 	r.Post("/billing/razorpay/verify", h.razorpayVerify)
-	// Dev-only sandbox provider: a mock hosted-checkout page + its pay action.
-	// Both 404 unless the sandbox is enabled (see sandbox handlers).
+	// Dev-only sandbox: a mock hosted-checkout page and its pay action, both 404
+	// unless the sandbox is enabled.
 	r.Get("/billing/sandbox/checkout", h.sandboxCheckoutPage)
 	r.Post("/billing/sandbox/pay", h.sandboxPay)
 }
 
-// sandboxTmpl renders the dev-only mock hosted-checkout page. It's clearly
-// labelled as a test page and offers Pay / Cancel actions only.
+// sandboxTmpl renders the dev-only mock hosted-checkout page, labelled as a
+// test page, with Pay and Cancel actions.
 var sandboxTmpl = template.Must(template.New("sandbox").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sandbox checkout</title>
@@ -972,8 +960,8 @@ type sandboxPageData struct {
 	Ref, Plan, Amount, Currency, SuccessURL, CancelURL string
 }
 
-// sandboxCheckoutPage renders the mock hosted-checkout page. Return URLs are
-// validated to avoid an open redirect; 404 when the sandbox is disabled.
+// sandboxCheckoutPage renders the mock hosted-checkout page, validating the
+// return URLs. It is a 404 when the sandbox is disabled.
 func (h *Handler) sandboxCheckoutPage(w http.ResponseWriter, r *http.Request) {
 	if !h.Service.SandboxEnabled() {
 		httpx.WriteError(w, r, errs.ErrNotFound)
@@ -997,8 +985,8 @@ func (h *Handler) sandboxCheckoutPage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// sandboxPay completes the referenced checkout (same path a real webhook takes)
-// and redirects back to the app's success URL. 404 when the sandbox is disabled.
+// sandboxPay completes the checkout, as a real webhook would, and redirects to
+// the success URL. It is a 404 when the sandbox is disabled.
 func (h *Handler) sandboxPay(w http.ResponseWriter, r *http.Request) {
 	if !h.Service.SandboxEnabled() {
 		httpx.WriteError(w, r, errs.ErrNotFound)
@@ -1173,9 +1161,8 @@ func (h *Handler) changePlan(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, sub)
 }
 
-// checkout starts a paid plan change: returns either a hosted-payment URL to
-// redirect to, or {status:"active"} when the plan is free / no card provider
-// serves the currency (direct activation, the invoice-only path).
+// checkout starts a plan change and returns either a hosted-payment URL or
+// {status: "active"} when the plan was activated directly.
 func (h *Handler) checkout(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := requirePathTenant(r)
 	if err != nil {
@@ -1206,8 +1193,7 @@ func (h *Handler) checkout(w http.ResponseWriter, r *http.Request) {
 }
 
 // signupCheckout starts a paid checkout for a plan chosen at signup, before the
-// user has an organization. The org is created only when the payment completes,
-// so an abandoned payment never leaves a dangling org. User-scoped (no tenant).
+// user has an organization, which is created only once the payment completes.
 func (h *Handler) signupCheckout(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
@@ -1253,8 +1239,8 @@ func (h *Handler) signupCheckout(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
-// validReturnURL guards the success/cancel URLs handed to the provider: an
-// absolute http(s) URL with a host. (They're the admin app's own origin.)
+// validReturnURL reports whether s is an absolute http or https URL with a host,
+// as the success and cancel URLs given to a provider must be.
 func validReturnURL(s string) bool {
 	if s == "" {
 		return false
@@ -1263,10 +1249,9 @@ func validReturnURL(s string) bool {
 	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != ""
 }
 
-// webhook receives a provider's payment webhook. The raw body is read for
-// signature verification; on a verified successful payment the referenced
-// checkout is completed (idempotently). Always returns 200 on a benign no-op so
-// the provider doesn't keep retrying acknowledged events.
+// webhook receives a provider's payment webhook and completes the checkout of a
+// verified successful payment. A no-op still returns 200, so the provider stops
+// retrying.
 func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
 	sigHeader := h.Service.WebhookSignatureHeader(provider)
@@ -1286,11 +1271,8 @@ func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// razorpayVerify completes a checkout from a Razorpay payment-link redirect. The
-// browser posts the signed callback params here (the async webhook can't reach a
-// local server); completion is idempotent, so a later webhook in production is a
-// harmless no-op. Authenticated by the Razorpay signature — CSRF-exempt, in the
-// public group.
+// razorpayVerify completes a checkout from a Razorpay payment-link redirect,
+// authenticated by the Razorpay signature. It is idempotent with the webhook.
 func (h *Handler) razorpayVerify(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		PaymentID     string `json:"razorpay_payment_id"`

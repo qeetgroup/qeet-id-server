@@ -1,13 +1,7 @@
-// Package threat records and surfaces security anomalies (the admin
-// "Threats → Anomalies" screen). Detections write append-only rows into
-// auth.security_events; the admin reads, summarises, and resolves them.
-//
-// The store is deliberately detection-agnostic: type/severity/status are open
-// strings so new signals (new_device, geo anomalies, bot verdicts) plug in
-// without schema or API changes. The wired detections come from the sign-in
-// lockout: an account locked after repeated failed sign-ins
-// (credential_stuffing) and a source network throttled for failing against
-// many accounts (password_spraying).
+// Package threat records security anomalies in auth.security_events for the
+// admin "Threats → Anomalies" screen. Type, severity and status are open
+// strings, so a new detection needs no schema change; today's come from the
+// sign-in lockout (credential_stuffing and password_spraying).
 package threat
 
 import (
@@ -28,8 +22,7 @@ import (
 )
 
 // Notifier sends an in-app notification to a user. Satisfied by
-// *notification.Service; kept as an interface so threat doesn't import that
-// package. nil = no notifications. Wired via SetNotifier.
+// *notification.Service; an interface so threat doesn't import that package.
 type Notifier interface {
 	Notify(ctx context.Context, tenantID, userID uuid.UUID, kind, title, description, href string) error
 }
@@ -44,8 +37,8 @@ func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool)}
 }
 
-// SetNotifier wires the in-app notifier so security events can also alert the
-// affected user. Called from internal/bootstrap/dependencies.go.
+// SetNotifier sets the in-app notifier that also alerts the affected user (nil:
+// no notifications).
 func (s *Service) SetNotifier(n Notifier) { s.notifier = n }
 
 // Event is a detection's input. TenantID is required; UserID/IP/UserAgent are
@@ -88,10 +81,9 @@ type Summary struct {
 	HighSeverity24h  int `json:"high_severity_24h"`
 }
 
-// Record appends a security event. Best-effort callers (detection hooks) should
-// log and swallow the error so a detection write never breaks the auth path.
-// InsertSecurityEvent left raw: NULLIF($7,”)::inet causes sqlc parameter-type
-// ambiguity for the inet cast.
+// Record appends a security event. Detection hooks should log and drop its
+// error so a failed write never breaks sign-in. The INSERT is hand-written
+// because sqlc can't infer the parameter type of its NULLIF(...)::inet cast.
 func (s *Service) Record(ctx context.Context, e Event) error {
 	if e.Severity == "" {
 		e.Severity = "low"
@@ -113,15 +105,10 @@ func (s *Service) Record(ctx context.Context, e Event) error {
 	return err
 }
 
-// OnAccountLocked implements the auth package's AnomalyRecorder: it is called
-// once for each sign-in lock, by the failure that set it. It resolves the
-// account to a tenant + user and records a credential-stuffing anomaly whose
-// detail states the reason and whose metadata carries the contributing
-// dimensions: the account, the source network and which counter tripped.
-// Best-effort throughout — an address with no account, or an account with no
-// organisation, has no tenant to scope an incident to and is skipped (the lock
-// is still counted in sign_in_lockouts_total and logged); storage errors are
-// logged, not surfaced.
+// OnAccountLocked implements auth.AnomalyRecorder for each sign-in lock: it
+// records a credential_stuffing anomaly for the account's user and tenant and
+// notifies the user. An account with no organisation is skipped; errors are
+// logged, not returned.
 func (s *Service) OnAccountLocked(ctx context.Context, lock auth.AccountLock) {
 	row, err := s.q.GetUserForAnomaly(ctx, lock.Email)
 	if err != nil {
@@ -170,13 +157,9 @@ func (s *Service) OnAccountLocked(ctx context.Context, lock auth.AccountLock) {
 	}
 }
 
-// OnSourceThrottled implements the auth package's AnomalyRecorder: it is
-// called once when a source network is throttled for failing password sign-in
-// against many distinct accounts (spraying). It records one password-spraying
-// anomaly in each organisation whose accounts the source targeted, carrying
-// the source network and the number of accounts. Addresses with no account or
-// no organisation have no tenant to report to (the throttle is still counted
-// in sign_in_source_throttles_total and logged). Best-effort, like
+// OnSourceThrottled implements auth.AnomalyRecorder for a source network
+// throttled for failing against many accounts: it records a password_spraying
+// anomaly in each organisation whose accounts were targeted. Best effort, like
 // OnAccountLocked.
 func (s *Service) OnSourceThrottled(ctx context.Context, t auth.SourceThrottle) {
 	tenants, err := s.q.ListTenantsForEmails(ctx, t.Accounts)
@@ -206,9 +189,8 @@ func (s *Service) OnSourceThrottled(ctx context.Context, t auth.SourceThrottle) 
 	}
 }
 
-// List returns the most recent anomalies for a tenant, newest first.
-// Left hand-written: COALESCE(host(e.ip),”) causes sqlc to generate
-// interface{} for the column, preventing type-safe scanning.
+// List returns up to limit of a tenant's most recent anomalies, newest first.
+// Hand-written SQL, not sqlc.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID, limit int) ([]Anomaly, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50

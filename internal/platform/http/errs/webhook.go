@@ -1,10 +1,6 @@
 package errs
 
-// Webhook error codes — stable, namespaced machine identifiers for the
-// internal/developer/webhooks domain. Clients branch and localize on these
-// (never on the message text). Once shipped, a code MUST NOT change. Every
-// identifier is prefixed with the `webhook` domain so it never collides with
-// another bounded context.
+// Webhook error codes.
 const (
 	CodeWebhookNotFound         = "webhook.not_found"
 	CodeWebhookDeliveryNotFound = "webhook.delivery_not_found"

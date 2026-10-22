@@ -1,9 +1,7 @@
-// Package mfa implements TOTP enrollment and verification plus a small
-// set of recovery codes. Recovery codes are bcrypt-hashed; the user sees
-// the plaintext list exactly once at generation.
-//
-// Mutating methods take a pgx.Tx so the caller (HTTP handler) can wrap
-// the mutation plus its audit row in a single transaction.
+// Package mfa implements second factors: authenticator apps (TOTP) with
+// hashed recovery codes, email and SMS codes, push approval on a linked phone
+// and passkeys, plus session step-up. Mutating methods take a pgx.Tx so the
+// caller commits the change and its audit row together.
 package mfa
 
 import (
@@ -33,24 +31,18 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
+// Service manages a user's second factors and session step-ups.
 type Service struct {
-	pool    *pgxpool.Pool
-	q       *dbgen.Queries
-	issuer  string // "qeet-id" — shown in the authenticator app
-	sender  notifier.Sender
-	pushURL string // Expo push API endpoint ("" = push delivery off)
-	// pushAccessToken is sent to the push service when set (SetExpoAccessToken).
-	pushAccessToken string
-	box             *envelope.Cipher
-	// webauthn asserts passkeys as a sign-in second factor (nil = not
-	// offered). Set via SetWebAuthn; see login.go.
-	webauthn WebAuthnVerifier
-	// plan gates SMS codes by the organisation's plan (nil = no gate). Set via
-	// SetPlan.
-	plan PlanGate
-	// deliverable reports whether a channel can reach anyone (nil: assume it
-	// can). Set via SetDeliveryCheck.
-	deliverable func(channel string) bool
+	pool            *pgxpool.Pool             // database pool
+	q               *dbgen.Queries            // generated queries
+	issuer          string                    // issuer name shown in the authenticator app
+	sender          notifier.Sender           // delivers email and SMS codes
+	pushURL         string                    // Expo push API endpoint ("" = push delivery off)
+	pushAccessToken string                    // sent to the push service when set (SetExpoAccessToken)
+	box             *envelope.Cipher          // encrypts TOTP secrets and push tokens (SetCipher)
+	webauthn        WebAuthnVerifier          // passkeys as a sign-in second factor (nil = not offered)
+	plan            PlanGate                  // gates SMS codes by plan (nil = no gate)
+	deliverable     func(channel string) bool // whether a channel can deliver (nil = assume it can)
 }
 
 func NewService(pool *pgxpool.Pool, issuer string, sender notifier.Sender, pushURL string) *Service {
@@ -72,15 +64,10 @@ func (s *Service) SetDeliveryCheck(deliverable func(channel string) bool) {
 	s.deliverable = deliverable
 }
 
-// consumeTOTPStep atomically marks a TOTP time-step as used, returning false if
-// that step (or a later one) was already consumed.
-//
-// totp.Verify accepts the current 30s step plus one either side, so without
-// this a correct code remained valid for ~90s and could be presented twice for
-// two independent authentications — the replay RFC 6238 §5.2 requires us to
-// reject. The check and the write are a single conditional UPDATE so two
-// concurrent submissions of the same code cannot both win: exactly one updates
-// a row, the other sees RowsAffected() == 0.
+// consumeTOTPStep marks a TOTP time step used, returning false if that step or
+// a later one already was. A code is accepted for about 90s, so this stops one
+// code authenticating twice (RFC 6238 §5.2); a single conditional UPDATE lets
+// only one of two concurrent submissions win.
 func consumeTOTPStep(ctx context.Context, tx pgx.Tx, userID uuid.UUID, step int64) (bool, error) {
 	tag, err := tx.Exec(ctx, `
 		UPDATE auth.mfa_totp
@@ -100,12 +87,12 @@ const otpTTL = 10 * time.Minute
 // transactions that wrap an MFA mutation and its audit row.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
+// Enrollment is a started authenticator-app setup. Replacing reports that the
+// account's confirmed app keeps working until a code from this one confirms it.
 type Enrollment struct {
 	Secret          string `json:"secret"`
 	ProvisioningURL string `json:"provisioning_url"`
-	// Replacing: the account holds a confirmed app, which keeps working
-	// until a code from this one confirms it.
-	Replacing bool `json:"replacing"`
+	Replacing       bool   `json:"replacing"`
 }
 
 // pendingTOTPTTL is how long a new authenticator app set up beside a
@@ -305,7 +292,7 @@ func (s *Service) loadTOTP(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (st
 const recoveryCodeCount = 10
 
 // mintRecoveryCodes replaces a user's recovery codes with a fresh batch and
-// returns the plaintext exactly once; only the bcrypt hashes are persisted.
+// returns the plaintext, the only time it is available; only hashes are stored.
 func (s *Service) mintRecoveryCodes(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]string, error) {
 	qtx := s.q.WithTx(tx)
 	if err := qtx.DeleteMFARecoveryCodes(ctx, userID); err != nil {
@@ -332,10 +319,8 @@ func (s *Service) mintRecoveryCodes(ctx context.Context, tx pgx.Tx, userID uuid.
 	return out, nil
 }
 
-// TOTPStatus reports whether the account has a *confirmed* TOTP factor. The
-// account UI reads this on load to render an "active" state instead of
-// re-offering enrollment. A new setup started while one is confirmed waits
-// beside it and does not change this until it is confirmed.
+// TOTPStatus reports whether the account has a confirmed authenticator app. A
+// replacement being set up beside it doesn't count until it is confirmed.
 type TOTPStatus struct {
 	Enrolled bool `json:"enrolled"`
 }
@@ -350,9 +335,9 @@ func (s *Service) TOTPStatus(ctx context.Context, userID uuid.UUID) (*TOTPStatus
 
 // RecoveryStatus summarises a user's backup codes for the account UI.
 type RecoveryStatus struct {
-	Enrolled  bool `json:"enrolled"` // TOTP confirmed — recovery codes back a real factor
-	Total     int  `json:"total"`
-	Remaining int  `json:"remaining"`
+	Enrolled  bool `json:"enrolled"`  // TOTP confirmed — recovery codes back a real factor
+	Total     int  `json:"total"`     // recovery codes issued
+	Remaining int  `json:"remaining"` // recovery codes not yet used
 }
 
 func (s *Service) RecoveryStatus(ctx context.Context, userID uuid.UUID) (*RecoveryStatus, error) {
@@ -477,10 +462,8 @@ func (s *Service) verifyCode(ctx context.Context, tx pgx.Tx, userID uuid.UUID, c
 	return &VerifyResult{UsedRecoveryCode: true, RecoveryCodeID: matchedID}, nil
 }
 
-// IsEnrolled reports whether the user has a second factor that can satisfy the
-// login MFA step today: a confirmed TOTP factor (recovery codes back it). The
-// auth package consults this (via the MFAEnroller interface) to decide whether
-// to challenge for a second factor at login.
+// IsEnrolled reports whether the user has a confirmed authenticator app (TOTP).
+// Other factor types are not considered.
 func (s *Service) IsEnrolled(ctx context.Context, userID uuid.UUID) (bool, error) {
 	ts, err := s.q.GetMFATOTPConfirmed(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -492,11 +475,10 @@ func (s *Service) IsEnrolled(ctx context.Context, userID uuid.UUID) (bool, error
 	return ts.Valid, nil
 }
 
-// VerifyForLoginTx verifies an authenticator-app, recovery or email/SMS code as
-// the second step of login and returns which kind met it ("totp",
-// "recovery_code" or "otp"), so the session the sign-in opens can be recorded
-// as stepped up. ("", nil) is a wrong or expired code; a non-nil error is an
-// infrastructure failure.
+// VerifyForLoginTx checks an authenticator-app, recovery or email/SMS code for
+// a sign-in's second step and returns which kind matched ("totp",
+// "recovery_code" or "otp"). ("", nil) is a wrong or expired code; an error is
+// an infrastructure failure.
 func (s *Service) VerifyForLoginTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) (string, error) {
 	res, err := s.verifyCode(ctx, tx, userID, code)
 	if err != nil {
@@ -518,14 +500,10 @@ func (s *Service) VerifyForLoginTx(ctx context.Context, tx pgx.Tx, userID uuid.U
 	return "totp", nil
 }
 
-// ResetForUser clears every second factor a user holds — the authenticator
-// app, recovery codes, email/SMS factors (their codes cascade), push devices
-// and their pending approval requests — together with what a factor earned:
-// remembered devices and step-ups. Passkeys stay: they are how the person signs
-// in, and are managed on their own. It returns how many of each it removed,
-// keyed by kind, for the audit record. This is an admin account-recovery
-// operation (a user locked out of their authenticator); the caller wraps it and
-// its audit row in one transaction.
+// ResetForUser removes every second factor userID holds (authenticator app,
+// recovery codes, email/SMS factors, push devices, pending push requests and
+// unused pairing codes) and what they earned: trusted devices and step-ups.
+// Passkeys stay. It returns the count removed per kind, for the audit record.
 func (s *Service) ResetForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (map[string]int64, error) {
 	removed := map[string]int64{}
 	for _, step := range []struct {
@@ -578,22 +556,13 @@ func maskDestination(channel, dest string) string {
 	return strings.Repeat("*", len(dest)-3) + dest[len(dest)-3:]
 }
 
-// sendOTP generates a code for the factor, persists its hash, and dispatches
-// the plaintext via the configured channel.
-// Sending one-time codes is limited to the pace of a person asking for one, so
-// the product cannot be driven to flood an inbox or a phone, or to bill the
-// operator for text messages, and live codes do not pile up for one account.
+// Limits on email and SMS codes, at the pace of a person asking for one, so
+// the service cannot be used to flood an inbox or phone or run up SMS bills.
 const (
-	// otpResendAfter: the wait before another code to the same factor.
-	otpResendAfter = 30 * time.Second
-	// otpSendsPerHourPerUser: codes one person may be sent in an hour, over
-	// all their factors.
-	otpSendsPerHourPerUser = 10
-	// otpSendsPerHourPerDestination: codes one address or number may be sent
-	// in an hour, over every account that holds it.
-	otpSendsPerHourPerDestination = 5
-	// maxOTPFactors: email and SMS factors one person may hold.
-	maxOTPFactors = 5
+	otpResendAfter                = 30 * time.Second // wait before another code to the same factor
+	otpSendsPerHourPerUser        = 10               // codes per person per hour, over all their factors
+	otpSendsPerHourPerDestination = 5                // codes per address or number per hour, over all accounts
+	maxOTPFactors                 = 5                // email and SMS factors one person may hold
 )
 
 // otpSend is one code to send: whose, in which organisation (nil: none; it
@@ -608,12 +577,10 @@ type otpSend struct {
 	purpose     string
 }
 
-// sendOTP sends a fresh code to a factor. It is refused with
-// ErrMFACodeSendLimited (retry_after: seconds) inside otpResendAfter of the
-// factor's last code, or past the hourly limits; an SMS code is refused unless
-// the organisation's plan includes it. The new code is the factor's only live
-// one — earlier unused codes stop working — and the send is audited with the
-// destination masked.
+// sendOTP sends a fresh code to a factor, ending its earlier unused codes, and
+// audits the send with the destination masked. It fails with
+// ErrMFACodeSendLimited (retry_after in seconds) inside the resend wait or past
+// an hourly limit, and refuses SMS unless the organisation's plan includes it.
 func (s *Service) sendOTP(ctx context.Context, in otpSend) error {
 	if s.deliverable != nil && !s.deliverable(in.channel) {
 		return errs.ErrMFADeliveryUnavailable.WithMetadata(map[string]any{"channel": in.channel})
@@ -911,15 +878,10 @@ func (s *Service) VerifyOTP(ctx context.Context, tx pgx.Tx, attempt Attempt, cod
 	return true, nil
 }
 
-// Step-up MFA
-//
-// A step-up proves something about one session: that it met a second factor
-// recently. It is recorded against the session that earned it, so a factor
-// proved in one browser never unlocks sensitive actions in another, and it
-// ends with that session. Each organisation sets how long a step-up lasts
-// (tenant.security_policies.step_up_window, 5 minutes by default) and which
-// factor types count (step_up_methods, any by default). A changed password or
-// an administrative factor reset clears every step-up the person holds.
+// Step-up MFA. A step-up records that one session met a second factor
+// recently, so a factor proved in one browser never unlocks another. Each
+// organisation sets how long it lasts (step_up_window, default 5 minutes) and
+// which factor types count (step_up_methods, default any).
 
 // RecordVerification records that sessionID, one of userID's own live
 // sessions, met a second factor by method ("totp", "recovery_code", "otp",
@@ -933,18 +895,15 @@ func (s *Service) RecordVerification(ctx context.Context, tx pgx.Tx, userID, ses
 	})
 }
 
-// StepUp is a session's step-up as its organisation judges it.
+// StepUp is a session's step-up as its organisation judges it. Met reports
+// whether a counted factor was met within Window. VerifiedAt and Method are the
+// latest step-up, counted or not. Methods are the counted types (nil: any).
 type StepUp struct {
-	// Met: the session met a counted factor within the window.
-	Met bool
-	// VerifiedAt and Method are the session's latest step-up, if any, whether
-	// or not it still counts.
+	Met        bool
 	VerifiedAt *time.Time
 	Method     string
-	// Window is how long a step-up lasts in the session's organisation, and
-	// Methods the factor types it counts (nil: any).
-	Window  time.Duration
-	Methods []string
+	Window     time.Duration
+	Methods    []string
 }
 
 // StepUpState reads sessionID's step-up. A principal without a session (an API
@@ -979,11 +938,9 @@ func (s *Service) StepUpState(ctx context.Context, userID uuid.UUID, sessionID *
 // (no session): the organisation default the migration also uses.
 const defaultStepUpWindow = 5 * time.Minute
 
-// RequireRecentMFA gates a handler behind a step-up of the calling session:
-// otherwise the request is refused with 403 step_up_required, listing the
-// factor types that count (allowed_methods, omitted when any does), so the
-// client can ask for one and retry. Both the refusal and a completed step-up
-// are audited.
+// RequireRecentMFA gates a handler behind a step-up of the calling session.
+// Otherwise it refuses with 403 step_up_required, listing the factor types
+// that count in allowed_methods (omitted when any does), and audits the refusal.
 func RequireRecentMFA(svc *Service) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -994,17 +951,14 @@ func RequireRecentMFA(svc *Service) func(http.Handler) http.Handler {
 	}
 }
 
-// StepUpRule says when a route needs a step-up of the calling session.
+// StepUpRule says when a route needs a step-up of the calling session. Under
+// StepUpWhenFactorHeld a person holding no counted factor can set one up, as
+// they have nothing to step up with.
 type StepUpRule int
 
 const (
-	// StepUpAlways: every call needs one.
-	StepUpAlways StepUpRule = iota + 1
-	// StepUpWhenFactorHeld: a call needs one while the person holds a factor
-	// their organisation counts for step-up. Setting up a first factor, or
-	// changing factors while none can step up, needs none: there is nothing
-	// to step up with.
-	StepUpWhenFactorHeld
+	StepUpAlways         StepUpRule = iota + 1 // every call needs one
+	StepUpWhenFactorHeld                       // needed while the person holds a factor that counts
 )
 
 // StepUpGate refuses a call to a listed route ("METHOD /pattern", chi syntax)
@@ -1080,11 +1034,10 @@ func (s *Service) HoldsStepUpFactor(ctx context.Context, userID uuid.UUID, tenan
 		(row.Passkeys && counts("webauthn")) || (row.Push && counts("push")), nil
 }
 
-// passStepUp reports whether the request's session is stepped up; when it is
-// not, it has written the refusal (401 without a principal, else 403
-// step_up_required) and audited it. A hosted-login principal holds no API
-// session: its sign-in counts as a step-up for the organisation's window after
-// it happened, where the organisation counts every factor type.
+// passStepUp reports whether the request's session is stepped up. If not, it
+// has already written the refusal (401 with no user, else an audited 403
+// step_up_required). A hosted-login principal has no session; its sign-in
+// counts within the window when the organisation counts every factor type.
 func (s *Service) passStepUp(w http.ResponseWriter, r *http.Request) bool {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
@@ -1183,23 +1136,20 @@ func (h *Handler) recordStepUp(ctx context.Context, tx pgx.Tx, r *http.Request, 
 	})
 }
 
-// WebAuthnVerifier asserts an already-authenticated user's existing passkey
-// credentials as a second factor. It is satisfied by *passkey.Service; the
-// interface lives here so package mfa can mount the routes without importing
-// package passkey (which would create an import cycle — passkey already imports
-// the lower-level platform packages mfa shares).
+// WebAuthnVerifier asserts a signed-in user's passkeys as a second factor. It
+// is satisfied by *passkey.Service; the interface keeps package mfa from
+// importing package passkey.
 type WebAuthnVerifier interface {
 	BeginMFA(ctx context.Context, userID uuid.UUID) (uuid.UUID, *protocol.CredentialAssertion, error)
 	FinishMFA(ctx context.Context, userID, sessionID uuid.UUID, cred json.RawMessage) error
 }
 
+// Handler serves the MFA routes. WebAuthn, when set, offers the user's passkeys
+// as a second factor (POST /mfa/webauthn/...). PairingThrottle, when set, wraps
+// the public pairing-code claim route, where a wrong code is a guess.
 type Handler struct {
-	Service *Service
-	// WebAuthn, when set, exposes the user's registered passkeys as a second
-	// factor (POST /mfa/webauthn/{challenge,verify}). Nil = feature disabled.
-	WebAuthn WebAuthnVerifier
-	// PairingThrottle, when set, wraps the public route a phone links with a
-	// pairing code, which guesses at a code when the code is wrong.
+	Service         *Service
+	WebAuthn        WebAuthnVerifier
 	PairingThrottle func(http.Handler) http.Handler
 }
 
@@ -1253,8 +1203,8 @@ func (h *Handler) Mount(r chi.Router) {
 	})
 }
 
-// auditActor builds the actor portion of an audit row from the request
-// principal. Returns ("", "system") for unauthenticated calls.
+// auditActor returns the audit actor for the request's principal, or
+// (nil, "system") when there is none.
 func auditActor(r *http.Request) (*uuid.UUID, string) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil {

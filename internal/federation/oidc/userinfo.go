@@ -81,11 +81,9 @@ func bearerChallenge(w http.ResponseWriter, code string) {
 	w.Header().Set("WWW-Authenticate", v)
 }
 
-// userinfo (GET and POST /v1/oauth/userinfo) answers who the signed-in user
-// is: sub, the tenant, and the standard claims the token's scopes grant. A
-// token without openid is refused (403 insufficient_scope), and an account
-// that has since been suspended or deleted gets 401 invalid_token, with the
-// bearer challenge either way.
+// userinfo handles GET and POST /v1/oauth/userinfo, returning sub, the tenant
+// and the standard claims the token's scopes grant. A token without openid gets
+// 403 insufficient_scope; a suspended or deleted account gets 401 invalid_token.
 func (h *Handler) userinfo(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {

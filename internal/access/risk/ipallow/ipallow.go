@@ -1,9 +1,7 @@
-// Package ipallow manages per-tenant IP allow/deny rules (CIDR) and evaluates
-// an address against them. Deny rules win; if any allow rule exists, an address
-// must match one to pass. Enforcement is gated by an explicit per-tenant flag
-// (avoids accidental lockout). While it is on, every sign-in to the
-// organisation and every renewal of a session in it asks CheckSignIn first; the
-// /check endpoint answers the same question for an admin.
+// Package ipallow manages per-tenant IP allow and deny rules (CIDRs). Deny
+// rules win, and if any allow rule exists an address must match one. Rules are
+// enforced only while the tenant's flag is on; then every sign-in to the
+// organisation and every session renewal in it calls CheckSignIn.
 package ipallow
 
 import (
@@ -25,12 +23,14 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
+// Rule is an organisation address rule: CIDR is allowed or denied according to
+// Action ("allow" or "deny").
 type Rule struct {
 	ID        uuid.UUID `json:"id"`
 	TenantID  uuid.UUID `json:"tenant_id"`
 	CIDR      string    `json:"cidr"`
 	Label     string    `json:"label"`
-	Action    string    `json:"action"` // allow | deny
+	Action    string    `json:"action"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -57,7 +57,8 @@ type Decision struct {
 	Reason  string
 }
 
-// Why a decision refused an address, as recorded in auth.address_refused.
+// Decision.Reason values: the exported ones are refusals, as recorded in
+// auth.address_refused. reasonEnforcingOff is Check's reason when rules are off.
 const (
 	ReasonDenyRule     = "deny_rule"
 	ReasonNotAllowed   = "not_in_allow_rules"
@@ -66,9 +67,8 @@ const (
 	reasonEnforcingOff = "enforcement disabled"
 )
 
-// Decide judges ipStr against the rule set. Pure, so it is unit-tested without
-// a database. An address that can't be read is refused: while rules are on, a
-// sign-in from an unknown address must not get past them.
+// Decide judges ipStr against rules. An address that can't be read is refused,
+// so a sign-in from an unknown address can't get past enforced rules.
 func Decide(rules []Rule, ipStr string) Decision {
 	ip, err := netip.ParseAddr(strings.TrimSpace(ipStr))
 	if err != nil {
@@ -211,15 +211,10 @@ func (s *Service) Check(ctx context.Context, tenantID uuid.UUID, ip string) (ena
 	return enabled, allowed, reason, nil
 }
 
-// CheckSignIn is the gate every sign-in to an organisation, and every renewal
-// of a session in it, passes before a session is issued or renewed. With the
-// organisation's rules off (or no organisation) it allows everything. Refused,
-// it records auth.address_refused — the rule responsible, the address and the
-// path — in its own transaction, so the record survives the refused sign-in,
-// and returns errs.ErrAuthAddressNotAllowed. ip is the address the platform
-// derived for the request (httpx.ClientIP), never one the caller declared;
-// path names the sign-in ("password", "passkey", "refresh", "oidc_authorize",
-// …). A failure to read the rules is returned, so the sign-in fails closed.
+// CheckSignIn returns errs.ErrAuthAddressNotAllowed when the tenant's enforced
+// rules refuse ip (from httpx.ClientIP), after recording auth.address_refused in
+// its own transaction so the record outlives the sign-in. path names the
+// sign-in. With rules off or no tenant it allows all; read errors are returned.
 func (s *Service) CheckSignIn(ctx context.Context, tenantID, userID uuid.UUID, ip, path string) error {
 	if tenantID == uuid.Nil {
 		return nil
@@ -279,11 +274,9 @@ func (s *Service) CheckSignIn(ctx context.Context, tenantID, userID uuid.UUID, i
 	return errs.ErrAuthAddressNotAllowed
 }
 
-// refusesCaller reports whether rules, enforced, would refuse the caller's own
-// address. A change to enforced rules that does is refused: the organisation
-// would lock its admins out, with no way back in to undo it. The console calls
-// from its own server, so there it is the console's address that must stay
-// allowed.
+// refusesCaller returns ErrRiskRulesLockOutCaller if rules would refuse the
+// caller's own address, so an organisation can't lock its admins out. For the
+// console, that is the console server's address.
 func refusesCaller(rules []Rule, r *http.Request) error {
 	if d := Decide(rules, httpx.ClientIP(r)); !d.Allowed {
 		return errs.ErrRiskRulesLockOutCaller.WithDetail("your address as the API sees it: " + httpx.ClientIP(r))

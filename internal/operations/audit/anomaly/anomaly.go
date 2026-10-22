@@ -1,8 +1,7 @@
-// Package anomaly scores the hash-chained audit.events log against a
-// per-(tenant, actor) behavioral baseline, flagging deviations (first-time
-// action, unusual hour, new IP) for admin review. A background Sweep scores
-// events in batches rather than hooking audit.Record synchronously — which
-// would couple every audit-writing domain to this package and add write latency.
+// Package anomaly scores audit events against a baseline per (tenant, actor)
+// and flags deviations (first-time action, unusual hour, new IP) for review. A
+// background sweep scores events in batches, so audit.Record stays fast and
+// does not depend on this package.
 package anomaly
 
 import (
@@ -34,10 +33,8 @@ const (
 	defaultScoreThreshold    = 0.6
 	defaultMinBaselineEvents = 20
 
-	// Scoring weights. Action novelty is the strongest signal (a first-time
-	// action type from this actor is the clearest "this doesn't look like
-	// them" signal); IP is the weakest, since legitimate admins travel and
-	// switch networks far more often than they change what they do.
+	// Scoring weights. A new action is the strongest signal and a new IP the
+	// weakest: admins change networks far more often than what they do.
 	weightAction = 0.5
 	weightHour   = 0.3
 	weightIP     = 0.2
@@ -63,6 +60,9 @@ type Anomaly struct {
 	EventAt      time.Time  `json:"event_at"`
 }
 
+// Settings is a tenant's anomaly-scoring configuration. Events score only once
+// the actor has MinBaselineEvents of history, and are flagged at or above
+// ScoreThreshold.
 type Settings struct {
 	TenantID          uuid.UUID `json:"tenant_id"`
 	Enabled           bool      `json:"enabled"`
@@ -70,17 +70,20 @@ type Settings struct {
 	MinBaselineEvents int       `json:"min_baseline_events"`
 }
 
+// Summary counts a tenant's anomalies.
 type Summary struct {
-	Open       int `json:"open"`
-	Resolved7d int `json:"resolved_7d"`
-	HighScore  int `json:"high_score_open"` // open anomalies scoring >= 0.85
+	Open       int `json:"open"`            // open anomalies
+	Resolved7d int `json:"resolved_7d"`     // anomalies resolved in the last 7 days
+	HighScore  int `json:"high_score_open"` // open anomalies scoring at least 0.85
 }
 
+// Service scores audit events and manages the anomalies it flags.
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 }
 
+// NewService returns a Service over pool.
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool)}
 }
@@ -130,11 +133,9 @@ func (s *Service) saveBaseline(ctx context.Context, tx pgx.Tx, tenantID, actorID
 	})
 }
 
-// score compares one event against the actor's baseline (as it stood before
-// this event) and returns a 0..1 anomaly score plus the reasons contributing
-// to it. Each signal is a novelty/rarity measure, not a statistical model —
-// explainable by design, matching the rest of the platform's "explain"
-// philosophy (RBAC/ReBAC ?explain=true, AuthZEN context.explain).
+// score compares an event with the actor's baseline from before it and returns
+// a 0..1 anomaly score and the reasons for it. Each signal is a simple novelty
+// measure, so every score can be explained.
 func score(b baseline, action, ip string, hour int) (float64, []string) {
 	var total float64
 	var reasons []string
@@ -149,9 +150,8 @@ func score(b baseline, action, ip string, hour int) (float64, []string) {
 	if b.eventCount > 0 {
 		hourFreq = float64(b.hours[hourKey]) / float64(b.eventCount)
 	}
-	// A never-seen hour scores the full weight; a common hour scores near
-	// zero. 8 is a smoothing factor so "seen a handful of times" still reads
-	// as somewhat unusual rather than snapping straight to zero.
+	// A never-seen hour scores the full weight; an hour holding at least 1/8 of
+	// the actor's events scores nothing.
 	hourNovelty := 1 - hourFreq*8
 	if hourNovelty < 0 {
 		hourNovelty = 0
@@ -211,17 +211,15 @@ func (s *Service) settingsFor(ctx context.Context, tenantID uuid.UUID) (Settings
 	return st, nil
 }
 
-// tick processes one batch of unscored events. Each event is handled in its
-// own transaction so a single bad row can't block the rest of the batch, and
-// so the per-tenant advisory-lock-free baseline read/update stays small.
+// tick scores one batch of unscored events, each in its own transaction so a
+// bad row cannot block the rest.
 func (s *Service) tick(ctx context.Context) error {
 	rows, err := s.q.ListUnscoredAuditEvents(ctx, int32(sweepBatch))
 	if err != nil {
 		return err
 	}
 
-	// Map the generated rows to unscoredEvent. ip is COALESCE(host(ip),'') →
-	// interface{}; convert to *string (nil when empty string).
+	// ip is COALESCE(host(ip), ''), typed interface{}; empty becomes nil.
 	var batch []unscoredEvent
 	for _, r := range rows {
 		e := unscoredEvent{
@@ -268,8 +266,8 @@ func (s *Service) scoreOne(ctx context.Context, e unscoredEvent) error {
 		return nil
 	}
 
-	// No human actor (agent/service/system) — nothing to baseline. Mark
-	// scored and move on.
+	// No user actor (agent, service or system): nothing to baseline, so just
+	// mark it scored.
 	if e.TenantID == nil || e.ActorUserID == nil {
 		if err := qTx.MarkAuditEventScored(ctx, e.ID); err != nil {
 			return err
@@ -321,11 +319,11 @@ func (s *Service) scoreOne(ctx context.Context, e unscoredEvent) error {
 	return tx.Commit(ctx)
 }
 
-// Sweep runs one scoring batch — exported for tests and the scheduler.
+// Sweep scores one batch of events, the work Run does on each tick.
 func (s *Service) Sweep(ctx context.Context) error { return s.tick(ctx) }
 
-// Run is the background sweeper, registered as a worker (mirrors
-// retention.Service.Run / gdpr.Service.Run).
+// Run is the background sweeper: it scores a batch every minute until ctx is
+// done.
 func (s *Service) Run(ctx context.Context) {
 	tk := time.NewTicker(sweepInterval)
 	defer tk.Stop()
@@ -341,8 +339,7 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
-// toUUIDPtr converts a pgtype.UUID (sqlc nullable uuid) to a *uuid.UUID,
-// returning nil for invalid (NULL) values.
+// toUUIDPtr converts a nullable pgtype.UUID to a *uuid.UUID; NULL becomes nil.
 func toUUIDPtr(u pgtype.UUID) *uuid.UUID {
 	if !u.Valid {
 		return nil
@@ -351,8 +348,8 @@ func toUUIDPtr(u pgtype.UUID) *uuid.UUID {
 	return &id
 }
 
-// toTimePtr converts a pgtype.Timestamptz (sqlc nullable timestamptz) to a
-// *time.Time, returning nil for invalid (NULL) values.
+// toTimePtr converts a nullable pgtype.Timestamptz to a *time.Time; NULL
+// becomes nil.
 func toTimePtr(t pgtype.Timestamptz) *time.Time {
 	if !t.Valid {
 		return nil
@@ -360,8 +357,8 @@ func toTimePtr(t pgtype.Timestamptz) *time.Time {
 	return &t.Time
 }
 
-// rowToAnomaly maps a ListAnomalies or ListAnomaliesFiltered row to an Anomaly.
-// The two generated row types share fields, so callers pass them positionally.
+// rowToAnomaly builds an Anomaly from the fields of a ListAnomalies or
+// ListAnomaliesFiltered row, whose generated types differ.
 func rowToAnomaly(
 	id, tenantID, eventID uuid.UUID,
 	actorUserID pgtype.UUID,
@@ -376,7 +373,7 @@ func rowToAnomaly(
 	ipRaw interface{},
 	eventAt time.Time,
 ) Anomaly {
-	// ip is COALESCE(host(e.ip), '') → interface{}; nil *string when empty.
+	// ip is COALESCE(host(e.ip), ''), typed interface{}; empty becomes nil.
 	var ipPtr *string
 	if ip, ok := ipRaw.(string); ok && ip != "" {
 		ipPtr = &ip
@@ -400,8 +397,8 @@ func rowToAnomaly(
 	}
 }
 
-// List returns a tenant's anomalies, most recent first. status filters to
-// "open"/"resolved"; empty returns both.
+// List returns up to limit of the tenant's anomalies (50 if limit is not in
+// 1..200), newest first. status is "open" or "resolved"; empty returns both.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID, status string, limit int) ([]Anomaly, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -440,6 +437,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, status string, l
 	return out, nil
 }
 
+// Summary returns the tenant's anomaly counts.
 func (s *Service) Summary(ctx context.Context, tenantID uuid.UUID) (*Summary, error) {
 	row, err := s.q.GetAnomalySummary(ctx, tenantID)
 	if err != nil {
@@ -452,6 +450,8 @@ func (s *Service) Summary(ctx context.Context, tenantID uuid.UUID) (*Summary, er
 	}, nil
 }
 
+// Resolve marks one of the tenant's open anomalies resolved by resolvedBy. It
+// returns errs.ErrNotFound if there is no such open anomaly.
 func (s *Service) Resolve(ctx context.Context, tenantID, id, resolvedBy uuid.UUID) error {
 	ct, err := s.q.ResolveAnomaly(ctx, dbgen.ResolveAnomalyParams{
 		ResolvedBy: pgtype.UUID{Bytes: resolvedBy, Valid: true},
@@ -467,11 +467,13 @@ func (s *Service) Resolve(ctx context.Context, tenantID, id, resolvedBy uuid.UUI
 	return nil
 }
 
+// GetSettings returns the tenant's settings, or the defaults if none are saved.
 func (s *Service) GetSettings(ctx context.Context, tenantID uuid.UUID) (*Settings, error) {
 	st, err := s.settingsFor(ctx, tenantID)
 	return &st, err
 }
 
+// UpdateSettings validates and saves the tenant's settings.
 func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Settings) (*Settings, error) {
 	if in.ScoreThreshold < 0 || in.ScoreThreshold > 1 {
 		return nil, errs.ErrAuditScoreThresholdInvalid
@@ -492,10 +494,12 @@ func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Set
 	return &out, nil
 }
 
+// Handler serves the anomaly endpoints.
 type Handler struct {
 	Service *Service
 }
 
+// Mount registers the anomaly routes.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/audit/anomalies", h.list)
 	r.Get("/tenants/{tenantID}/audit/anomalies/summary", h.summary)

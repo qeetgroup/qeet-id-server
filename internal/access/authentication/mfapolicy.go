@@ -14,30 +14,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// Enforcing the MFA an organisation requires (security policy
-// mfa_enforcement) or an administrator requires of one account
-// (users.mfa_required) at password sign-in:
-//
-//   - optional: only an account holding a second factor is challenged.
-//   - required: every account of the organisation must meet a challenge.
-//   - admin_only: administrators must — accounts holding a role, directly or
-//     through a group, that grants any write permission.
-//   - an account marked as requiring MFA must, whatever its organisation sets.
-//
-// An account that must and holds a factor is challenged as usual. One that
-// holds none gets an enrolment challenge instead of a session: it sets up an
-// authenticator app (StartMFAEnrollment) and the code that confirms the app
-// meets the challenge, so no session is issued before a factor exists.
-//
-// Grace period: for mfa_grace_days after the organisation turns its
-// requirement on, the members it already had may put the setup off — they
-// still get the enrolment challenge, and may skip it (MFAProof.Skip) until
-// the grace period ends. Accounts created later, and accounts marked
-// individually, have none.
-//
-// Every challenge is audited as auth.mfa_challenged with its reason, so one
-// raised by policy is told apart from one raised because the person chose to
-// set up a factor.
+// MFA enforcement at sign-in: an organisation's mfa_enforcement (optional,
+// required or admin_only) or an account's mfa_required decides who must meet a
+// second factor. An account that must but holds none sets one up first; existing
+// members may postpone setup during the organisation's grace period.
 
 // Why a sign-in is challenged.
 const (
@@ -93,14 +73,9 @@ func (s *Service) mfaRequirementFor(ctx context.Context, userID, tenantID uuid.U
 	return decideMFARequirement(row, time.Now()), nil
 }
 
-// The requirement belongs to the organisation being entered, not only to the
-// one the account calls home. Signing in reads the home
-// organisation's; everything that issues a session or a code for another
-// organisation — switching into it, accepting its invitation, signing in to one
-// of its applications, approving a device for one — asks tenantFactorShortfall
-// first. For that every session records whether, and how, its sign-in met a
-// second factor (auth.sessions and auth.login_sessions second_factor,
-// migration 0149).
+// How a session's sign-in met a second factor. Every session records it, so
+// entering another organisation can be checked against that organisation's
+// requirement (see tenantFactorShortfall).
 const (
 	secondFactorMFA           = "mfa"
 	secondFactorPasskey       = "passkey"
@@ -141,13 +116,10 @@ func stricterRequirement(a, b mfaRequirement) mfaRequirement {
 	return out
 }
 
-// tenantFactorShortfall is what stops a session or a code being issued for
-// tenantID to userID, whose sign-in met secondFactor ("": none): nil when
-// nothing does — the organisation doesn't require a factor of the account, the
-// sign-in met one, or the account holds none and the organisation's grace
-// period still lets it put the setup off. Otherwise ErrMFAEnrollmentRequired
-// when the account must set a factor up first, or ErrStepUpRequired when it
-// holds one this sign-in didn't use.
+// tenantFactorShortfall reports what stops a session or code being issued for
+// tenantID to userID, whose sign-in met secondFactor ("" for none): nil,
+// ErrMFAEnrollmentRequired when a factor must be set up first, or
+// ErrStepUpRequired when the account holds one this sign-in didn't use.
 func (s *Service) tenantFactorShortfall(ctx context.Context, userID, tenantID uuid.UUID, secondFactor string) error {
 	if s.mfa == nil || tenantID == uuid.Nil || secondFactor != "" {
 		return nil

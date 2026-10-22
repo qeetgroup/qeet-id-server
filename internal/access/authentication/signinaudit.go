@@ -13,16 +13,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
 )
 
-// Failed sign-ins are recorded in the organisation's audit trail, and so its
-// log stream, as auth.sign_in_failed: the organisation the sign-in was for (or
-// the account's own), the account when one was found, how it failed and where
-// it came from — never what was submitted. A failure for an address with no
-// account names no person. Locks and throttles the failures set are recorded
-// as auth.account_locked (with when the lock lifts) and auth.source_throttled.
-//
-// The failure records are bounded per organisation and source network, and per
-// organisation, so an attack can't flood the trail; failures past the bound
-// are counted in sign_in_failures_unrecorded_total instead.
+// Failed sign-ins are recorded in the organisation's audit trail as
+// auth.sign_in_failed, never with what was submitted; locks and throttles are
+// recorded too. Records are capped per organisation and network, and failures
+// past the cap are counted in sign_in_failures_unrecorded_total.
 
 // How a sign-in failed, as recorded.
 const (
@@ -35,18 +29,13 @@ const (
 
 // SignInFailure is a failed sign-in, as recorded.
 type SignInFailure struct {
-	// TenantID is the organisation the sign-in was for (uuid.Nil: none
-	// named; the account's own is used when there is an account).
-	TenantID uuid.UUID
-	// UserID is the account, when one was found (uuid.Nil: none, and the
-	// record names no person).
-	UserID    uuid.UUID
-	Method    string // password, mfa, passkey
-	Reason    string
-	IP        string
-	UserAgent string
-	// Metadata adds details to the record; never anything submitted.
-	Metadata map[string]any
+	TenantID  uuid.UUID      // the organisation signed in to (uuid.Nil: the account's own)
+	UserID    uuid.UUID      // the account, if one was found (uuid.Nil: none)
+	Method    string         // password, mfa or passkey
+	Reason    string         // a Failure* value, such as FailureWrongPassword
+	IP        string         // the client address
+	UserAgent string         // the client's User-Agent
+	Metadata  map[string]any // extra details, never anything submitted
 }
 
 var unrecordedFailures = promauto.NewCounterVec(prometheus.CounterOpts{

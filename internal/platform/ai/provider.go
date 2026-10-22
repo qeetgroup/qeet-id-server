@@ -1,7 +1,6 @@
-// Package ai defines the provider-neutral inference abstraction for the AI
-// qeetai. Implementations live in platform/ai/{anthropic,openai}; the qeetai
-// orchestrator depends only on Provider. Arch rule: platform/* must not import
-// domains/*.
+// Package ai defines the provider-neutral streaming inference interface used by
+// the Qeet AI assistant. Implementations are in the anthropic and openai
+// subpackages.
 package ai
 
 import (
@@ -17,28 +16,17 @@ type ToolDef struct {
 	InputSchema json.RawMessage `json:"input_schema"`
 }
 
-// ContentBlock is a provider-neutral content element whose JSON shape matches
-// the Anthropic content-block format — the canonical storage format used in
-// the qeetai DB. Each provider converts to/from its own wire format at the
-// boundary; the orchestrator and DB always use this neutral form.
-//
-// Fields:
-//
-//	Type      — "text" | "tool_use" | "tool_result"
-//	Text      — text blocks
-//	ID        — tool_use: the tool call id
-//	Name      — tool_use / tool_result: the tool name
-//	Input     — tool_use: JSON input object
-//	ToolUseID — tool_result: links back to the tool_use.id
-//	Content   — tool_result: JSON-encoded result string or object
+// ContentBlock is a provider-neutral content element. Its JSON matches
+// Anthropic's content-block format, which is how conversations are stored;
+// each provider converts at its boundary.
 type ContentBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
-	Content   json.RawMessage `json:"content,omitempty"`
+	Type      string          `json:"type"`                  // "text", "tool_use" or "tool_result"
+	Text      string          `json:"text,omitempty"`        // text: the text
+	ID        string          `json:"id,omitempty"`          // tool_use: the call ID
+	Name      string          `json:"name,omitempty"`        // tool_use: the tool name
+	Input     json.RawMessage `json:"input,omitempty"`       // tool_use: the JSON input
+	ToolUseID string          `json:"tool_use_id,omitempty"` // tool_result: the tool_use ID it answers
+	Content   json.RawMessage `json:"content,omitempty"`     // tool_result: the JSON-encoded result
 }
 
 // Message is one turn in conversation history. Role is "user", "assistant",
@@ -54,71 +42,32 @@ type Message struct {
 type EventType string
 
 const (
-	// EventTextDelta carries a text fragment streamed from the model.
-	EventTextDelta EventType = "text_delta"
-
-	// EventToolCallStart signals the beginning of a tool-call block. ToolIndex
-	// identifies which accumulator slot to use (0-based, per-turn counter).
-	EventToolCallStart EventType = "tool_call_start"
-
-	// EventToolCallDelta carries one streaming fragment of the tool-call's
-	// JSON input. ToolIndex identifies the target accumulator.
-	EventToolCallDelta EventType = "tool_call_delta"
-
-	// EventToolCallStop signals that a tool-call's input is complete. Providers
-	// may omit this; the orchestrator treats it as a no-op.
-	EventToolCallStop EventType = "tool_call_stop"
-
-	// EventStop signals the model has finished generating for this turn.
-	// StopReason is "end_turn" (text reply) or "tool_use" (tool calls issued).
-	EventStop EventType = "stop"
-
-	// EventProviderError signals a terminal error from the provider. The
-	// orchestrator emits an error SSE frame and closes the stream.
-	EventProviderError EventType = "error"
+	EventTextDelta     EventType = "text_delta"      // a text fragment
+	EventToolCallStart EventType = "tool_call_start" // a tool call begins (ToolIndex, ToolID, ToolName)
+	EventToolCallDelta EventType = "tool_call_delta" // a fragment of a tool call's JSON input
+	EventToolCallStop  EventType = "tool_call_stop"  // a tool call's input is complete; optional
+	EventStop          EventType = "stop"            // the turn is done (StopReason)
+	EventProviderError EventType = "error"           // a terminal provider error (ErrorMessage)
 )
 
-// Event is a normalized streaming event emitted by any Provider. Only the
-// fields relevant to the Event.Type are set; all others are zero.
+// Event is a normalized streaming event from a Provider. Only the fields for
+// its Type are set.
 type Event struct {
 	Type EventType
 
-	// EventTextDelta: text fragment.
-	TextDelta string
-
-	// EventToolCallStart: tool call identity.
-	ToolIndex int    // 0-based slot; matches subsequent delta/stop events
-	ToolID    string // provider-assigned call id (e.g. "toolu_abc123")
-	ToolName  string // tool manifest name (e.g. "search_users")
-
-	// EventToolCallDelta: streaming fragment of the tool JSON input.
-	// ToolIndex from EventToolCallStart identifies the target accumulator.
-	ToolInputDelta string
-
-	// EventStop: why the model stopped.
-	StopReason string // "end_turn" | "tool_use"
-
-	// EventProviderError: human-readable message (no key material).
-	ErrorMessage string
+	TextDelta      string // EventTextDelta: the text fragment
+	ToolIndex      int    // tool-call events: 0-based slot shared by start, delta and stop
+	ToolID         string // EventToolCallStart: the provider's call ID (e.g. "toolu_abc123")
+	ToolName       string // EventToolCallStart: the manifest tool name (e.g. "search_users")
+	ToolInputDelta string // EventToolCallDelta: a fragment of the JSON input
+	StopReason     string // EventStop: "end_turn" or "tool_use"
+	ErrorMessage   string // EventProviderError: a message with no key material
 }
 
-// Provider is the inference backend abstraction consumed by the qeetai
-// orchestrator. Implementations are in platform/ai/anthropic and
-// platform/ai/openai; the orchestrator depends only on this interface.
-//
-// Stream initiates one streaming inference turn and returns:
-//   - events: channel of normalized Event values, closed on stream end.
-//   - errC:   buffered channel (cap 1) carrying the final transport error
-//     if any; closed after events.
-//
-// Callers must drain events before reading errC. Cancelling ctx aborts the
-// in-flight request and closes both channels.
-//
-// Parameters:
-//   - system   — system prompt (may be empty).
-//   - messages — full conversation history in neutral DB format (Anthropic
-//     content-block JSON); each provider converts at the boundary.
-//   - tools    — available tool definitions from the manifest.
+// Provider streams one inference turn. Stream returns an event channel and an
+// error channel (capacity 1) that carries any transport error; both close when
+// the turn ends, so drain events first. Cancelling ctx aborts the request.
+// messages is the full history; system may be empty.
 type Provider interface {
 	Stream(ctx context.Context, system string, messages []Message, tools []ToolDef) (<-chan Event, <-chan error)
 }

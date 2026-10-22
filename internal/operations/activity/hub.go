@@ -9,44 +9,34 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-// subBufSize is the per-subscriber channel capacity. 256 events provides a
-// comfortable burst buffer for a slow SSE consumer without wasting much memory.
-// When full, the hub drops the oldest event (never blocks the NATS goroutine).
+// subBufSize is the capacity of each subscriber's channel. When it is full, the
+// hub drops the oldest event rather than block the NATS goroutine.
 const subBufSize = 256
 
-// subscriber is one SSE connection's receive end. Each connection gets its own
-// buffered channel routed exclusively to its tenant.
+// subscriber is the receive end of one SSE connection.
 type subscriber struct {
 	tenantID uuid.UUID
 	ch       chan ActivityEvent
 }
 
-// Hub is an in-process fan-out broker that receives domain events from the NATS
-// outbox and delivers them to the SSE connections that belong to the same tenant.
-//
-// Security invariant: an event published to tenantID X is delivered ONLY to
-// subscribers registered under tenantID X. The routing key (payload.tenant_id)
-// is extracted from the message body and independently checked by the SSE
-// handler against the JWT principal's tenant — belt-and-suspenders isolation.
-//
-// When nc is nil (NATS_URL not configured) the hub acts as a no-op broker:
-// SSE connections still connect and receive keep-alives + history replays,
-// but no live events are delivered.
+// Hub fans out domain events from the NATS outbox to the SSE subscribers of
+// each event's tenant. An event for tenant X reaches only subscribers registered
+// under X, and the stream handler checks the tenant again before writing. It is
+// safe for concurrent use.
 type Hub struct {
-	mu   sync.RWMutex
+	mu   sync.RWMutex                // guards subs
 	subs map[uuid.UUID][]*subscriber // tenantID → active subscribers
 }
 
-// NewHub constructs and starts the Hub. If nc is non-nil the hub subscribes to
-// the NATS wildcard subject ">" (matches all outbox topics) and routes incoming
-// events by tenant. Call Hub.Subscribe to attach SSE connections.
+// NewHub returns a Hub subscribed to every NATS subject (">"). With a nil nc it
+// delivers no live events, but streams still get keep-alives and history
+// replay.
 func NewHub(nc *nats.Conn) *Hub {
 	h := &Hub{
 		subs: make(map[uuid.UUID][]*subscriber),
 	}
 	if nc != nil {
-		// ">" matches every subject at any depth — outbox topics are
-		// dot-namespaced (e.g. "user.events", "auth", "group.events").
+		// Outbox topics are dot-namespaced ("user.events", "auth", …).
 		if _, err := nc.Subscribe(">", h.dispatch); err != nil {
 			slog.Error("activity hub: NATS subscribe failed", "err", err)
 		} else {
@@ -58,12 +48,9 @@ func NewHub(nc *nats.Conn) *Hub {
 	return h
 }
 
-// Subscribe registers a new SSE consumer for tenantID and returns:
-//   - ch: receive-only channel of ActivityEvent (buffered, subBufSize).
-//   - unsubscribe: function the caller MUST invoke when the connection closes.
-//
-// The tenant is derived from the JWT principal in the SSE handler and is NEVER
-// taken from the URL or request body.
+// Subscribe registers a subscriber for tenantID and returns its event channel
+// and an unsubscribe func the caller must call when the connection closes.
+// tenantID must come from the authenticated principal.
 func (h *Hub) Subscribe(tenantID uuid.UUID) (<-chan ActivityEvent, func()) {
 	s := &subscriber{
 		tenantID: tenantID,
@@ -80,9 +67,7 @@ func (h *Hub) Subscribe(tenantID uuid.UUID) (<-chan ActivityEvent, func()) {
 		list := h.subs[tenantID]
 		for i, sub := range list {
 			if sub == s {
-				// Remove without preserving order — order is insertion order and
-				// removal is O(n) over what is typically a tiny slice (< 10 SSE
-				// connections per tenant in practice).
+				// O(n), but a tenant rarely has more than a few connections.
 				h.subs[tenantID] = append(list[:i], list[i+1:]...)
 				break
 			}
@@ -93,21 +78,18 @@ func (h *Hub) Subscribe(tenantID uuid.UUID) (<-chan ActivityEvent, func()) {
 	}
 }
 
-// dispatch is the NATS message handler. It runs in NATS's internal goroutine so
-// it must complete quickly: it extracts the tenant from the payload, maps the
-// message to an ActivityEvent, and calls fanOut.
+// dispatch is the NATS message handler. It runs on the NATS goroutine, so it
+// only maps the message to an ActivityEvent and fans it out.
 func (h *Hub) dispatch(msg *nats.Msg) {
-	// The event type is carried in the Qeet-Event-Type header (set by
-	// NATSPublisher.Publish). Skip messages without it (should never happen
-	// in normal operation, but defensive).
+	// The publisher sets the event type in the Qeet-Event-Type header; skip
+	// messages without it.
 	eventType := msg.Header.Get("Qeet-Event-Type")
 	if eventType == "" {
 		return
 	}
 
-	// Parse tenant_id from the payload. All domain events embed it. Events
-	// without a tenant_id (e.g. platform system events) are skipped — they
-	// have no tenant subscribers.
+	// Events without a tenant_id, such as platform system events, have no
+	// subscribers.
 	var tip struct {
 		TenantID *uuid.UUID `json:"tenant_id"`
 	}
@@ -120,13 +102,9 @@ func (h *Hub) dispatch(msg *nats.Msg) {
 	h.fanOut(tenantID, ev)
 }
 
-// fanOut delivers ev to every subscriber registered under tenantID.
-// It is the critical per-tenant routing step: NO event is ever sent to a
-// subscriber whose tenantID differs from ev's tenant.
-//
-// Drop-oldest policy: when a subscriber's channel is full, one buffered event
-// is drained to make room, then the new event is enqueued. This avoids blocking
-// the NATS dispatch goroutine and keeps slow consumers from affecting others.
+// fanOut delivers ev to every subscriber of tenantID without blocking. A full
+// channel loses its oldest event to make room; if it is still full, ev is
+// dropped and logged.
 func (h *Hub) fanOut(tenantID uuid.UUID, ev ActivityEvent) {
 	h.mu.RLock()
 	subs := h.subs[tenantID]
@@ -142,9 +120,7 @@ func (h *Hub) fanOut(tenantID uuid.UUID, ev ActivityEvent) {
 			case <-s.ch:
 			default:
 			}
-			// Best-effort re-enqueue; drop if channel is still full (very unlikely
-			// because we just drained one slot, but guard against the race where
-			// multiple goroutines are dispatching concurrently).
+			// Another dispatch may have refilled the slot; then drop ev.
 			select {
 			case s.ch <- ev:
 			default:

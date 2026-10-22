@@ -1,7 +1,6 @@
-// Package openai is a streaming OpenAI Chat Completions client implementing
-// ai.Provider. Transport-only (base URL, auth header, SSE parsing); imports
-// nothing from domains/*. Also works with any hosted OpenAI-compatible endpoint
-// (Groq, OpenRouter, Gemini's OpenAI path) via QEETAI_BASE_URL.
+// Package openai is a streaming OpenAI Chat Completions client that implements
+// ai.Provider. Through the base URL it also serves OpenAI-compatible endpoints
+// (Azure, Groq, OpenRouter, Gemini's OpenAI path).
 package openai
 
 import (
@@ -18,16 +17,12 @@ import (
 )
 
 const (
-	// DefaultBaseURL is the OpenAI API v1 base URL, used when BaseURL is empty.
-	DefaultBaseURL = "https://api.openai.com/v1"
-
-	// DefaultModel is the model used when none is specified.
-	DefaultModel = "gpt-4o"
+	DefaultBaseURL = "https://api.openai.com/v1" // used when no base URL is given
+	DefaultModel   = "gpt-4o"                    // used when no model is given
 )
 
 // Client is a streaming OpenAI Chat Completions client implementing ai.Provider.
-// Inject a custom HTTPClient and BaseURL to intercept calls in tests (feed
-// canned SSE bytes), exactly mirroring the anthropic.Client pattern.
+// Tests point HTTPClient and BaseURL at canned SSE responses.
 type Client struct {
 	APIKey     string
 	BaseURL    string
@@ -36,9 +31,8 @@ type Client struct {
 	HTTPClient *http.Client
 }
 
-// New returns a Client with the given parameters and sensible defaults.
-// An empty baseURL uses DefaultBaseURL (https://api.openai.com/v1) — override
-// to point at any hosted OpenAI-compatible endpoint.
+// New returns a Client. Empty or zero arguments get the defaults:
+// DefaultBaseURL, DefaultModel, 4096 max tokens and http.DefaultClient.
 func New(apiKey, baseURL, model string, maxTokens int, httpClient *http.Client) *Client {
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
@@ -61,12 +55,9 @@ func New(apiKey, baseURL, model string, maxTokens int, httpClient *http.Client) 
 	}
 }
 
-// Stream implements ai.Provider. It converts the neutral conversation history
-// and tool definitions to OpenAI Chat Completions format, calls the streaming
-// endpoint, and emits normalized ai.Event values.
-//
-// "tool" role messages (tool_result turns) are converted to OpenAI role="tool"
-// messages directly (no remapping required).
+// Stream implements ai.Provider: it converts the history and tools to Chat
+// Completions format, streams the response and emits ai.Event values. "tool"
+// messages map to OpenAI's own tool role.
 func (c *Client) Stream(ctx context.Context, system string, messages []ai.Message, tools []ai.ToolDef) (<-chan ai.Event, <-chan error) {
 	out := make(chan ai.Event, 64)
 	errC := make(chan error, 1)
@@ -133,17 +124,17 @@ type openAIRequest struct {
 // nil marshals to JSON null (required for assistant turns that only have
 // tool_calls and no text content).
 type openAIMessage struct {
-	Role       string          `json:"role"`
-	Content    *string         `json:"content"`
-	ToolCalls  []openAICallDef `json:"tool_calls,omitempty"`
+	Role       string          `json:"role"`                   // "system", "user", "assistant" or "tool"
+	Content    *string         `json:"content"`                // nil for an assistant turn with only tool calls
+	ToolCalls  []openAICallDef `json:"tool_calls,omitempty"`   // the assistant's tool calls
 	ToolCallID string          `json:"tool_call_id,omitempty"` // role=tool only
 }
 
 type openAICallDef struct {
-	ID       string `json:"id"`
+	ID       string `json:"id"`   // the tool call ID
 	Type     string `json:"type"` // always "function"
 	Function struct {
-		Name      string `json:"name"`
+		Name      string `json:"name"`      // the function name
 		Arguments string `json:"arguments"` // JSON string (not object)
 	} `json:"function"`
 }
@@ -151,9 +142,9 @@ type openAICallDef struct {
 type openAITool struct {
 	Type     string `json:"type"` // always "function"
 	Function struct {
-		Name        string          `json:"name"`
-		Description string          `json:"description"`
-		Parameters  json.RawMessage `json:"parameters"` // same schema as InputSchema
+		Name        string          `json:"name"`        // the function name
+		Description string          `json:"description"` // what the function does
+		Parameters  json.RawMessage `json:"parameters"`  // same schema as InputSchema
 	} `json:"function"`
 }
 
@@ -173,7 +164,7 @@ type openAIDelta struct {
 }
 
 type openAICallDelta struct {
-	Index    int    `json:"index"`
+	Index    int    `json:"index"`          // which tool call this delta belongs to
 	ID       string `json:"id,omitempty"`   // only in the first delta for this index
 	Type     string `json:"type,omitempty"` // only in the first delta
 	Function struct {

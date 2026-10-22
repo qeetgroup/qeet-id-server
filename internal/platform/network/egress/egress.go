@@ -17,6 +17,7 @@ import (
 	"time"
 )
 
+// Resolver looks up a host's IP addresses; *net.Resolver satisfies it.
 type Resolver interface {
 	LookupIP(ctx context.Context, network, host string) ([]net.IP, error)
 }
@@ -25,6 +26,9 @@ type dialer interface {
 	DialContext(ctx context.Context, network, address string) (net.Conn, error)
 }
 
+// Options configures NewPolicy. AllowedPrivate lists non-public prefixes that
+// are still reachable, AllowInsecure permits http and ldap, and AllowAllPrivate
+// skips the address check. A nil Resolver or Dialer uses the net defaults.
 type Options struct {
 	Resolver        Resolver
 	AllowedPrivate  []netip.Prefix
@@ -38,6 +42,8 @@ type Options struct {
 	ProxyURL *url.URL
 }
 
+// Policy decides which outbound destinations are allowed, and builds HTTP
+// clients and dialers that enforce it.
 type Policy struct {
 	resolver        Resolver
 	allowedPrivate  []netip.Prefix
@@ -47,6 +53,7 @@ type Policy struct {
 	proxyURL        *url.URL
 }
 
+// NewPolicy returns a Policy configured by options.
 func NewPolicy(options Options) *Policy {
 	resolver := options.Resolver
 	if resolver == nil {
@@ -66,6 +73,8 @@ func NewPolicy(options Options) *Policy {
 	}
 }
 
+// PublicPolicy returns optional[0] if given and non-nil, else the default
+// policy: https and ldaps to public addresses only.
 func PublicPolicy(optional ...*Policy) *Policy {
 	if len(optional) > 0 && optional[0] != nil {
 		return optional[0]
@@ -73,14 +82,20 @@ func PublicPolicy(optional ...*Policy) *Policy {
 	return NewPolicy(Options{})
 }
 
+// DevelopmentPolicy also allows http, ldap and non-public addresses, for local
+// development.
 func DevelopmentPolicy() *Policy {
 	return NewPolicy(Options{AllowInsecure: true, AllowAllPrivate: true})
 }
 
+// ValidateHTTPURL parses raw and checks it is an allowed http(s) destination:
+// absolute, without userinfo or a fragment, not a local or ambiguous numeric
+// host, and not a disallowed IP literal. Host names are not resolved here.
 func (p *Policy) ValidateHTTPURL(raw string) (*url.URL, error) {
 	return p.validateURL(raw, map[string]struct{}{"https": {}, "http": {}})
 }
 
+// ValidateLDAPURL is ValidateHTTPURL for ldap and ldaps URLs.
 func (p *Policy) ValidateLDAPURL(raw string) (*url.URL, error) {
 	return p.validateURL(raw, map[string]struct{}{"ldaps": {}, "ldap": {}})
 }
@@ -179,11 +194,15 @@ func (p *Policy) resolveAllowed(ctx context.Context, host string) ([]net.IP, err
 	return ips, nil
 }
 
+// ValidateHost resolves host and returns an error unless every address it
+// resolves to is allowed.
 func (p *Policy) ValidateHost(ctx context.Context, host string) error {
 	_, err := p.resolveAllowed(ctx, host)
 	return err
 }
 
+// DialContext resolves address, refuses it unless every resolved IP is allowed,
+// then dials those IPs in turn, so the checked address is the one connected to.
 func (p *Policy) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
@@ -204,6 +223,8 @@ func (p *Policy) DialContext(ctx context.Context, network, address string) (net.
 	return nil, lastErr
 }
 
+// CheckRedirect is an http.Client CheckRedirect that stops after 5 redirects
+// and validates each target, resolving its host unless a proxy is configured.
 func (p *Policy) CheckRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= 5 {
 		return errors.New("too many outbound redirects")
@@ -219,14 +240,15 @@ func (p *Policy) CheckRedirect(req *http.Request, via []*http.Request) error {
 	return err
 }
 
+// HTTPClient returns a client with timeout that dials only allowed addresses,
+// or sends everything through Options.ProxyURL when set; ambient proxy
+// variables are ignored.
 func (p *Policy) HTTPClient(timeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if p.proxyURL != nil {
-		// The proxy opens the destination connection, so pinning here would
-		// only re-validate the proxy's own address — and reject it whenever the
-		// proxy sits on a private network, which is the usual deployment. URL
-		// validation still runs on every request and redirect; enforcing the
-		// address policy becomes the proxy's job.
+		// The proxy opens the destination connection, so pinning here would only
+		// check the proxy's own, usually private, address. URLs are still validated;
+		// the proxy enforces the address policy.
 		transport.Proxy = http.ProxyURL(p.proxyURL)
 	} else {
 		transport.Proxy = nil

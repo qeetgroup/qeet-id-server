@@ -1,6 +1,6 @@
-// Package invite lets a tenant admin invite an email address into a
-// tenant with a pre-assigned role. The invitee follows the link, creates
-// their account, and the invite is consumed in the same transaction.
+// Package invite lets a tenant admin invite an email address into a tenant with
+// a pre-assigned role. The invitee accepts by link, either creating an account
+// or, when signed in, joining with their existing one.
 package invite
 
 import (
@@ -66,20 +66,18 @@ type CreateInput struct {
 	RoleID   *uuid.UUID `json:"role_id"`
 }
 
+// Service manages invitations. Until SetPasswordRules is called Accept refuses
+// with 501 rather than set an unchecked password; without SetPlanLimiter there
+// is no seat limit.
 type Service struct {
 	pool       *pgxpool.Pool
 	q          *dbgen.Queries
 	sender     notifier.Sender
 	ttl        time.Duration
 	baseAppURL string
-	// rules checks the invitee's password on Accept (nil = Accept is refused
-	// rather than set an unchecked password). Set via SetPasswordRules.
-	rules PasswordRules
-	// limits gates invite creation by the plan seat limit (nil = off).
-	limits PlanLimiter
-	// methods says which ways of accepting an organisation allows (nil = a
-	// password only). Set via SetAcceptMethods; see passkey.go.
-	methods AcceptMethods
+	rules      PasswordRules
+	limits     PlanLimiter
+	methods    AcceptMethods
 }
 
 func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, baseAppURL string) *Service {
@@ -97,18 +95,16 @@ type PasswordRules interface {
 	ValidateForTenant(ctx context.Context, tenantID uuid.UUID, email, pw string) error
 }
 
-// SetPasswordRules wires the password check run on Accept. Called from
-// internal/bootstrap/dependencies.go.
+// SetPasswordRules sets the password check Accept runs.
 func (s *Service) SetPasswordRules(r PasswordRules) { s.rules = r }
 
-// PlanLimiter returns the numeric cap for a plan-gated resource (negative =
-// unlimited). Satisfied by operations/entitlements.Service, injected via
-// SetPlanLimiter.
+// PlanLimiter returns the cap for a plan-gated resource (negative means
+// unlimited). Satisfied by *entitlements.Service.
 type PlanLimiter interface {
 	Limit(ctx context.Context, tenantID uuid.UUID, resource string) (int, error)
 }
 
-// SetPlanLimiter wires the seat-limit checker (nil disables the gate).
+// SetPlanLimiter sets the seat-limit checker (nil disables the limit).
 func (s *Service) SetPlanLimiter(l PlanLimiter) { s.limits = l }
 
 // CountSeats returns the tenant's seats in use (members + pending invites) — the
@@ -224,11 +220,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UU
 	return &iv, raw, nil
 }
 
-// sendInviteEmail delivers the accept link. A failure does not fail the
-// request — the invite row exists and the admin can resend or copy the
-// returned token — but is logged and returned, so the response says the email
-// didn't go (Invite.Delivery). Delivery to unverified recipients fails while
-// Amazon SES is in sandbox mode.
+// sendInviteEmail emails the accept link. A failure is logged and returned, for
+// Invite.Delivery, but doesn't fail the request: the invite exists and the admin
+// can resend it or share the link.
 func (s *Service) sendInviteEmail(ctx context.Context, tenantID, inviteID uuid.UUID, email, rawToken string) error {
 	inviteURL := fmt.Sprintf("%s/invite/accept?token=%s", s.baseAppURL, rawToken)
 	if err := s.sender.Send(ctx, notifier.Message{
@@ -301,7 +295,7 @@ func (s *Service) Revoke(ctx context.Context, tenantID, id uuid.UUID) error {
 
 type AcceptInput struct {
 	Token       string `json:"token" validate:"required"`
-	Password    string `json:"password" validate:"required,max=256"` // length + rules: checked in Accept
+	Password    string `json:"password" validate:"required,max=256"`
 	DisplayName string `json:"display_name" validate:"omitempty,max=200"`
 }
 
@@ -338,10 +332,9 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (*AcceptResult, er
 		return nil, errs.ErrInviteExpired
 	}
 
-	// Email is globally unique (migration 0022). If the invited address already
-	// has an account, the anonymous set-a-password path can't INSERT a new user
-	// row — that used to surface as an opaque unique-violation 500. Send the
-	// invitee to sign in and accept as themselves (AcceptAuthenticated).
+	// Email is globally unique (migration 0022), so an address that already has
+	// an account can't get a new one here: the invitee signs in and accepts as
+	// themselves (AcceptAuthenticated).
 	if _, err := qtx.FindUserIDByEmail(ctx, inv.Email); err == nil {
 		return nil, errs.ErrInviteAccountExists
 	} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -487,10 +480,8 @@ type pendingInvite struct {
 	ExpiresAt time.Time
 }
 
-// AcceptAuthenticated lets an already signed-in user join the invited tenant
-// with their existing account (via the emailed token) — no new user row, no
-// password. The path for a user who signed up first (tenant-less) and only
-// then opened an invite link.
+// AcceptAuthenticated lets a signed-in user join the invited tenant with their
+// existing account, using the emailed token: no new user and no password.
 func (s *Service) AcceptAuthenticated(ctx context.Context, userID uuid.UUID, token string) (*AcceptResult, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

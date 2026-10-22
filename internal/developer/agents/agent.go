@@ -46,7 +46,7 @@ func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer}
 }
 
-// SetEmitter wires the webhook event emitter (called from internal/bootstrap).
+// SetEmitter sets the webhook event emitter; nil emits nothing.
 func (s *Service) SetEmitter(e EventEmitter) { s.emitter = e }
 
 // Pool exposes the connection pool for the handler's audit writes.
@@ -59,8 +59,7 @@ func (s *Service) emit(ctx context.Context, tenantID uuid.UUID, eventType string
 	_ = s.emitter(ctx, tenantID, eventType, payload) // best-effort
 }
 
-// AgentStatus returns an agent's current lifecycle status. Used by the auth
-// middleware to deny suspended/decommissioned agents' tokens on every request.
+// AgentStatus returns an agent's current lifecycle status, or ErrAgentNotFound.
 func (s *Service) AgentStatus(ctx context.Context, agentID uuid.UUID) (string, error) {
 	status, err := s.q.GetAgentStatusByID(ctx, agentID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -171,21 +170,20 @@ func (s *Service) TransitionWithActor(ctx context.Context, id, tenantID uuid.UUI
 	return s.transition(ctx, id, tenantID, target, actor)
 }
 
+// Agent is an AI-agent identity. Status is active, suspended or decommissioned;
+// Disabled mirrors Status != "active" for older clients. SponsorUserID is the
+// person accountable for it (required for new agents, nil on older ones), and
+// Secret, the plaintext credential, is returned only on create.
 type Agent struct {
-	ID              uuid.UUID `json:"id"`
-	Name            string    `json:"name"`
-	Scopes          []string  `json:"scopes"`
-	TokenTTLSeconds int       `json:"token_ttl_seconds"`
-	// Status is the lifecycle state: active | suspended | decommissioned.
-	Status string `json:"status"`
-	// Disabled is retained for back-compat (true when Status != "active").
-	Disabled bool `json:"disabled"`
-	// SponsorUserID is the named human owner accountable for this agent — nil only
-	// for agents created before the sponsor model existed; new agents require one.
-	SponsorUserID *uuid.UUID `json:"sponsor_user_id,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	// Secret is the plaintext credential, returned only once on create.
-	Secret string `json:"secret,omitempty"`
+	ID              uuid.UUID  `json:"id"`
+	Name            string     `json:"name"`
+	Scopes          []string   `json:"scopes"`
+	TokenTTLSeconds int        `json:"token_ttl_seconds"`
+	Status          string     `json:"status"`
+	Disabled        bool       `json:"disabled"`
+	SponsorUserID   *uuid.UUID `json:"sponsor_user_id,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	Secret          string     `json:"secret,omitempty"`
 }
 
 // pgUUID converts a non-nil uuid.UUID to pgtype.UUID for sqlc params.
@@ -224,10 +222,8 @@ func newSecret() (string, error) {
 	return "agt_" + hex.EncodeToString(b), nil
 }
 
-// sponsorBelongsToTenant reports whether userID is a member of tenantID —
-// the same rbac.user_roles membership check auth.Service.SwitchTenant uses.
-// A sponsor must be an actual accountable member of the tenant, not just any
-// user row that happens to exist.
+// sponsorBelongsToTenant reports whether userID holds a role in tenantID: a
+// sponsor must be an accountable member of the tenant, not just any user.
 func (s *Service) sponsorBelongsToTenant(ctx context.Context, tenantID, userID uuid.UUID) (bool, error) {
 	return s.q.SponsorBelongsToTenant(ctx, dbgen.SponsorBelongsToTenantParams{
 		UserID:   userID,
@@ -360,11 +356,9 @@ func (s *Service) AgentsSponsoredBy(ctx context.Context, tenantID, userID uuid.U
 	return out, nil
 }
 
-// TransferSponsor reassigns every agent sponsored by fromUserID (within
-// tenantID) to toUserID in one statement — the offboarding operation: run
-// this before removing fromUserID's access so no agent is left with an owner
-// who can no longer be held accountable for it. toUserID must itself be a
-// member of the tenant. Returns the number of agents transferred.
+// TransferSponsor reassigns, in one statement, every agent fromUserID sponsors
+// in tenantID to toUserID, who must be a tenant member, and returns how many
+// moved. Run it before removing fromUserID's access when offboarding.
 func (s *Service) TransferSponsor(ctx context.Context, tenantID, fromUserID, toUserID uuid.UUID) (int, error) {
 	return s.TransferSponsorWithActor(ctx, tenantID, fromUserID, toUserID, audit.Actor{Type: "system"})
 }

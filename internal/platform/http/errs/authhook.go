@@ -1,10 +1,6 @@
 package errs
 
-// Auth-hook error codes — stable, namespaced machine identifiers for the
-// internal/developer/auth-hooks domain. Clients branch and localize on these
-// (never on the message text). Once shipped, a code MUST NOT change. Every
-// identifier is prefixed with the `authhook` domain so it never collides with
-// another bounded context.
+// Auth hook error codes.
 const (
 	CodeAuthHookNotFound       = "authhook.not_found"
 	CodeAuthHookDenied         = "authhook.denied"

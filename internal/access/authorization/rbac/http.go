@@ -13,13 +13,13 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
+// Handler serves the RBAC routes. Decider answers GET /v1/check across every
+// engine, so an attribute (ABAC) deny refuses there as everywhere else.
 type Handler struct {
 	Repo     *Repository
 	Service  *Service
 	Validate *validator.Validate
-	// Decider answers GET /v1/check across every engine, so an attribute
-	// (ABAC) deny refuses there as at every other enforcement point.
-	Decider *decide.Decider
+	Decider  *decide.Decider
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -43,11 +43,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/check", h.check)
 }
 
-// requirePathTenant enforces that the {tenantID} in the path matches the
-// caller's own JWT tenant scope, returning 403 on mismatch (QID-18). Mirrors
-// the identical guard in the rebac/authpolicy/threat/ipallow handlers — the
-// RBAC handlers previously parsed the path tenant and trusted it unverified,
-// letting a tenant admin read/write another tenant's roles and assignments.
+// requirePathTenant returns the path's {tenantID} if it is the caller's own
+// tenant and 403 otherwise, so an admin can't reach another tenant's roles and
+// assignments by editing the URL.
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
 	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
@@ -63,11 +61,9 @@ func requirePathTenant(r *http.Request) (uuid.UUID, error) {
 	return scope, nil
 }
 
-// scopedRole parses the {roleID} path param and enforces the role belongs to
-// the caller's own tenant, returning ErrNotFound on cross-tenant access. The
-// role-permission routes carry only a roleID (no tenantID), so without this a
-// tenant admin could grant/revoke/read another tenant's role permissions if
-// they knew the role id (QID-18).
+// scopedRole returns the path's {roleID} if the role belongs to the caller's
+// tenant. These routes carry no tenant, so another tenant's role is
+// ErrNotFound, the same as a missing one, and role IDs can't be probed.
 func (h *Handler) scopedRole(r *http.Request) (uuid.UUID, error) {
 	roleID, err := uuid.Parse(chi.URLParam(r, "roleID"))
 	if err != nil {
@@ -280,11 +276,10 @@ func (h *Handler) effective(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"permissions": keys})
 }
 
-// check authorizes an action through the composed decision (decide.Decider):
-// an attribute (ABAC) deny refuses, a role or an attribute allow permits. It
-// returns {"allowed": bool, "decided_by": {"model", "rule"}}. With the opt-in
-// query flag explain=true it adds the role grant paths, a reason on denial and
-// the decision's trace.
+// check answers GET /v1/check with the composed decision (decide.Decider):
+// {"allowed", "decided_by": {"model", "rule"}}, ABAC detail shown only to a
+// caller who may read policies. explain=true adds the role grant paths, a
+// reason on denial and the decision's trace.
 func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	uid, err := uuid.Parse(q.Get("user_id"))
@@ -297,9 +292,8 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenant_id"))
 		return
 	}
-	// The tenant_id is caller-supplied via query; verify it matches the caller's
-	// own JWT tenant so /check can't be used as a cross-tenant permission oracle
-	// (QID-18).
+	// tenant_id comes from the query, so it must be the caller's own tenant, or
+	// /check would be a cross-tenant permission oracle.
 	if scope, serr := httpx.RequireTenant(r); serr != nil {
 		httpx.WriteError(w, r, serr)
 		return

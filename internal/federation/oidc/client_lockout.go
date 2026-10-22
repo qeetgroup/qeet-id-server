@@ -29,8 +29,7 @@ func DefaultClientLockout() ClientLockout {
 	return ClientLockout{Threshold: 10, Window: 15 * time.Minute, Duration: 15 * time.Minute}
 }
 
-// SetClientLockout sets the application secret lockout. Called from
-// internal/bootstrap/dependencies.go.
+// SetClientLockout sets the application secret lockout.
 func (s *Service) SetClientLockout(l ClientLockout) { s.lockout = l }
 
 // clientLocked reports whether a lockout is in force for the application. A

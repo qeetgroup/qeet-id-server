@@ -1,7 +1,6 @@
-// Package group provides org/team hierarchy inside a tenant. Group-level
-// permission grants are out of scope for now (RBAC stays user-level); the model
-// just captures the shape ahead of need. Mutating methods own their transaction
-// and write the audit row in the same tx, so the trail commits atomically.
+// Package group manages a tenant's group hierarchy, its members, group
+// templates and bulk import. Roles granted to groups belong to the rbac
+// package. Each mutation commits its audit row in the same transaction.
 package group
 
 import (
@@ -31,9 +30,7 @@ type Group struct {
 	Name        string     `json:"name"`
 	Description string     `json:"description"`
 	CreatedAt   time.Time  `json:"created_at"`
-	// MemberCount is populated by List only. Create/Update return a group that
-	// has just been written, where the count is either zero or unchanged, so
-	// they leave it at zero rather than paying for a second query.
+	// MemberCount is set by List only; Create and Update leave it zero.
 	MemberCount int `json:"member_count"`
 }
 
@@ -172,14 +169,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor)
 	return &g, nil
 }
 
-// List returns every group in the tenant with its member count.
-//
-// The count is a LEFT JOIN aggregate rather than a per-group query: the console
-// shows "members assigned" across the whole directory, and one round trip per
-// group would make that O(groups) requests for a single number.
-//
-// Raw SQL because sqlc isn't wired into the build here; fold this into
-// queries.sql (replacing ListGroups) at the next `sqlc generate`.
+// List returns every group in the tenant with its member count, counted in one
+// LEFT JOIN rather than a query per group. It is hand-written SQL because the
+// generated ListGroups has no member count.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Group, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT g.id, g.tenant_id, g.parent_id, g.name, g.description, g.created_at,
@@ -349,9 +341,7 @@ func (s *Service) RemoveMember(ctx context.Context, groupID, userID, tenantID uu
 	return tx.Commit(ctx)
 }
 
-// Member is a group_members row enriched with the user's email +
-// display_name so the admin UI can render meaningful rows without a
-// per-member follow-up call.
+// Member is a group member with the user's email and display name.
 type Member struct {
 	UserID      uuid.UUID `json:"user_id"`
 	Email       string    `json:"email"`

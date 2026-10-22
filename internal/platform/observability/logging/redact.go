@@ -6,6 +6,7 @@ import (
 	"strings"
 )
 
+// RedactedValue replaces the value of a sensitive log attribute.
 const RedactedValue = "[REDACTED]"
 
 // sensitiveKeys are attribute keys whose values are fully replaced with
@@ -62,15 +63,14 @@ var partialKeys = map[string]func(string) string{
 	"phone_number": maskPhone,
 }
 
-// RedactingHandler wraps another slog.Handler and masks sensitive attribute
-// values before they reach the underlying handler. It redacts at the
-// attribute-key level — sensitive data nested inside arbitrary structs
-// passed via slog.Any is not reached. Callers logging structs should
-// implement slog.LogValuer to emit pre-redacted attrs.
+// RedactingHandler wraps a slog.Handler and masks sensitive attribute values by
+// key. It doesn't reach into structs passed with slog.Any; such types should
+// implement slog.LogValuer and emit redacted attrs.
 type RedactingHandler struct {
 	next slog.Handler
 }
 
+// NewRedactingHandler returns a RedactingHandler that writes to next.
 func NewRedactingHandler(next slog.Handler) *RedactingHandler {
 	return &RedactingHandler{next: next}
 }

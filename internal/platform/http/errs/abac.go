@@ -1,9 +1,6 @@
 package errs
 
-// ABAC (attribute-based access control) error codes — stable, namespaced
-// machine identifiers for policy validation and management. Clients branch and
-// localize on these, never on the message text. Once shipped, a code MUST NOT
-// change.
+// ABAC (attribute-based access control) policy error codes.
 const (
 	CodeABACNameRequired         = "abac.name_required"
 	CodeABACEffectInvalid        = "abac.effect_invalid"
@@ -22,7 +19,5 @@ var (
 	ErrABACActionRequired       = New(CodeABACActionRequired, "Specify the action this policy applies to.")
 	ErrABACConditionInvalid     = New(CodeABACConditionInvalid, "The policy condition is invalid.")
 	ErrABACPolicyNameExists     = New(CodeABACPolicyNameExists, "A policy with that name already exists.")
-	// ErrABACPolicyLocksOut: the deny policy would stop its own author changing
-	// policies, leaving nobody able to remove it.
-	ErrABACPolicyLocksOut = New(CodeABACPolicyLocksOut, "This deny policy would stop you changing policies, so nobody could undo it. Narrow its condition so it doesn't match you, or limit it to other resources or actions.")
+	ErrABACPolicyLocksOut       = New(CodeABACPolicyLocksOut, "This deny policy would stop you changing policies, so nobody could undo it. Narrow its condition so it doesn't match you, or limit it to other resources or actions.")
 )

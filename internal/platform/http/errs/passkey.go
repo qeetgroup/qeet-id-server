@@ -31,17 +31,9 @@ var (
 	ErrPasskeyNoCredentials      = New(CodePasskeyNoCredentials, "No passkeys are registered for this account.")
 	ErrPasskeyMFAFailed          = New(CodePasskeyMFAFailed, "Passkey verification failed. Please try again.")
 	ErrPasskeyCeremonyFailed     = New(CodePasskeyCeremonyFailed, "We couldn't start the passkey process. Please try again.")
-	// ErrPasskeyCloneDetected is returned when the authenticator's signature
-	// counter fails to advance, which indicates the credential's private key
-	// may have been extracted and cloned. The message is deliberately vague to
-	// the end user; the detail is in the server log.
-	ErrPasskeyCloneDetected = New(CodePasskeyCloneDetected,
-		"We couldn't verify that passkey. Please contact your administrator.")
-	// ErrPasskeyDisabled is returned when the user's organization has passkeys
-	// switched off (auth policy passkey_enabled), so no passkey can be added.
-	ErrPasskeyDisabled = New(CodePasskeyDisabled, "Your organization has turned off passkeys.")
-	// ErrPasskeyBrowserMismatch refuses finishing a hosted passkey sign-in in a
-	// browser that didn't begin the ceremony.
+	ErrPasskeyCloneDetected      = New(CodePasskeyCloneDetected,
+		"We couldn't verify that passkey. Please contact your administrator.") // signature counter didn't advance; vague on purpose
+	ErrPasskeyDisabled        = New(CodePasskeyDisabled, "Your organization has turned off passkeys.")
 	ErrPasskeyBrowserMismatch = New(CodePasskeyBrowserMismatch,
 		"This passkey sign-in was started in a different browser. Please start again here.").AsRetryable()
 )

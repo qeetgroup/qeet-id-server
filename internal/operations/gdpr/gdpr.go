@@ -1,6 +1,7 @@
-// Package gdpr handles right-to-erasure requests. A request enters with
-// a grace period; a background job purges PII once the grace expires.
-// PII is replaced with a redacted marker so audit references remain intact.
+// Package gdpr handles data-subject rights: erasure requests with a grace
+// period, data exports, self-service account deletion and export, and SOC 2 and
+// ISO 27001 compliance evidence. Erasure redacts PII in place, so audit
+// references stay intact.
 package gdpr
 
 import (
@@ -22,6 +23,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
+// Request is a right-to-erasure request.
 type Request struct {
 	ID          uuid.UUID  `json:"id"`
 	TenantID    uuid.UUID  `json:"tenant_id"`
@@ -34,19 +36,18 @@ type Request struct {
 	CreatedAt   time.Time  `json:"created_at"`
 }
 
+// Service handles erasure and data-export requests; Run is its background
+// sweeper. Until SetSessionSignals is called, ended sessions are not announced.
 type Service struct {
 	pool     *pgxpool.Pool
 	q        *dbgen.Queries
 	grace    time.Duration
 	workerID uuid.UUID
 	lease    time.Duration
-	// signals announces the sessions an erasure ends (nil = announces
-	// nothing). Set via SetSessionSignals.
-	signals *sessionsignal.Signaller
+	signals  *sessionsignal.Signaller
 }
 
-// SetSessionSignals wires the announcement of ended sessions. Called from
-// internal/bootstrap/dependencies.go.
+// SetSessionSignals sets where the sessions an erasure ends are announced.
 func (s *Service) SetSessionSignals(sig *sessionsignal.Signaller) { s.signals = sig }
 
 // endSessions ends every session of the account being erased and announces
@@ -60,6 +61,8 @@ func (s *Service) endSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID) 
 	return nil
 }
 
+// NewService returns a Service whose erasure requests wait grace (30 days if
+// grace <= 0) before the purge.
 func NewService(pool *pgxpool.Pool, grace time.Duration) *Service {
 	if grace <= 0 {
 		grace = 30 * 24 * time.Hour
@@ -67,6 +70,7 @@ func NewService(pool *pgxpool.Pool, grace time.Duration) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), grace: grace, workerID: uuid.New(), lease: 15 * time.Minute}
 }
 
+// CreateInput is an erasure request to file.
 type CreateInput struct {
 	TenantID uuid.UUID  `json:"tenant_id"`
 	UserID   uuid.UUID  `json:"user_id"`
@@ -74,6 +78,9 @@ type CreateInput struct {
 	By       *uuid.UUID `json:"-"`
 }
 
+// Request files an erasure request for a user whose home tenant is
+// in.TenantID; other users return errs.ErrNotFound. The purge runs once the
+// grace period ends.
 func (s *Service) Request(ctx context.Context, in CreateInput) (*Request, error) {
 	owned, err := s.userBelongsToTenant(ctx, in.UserID, in.TenantID)
 	if err != nil {
@@ -82,8 +89,8 @@ func (s *Service) Request(ctx context.Context, in CreateInput) (*Request, error)
 	if !owned {
 		return nil, errs.ErrNotFound
 	}
-	// grace_until is pre-computed here (instead of NOW() + $5::interval) to
-	// avoid the pgtype.Interval parameter type mismatch in sqlc-generated code.
+	// grace_until is computed in Go rather than as NOW() + interval, whose sqlc
+	// parameter type is ambiguous.
 	var reason *string
 	if in.Reason != "" {
 		reason = &in.Reason
@@ -101,12 +108,9 @@ func (s *Service) Request(ctx context.Context, in CreateInput) (*Request, error)
 	return purgeRequestFromRow(dbgen.ListPurgeRequestsRow(row)), nil
 }
 
-// userBelongsToTenant keys off users.tenant_id — the user's home tenant —
-// rather than rbac.user_roles membership, which is what OIDC authorization
-// uses. The two answers differ for a guest who holds a role in another tenant,
-// and that difference is deliberate: erasure is destructive and irreversible,
-// so only the tenant that owns the record may order it. A tenant the user
-// merely has a role in can revoke that role, not delete the person.
+// userBelongsToTenant reports whether tenantID is the user's home tenant
+// (users.tenant_id), not merely one where the user holds a role. Erasure is
+// irreversible, so only the owning tenant may order it.
 func (s *Service) userBelongsToTenant(ctx context.Context, userID, tenantID uuid.UUID) (bool, error) {
 	var owned bool
 	err := s.pool.QueryRow(ctx, `
@@ -118,6 +122,8 @@ func (s *Service) userBelongsToTenant(ctx context.Context, userID, tenantID uuid
 	return owned, err
 }
 
+// Cancel cancels one of the tenant's pending erasure requests. It returns
+// errs.ErrNotFound if there is no such pending request.
 func (s *Service) Cancel(ctx context.Context, tenantID, id uuid.UUID) error {
 	ct, err := s.q.CancelPurgeRequest(ctx, dbgen.CancelPurgeRequestParams{ID: id, TenantID: tenantID})
 	if err != nil {
@@ -129,6 +135,7 @@ func (s *Service) Cancel(ctx context.Context, tenantID, id uuid.UUID) error {
 	return nil
 }
 
+// List returns the tenant's 200 most recent erasure requests, newest first.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Request, error) {
 	rows, err := s.q.ListPurgeRequests(ctx, tenantID)
 	if err != nil {
@@ -141,8 +148,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Request, erro
 	return out, nil
 }
 
-// purgeRequestFromRow maps a generated purge-request row to the domain
-// Request type.
+// purgeRequestFromRow converts a purge-request row to a Request.
 func purgeRequestFromRow(r dbgen.ListPurgeRequestsRow) *Request {
 	return &Request{
 		ID:          r.ID,
@@ -157,8 +163,8 @@ func purgeRequestFromRow(r dbgen.ListPurgeRequestsRow) *Request {
 	}
 }
 
-// Run is the background sweeper. It picks ripe purge requests and erases
-// PII from the user row + drops auth credentials. Audit rows are kept.
+// Run is the background sweeper. Every minute until ctx is done, it erases the
+// users whose grace period has ended and builds pending data exports.
 func (s *Service) Run(ctx context.Context) {
 	tk := time.NewTicker(time.Minute)
 	defer tk.Stop()
@@ -177,11 +183,10 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
-// Sweep runs a single purge pass over ripe requests — the same work Run does on
-// each tick. Exposed for ops-triggered purges and tests.
+// Sweep runs one purge pass, the work Run does on each tick.
 func (s *Service) Sweep(ctx context.Context) error { return s.tick(ctx) }
 
-// SweepExports claims and processes one export batch.
+// SweepExports claims and builds one batch of pending data exports.
 func (s *Service) SweepExports(ctx context.Context) error { return s.exportSweepTick(ctx) }
 
 func (s *Service) tick(ctx context.Context) error {
@@ -227,6 +232,8 @@ func (s *Service) tick(ctx context.Context) error {
 	return nil
 }
 
+// purgeOne erases the user of one leased request. If the user's home tenant
+// does not match the request's, the request is quarantined instead.
 func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -320,11 +327,9 @@ func (s *Service) purgeTenantUserData(ctx context.Context, tx pgx.Tx, qTx *dbgen
 	return nil
 }
 
-// purgeUserData replaces the user's PII with redacted markers and drops all
-// sign-in credentials (password, TOTP, recovery codes) + revokes sessions. The
-// user row is kept as a redacted tombstone and audit rows are left intact, so
-// historical events stay verifiable. Shared by the admin grace-period sweep and
-// self-service deletion.
+// purgeUserData ends the user's sessions, redacts their PII and deletes their
+// password, TOTP and recovery codes. The redacted user row and the audit rows
+// are kept, so past events stay verifiable.
 func (s *Service) purgeUserData(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
 	// Sessions first, announced before anything about the account is redacted.
 	if err := s.endSessions(ctx, tx, userID); err != nil {
@@ -346,9 +351,8 @@ func (s *Service) purgeUserData(ctx context.Context, tx pgx.Tx, userID uuid.UUID
 	return nil
 }
 
-// PurgeSelf immediately erases the current user's own PII and credentials — no
-// grace period. Backs the self-service "delete my account" action; audit
-// references are preserved (redacted), matching the admin erasure guarantees.
+// PurgeSelf erases the current user's PII and credentials at once, with no grace
+// period, for self-service account deletion. Audit references are kept.
 func (s *Service) PurgeSelf(ctx context.Context, userID uuid.UUID) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -361,8 +365,8 @@ func (s *Service) PurgeSelf(ctx context.Context, userID uuid.UUID) error {
 	return tx.Commit(ctx)
 }
 
-// ExportRequest is a queued/completed GDPR data-export job. Payload is filled
-// in by the background sweep (exportTick) once status flips to "ready".
+// ExportRequest is a data-export job. The background sweep (exportSweepTick)
+// fills in Payload and sets Status to "ready".
 type ExportRequest struct {
 	ID          uuid.UUID      `json:"id"`
 	TenantID    uuid.UUID      `json:"tenant_id"`
@@ -375,14 +379,15 @@ type ExportRequest struct {
 	CreatedAt   time.Time      `json:"created_at"`
 }
 
+// ExportInput is a data-export request to queue.
 type ExportInput struct {
 	TenantID uuid.UUID  `json:"tenant_id"`
 	UserID   uuid.UUID  `json:"user_id"`
 	By       *uuid.UUID `json:"-"`
 }
 
-// RequestExport queues a data-export job for a user. The background sweep
-// (exportTick) builds the payload asynchronously; poll GetExport for status.
+// RequestExport queues a data export for a user whose home tenant is
+// in.TenantID. The background sweep builds it; poll GetExport for the result.
 func (s *Service) RequestExport(ctx context.Context, in ExportInput) (*ExportRequest, error) {
 	owned, err := s.userBelongsToTenant(ctx, in.UserID, in.TenantID)
 	if err != nil {
@@ -410,7 +415,8 @@ func (s *Service) RequestExport(ctx context.Context, in ExportInput) (*ExportReq
 	}, nil
 }
 
-// ListExports returns a tenant's export requests, most recent first.
+// ListExports returns the tenant's 200 most recent export requests, newest
+// first, without payloads.
 func (s *Service) ListExports(ctx context.Context, tenantID uuid.UUID) ([]ExportRequest, error) {
 	rows, err := s.q.ListExportRequests(ctx, tenantID)
 	if err != nil {
@@ -432,7 +438,8 @@ func (s *Service) ListExports(ctx context.Context, tenantID uuid.UUID) ([]Export
 	return out, nil
 }
 
-// GetExport fetches one export request, including its payload once ready.
+// GetExport returns one of the tenant's export requests, with its payload once
+// ready.
 func (s *Service) GetExport(ctx context.Context, tenantID, id uuid.UUID) (*ExportRequest, error) {
 	r, err := s.q.GetExportRequest(ctx, dbgen.GetExportRequestParams{
 		ID:       id,
@@ -462,8 +469,8 @@ func (s *Service) GetExport(ctx context.Context, tenantID, id uuid.UUID) (*Expor
 	return out, nil
 }
 
-// exportSweepTick picks pending export requests and builds their payload.
-// Runs on the same ticker cadence as the purge sweep (see Run).
+// exportSweepTick leases up to 20 pending export requests and builds their
+// payloads, marking a request "failed" if building it fails.
 func (s *Service) exportSweepTick(ctx context.Context) error {
 	rows, err := s.pool.Query(ctx, `
 		WITH candidates AS (
@@ -569,12 +576,11 @@ type exportRole struct {
 	GrantedAt time.Time `json:"granted_at"`
 }
 
-// collectUserData assembles the GDPR-portable data for one user: profile,
-// sessions, passkey/MFA metadata (no secrets or credential material), and
-// role assignments. Password hashes, TOTP secrets, and recovery-code hashes
-// are deliberately excluded — they're credentials, not personal data.
+// collectUserData assembles one user's portable data in a tenant: profile,
+// sessions, passkeys, MFA status and roles. Credentials (password hashes, TOTP
+// secrets, recovery codes) are excluded.
 func (s *Service) collectUserData(ctx context.Context, tenantID, userID uuid.UUID) (map[string]any, error) {
-	// user.users.tenant_id is nullable → pgtype.UUID param.
+	// user.users.tenant_id is nullable, so it takes a pgtype.UUID.
 	profileRow, err := s.q.GetUserProfileForExport(ctx, dbgen.GetUserProfileForExportParams{
 		UserID:   userID,
 		TenantID: pgUUIDNullable(&tenantID),
@@ -592,7 +598,7 @@ func (s *Service) collectUserData(ctx context.Context, tenantID, userID uuid.UUI
 		CreatedAt:       profileRow.CreatedAt,
 	}
 
-	// auth.sessions.tenant_id is nullable (migration 0026) → pgtype.UUID param.
+	// auth.sessions.tenant_id is nullable, so it takes a pgtype.UUID.
 	sessRows, err := s.q.ListUserSessionsForExport(ctx, dbgen.ListUserSessionsForExportParams{
 		UserID:   userID,
 		TenantID: pgUUIDNullable(&tenantID),
@@ -644,8 +650,7 @@ func (s *Service) collectUserData(ctx context.Context, tenantID, userID uuid.UUI
 		roles = append(roles, exportRole{RoleName: r.RoleName, GrantedAt: r.GrantedAt})
 	}
 
-	// GetUserMFAStatus returns ErrNoRows when the user has no TOTP row — that
-	// means mfaEnabled is false (the zero value), which is correct.
+	// ErrNoRows means no TOTP factor, so mfaEnabled stays false.
 	mfaEnabled, err := s.q.GetUserMFAStatus(ctx, userID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
@@ -667,11 +672,9 @@ type exportSelfRole struct {
 	GrantedAt    time.Time `json:"granted_at"`
 }
 
-// ExportSelf assembles the GDPR-portable data for the *current* user, across all
-// their organizations and independent of any tenant scope (a self-service user
-// may be tenant-less, so this can't reuse the tenant-filtered admin queries).
-// Credential material — password hashes, TOTP secrets, recovery-code hashes — is
-// deliberately excluded. Returned synchronously so the caller can download it.
+// ExportSelf assembles the current user's portable data across all their
+// organizations, with no tenant scope: a self-service user may have no tenant.
+// Credentials are excluded.
 func (s *Service) ExportSelf(ctx context.Context, userID uuid.UUID) (map[string]any, error) {
 	var profile exportProfile
 	if err := s.pool.QueryRow(ctx, `
@@ -750,7 +753,7 @@ func (s *Service) ExportSelf(ctx context.Context, userID uuid.UUID) (map[string]
 		return nil, err
 	}
 
-	// ErrNoRows means no TOTP row → not enrolled (false zero value is correct).
+	// ErrNoRows means no TOTP factor, so mfaEnabled stays false.
 	mfaEnabled, err := s.q.GetUserMFAStatus(ctx, userID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
@@ -766,24 +769,25 @@ func (s *Service) ExportSelf(ctx context.Context, userID uuid.UUID) (map[string]
 	}, nil
 }
 
-// ReauthChecker re-verifies a caller's password before an irreversible action.
-// Injected from the auth service; nil disables the gate.
+// ReauthChecker re-verifies a user's password before an irreversible action.
+// hasPassword is false for an account without a password.
 type ReauthChecker interface {
 	ReauthPassword(ctx context.Context, userID uuid.UUID, plain string) (hasPassword, ok bool, err error)
 }
 
+// Handler serves the GDPR, self-service account and compliance evidence
+// endpoints. Reauth, when set, makes account deletion require the password of
+// an account that has one.
 type Handler struct {
 	Service  *Service
 	Evidence *EvidenceService
-	// Reauth gates account deletion behind a password re-prove (when the account
-	// has a password). Nil = gate off.
-	Reauth ReauthChecker
+	Reauth   ReauthChecker
 }
 
+// Mount registers the routes.
 func (h *Handler) Mount(r chi.Router) {
-	// Self-service (the current user acts on their own account, no tenant
-	// required) — mirrors /v1/me; not in the RBAC permission map, so any authed
-	// user passes through.
+	// Self-service: the signed-in user acts on their own account, and no tenant
+	// is required.
 	r.Post("/account/export", h.exportSelf)
 	r.Post("/account/delete", h.deleteSelf)
 
@@ -795,12 +799,12 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/gdpr/export", h.listExports)
 	r.Get("/tenants/{tenantID}/gdpr/export/{id}", h.getExport)
 
-	// Compliance evidence routes — SOC 2 and ISO 27001 live checks.
+	// SOC 2 and ISO 27001 compliance evidence.
 	h.mountEvidence(r)
 }
 
-// exportSelf returns the current user's own portable data as a downloadable
-// JSON document (synchronous — the payload is small). Self-service, no tenant.
+// exportSelf returns the current user's portable data as a downloadable JSON
+// document.
 func (h *Handler) exportSelf(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
@@ -816,23 +820,22 @@ func (h *Handler) exportSelf(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, data)
 }
 
-// deleteSelf immediately erases the current user's PII + credentials and revokes
-// their sessions (self-service "delete my account"). No grace period; audit
-// references are kept redacted. The caller is signed out client-side afterwards.
+// deleteSelfInput is the body of POST /account/delete.
 type deleteSelfInput struct {
 	Password string `json:"password"`
 }
 
+// deleteSelf erases the current user's PII and credentials at once and ends
+// their sessions. The client signs the user out afterwards.
 func (h *Handler) deleteSelf(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
 	}
-	// Re-prove identity before this irreversible purge: a stolen access token
-	// alone must not be enough. When the account has a password we require it;
-	// password-less (social/passkey) accounts are already strongly authenticated,
-	// so they pass on the session alone.
+	// A stolen access token alone must not delete the account: require the
+	// password when the account has one. Password-less (social or passkey)
+	// accounts pass on the session alone.
 	if h.Reauth != nil {
 		var in deleteSelfInput
 		_ = httpx.DecodeJSON(r, &in)
@@ -842,8 +845,8 @@ func (h *Handler) deleteSelf(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if hasPassword && !ok {
-			// 400 (not 401) so the client's session-expiry handling doesn't log the
-			// user out on a mistyped confirmation password.
+			// 400, not 401, so the client does not sign the user out over a mistyped
+			// password.
 			httpx.WriteError(w, r, errs.ErrBadRequest.WithMessage("Incorrect password."))
 			return
 		}
@@ -947,8 +950,8 @@ func (h *Handler) listExports(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
-// getExport returns the export request; once status is "ready" the response
-// includes the full payload with a Content-Disposition download header.
+// getExport returns an export request; once it is ready, the response carries
+// the payload and a Content-Disposition download header.
 func (h *Handler) getExport(w http.ResponseWriter, r *http.Request) {
 	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {

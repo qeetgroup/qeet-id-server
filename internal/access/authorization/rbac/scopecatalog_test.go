@@ -9,13 +9,10 @@ import (
 	"testing"
 )
 
-// TestBackfillMigrationMatchesBuiltinPermissions pins migration 0105's
-// compatibility scope list to builtinPermissionDefinitions.
-//
-// 0105 widens pre-enforcement machine credentials to the scopes they already
-// had in practice. If a permission is added here but not there, credentials
-// migrated by 0105 silently lack it; if one is removed here but left there,
-// ValidateMachineScopes rejects a credential the migration itself wrote.
+// TestBackfillMigrationMatchesBuiltinPermissions checks that migration 0105's
+// machine-scope backfill lists exactly builtinPermissionDefinitions. Otherwise
+// backfilled credentials lack a new permission, or ValidateMachineScopes
+// rejects a scope the migration wrote.
 func TestBackfillMigrationMatchesBuiltinPermissions(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {

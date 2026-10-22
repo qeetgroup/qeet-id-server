@@ -1,10 +1,8 @@
-// IdP side of SAML 2.0: Qeet ID acting as an identity provider (SSO source) for
-// downstream Service Providers — the inverse of saml.go. A tenant registers an SP
-// (EntityID + ACS URL); the SP sends users to /saml/idp/sso, we authenticate them
-// via the same hosted-login SSO cookie the OIDC provider uses, then sign a SAML
-// assertion and POST it to the SP's ACS. Assertions are signed RSA-SHA256 +
-// exclusive c14n via goxmldsig (broadest SP compatibility) — we never hand-roll XML-DSig.
 package saml
+
+// Qeet ID as a SAML identity provider: a tenant's registered SP sends the user to
+// /saml/idp/sso, the hosted-login SSO cookie authenticates them, and an assertion
+// signed with goxmldsig (RSA-SHA256, exclusive c14n) is POSTed to the SP's ACS.
 
 import (
 	"bytes"
@@ -66,7 +64,7 @@ const (
 type idpSigner struct {
 	key     *rsa.PrivateKey
 	certDER []byte
-	certB64 string // base64 DER, for metadata <X509Certificate>
+	certB64 string
 }
 
 func newIdPSigner(keyPEM, certPEM string) (*idpSigner, error) {
@@ -114,8 +112,8 @@ func (s *idpSigner) signingContext() (*dsig.SigningContext, error) {
 	return ctx, nil
 }
 
-// GenerateIdPKeyPEM mints a fresh RSA-2048 key + 10-year self-signed cert. Used
-// to bootstrap an ephemeral signing identity in dev when SAML_IDP_KEY is unset.
+// GenerateIdPKeyPEM mints a fresh RSA-2048 key and 10-year self-signed
+// certificate, for an ephemeral signing identity in development.
 func GenerateIdPKeyPEM(commonName string) (keyPEM, certPEM string, err error) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -168,20 +166,19 @@ type SessionResolver interface {
 	ResolveLoginSession(ctx context.Context, raw string) (uuid.UUID, error)
 }
 
-// IdP issues SAML assertions and manages the SP registry.
+// IdP issues SAML assertions and manages the SP registry. A nil gate leaves SP
+// creation ungated.
 type IdP struct {
 	pool         *pgxpool.Pool
 	q            *dbgen.Queries
 	signer       *idpSigner
 	sessions     SessionResolver
 	loginBaseURL string
-	// gate enforces the plan SSO feature on connection creation (nil = off).
-	gate PlanGate
+	gate         PlanGate
 }
 
 // PlanGate reports whether a plan-gated boolean feature is included in the
-// tenant's plan. Satisfied by operations/entitlements.Service, injected via
-// SetPlanGate so federation needn't import the plan packages.
+// tenant's plan. Satisfied by *entitlements.Service.
 type PlanGate interface {
 	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
 }
@@ -428,7 +425,7 @@ func (i *IdP) buildSignedResponse(idpEntity string, sp *ServiceProvider, acs, em
 		nidFormat = nameIDEmail
 	}
 
-	// --- Assertion (signed standalone, then embedded) ---
+	// --- Assertion (signed below, once inside the Response) ---
 	assertion := etree.NewElement("saml:Assertion")
 	assertion.CreateAttr("xmlns:saml", nsAssertion)
 	assertion.CreateAttr("Version", "2.0")
@@ -487,12 +484,8 @@ func (i *IdP) buildSignedResponse(idpEntity string, sp *ServiceProvider, acs, em
 	resp.CreateElement("samlp:Status").CreateElement("samlp:StatusCode").CreateAttr("Value", statusSuccess)
 	resp.AddChild(assertion)
 
-	// Sign the assertion in its FINAL position inside the Response, so the
-	// canonical form the SP validates matches exactly what we signed (signing a
-	// detached element then embedding it changes the namespace context and
-	// breaks verification). Then swap in the signed copy and move ds:Signature
-	// to immediately follow saml:Issuer (SAML schema order; the enveloped
-	// transform excludes the signature from its own digest, so this is safe).
+	// Sign the assertion in place inside the Response, so the canonical form the SP
+	// checks matches what was signed, then move ds:Signature after saml:Issuer.
 	ctx, err := i.signer.signingContext()
 	if err != nil {
 		return nil, err
@@ -510,13 +503,10 @@ func (i *IdP) buildSignedResponse(idpEntity string, sp *ServiceProvider, acs, em
 	return doc.WriteToBytes()
 }
 
-// moveSignatureAfterIssuer reorders the assertion's children so ds:Signature
-// immediately follows saml:Issuer (the SAML/XSD-mandated position that strict
-// SPs like ADFS require). It manipulates the exported Child token slice
-// directly: goxmldsig appends the signature with a raw slice append that leaves
-// etree's index bookkeeping stale, so RemoveChild/InsertChildAt would duplicate
-// it. The enveloped-signature transform excludes the signature from its own
-// digest, so moving it doesn't invalidate the signature.
+// moveSignatureAfterIssuer moves ds:Signature to just after saml:Issuer, where
+// the schema puts it and strict SPs such as ADFS require it. It edits el.Child
+// directly because goxmldsig leaves etree's child indexes stale. An enveloped
+// signature doesn't cover itself, so moving it keeps it valid.
 func moveSignatureAfterIssuer(el *etree.Element) {
 	sigIdx, issuerIdx := -1, -1
 	for i, tok := range el.Child {

@@ -62,12 +62,9 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 			raw := strings.TrimSpace(auth[len("bearer "):])
 			claims, err := v.Tokens.VerifyAccess(raw)
 			if err != nil {
-				// Wrap, not WithDetail. The verification error embeds header
-				// values the caller chose (notably an unknown `kid`, echoed
-				// verbatim) and distinguishes "unknown kid" / "retired key" /
-				// "expired" / "issuer mismatch" — an oracle that maps our key
-				// rotation state for an unauthenticated caller. The cause is
-				// logged by WriteError; the client gets a bare 401.
+				// Wrap, not WithDetail: the cause echoes caller-chosen header
+				// values (such as an unknown kid) and would reveal our
+				// key-rotation state. WriteError logs it; the client gets a 401.
 				w.Header().Set("WWW-Authenticate", `Bearer realm="qeet", error="invalid_token"`)
 				WriteError(w, r, errs.ErrUnauthorized.Wrap(err))
 				return
@@ -120,13 +117,10 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 	}
 }
 
-// EnforceTenantScope rejects any request whose matched route carries a
-// {tenantID} path param that isn't the authenticated caller's own tenant.
-// Mounted once on the authed route group, it closes the entire class of
-// cross-tenant "trust the path tenant" bugs (QID-18) centrally, so a handler
-// physically cannot serve another tenant's data even if it forgets to check.
-// Routes without a {tenantID} param (e.g. /users/{id}, /roles/{roleID}) pass
-// through untouched — those are scoped by their own handlers.
+// EnforceTenantScope rejects a request whose route has a {tenantID} path param
+// other than the caller's own tenant, so a handler can't serve another tenant's
+// data even if it forgets to check. Routes without the param pass through;
+// their handlers scope themselves.
 func EnforceTenantScope(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if pathTenant := chi.URLParam(r, "tenantID"); pathTenant != "" {

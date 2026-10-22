@@ -1,10 +1,7 @@
-// Package qeetai is the AI qeetai inference service for the admin console.
-// It persists conversation and message history (tenant + user scoped), drives
-// the Anthropic tool-orchestration loop, and exposes the results over SSE.
-//
-// Security invariant: the qeetai NEVER executes a domain mutation. Tool calls
-// are emitted as SSE events; the browser executes them under the user's own
-// token so RBAC and audit are inherited, never bypassed.
+// Package qeetai serves the Qeet AI assistant for the admin console: it stores
+// each user's conversations, streams model turns over SSE and manages
+// per-tenant provider keys. The server never runs a tool; tool calls go to the
+// browser, which runs them under the user's own token.
 package qeetai
 
 import (
@@ -73,10 +70,8 @@ type ToolCallError struct {
 	Message string `json:"message"`
 }
 
-// serviceStore is the persistence interface consumed by Handler. *Service
-// satisfies it. Declared by the consumer (Handler) per Go's "accept interfaces,
-// return concretes" convention — this allows tests to inject stubs without a
-// live database connection.
+// serviceStore is the persistence Handler needs. *Service implements it, and
+// tests substitute a stub.
 type serviceStore interface {
 	Pool() *pgxpool.Pool
 	CreateConversation(ctx context.Context, tenantID, userID uuid.UUID, in CreateConversationInput) (*Conversation, error)
@@ -98,8 +93,8 @@ func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool)}
 }
 
-// Pool returns the underlying connection pool. Used by Handler for audit
-// recording, which needs to begin its own transaction outside the service layer.
+// Pool returns the underlying connection pool, for callers that record audit
+// events in their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 // CreateConversation inserts a new conversation for the given tenant+user.

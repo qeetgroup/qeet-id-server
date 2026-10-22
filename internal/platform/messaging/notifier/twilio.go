@@ -13,12 +13,11 @@ import (
 // TwilioSender delivers SMS via Twilio's REST API — a form-POST with HTTP basic
 // auth, no SDK. It handles the "sms" channel only.
 type TwilioSender struct {
-	AccountSID string
-	AuthToken  string
-	From       string
-	// BaseURL defaults to https://api.twilio.com; overridable for tests.
-	BaseURL string
-	Client  *http.Client
+	AccountSID string       // the Twilio account SID
+	AuthToken  string       // the Twilio auth token
+	From       string       // the sending phone number
+	BaseURL    string       // defaults to https://api.twilio.com; set by tests
+	Client     *http.Client // nil uses a client with a 10s timeout
 }
 
 func (s TwilioSender) Send(ctx context.Context, m Message) error {

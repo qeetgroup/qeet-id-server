@@ -10,23 +10,19 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// Service wraps the Repository so each mutation owns its transaction and writes
-// the audit row in the same tx — keeping the audit trail atomic with the change
-// and the HTTP handlers thin. Reads stay on the Repository.
+// Service runs each RBAC mutation in its own transaction with its audit row;
+// reads stay on the Repository. emitter sends token.claims_change webhook
+// events and limits caps custom roles by plan; nil turns either off.
 type Service struct {
-	repo *Repository
-	// emitter delivers token.claims_change signals to a tenant's webhook
-	// subscriptions (nil = emission off). Set via SetEmitter.
+	repo    *Repository
 	emitter EventEmitter
-	// limits gates custom-role creation by plan (nil = off). Set via SetPlanLimiter.
-	limits PlanLimiter
+	limits  PlanLimiter
 }
 
 func NewService(repo *Repository) *Service { return &Service{repo: repo} }
 
-// PlanLimiter returns the numeric cap for a plan-gated resource (negative =
-// unlimited). Satisfied by operations/entitlements.Service, injected via
-// SetPlanLimiter so rbac needn't import the plan packages.
+// PlanLimiter returns the cap for a plan-gated resource (negative: unlimited).
+// It is satisfied by operations/entitlements.Service.
 type PlanLimiter interface {
 	Limit(ctx context.Context, tenantID uuid.UUID, resource string) (int, error)
 }
@@ -34,21 +30,15 @@ type PlanLimiter interface {
 // SetPlanLimiter wires the plan-limit checker (nil disables the gate).
 func (s *Service) SetPlanLimiter(l PlanLimiter) { s.limits = l }
 
-// EventEmitter delivers a webhook-shaped event to a tenant's subscriptions.
-// Satisfied by *webhook.Service.Enqueue; kept as a func type (matching the
-// same pattern used by domains/access/authentication and
-// domains/developer/agents) so rbac doesn't import the webhooks package.
-// Wired via SetEmitter.
+// EventEmitter delivers a webhook event to a tenant's subscriptions, as the
+// webhooks service's Enqueue does, without rbac importing that package.
 type EventEmitter func(ctx context.Context, tenantID uuid.UUID, eventType string, payload any) error
 
-// SetEmitter wires webhook delivery for token.claims_change signals. Called
-// from internal/bootstrap/dependencies.go.
+// SetEmitter sets webhook delivery for token.claims_change events.
 func (s *Service) SetEmitter(e EventEmitter) { s.emitter = e }
 
-// emit is a best-effort webhook delivery — a failure here must never fail
-// the role change it's describing, so errors are swallowed silently. (rbac
-// has no logger dependency today; adding one for this alone isn't worth the
-// new import — Enqueue's own dispatcher logs delivery failures.)
+// emit delivers a webhook event, best effort: an error is ignored so it never
+// fails the role change it describes.
 func (s *Service) emit(ctx context.Context, tenantID uuid.UUID, eventType string, payload any) {
 	if s.emitter == nil {
 		return

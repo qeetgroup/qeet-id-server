@@ -8,9 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// failingPublisher fails the first N publish calls then succeeds. Used
-// to exercise the dispatcher's retry-then-DLQ path without standing up
-// a real Postgres.
+// failingPublisher fails its first failuresLeft publishes, then succeeds.
 type failingPublisher struct {
 	failuresLeft int
 	publishes    []string

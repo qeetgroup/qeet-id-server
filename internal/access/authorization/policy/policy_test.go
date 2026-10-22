@@ -6,9 +6,8 @@ import (
 	"time"
 )
 
-// TestDurationJSON: session bounds are written as duration strings the console
-// edits, and read back from those or from the nanoseconds earlier responses
-// carried.
+// TestDurationJSON checks that durations are written as strings the console
+// edits and read back from those or from nanoseconds.
 func TestDurationJSON(t *testing.T) {
 	for in, want := range map[time.Duration]string{
 		720 * time.Hour:  `"720h"`,
@@ -36,9 +35,9 @@ func TestDurationJSON(t *testing.T) {
 	}
 }
 
-// TestNormalizeFillsDefaultsAndRefusesOutOfRange: bounds left out take the
-// platform defaults, the idle timeout no longer than the maximum age; values
-// out of range are named.
+// TestNormalizeFillsDefaultsAndRefusesOutOfRange checks that omitted session
+// bounds take the platform defaults, with the idle timeout capped at the
+// maximum age, and that out-of-range values are named.
 func TestNormalizeFillsDefaultsAndRefusesOutOfRange(t *testing.T) {
 	r := &Repository{sessionMaxAge: 720 * time.Hour, sessionIdle: 24 * time.Hour}
 	p := Policy{PasswordMinLength: 8, PasswordComplexity: "standard", MFAEnforcement: "optional", SessionMaxAge: Duration(2 * time.Hour)}
@@ -61,9 +60,9 @@ func TestNormalizeFillsDefaultsAndRefusesOutOfRange(t *testing.T) {
 	}
 }
 
-// TestNormalizeStepUp: a policy that leaves the step-up window out gets five
-// minutes and every factor type; a window outside 1m–60m, an unknown factor
-// type or a repeated one is named.
+// TestNormalizeStepUp checks that an omitted step-up window becomes five
+// minutes with every factor type counted, and that a window outside 1m–60m or
+// an unknown or repeated factor type is named.
 func TestNormalizeStepUp(t *testing.T) {
 	r := &Repository{sessionMaxAge: 720 * time.Hour, sessionIdle: 24 * time.Hour}
 	base := func() Policy {

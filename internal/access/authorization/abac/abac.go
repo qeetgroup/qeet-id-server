@@ -1,27 +1,7 @@
-// Package abac is the attribute-based access control (ABAC) engine for
-// Qeet ID. It stores per-tenant policies and evaluates them at request time.
-//
-// A policy pairs an effect (allow/deny) with a resource-type, an action, and
-// an optional condition tree. Conditions are recursive JSON trees:
-//
-//	{"all": [...nodes]}           AND — every child must be true
-//	{"any": [...nodes]}           OR  — at least one child must be true
-//	{"not": node}                 NOT — inverts the child
-//	{"attr":"subject.dept","op":"eq","value":"eng"}  comparison leaf
-//
-// Attribute paths use dot-notation with a leading namespace ("subject.*",
-// "resource.*", "context.*"). All thirteen operators are supported:
-// eq, ne, in, nin, contains, gt, gte, lt, lte, exists, prefix, suffix, regex.
-//
-// Decision algorithm (deny-wins):
-//  1. Collect all enabled policies whose resource_type and action match (exact
-//     or "*" wildcard), ordered by priority desc.
-//  2. Evaluate each policy's condition against the request attribute bag.
-//  3. If ANY matching policy has effect=deny → DENY (explicit deny wins).
-//  4. If ANY matching policy has effect=allow → ALLOW.
-//  5. Default → DENY.
-//
-// Mutating service methods write the audit row in the same tx as the change.
+// Package abac stores per-tenant attribute-based access control policies and
+// evaluates them deny-wins: among enabled policies for the resource type and
+// action (exact or "*"), a matching deny refuses, else a matching allow
+// permits, else the answer is deny. Conditions are JSON trees (EvaluateCondition).
 package abac
 
 import (
@@ -84,8 +64,8 @@ type CreateInput struct {
 	Enabled      bool            `json:"enabled"`
 }
 
-// UpdateInput carries the replacement fields for PATCH (all non-zero values
-// replace the existing row; the caller must send the full desired state).
+// UpdateInput is a policy's full replacement state for PATCH: every field,
+// zero or not, replaces the stored one.
 type UpdateInput struct {
 	Name         string          `json:"name"`
 	Description  string          `json:"description"`
@@ -112,16 +92,15 @@ type EvaluationInput struct {
 	Context  map[string]any     `json:"context"`
 }
 
-// Decision is the result of an Evaluate call.
+// Decision is the result of an Evaluate call. Trace lists, readably, each
+// policy evaluated and why; the evaluate endpoint returns it only with
+// ?explain=true.
 type Decision struct {
 	Allow           bool       `json:"allow"`
 	Effect          string     `json:"effect"`
 	MatchedPolicyID *uuid.UUID `json:"matched_policy_id,omitempty"`
 	Reason          string     `json:"reason,omitempty"`
-	// Trace is a human-readable grant-path explanation listing which policies
-	// were evaluated and why the decision was reached. Returned only when the
-	// caller requests ?explain=true, mirroring the rebac/authzen convention.
-	Trace []string `json:"trace,omitempty"`
+	Trace           []string   `json:"trace,omitempty"`
 }
 
 // Condition evaluator — pure functions, no I/O.
@@ -451,10 +430,10 @@ func evaluateNode(raw json.RawMessage, bag AttributeBag) (bool, error) {
 	}
 }
 
-// EvaluateCondition evaluates a condition tree against an attribute bag.
-// Returns (true, nil) on match, (false, nil) on non-match, and an error if
-// the condition tree is structurally invalid or uses an unknown operator.
-// On error, callers MUST default to DENY (fail-closed).
+// EvaluateCondition reports whether a condition tree holds for attrs. A node is
+// {"all": [...]}, {"any": [...]}, {"not": node} or a leaf {"attr":
+// "subject.dept", "op": "eq", "value": "eng"}; an empty tree holds. An error
+// means the tree is invalid, and callers must then deny (fail closed).
 func EvaluateCondition(node json.RawMessage, attrs AttributeBag) (bool, error) {
 	return evaluateNode(node, attrs)
 }
@@ -606,9 +585,8 @@ func locksOutAuthor(effect, resourceType, action string, enabled bool, cond json
 	return matched || err != nil
 }
 
-// PlanGate reports whether a plan-gated boolean feature is included in the
-// tenant's plan. Satisfied by operations/entitlements.Service, injected via
-// SetPlanGate.
+// PlanGate reports whether a plan-gated feature is in the tenant's plan. It is
+// satisfied by operations/entitlements.Service.
 type PlanGate interface {
 	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
 }
@@ -857,9 +835,9 @@ type candidate struct {
 	priority  int
 }
 
-// Evaluate selects all enabled policies matching the request and applies the
-// deny-wins algorithm. The returned Decision always has Allow set; Trace is
-// populated only when at least one policy was evaluated (or on default deny).
+// Evaluate applies tenantID's enabled policies for in's resource type and
+// action, highest priority first, deny-wins: a matching deny or a condition
+// that fails to evaluate refuses, else a matching allow permits, else deny.
 func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in EvaluationInput) (*Decision, error) {
 	if strings.TrimSpace(in.Action) == "" {
 		return nil, errs.ErrABACActionRequired

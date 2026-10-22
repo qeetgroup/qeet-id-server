@@ -37,11 +37,8 @@ func gracefulShutdown(
 	inFlightAtSignal := deps.InFlight.Count()
 	slog.Info("shutdown initiated", "in_flight", inFlightAtSignal)
 
-	// Each phase gets its OWN budget. Sharing one deadline across all three ran
-	// them serially against a single clock: a busy HTTP drain could consume the
-	// whole window, after which the worker drain saw an already-expired context
-	// and gave up with zero grace, and the tracer flush silently dropped every
-	// buffered span.
+	// Each phase gets its own timeout, so a slow HTTP drain can't use up the time
+	// for the worker drain and the tracer flush.
 	httpCtx, cancelHTTP := context.WithTimeout(context.Background(), httpDrainTimeout)
 	defer cancelHTTP()
 	if err := srv.Shutdown(httpCtx); err != nil {

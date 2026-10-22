@@ -7,8 +7,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// An update names only what changes, so a missing parent_id must not read as
-// "make it top-level"; only an explicit null does that.
+// TestUpdateInputTellsAMissingParentFromNull checks that UpdateInput tells a
+// missing parent_id (keep the parent) from an explicit null (make it top-level).
 func TestUpdateInputTellsAMissingParentFromNull(t *testing.T) {
 	id := uuid.New()
 	for _, c := range []struct {

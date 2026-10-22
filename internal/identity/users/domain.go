@@ -1,3 +1,6 @@
+// Package user manages user accounts and their membership of tenants: the
+// /users admin API and /me, bulk and vendor imports, suspension, and the User
+// 360 views.
 package user
 
 import (
@@ -53,7 +56,7 @@ type Deletion struct {
 type CreateInput struct {
 	TenantID    uuid.UUID      `json:"tenant_id" validate:"required"`
 	Email       string         `json:"email" validate:"required,email"`
-	Password    string         `json:"password" validate:"omitempty,max=256"` // length + rules: Handler.PasswordPolicy
+	Password    string         `json:"password" validate:"omitempty,max=256"`
 	DisplayName string         `json:"display_name" validate:"omitempty,max=200"`
 	Phone       string         `json:"phone" validate:"omitempty,e164"`
 	Metadata    map[string]any `json:"metadata"`
@@ -62,7 +65,7 @@ type CreateInput struct {
 // BulkUserInput is one row of a bulk user import (POST /v1/users/bulk).
 type BulkUserInput struct {
 	Email       string `json:"email" validate:"required,email"`
-	Password    string `json:"password" validate:"omitempty,max=256"` // length + rules: Handler.PasswordPolicy
+	Password    string `json:"password" validate:"omitempty,max=256"`
 	DisplayName string `json:"display_name" validate:"omitempty,max=200"`
 	Phone       string `json:"phone" validate:"omitempty,e164"`
 }
@@ -74,8 +77,8 @@ type BulkCreateInput struct {
 	Users    []BulkUserInput `json:"users" validate:"required,min=1,max=1000"`
 }
 
-// BulkImportError describes why a single row failed. Line is the 1-based index
-// of the row within the submitted `users` array.
+// BulkImportError describes why a single row failed. Line is the row's 1-based
+// position in the submitted users array or export file.
 type BulkImportError struct {
 	Line    int    `json:"line,omitempty"`
 	Email   string `json:"email,omitempty"`

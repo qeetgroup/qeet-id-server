@@ -6,11 +6,8 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai"
 )
 
-// Provider wraps Client to satisfy the ai.Provider interface. It converts the
-// neutral ai.Message/ai.ToolDef formats to Anthropic wire format, calls the
-// underlying streaming API, and maps ParsedEvent values to ai.Event values.
-//
-// Construct via NewProvider and pass to the qeetai orchestrator.
+// Provider adapts Client to ai.Provider, converting the neutral message and
+// tool formats to Anthropic's and its stream events to ai.Event values.
 type Provider struct {
 	client *Client
 }
@@ -20,10 +17,8 @@ func NewProvider(c *Client) *Provider {
 	return &Provider{client: c}
 }
 
-// Stream implements ai.Provider. It translates the neutral conversation history
-// and tool definitions to Anthropic wire format, streams the response, and
-// emits normalized ai.Event values. Blocking until the stream ends or ctx is
-// cancelled.
+// Stream implements ai.Provider. It returns at once and translates the
+// Anthropic stream into ai.Event values in a goroutine.
 func (p *Provider) Stream(ctx context.Context, system string, messages []ai.Message, tools []ai.ToolDef) (<-chan ai.Event, <-chan error) {
 	req := MessagesRequest{
 		System:   system,

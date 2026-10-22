@@ -34,7 +34,8 @@ type Definition struct {
 	Variables      []string
 }
 
-// catalog mirrors the transactional emails the platform sends today.
+// catalog lists the transactional emails the platform sends, with their
+// defaults.
 var catalog = []Definition{
 	{
 		Key: "verify_email", Name: "Email verification",
@@ -82,7 +83,9 @@ func defByKey(key string) (Definition, bool) {
 	return Definition{}, false
 }
 
-// Resolved is the API view: catalog metadata merged with any tenant override.
+// Resolved is a template as the API shows it: its catalog entry merged with any
+// tenant override. DeliveryScope is "tenant" for templates sent with the
+// tenant's customisation (invite, magic_link), else "platform".
 type Resolved struct {
 	Key           string        `json:"key"`
 	Name          string        `json:"name"`
@@ -113,7 +116,7 @@ func resolve(d Definition, subject, body *string) Resolved {
 var varRe = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_]+)\s*\}\}`)
 
 // Render substitutes {{name}} placeholders from vars. Unknown placeholders are
-// left intact so a missing value is visible rather than silently blanked.
+// left as they are, so a missing value shows rather than vanishing.
 func Render(s string, vars map[string]string) string {
 	return varRe.ReplaceAllStringFunc(s, func(m string) string {
 		key := strings.Trim(strings.TrimSpace(m), "{} ")
@@ -124,18 +127,21 @@ func Render(s string, vars map[string]string) string {
 	})
 }
 
+// Service stores tenants' email template overrides.
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 }
 
+// NewService returns a Service over pool.
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool)}
 }
 
+// Pool returns the service's database pool.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
-// overrides returns the tenant's customised templates keyed by template_key.
+// overrides returns the tenant's customised templates by template key.
 func (s *Service) overrides(ctx context.Context, tenantID uuid.UUID) (map[string]dbgen.ListEmailTemplateOverridesRow, error) {
 	rows, err := s.q.ListEmailTemplateOverrides(ctx, tenantID)
 	if err != nil {
@@ -148,6 +154,7 @@ func (s *Service) overrides(ctx context.Context, tenantID uuid.UUID) (map[string
 	return out, nil
 }
 
+// List returns every catalog template, with the tenant's overrides applied.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Resolved, error) {
 	ov, err := s.overrides(ctx, tenantID)
 	if err != nil {
@@ -168,6 +175,8 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Resolved, err
 	return out, nil
 }
 
+// Get returns one template with the tenant's override applied. An unknown key
+// returns errs.ErrEmailTemplateNotFound.
 func (s *Service) Get(ctx context.Context, tenantID uuid.UUID, key string) (*Resolved, error) {
 	d, ok := defByKey(key)
 	if !ok {
@@ -190,10 +199,13 @@ func (s *Service) Get(ctx context.Context, tenantID uuid.UUID, key string) (*Res
 	return &r, nil
 }
 
+// Upsert is UpsertEditor with only a subject and body.
 func (s *Service) Upsert(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key, subject, body string) (*Resolved, error) {
 	return s.UpsertEditor(ctx, tx, tenantID, key, EditorInput{Subject: subject, Body: body})
 }
 
+// UpsertEditor validates input and saves it, in tx, as the tenant's override of
+// a template.
 func (s *Service) UpsertEditor(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key string, input EditorInput) (*Resolved, error) {
 	d, ok := defByKey(key)
 	if !ok {
@@ -216,7 +228,8 @@ func (s *Service) UpsertEditor(ctx context.Context, tx pgx.Tx, tenantID uuid.UUI
 	return &r, nil
 }
 
-// Reset removes a tenant override, reverting to the built-in default.
+// Reset deletes the tenant's override of a template, in tx, restoring the
+// built-in default.
 func (s *Service) Reset(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key string) (*Resolved, error) {
 	d, ok := defByKey(key)
 	if !ok {
@@ -231,6 +244,7 @@ func (s *Service) Reset(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key 
 	return &r, nil
 }
 
+// Handler serves the email template endpoints.
 type Handler struct {
 	Service          *Service
 	Sender           notifier.Sender
@@ -239,6 +253,7 @@ type Handler struct {
 	testLimits       testEmailLimits
 }
 
+// Mount registers the email template routes.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/email-templates", h.list)
 	r.Get("/tenants/{tenantID}/email-templates/{key}", h.get)

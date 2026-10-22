@@ -29,8 +29,8 @@ func TestPctChange(t *testing.T) {
 	}
 }
 
-// Lock in the JSON envelope shape so frontend type drift surfaces here
-// rather than as a runtime "undefined.toLocaleString()" in the dashboard.
+// TestOverview_JSONShape checks the JSON shape of Overview, so drift from the
+// console's types fails here rather than in the dashboard.
 func TestOverview_JSONShape(t *testing.T) {
 	o := Overview{}
 	o.KPIs.MAU = Metric{Value: 100, DeltaPct: 5.5}

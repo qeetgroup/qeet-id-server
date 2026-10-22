@@ -14,14 +14,17 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
+// Reader reads a tenant's audit log.
 type Reader struct {
 	pool *pgxpool.Pool
 }
 
+// NewReader returns a Reader over pool.
 func NewReader(pool *pgxpool.Pool) *Reader {
 	return &Reader{pool: pool}
 }
 
+// Row is one audit event as List returns it.
 type Row struct {
 	ID           uuid.UUID  `json:"id"`
 	TenantID     *uuid.UUID `json:"tenant_id"`
@@ -36,18 +39,18 @@ type Row struct {
 	CreatedAt    time.Time  `json:"created_at"`
 }
 
-// ListFilter narrows List's results. Every field is optional; zero-value
-// fields are not applied as filters.
+// ListFilter narrows List's results; zero-value fields do not filter. Search is
+// a websearch_to_tsquery full-text query ("quoted phrases", -exclusions, OR).
 type ListFilter struct {
 	Action       string
 	ResourceType string
 	ActorUserID  uuid.UUID
-	// Search is applied as a PostgreSQL websearch_to_tsquery against the
-	// stored search_vector column. Supports "quoted phrases", -exclusions,
-	// and OR. Empty string disables FTS.
-	Search string
+	Search       string
 }
 
+// List returns up to limit of the tenant's audit rows (50 if limit is not in
+// 1..200), newest first, and a cursor for the next page, or "" on the last
+// page.
 func (rd *Reader) List(ctx context.Context, tenantID uuid.UUID, limit int, cursor string, filter ListFilter) ([]Row, string, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -91,9 +94,7 @@ func (rd *Reader) List(ctx context.Context, tenantID uuid.UUID, limit int, curso
 		return nil, "", err
 	}
 	defer resRows.Close()
-	// Initialise as empty (not nil) so an empty list serialises to JSON
-	// `[]` rather than `null`. The frontend can then iterate without
-	// null-guarding every access site.
+	// Empty, not nil, so an empty page encodes as [] rather than null.
 	out := []Row{}
 	for resRows.Next() {
 		var r Row
@@ -103,8 +104,8 @@ func (rd *Reader) List(ctx context.Context, tenantID uuid.UUID, limit int, curso
 		}
 		out = append(out, r)
 	}
-	// Without this, a truncated read yields a short audit page that looks
-	// complete — the worst possible silent failure for an audit trail.
+	// Without this, a truncated read would return a short page that looks
+	// complete.
 	if err := resRows.Err(); err != nil {
 		return nil, "", err
 	}
@@ -116,28 +117,27 @@ func (rd *Reader) List(ctx context.Context, tenantID uuid.UUID, limit int, curso
 	return out, next, nil
 }
 
+// Handler serves the audit log endpoints.
 type Handler struct {
 	Reader   *Reader
 	Verifier *Verifier
 }
 
+// Mount registers the authenticated audit routes.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/audit", h.list)
 	r.Get("/tenants/{tenantID}/audit/verify", h.verify)
 }
 
-// MountPublic registers the unauthenticated platform-chain verify endpoint.
-// It is mounted in the public route group so any external party can
-// independently confirm the platform audit log is intact — the "provable
-// audit" guarantee — without holding a Qeet ID account. Per-tenant
-// verification (which would expose tenant activity) stays behind auth in Mount.
+// MountPublic registers GET /audit/verify, an unauthenticated check of the
+// platform audit chain, so anyone can confirm it is intact. Tenant chains are
+// verified only behind auth, in Mount.
 func (h *Handler) MountPublic(r chi.Router) {
 	r.Get("/audit/verify", h.verifyPublic)
 }
 
-// publicVerifyResult is the deliberately minimal, non-tenant-scoped view
-// returned by verifyPublic: enough to confirm the platform audit chain is
-// intact, with no tenant data, row identifiers, or per-tenant activity exposed.
+// publicVerifyResult is verifyPublic's deliberately minimal result: whether the
+// platform chain is intact, with no tenant data or row identifiers.
 type publicVerifyResult struct {
 	ChainValid  bool `json:"chain_valid"`
 	RowsChecked int  `json:"rows_checked"`
@@ -187,11 +187,8 @@ func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
-// verifyPublic verifies the platform-level audit hash chain (the rows with a
-// NULL tenant_id) and returns only whether the chain is intact and how many
-// rows were checked — no tenant scope, no row identifiers. Unauthenticated by
-// design so an external auditor can confirm the platform has not tampered with
-// its own audit log.
+// verifyPublic verifies the platform audit chain (rows with a NULL tenant_id)
+// and returns only whether it is intact and how many rows were checked.
 func (h *Handler) verifyPublic(w http.ResponseWriter, r *http.Request) {
 	res, err := h.Verifier.Verify(r.Context(), nil)
 	if err != nil {

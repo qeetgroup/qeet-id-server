@@ -1,10 +1,7 @@
-// Package rbac models permissions, per-tenant roles, role->permission
-// bindings, and user assignments. The Check endpoint is the hot path
-// callers use to authorize an action.
-//
-// Mutating methods take a pgx.Tx so the caller (HTTP handler) can wrap
-// the mutation plus its audit row in a single transaction. Read methods
-// use the pool directly.
+// Package rbac models permissions, per-tenant roles and their assignment to
+// users and groups, and enforces route policies (Enforce). Mutating methods
+// take a pgx.Tx so the caller commits the change and its audit row together;
+// reads use the pool directly.
 package rbac
 
 import (
@@ -101,8 +98,8 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 // transactions that wrap an RBAC mutation and its audit row.
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
-// CountCustomRoles returns the number of non-system (custom) roles a tenant has
-// defined — used by the plan-limit check on role creation.
+// CountCustomRoles returns the number of non-system (custom) roles tenantID
+// has defined.
 func (r *Repository) CountCustomRoles(ctx context.Context, tenantID uuid.UUID) (int64, error) {
 	return r.q.CountCustomRoles(ctx, tenantID)
 }
@@ -182,9 +179,8 @@ func (r *Repository) ListRoles(ctx context.Context, tenantID uuid.UUID) ([]Role,
 	return out, nil
 }
 
-// RoleTenant returns the tenant a role belongs to, or ErrNotFound. The
-// role-permission routes carry only a {roleID} (no {tenantID}), so handlers use
-// this to enforce the role belongs to the caller's own tenant (QID-18).
+// RoleTenant returns the tenant a role belongs to, or ErrNotFound. Routes that
+// name only a {roleID} use it to keep callers to their own tenant's roles.
 func (r *Repository) RoleTenant(ctx context.Context, roleID uuid.UUID) (uuid.UUID, error) {
 	tid, err := r.q.GetRoleTenant(ctx, roleID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -216,11 +212,10 @@ func (r *Repository) RevokePermission(ctx context.Context, tx pgx.Tx, roleID, pe
 	return r.q.WithTx(tx).RevokePermission(ctx, dbgen.RevokePermissionParams{RoleID: roleID, PermissionID: permID})
 }
 
-// AssignRole grants a role to a user within tenantID. The role must belong to
-// tenantID and the user must already be a live member of it; both are checked
-// in the INSERT itself, so a caller can never pull a user from another tenant
-// in or attach another tenant's role. Re-assigning a held role is a no-op.
-// Every refusal is ErrRBACUserOrRoleNotFound, whichever id was wrong.
+// AssignRole grants roleID to userID in tenantID; re-assigning is a no-op. The
+// INSERT itself requires a role of tenantID and a live member of it, so no
+// other tenant's user or role can be attached. Every refusal is
+// ErrRBACUserOrRoleNotFound, whichever ID was wrong.
 func (r *Repository) AssignRole(ctx context.Context, tx pgx.Tx, userID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID) error {
 	valid, err := r.q.WithTx(tx).AssignUserRole(ctx, dbgen.AssignUserRoleParams{
 		UserID:    userID,
@@ -245,12 +240,9 @@ func (r *Repository) UnassignRole(ctx context.Context, tx pgx.Tx, userID, tenant
 	})
 }
 
-// AssignRoleToGroup grants a role to a group. The role and the group must both
-// belong to tenantID; we enforce that in the INSERT's SELECT so a caller can
-// never bind a role from one tenant to a group in another. ON CONFLICT keeps it
-// idempotent. The returned bool reports whether the role/group pair was valid
-// for this tenant (false => the caller should surface a 404), distinguishing a
-// genuine no-op from a cross-tenant or missing-row attempt.
+// AssignRoleToGroup grants roleID to groupID; re-granting is a no-op. The
+// INSERT requires both to belong to tenantID, so no role crosses tenants. It
+// reports false, for the caller to answer 404, when the pair isn't valid there.
 func (r *Repository) AssignRoleToGroup(ctx context.Context, tx pgx.Tx, groupID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID) (bool, error) {
 	valid, err := r.q.WithTx(tx).AssignRoleToGroup(ctx, dbgen.AssignRoleToGroupParams{
 		GroupID:   groupID,
@@ -297,10 +289,9 @@ func (r *Repository) ListGroupRoles(ctx context.Context, groupID, tenantID uuid.
 	return out, nil
 }
 
-// Check returns true if the user holds any role in tenant that grants the
-// named permission — counting BOTH roles granted directly to the user and
-// roles granted to a group the user belongs to. The two arms are scoped by
-// tenant_id independently so a grant can never leak across tenants.
+// Check reports whether userID holds a role in tenantID, directly or through a
+// group, that grants permKey. Both paths are scoped by tenant_id, so a grant
+// never leaks across tenants.
 func (r *Repository) Check(ctx context.Context, userID, tenantID uuid.UUID, permKey string) (bool, error) {
 	ok, err := r.q.CheckPermission(ctx, dbgen.CheckPermissionParams{
 		UserID:   userID,
@@ -326,11 +317,11 @@ func (r *Repository) EffectivePermissions(ctx context.Context, userID, tenantID 
 // GrantStep is one link in an authorization decision's grant path: a role that
 // confers the requested permission, plus how that role reaches the user.
 type GrantStep struct {
-	Permission string     `json:"permission"`
-	GrantedBy  string     `json:"granted_by"` // e.g. "role:admin"
-	Via        string     `json:"via"`        // "direct" or "group:<name>"
-	GroupID    *uuid.UUID `json:"group_id,omitempty"`
-	RoleID     uuid.UUID  `json:"role_id"`
+	Permission string     `json:"permission"`         // the permission key
+	GrantedBy  string     `json:"granted_by"`         // e.g. "role:admin"
+	Via        string     `json:"via"`                // "direct" or "group:<name>"
+	GroupID    *uuid.UUID `json:"group_id,omitempty"` // the group, when granted through one
+	RoleID     uuid.UUID  `json:"role_id"`            // the role that grants it
 }
 
 // Explanation is the structured "why?" for a single Check. Allowed is the same
@@ -343,11 +334,9 @@ type Explanation struct {
 	Reason  string      `json:"reason,omitempty"`
 }
 
-// Explain resolves the same decision as Check but records the grant path while
-// it computes it (rather than re-deriving), so it stays correct as the rules
-// evolve. It enumerates every role — direct or group-derived — that grants the
-// permission for this user/tenant. allowed == (len(Paths) > 0). Both arms are
-// scoped by tenant_id, so a path can never name a grant from another tenant.
+// Explain lists every role, direct or through a group, that grants permKey to
+// userID in tenantID; Allowed reports whether there is any. Both paths are
+// scoped by tenant_id, so a path never names another tenant's grant.
 func (r *Repository) Explain(ctx context.Context, userID, tenantID uuid.UUID, permKey string) (*Explanation, error) {
 	rows, err := r.q.ExplainGrants(ctx, dbgen.ExplainGrantsParams{
 		UserID:   userID,
@@ -384,9 +373,8 @@ func (r *Repository) Explain(ctx context.Context, userID, tenantID uuid.UUID, pe
 	return exp, nil
 }
 
-// SeedBuiltins ensures the platform permissions + per-tenant default
-// roles exist. Idempotent; safe to call on every boot. Manages its own
-// transaction since it isn't invoked from an HTTP handler.
+// SeedBuiltins upserts the built-in permissions in its own transaction. It is
+// idempotent and safe to run on every boot.
 func (r *Repository) SeedBuiltins(ctx context.Context) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {

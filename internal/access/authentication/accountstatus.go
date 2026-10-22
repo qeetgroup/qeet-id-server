@@ -11,14 +11,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// refuseInactiveAccount refuses a sign-in for an account that is deleted, or
-// neither active nor invited, with the answer password sign-in gives
-// (ErrAuthAccountInactive), and audits the refusal as auth.sign_in_refused.
-// It runs where every sign-in issues its session or hosted-login
-// cookie, after the credential has been proved, so a path that proves it some
-// other way — a passkey, a social provider, and any added later — can't skip
-// it: suspending an account during an incident shuts every way back in, not
-// only the password.
+// refuseInactiveAccount refuses, with ErrAuthAccountInactive, a sign-in to an
+// account that is deleted or neither active nor invited, and audits it. Every
+// sign-in path calls it before issuing a session, so suspending an account
+// closes every way in.
 func (s *Service) refuseInactiveAccount(ctx context.Context, userID, tenantID uuid.UUID, method, ip, ua string) error {
 	var status string
 	var deleted bool

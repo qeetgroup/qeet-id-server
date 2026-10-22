@@ -11,21 +11,18 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// TestRunBulkImport_PartialSuccess verifies that bad and duplicate rows are
-// reported per-row without failing the whole batch, that create is only called
-// for rows that pass validation, and that line numbers + the conflict message
-// are surfaced correctly.
+// TestRunBulkImport_PartialSuccess checks that bad and duplicate rows are
+// reported by line without failing the batch, and that only valid rows reach
+// create.
 func TestRunBulkImport_PartialSuccess(t *testing.T) {
 	v := validator.New()
 	tenant := uuid.New()
 	rows := []BulkUserInput{
-		{Email: "a@example.com", DisplayName: "A"}, // 1: ok
-		{Email: "not-an-email"},                    // 2: invalid email
-		{Email: "dupe@example.com"},                // 3: creator returns conflict
-		// 4: password over the hashing bound (its length and other rules are the
-		// organisation's, checked when the row is created — see the test below)
-		{Email: "b@example.com", Password: strings.Repeat("x", 257)},
-		{Email: "c@example.com"}, // 5: ok
+		{Email: "a@example.com", DisplayName: "A"},                   // 1: ok
+		{Email: "not-an-email"},                                      // 2: invalid email
+		{Email: "dupe@example.com"},                                  // 3: creator returns conflict
+		{Email: "b@example.com", Password: strings.Repeat("x", 257)}, // 4: password over max=256
+		{Email: "c@example.com"},                                     // 5: ok
 	}
 
 	var calls int
@@ -68,7 +65,7 @@ func TestRunBulkImport_PartialSuccess(t *testing.T) {
 	}
 }
 
-// TestRunBulkImport_AllValid covers the happy path.
+// TestRunBulkImport_AllValid checks that every valid row is created.
 func TestRunBulkImport_AllValid(t *testing.T) {
 	v := validator.New()
 	tenant := uuid.New()
@@ -83,9 +80,8 @@ func TestRunBulkImport_AllValid(t *testing.T) {
 	}
 }
 
-// A row whose password the organisation's rules refuse is reported
-// with the reason (the rule that failed), not a generic failure, so an
-// operator can fix and resubmit that row alone.
+// TestRunBulkImport_RefusedPasswordReportsTheRule checks that a row whose
+// password is refused reports the rule it broke, not a generic failure.
 func TestRunBulkImport_RefusedPasswordReportsTheRule(t *testing.T) {
 	tenant := uuid.New()
 	rows := []BulkUserInput{

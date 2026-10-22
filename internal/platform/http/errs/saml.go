@@ -1,9 +1,6 @@
 package errs
 
-// SAML federation error codes — stable, namespaced machine identifiers for both
-// the SP side (Qeet consuming an external IdP) and the IdP side (Qeet as an SSO
-// source for downstream Service Providers). Clients branch/localize on the code,
-// never the message. Once shipped, a code MUST NOT change.
+// SAML error codes, for both the service provider and identity provider sides.
 const (
 	CodeSAMLTenantIDInvalid          = "saml.tenant_id_invalid"
 	CodeSAMLTenantMismatch           = "saml.tenant_mismatch"

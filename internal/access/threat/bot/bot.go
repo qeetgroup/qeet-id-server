@@ -1,13 +1,7 @@
-// Package bot scores incoming auth requests for bot-likeness and records the
-// verdicts surfaced in the admin "Threats → Bots" screen. Scoring is a pure,
-// offline User-Agent heuristic (no network, no third-party captcha needed for
-// the baseline) so it works in dev/CI; honeypot/captcha toggles are stored for
-// future enforcement.
-//
-// Detection is detect-only: a verdict of "blocked" means "would block" — the
-// auth path is never hard-failed on a heuristic, so an unusual-but-legitimate
-// client can't be locked out. Only clearly suspicious attempts are recorded;
-// clean human user-agents are scored 0 and skipped to keep the log meaningful.
+// Package bot scores sign-in requests for bot-likeness with an offline
+// User-Agent heuristic and records suspicious verdicts for the admin
+// "Threats → Bots" screen. It only detects: a "blocked" verdict means "would
+// block", and no sign-in is refused on it.
 package bot
 
 import (
@@ -65,9 +59,8 @@ func Score(ua string) float64 {
 	return 0
 }
 
-// Settings is a tenant's bot-detection config. Only ua_check drives the
-// baseline scorer today; honeypot/captcha/signature are stored for future
-// enforcement layers.
+// Settings is a tenant's bot-detection config. Only UACheck and ScoreThreshold
+// affect Evaluate; Honeypot, Captcha and Signature are stored but not enforced.
 type Settings struct {
 	UACheck        bool    `json:"ua_check"`
 	Honeypot       bool    `json:"honeypot"`
@@ -105,10 +98,9 @@ func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool)}
 }
 
-// Evaluate scores an auth attempt's User-Agent and, when suspicious, records a
-// verdict scoped to the tenant the email belongs to. Best-effort: it never
-// blocks or fails the auth path. Called from the auth HTTP handlers, which hold
-// the UA + client IP.
+// Evaluate scores a sign-in's User-Agent and, when it looks suspicious, records
+// a verdict in the tenant the email belongs to. Best effort: it never blocks or
+// fails the sign-in.
 func (s *Service) Evaluate(ctx context.Context, email, ip, ua string) {
 	score := Score(ua)
 	if score < recordFloor {
@@ -143,9 +135,8 @@ func (s *Service) Evaluate(ctx context.Context, email, ip, ua string) {
 	}
 }
 
-// Recent returns the most recent bot events for a tenant.
-// Left hand-written: COALESCE(host(ip),”) causes sqlc to generate interface{}
-// for the column type, preventing type-safe scanning.
+// Recent returns up to limit of a tenant's most recent bot events, newest
+// first. Hand-written SQL, not sqlc.
 func (s *Service) Recent(ctx context.Context, tenantID uuid.UUID, limit int) ([]Event, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50

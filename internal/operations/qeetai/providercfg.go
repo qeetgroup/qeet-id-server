@@ -1,18 +1,9 @@
 package qeetai
 
-// Per-tenant "bring your own key" (BYOK) AI provider configuration.
-//
-// The qeetai's model provider used to be a single deployment-level singleton
-// built from QEETAI_* env at boot. This file adds a per-tenant seam: an
-// organization owner/admin can store their own provider + API key, and the
-// qeetai then streams a turn through THEIR provider. When a tenant hasn't
-// configured a key, we fall back to the deployment-level platform config, so
-// qeetai keeps working out of the box.
-//
-// The tenant API key is encrypted at rest with AES-256-GCM using the SAME data
-// key as the secrets vault (a KeyProvider is injected from the composition
-// root). Plaintext keys are never persisted and never returned to the client —
-// only a last-4 hint is exposed.
+// Per-tenant "bring your own key" (BYOK) provider configuration. A tenant's API
+// key is sealed with the deployment data key, bound to that tenant, and never
+// returned; only a last-4 hint is. A tenant without a key falls back to the
+// deployment's QEETAI_* provider.
 
 import (
 	"bytes"
@@ -39,10 +30,8 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
-// KeyProvider supplies the AES data-encryption key used to encrypt tenant BYOK
-// keys at rest. Structurally identical to the secrets-vault KeyProvider so the
-// composition root can pass the same provider without the qeetai importing the
-// developer/credentials package.
+// KeyProvider supplies the deployment data key that seals tenant provider keys.
+// It matches the secrets vault's KeyProvider, so one implementation serves both.
 type KeyProvider interface {
 	DataKey(ctx context.Context) ([]byte, error)
 }
@@ -51,12 +40,9 @@ type KeyProvider interface {
 type ConfigSource string
 
 const (
-	// SourceNone: neither a tenant key nor a platform key is configured.
-	SourceNone ConfigSource = "none"
-	// SourcePlatform: no tenant key; using the deployment-level QEETAI_* env.
-	SourcePlatform ConfigSource = "platform"
-	// SourceTenant: the tenant has configured (BYOK) their own provider + key.
-	SourceTenant ConfigSource = "tenant"
+	SourceNone     ConfigSource = "none"     // no tenant or platform key
+	SourcePlatform ConfigSource = "platform" // the deployment's QEETAI_* key
+	SourceTenant   ConfigSource = "tenant"   // the tenant's own (BYOK) key
 )
 
 // supportedProviders is the set of provider identifiers accepted on write.
@@ -89,19 +75,15 @@ func (p PlatformProvider) configured() bool {
 	return strings.TrimSpace(p.Provider) != "" && strings.TrimSpace(p.APIKey) != ""
 }
 
-// ProviderConfig resolves and manages per-tenant BYOK provider settings. It
-// satisfies ProviderResolver (consumed by the orchestrator) and backs the
-// admin CRUD endpoints.
+// ProviderConfig resolves and manages per-tenant BYOK provider settings and
+// implements ProviderResolver. A tenant admin chooses base_url, so httpClient is
+// bounded by egress; it serves both model calls and the Test probe.
 type ProviderConfig struct {
-	pool     *pgxpool.Pool
-	q        *dbgen.Queries
-	box      *envelope.Cipher
-	platform PlatformProvider
-	// egress bounds every call to a tenant-supplied base_url. BYOK lets a tenant
-	// admin name the endpoint this server talks to, which is the same
-	// tenant-controlled outbound surface as webhooks and log sinks.
-	egress *egress.Policy
-	// httpClient is used only by Test() for the live key-validation probe.
+	pool       *pgxpool.Pool
+	q          *dbgen.Queries
+	box        *envelope.Cipher
+	platform   PlatformProvider
+	egress     *egress.Policy
 	httpClient *http.Client
 }
 
@@ -130,12 +112,9 @@ func NewProviderConfig(ctx context.Context, pool *pgxpool.Pool, kp KeyProvider, 
 // PlatformConfigured reports whether a deployment-level fallback key is set.
 func (c *ProviderConfig) PlatformConfigured() bool { return c.platform.configured() }
 
-// qeetaiKeyPurpose / qeetaiKeyResource bind a tenant's provider key to its own
-// encryption context. Before this, every tenant's key was sealed with one
-// process-wide AES-GCM and a nil AAD, so ciphertext copied from one tenant's row
-// into another's decrypted happily into the second tenant's inference path.
-// The tenant id is the part that actually closes that; the resource is constant
-// because there is exactly one provider row per tenant.
+// qeetaiKeyPurpose and qeetaiKeyResource bind a provider key to its tenant, so
+// ciphertext copied into another tenant's row won't decrypt. The resource is
+// constant because each tenant has one provider row.
 const (
 	qeetaiKeyPurpose  = "qeetai-provider"
 	qeetaiKeyResource = "api-key"
@@ -148,10 +127,8 @@ func (c *ProviderConfig) encrypt(tenantID uuid.UUID, plaintext string) (cipherte
 	return c.box.Seal(tenantID, qeetaiKeyPurpose, qeetaiKeyResource, []byte(plaintext))
 }
 
-// decrypt opens a tenant's provider key. Rows written before the envelope
-// switch carry no version prefix and fall back to the legacy nil-AAD path
-// inside envelope.Open — the deployment DEK is the same, so no migration is
-// needed; reseal() then upgrades the row in place on first read.
+// decrypt opens a tenant's provider key. envelope.Open also reads legacy rows
+// sealed without the tenant context; ProviderFor then reseals them.
 func (c *ProviderConfig) decrypt(tenantID uuid.UUID, ciphertext, nonce []byte) (string, error) {
 	if c.box == nil {
 		return "", errs.ErrInternalServer.WithDetail("Qeet AI key encryption is unavailable")
@@ -254,12 +231,9 @@ func (c *ProviderConfig) ProviderFor(ctx context.Context, tenantID uuid.UUID) (a
 	return nil, errs.New("qeetai_unconfigured", "AI qeetai is not configured for this organization")
 }
 
-// buildProvider constructs an ai.Provider for the given provider identifier.
-// "azure" is served by the OpenAI-compatible client (the admin supplies the
-// Azure endpoint via base_url).
-// buildProvider wires the model client to the egress-bounded transport, so a
-// tenant-supplied base_url cannot reach the internal network at inference time
-// any more than it can at configuration time.
+// buildProvider returns the ai.Provider for provider; "azure" uses the
+// OpenAI-compatible client with the admin's base_url. The HTTP client is
+// egress-bounded, so a tenant's base_url can't reach the internal network.
 func (c *ProviderConfig) buildProvider(provider, apiKey, baseURL, model string, maxTokens int) ai.Provider {
 	client := c.httpClient
 	switch strings.ToLower(provider) {

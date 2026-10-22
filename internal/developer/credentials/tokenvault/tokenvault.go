@@ -1,8 +1,7 @@
-// Package tokenvault is a per-tenant encrypted store for third-party OAuth tokens
-// (Slack, GitHub, Google, or any registered OAuth2 provider). A user connects once
-// via an authorization-code ceremony; callers then fetch a live access token via
-// GetAccessToken and never see the refresh token. Encryption reuses the secrets
-// vault's KeyProvider (KMS or static key).
+// Package tokenvault stores each tenant's third-party OAuth tokens (Slack,
+// GitHub, Google, or any registered OAuth2 provider), encrypted. A user connects
+// once through an authorization-code flow; GetAccessToken then returns a live
+// access token, never the refresh token.
 package tokenvault
 
 import (
@@ -269,15 +268,14 @@ func (s *Service) BeginConnect(ctx context.Context, tenantID, userID uuid.UUID, 
 	return u.String(), nil
 }
 
-// oauthTokenResponse is the standard OAuth2 token-endpoint JSON shape (RFC
-// 6749 §5.1), which Slack/GitHub (with Accept: application/json)/Google/most
-// custom providers all return.
+// oauthTokenResponse is the standard OAuth 2.0 token response (RFC 6749 §5.1).
+// ExpiresIn is any because some providers send it as a numeric string.
 type oauthTokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	TokenType    string `json:"token_type"`
 	Scope        string `json:"scope"`
-	ExpiresIn    any    `json:"expires_in"` // some providers send this as a numeric string
+	ExpiresIn    any    `json:"expires_in"`
 }
 
 func (r oauthTokenResponse) expiresInSeconds() int64 {
@@ -483,10 +481,9 @@ func randomState() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// externalScheme mirrors domains/federation/oidc's helper of the same name:
-// the request's public scheme, honoring X-Forwarded-Proto from a
-// TLS-terminating proxy, so the callback URL registered with a third-party
-// provider stays https in production.
+// externalScheme returns the request's public scheme, as oidc's helper of the
+// same name does: X-Forwarded-Proto from a TLS-terminating proxy, then TLS,
+// defaulting to https except on localhost.
 func externalScheme(r *http.Request) string {
 	if p := r.Header.Get("X-Forwarded-Proto"); p == "https" || p == "http" {
 		return p
@@ -672,11 +669,10 @@ func (h *Handler) listGrants(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
-// getAccessToken is the "agent-safe" fetch: it hands back a live access
-// token, transparently refreshed if needed, and gated the same way the
-// generic secrets vault gates vault:<name> access — a scoped principal
-// (e.g. an AI agent) needs vault:<provider> or vault:read, and every access
-// is audited since a live third-party credential is sensitive.
+// getAccessToken returns a live access token, refreshed if needed, only to the
+// person who connected the account, signed in themselves (any other credential
+// is refused and recorded) and holding vault:<provider> or vault:read. Each
+// read is audited.
 func (h *Handler) getAccessToken(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil {

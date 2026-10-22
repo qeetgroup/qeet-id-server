@@ -16,25 +16,18 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
-// Every sign-in that proves its first factor is assessed for risk, once, on
-// every path (the API, the hosted login, a magic link): the assessment also
-// records the sign-in's country and device for the next one to be compared
-// against. A risky sign-in may not skip the second factor on a remembered
-// device; and one by a person who holds no second factor is confirmed with a
-// code sent to their verified email address instead of going straight in (a
-// magic link has proved that mailbox already, so it goes in).
+// Every sign-in that proves its first factor is risk-assessed once, which also
+// records its country and device for the next comparison. A risky sign-in can't
+// skip MFA on a remembered device, and one without a second factor is confirmed
+// by a code sent to the verified email (a magic link has already proved it).
 
 // nextStep is what a sign-in that proved its first factor does next.
 type nextStep int
 
 const (
-	// stepSession: issue the session.
-	stepSession nextStep = iota
-	// stepChallenge: the gate's challenge — a factor held, or the setting up
-	// of one that is required.
-	stepChallenge
-	// stepRiskEmail: confirm the sign-in with a code sent to the verified email.
-	stepRiskEmail
+	stepSession   nextStep = iota // issue the session
+	stepChallenge                 // ask for a held factor, or set up a required one
+	stepRiskEmail                 // confirm with a code sent to the verified email
 )
 
 // nextSignInStep decides a sign-in's next step. trustedToken is the request's
@@ -71,12 +64,9 @@ func (s *Service) trustedDeviceSkips(ctx context.Context, userID, tenantID uuid.
 	return s.IsTrustedDevice(ctx, userID, tenantID, trustedToken)
 }
 
-// riskEmailChallenge records a challenge met by a code sent to the person's
-// verified email address, for a risky sign-in with no second factor to ask
-// for, and audits it. The challenge offers that address as its one factor,
-// named by the challenge's own id, so a client asks for the code and submits
-// it as for any email factor. Refused with ErrAuthRiskVerificationUnavailable
-// when the account has no verified email address.
+// riskEmailChallenge records a challenge met by a code sent to the verified
+// email, for a risky sign-in with no second factor, and audits it. It returns
+// ErrAuthRiskVerificationUnavailable when the account has no verified email.
 func (s *Service) riskEmailChallenge(ctx context.Context, userID, tenantID uuid.UUID, claims map[string]any,
 	firstFactor, ip, ua string) (MFAChallenge, error) {
 	var email string

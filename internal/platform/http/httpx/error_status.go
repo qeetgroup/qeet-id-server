@@ -6,10 +6,9 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// statusByCode maps each canonical error code to its HTTP status. This lives in
-// the transport layer (not on the domain error) so the errs catalog stays
-// transport-agnostic — the same errors can back gRPC/CLI/jobs with a different
-// mapping. Keep this in sync with the errs catalog.
+// statusByCode maps each error code to its HTTP status. It lives in the
+// transport layer, not on errs.Error, so the errs catalog stays
+// transport-agnostic. Keep it in sync with that catalog.
 var statusByCode = map[string]int{
 	// Generic platform errors.
 	errs.CodeBadRequest:          http.StatusBadRequest,
@@ -77,9 +76,8 @@ var statusByCode = map[string]int{
 	"qeetai_unconfigured": http.StatusConflict,
 }
 
-// registerStatuses merges a domain's code→status entries into statusByCode.
-// Per-domain files (error_status_<domain>.go) call this from an init() so each
-// bounded context owns its own mappings without editing this shared file.
+// registerStatuses adds a domain's code→status entries to statusByCode; each
+// error_status_<domain>.go calls it from init.
 func registerStatuses(m map[string]int) {
 	for k, v := range m {
 		statusByCode[k] = v

@@ -21,11 +21,9 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// TestEnforceTenantScope locks in the central cross-tenant guard (QID-18): a
-// request to /tenants/{tenantID}/... must be rejected with 403 unless the path
-// tenant equals the caller's own tenant; routes without a {tenantID} param pass
-// through. Uses a real chi router so the {tenantID} param is actually extracted
-// the same way it is in production (the guard reads chi.URLParam).
+// TestEnforceTenantScope checks that a {tenantID} route admits only the caller's
+// own tenant (403 for another, 400 for a malformed id) and that routes without
+// the param pass through.
 func TestEnforceTenantScope(t *testing.T) {
 	callerTenant := uuid.New()
 	otherTenant := uuid.New()
@@ -75,14 +73,9 @@ func TestEnforceTenantScope(t *testing.T) {
 	}
 }
 
-// TestRequireAuth_AgentStatusEnforced locks in the AI-agent kill-switch: an
-// agent token is stateless and stays cryptographically valid until it expires,
-// so revocation is enforced at request time by consulting the agent's current
-// lifecycle status. A suspended/decommissioned/unknown agent must be denied
-// with 401 immediately (within one request), never reaching the handler; an
-// active agent must pass through. This guards against a refactor silently
-// dropping the AgentStatus check (which would make suspend/kill-all a no-op
-// until token expiry).
+// TestRequireAuth_AgentStatusEnforced checks that a valid agent token is refused
+// with 401 unless AgentStatus reports the agent active, so suspending an agent
+// takes effect on its next request rather than at token expiry.
 func TestRequireAuth_AgentStatusEnforced(t *testing.T) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

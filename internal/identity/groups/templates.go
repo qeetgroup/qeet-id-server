@@ -16,9 +16,8 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// maxTemplateDepth bounds how deep a template tree may nest. A template is
-// applied recursively, so an unbounded tree is an unbounded write; 6 is deeper
-// than any real org chart we've seen and keeps one apply to a sane size.
+// maxTemplateDepth bounds how deep a template tree may nest, since applying a
+// template writes every node.
 const maxTemplateDepth = 6
 
 // maxTemplateNodes bounds the total groups one apply can create.
@@ -86,8 +85,7 @@ func validateTemplate(in TemplateInput) (int, error) {
 	return count, nil
 }
 
-// Raw SQL throughout this file: sqlc isn't wired into the build here. Fold these
-// into queries.sql at the next `sqlc generate`.
+// The template queries below are hand-written SQL, not sqlc.
 
 func (s *Service) ListTemplates(ctx context.Context, tenantID uuid.UUID) ([]GroupTemplate, error) {
 	rows, err := s.pool.Query(ctx, `
@@ -187,9 +185,8 @@ func (s *Service) DeleteTemplate(
 	return tx.Commit(ctx)
 }
 
-// ApplyTemplate materialises a template's tree as real groups under an optional
-// parent. The whole tree is one transaction: a half-applied org chart is worse
-// than none, because the operator can't tell which half ran.
+// ApplyTemplate creates a template's tree as groups under an optional parent, in
+// one transaction: a half-applied tree is worse than none.
 func (s *Service) ApplyTemplate(
 	ctx context.Context, id, tenantID uuid.UUID, parentID *uuid.UUID, actor audit.Actor,
 ) ([]Group, error) {
@@ -209,9 +206,8 @@ func (s *Service) ApplyTemplate(
 		return nil, err
 	}
 
-	// The parent is caller-supplied. tenant.groups.parent_id only has a foreign
-	// key to groups(id) — not a tenant-scoped one — so without this check a
-	// caller could graft their template under another tenant's group.
+	// The parent is caller-supplied and must be one of this tenant's groups;
+	// checking first gives ErrGroupNotFound rather than a foreign-key error.
 	if parentID != nil {
 		ok, err := s.q.GroupExists(ctx, dbgen.GroupExistsParams{ID: *parentID, TenantID: tenantID})
 		if err != nil {

@@ -19,17 +19,13 @@ import (
 )
 
 // OpenID Connect CIBA (Client-Initiated Backchannel Authentication), poll mode
-// only: a client that already knows the user (login_hint) starts a backchannel
-// request; the user approves/denies out-of-band while the client polls with
-// auth_req_id. The backchannel counterpart of the device grant (device.go) —
-// same mechanics, but the user is known up front rather than via a typed code.
+// only: a client that knows the user (login_hint) starts a request, the user
+// approves out of band, and the client polls with auth_req_id.
 
 const (
-	grantTypeCIBA = "urn:openid:params:grant-type:ciba"
-	// cibaRequestTTL bounds how long a backchannel auth request stays pending.
-	cibaRequestTTL = 10 * time.Minute
-	// cibaPollInterval mirrors the device grant's poll throttle.
-	cibaPollInterval = 5
+	grantTypeCIBA    = "urn:openid:params:grant-type:ciba" // the CIBA grant_type
+	cibaRequestTTL   = 10 * time.Minute                    // how long a request stays pending
+	cibaPollInterval = 5                                   // seconds between polls, as for the device grant
 )
 
 // Notifier delivers an async, out-of-band prompt to a user (e.g. the in-app
@@ -40,7 +36,7 @@ type Notifier interface {
 	Notify(ctx context.Context, tenantID, userID uuid.UUID, kind, title, description, href string) error
 }
 
-// SetNotifier wires the CIBA consent-prompt notifier. Called from internal/bootstrap/dependencies.go.
+// SetNotifier wires the CIBA consent-prompt notifier.
 func (s *Service) SetNotifier(n Notifier) { s.notifier = n }
 
 // CIBAAuthResponse is the OpenID CIBA §7 backchannel-authentication response.
@@ -50,11 +46,9 @@ type CIBAAuthResponse struct {
 	Interval  int    `json:"interval"`
 }
 
-// BackchannelAuthorize resolves loginHint (an email, scoped to the client's
-// own tenant) to a user, creates a pending CIBA request, and best-effort
-// notifies that user. unknown_user_id and other failures use CIBA's own
-// error vocabulary (OpenID CIBA §13) via oauthError, matching how the device
-// grant's polling errors are rendered.
+// BackchannelAuthorize resolves loginHint (an email in the client's tenant) to a
+// user, creates a pending CIBA request and notifies the user. Errors use CIBA's
+// own codes (OpenID CIBA §13).
 func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecret, loginHint, scope, bindingMessage string) (*CIBAAuthResponse, error) {
 	client, err := s.authenticateClient(ctx, clientID, clientSecret)
 	if err != nil {
@@ -170,12 +164,9 @@ func (s *Service) ListPendingCIBA(ctx context.Context, userID uuid.UUID) ([]CIBA
 	return out, nil
 }
 
-// DecideBackchannel records userID's approve/deny of one of their own
-// pending CIBA requests (identified by its opaque id, not the raw
-// auth_req_id — the id is what ListPendingCIBA shows). Unlike the device
-// grant, the approving user is fixed by the request itself (it was resolved
-// from login_hint at BackchannelAuthorize time), so this rejects any id that
-// isn't userID's own.
+// DecideBackchannel records userID's approval or denial of one of their own
+// pending CIBA requests, identified by its ID rather than auth_req_id. It
+// rejects any request that isn't userID's.
 func (s *Service) DecideBackchannel(ctx context.Context, userID, id uuid.UUID, approve bool) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

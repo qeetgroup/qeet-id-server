@@ -90,7 +90,7 @@ func NewService(pool *pgxpool.Pool, users *user.Repository, t *tokens.Issuer) *S
 }
 
 // SetSessionSignals wires the announcement of ended sessions (session.revoked
-// webhooks). Called from internal/bootstrap/dependencies.go.
+// webhooks).
 func (s *Service) SetSessionSignals(sig *sessionsignal.Signaller) { s.signals = sig }
 
 // otherSessionsEnded turns RevokeOtherSessionsForUser's rows into signals.
@@ -115,16 +115,14 @@ func endedSessions(userID uuid.UUID, ids []uuid.UUID, tenants []pgtype.UUID) []s
 }
 
 // MFAEnroller is the slice of the MFA service the auth package needs to enforce
-// a second factor at login. Wired in internal/bootstrap/dependencies.go via SetMFA.
+// a second factor at login.
 type MFAEnroller interface {
 	// LoginFactors lists the second factors the user can meet a sign-in
 	// challenge with (none: sign in without one). See mfalogin.go.
 	LoginFactors(ctx context.Context, userID uuid.UUID) ([]LoginFactor, error)
-	// VerifyForLoginTx verifies an authenticator-app, recovery or email/SMS
-	// code inside the challenge transaction so the code's consumption and the
-	// challenge's commit together, and returns which kind met it ("totp",
-	// "recovery_code" or "otp"); ("", nil) means the code was wrong, a non-nil
-	// error is infrastructure.
+	// VerifyForLoginTx checks an authenticator-app, recovery or email/SMS code
+	// inside the challenge transaction and returns the kind that matched ("totp",
+	// "recovery_code" or "otp"). It returns ("", nil) for a wrong code.
 	VerifyForLoginTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) (string, error)
 	// SendLoginCode sends a code to one of the user's confirmed email/SMS
 	// factors for a sign-in to tenantID (nil: none).
@@ -141,31 +139,28 @@ type MFAEnroller interface {
 	// RecordVerification records that one of the user's sessions met a second
 	// factor, stepping that session (and no other) up.
 	RecordVerification(ctx context.Context, tx pgx.Tx, userID, sessionID uuid.UUID, method string) error
-	// StartLoginEnrollment starts an authenticator app for a sign-in's
-	// enrolment challenge and returns its secret and provisioning URL;
-	// ConfirmLoginEnrollment confirms it with a code from the app and returns
-	// the account's new recovery codes ((nil, false, nil): a wrong code). Both
-	// run inside the challenge transaction. See mfapolicy.go.
+	// StartLoginEnrollment starts an authenticator app for a sign-in's enrolment
+	// challenge and returns its secret and provisioning URL. ConfirmLoginEnrollment
+	// confirms it with a code and returns new recovery codes, or false for a wrong
+	// code. Both run inside the challenge transaction.
 	StartLoginEnrollment(ctx context.Context, tx pgx.Tx, userID uuid.UUID, account string) (string, string, error)
 	ConfirmLoginEnrollment(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) ([]string, bool, error)
 }
 
-// SetMFA wires the MFA-at-login checker. Called from internal/bootstrap/dependencies.go.
+// SetMFA wires the MFA-at-login checker.
 func (s *Service) SetMFA(m MFAEnroller) { s.mfa = m }
 
-// RegistrationPolicy is the slice of the auth-policy service the auth package
-// needs: the per-tenant self-registration gate, and the one password check
-// every path that sets a password runs — the rules of the organisation the
-// account belongs to (uuid.Nil = none: the platform baseline), the offline
-// strength baseline and, when enabled, the breach check. Satisfied by
-// *authpolicy.Service. Wired in internal/bootstrap/dependencies.go via SetRegistrationPolicy.
+// RegistrationPolicy is the part of the auth-policy service this package needs:
+// the per-tenant self-registration switch and the password check run wherever a
+// password is set. A tenantID of uuid.Nil means the platform baseline.
+// Satisfied by *authpolicy.Service.
 type RegistrationPolicy interface {
 	SelfRegistrationEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
 	ValidateForTenant(ctx context.Context, tenantID uuid.UUID, email, pw string) error
 }
 
 // SetRegistrationPolicy wires the hosted self-registration gate + password
-// policy. Called from internal/bootstrap/dependencies.go.
+// policy.
 func (s *Service) SetRegistrationPolicy(p RegistrationPolicy) { s.regPolicy = p }
 
 // MethodPolicy is the slice of the authentication policy that decides whether
@@ -175,7 +170,6 @@ type MethodPolicy interface {
 }
 
 // SetMethodPolicy wires the sign-in method policy (nil = every method allowed).
-// Called from internal/bootstrap/dependencies.go.
 func (s *Service) SetMethodPolicy(p MethodPolicy) { s.methods = p }
 
 // passwordAllowed refuses with ErrAuthMethodDisabled when tenantID has switched
@@ -215,24 +209,19 @@ func (s *Service) SelfRegistrationEnabled(ctx context.Context, tenantID uuid.UUI
 	return s.regPolicy.SelfRegistrationEnabled(ctx, tenantID)
 }
 
-// AnomalyRecorder receives security signals from the auth flow (nil = recording
-// off): once for each sign-in lock, from the failure that set it, and once for
-// each source network throttled for spraying (see lockout.go). Kept as an
-// interface so auth doesn't import the threat package; satisfied by
-// *threat.Service. Wired via SetAnomalyRecorder.
+// AnomalyRecorder receives security signals from sign-in: each account lock and
+// each network throttled for password spraying. Satisfied by *threat.Service.
 type AnomalyRecorder interface {
 	OnAccountLocked(ctx context.Context, lock AccountLock)
 	OnSourceThrottled(ctx context.Context, throttle SourceThrottle)
 }
 
-// SetAnomalyRecorder wires the security-anomaly recorder. Called from
-// internal/bootstrap/dependencies.go.
+// SetAnomalyRecorder wires the security-anomaly recorder.
 func (s *Service) SetAnomalyRecorder(a AnomalyRecorder) { s.anomaly = a }
 
 // DevicePolicy reports whether a tenant has opted into adaptive MFA (skipping
 // the second factor on a trusted device). Satisfied by *authpolicy.Service;
-// kept as an interface so auth doesn't import authpolicy. Wired via
-// SetDevicePolicy.
+// kept as an interface so auth doesn't import authpolicy.
 type DevicePolicy interface {
 	RememberDeviceEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
 	// RememberDevicePolicy adds how long a device the tenant remembers stays
@@ -240,40 +229,34 @@ type DevicePolicy interface {
 	RememberDevicePolicy(ctx context.Context, tenantID uuid.UUID) (bool, time.Duration, error)
 }
 
-// SetDevicePolicy wires the adaptive-MFA (trusted-device) gate. Called from
-// internal/bootstrap/dependencies.go.
+// SetDevicePolicy wires the adaptive-MFA (trusted-device) gate.
 func (s *Service) SetDevicePolicy(d DevicePolicy) { s.devicePolicy = d }
 
 // RiskAssessor checks whether the risk level of an auth request should force
-// MFA even on a trusted device. Satisfied by *risk.Service (threat-detection/risk);
-// kept as an interface so auth doesn't import that package. Wired via SetRiskAssessor.
+// MFA even on a trusted device. Satisfied by *risk.Service
+// (threat-detection/risk); kept as an interface so auth doesn't import that
+// package.
 type RiskAssessor interface {
-	// ShouldForceMFA returns true when the request's risk score — bot-likeness,
-	// plus impossible-travel and device-reputation signals when a tenant has
-	// opted into them — exceeds the tenant's configured force-MFA threshold.
-	// country is a best-effort ISO code (empty when unresolved); fails open
-	// (false) on any error.
+	// ShouldForceMFA reports whether the request's risk score exceeds the tenant's
+	// force-MFA threshold. country is an ISO code, or empty when unknown. It fails
+	// open (false) on any error.
 	ShouldForceMFA(ctx context.Context, tenantID, userID uuid.UUID, ip, ua, country string) bool
 }
 
-// SetRiskAssessor wires the sign-in risk assessment. Called from internal/bootstrap/dependencies.go.
+// SetRiskAssessor wires the sign-in risk assessment.
 func (s *Service) SetRiskAssessor(r RiskAssessor) { s.riskAssessor = r }
 
-// SetSender wires the email sender for risk confirmation codes. Called from
-// internal/bootstrap/dependencies.go.
+// SetSender wires the email sender for risk confirmation codes.
 func (s *Service) SetSender(n notifier.Sender) { s.sender = n }
 
-// LoginHook is a synchronous policy gate run after credentials verify: it
-// returns a non-nil error to DENY the sign-in, or nil to allow — in which case
-// the returned map (possibly nil) carries custom claims to inject into the
-// issued access token. nil hook = no gate. Satisfied by *authhook.Service; an
-// interface so auth doesn't import it.
+// LoginHook is a policy gate run after the credentials are verified. A non-nil
+// error refuses the sign-in; otherwise the returned map (possibly nil) holds
+// custom claims for the access token.
 type LoginHook interface {
 	Run(ctx context.Context, tenantID, userID uuid.UUID, email string) (map[string]any, error)
 }
 
-// SetLoginHook wires the post-credential Actions/Hooks gate. Called from
-// internal/bootstrap/dependencies.go.
+// SetLoginHook wires the post-credential Actions/Hooks gate.
 func (s *Service) SetLoginHook(h LoginHook) { s.loginHook = h }
 
 // mfaChallengeTTL bounds how long a pending second-factor login stays valid.
@@ -479,25 +462,10 @@ type SwitchTenantInput struct {
 	UserAgent     string
 }
 
-// SwitchTenant replaces the caller's session with one scoped to another
-// organization they belong to. The new session's token carries the claims that
-// organization's authentication hook adds (the hook may also refuse the
-// switch), and keeps them across renewals. The session switched from ends —
-// superseded by the new one, its refresh token refused — in the same
-// transaction, and revocation subscribers of the organization it belonged to
-// are told, with "tenant_switch" as the reason.
-//
-// The organization's second-factor requirement applies to entering it, not
-// only to signing in at home: the sign-in behind the session
-// switched from must have met a factor, or that session must hold a fresh
-// step-up, and the new session carries it on.
-//
-// Refused with ErrAuthNotTenantMember for an organization the caller does not
-// belong to, with ErrStepUpRequired or ErrMFAEnrollmentRequired while its
-// second-factor requirement isn't met (see tenantFactorShortfall), with the
-// hook's error when the hook refuses, and with ErrUnauthorized when the
-// session switched from has already ended (its access token outlives it by a
-// few minutes); in every refusal nothing changes.
+// SwitchTenant replaces the caller's session with one in another organisation
+// they belong to, ending the old one in the same transaction. The organisation's
+// second-factor requirement must already be met (ErrStepUpRequired,
+// ErrMFAEnrollmentRequired); on any refusal nothing changes.
 func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*TokenPair, error) {
 	member, err := s.q.CheckTenantMembership(ctx, dbgen.CheckTenantMembershipParams{
 		UserID:   in.UserID,
@@ -606,13 +574,10 @@ func (s *Service) SignInInvitedAccount(ctx context.Context, userID, tenantID uui
 	return &LoginResult{Pair: pair}, nil
 }
 
-// EnterInvitedTenant issues the session an existing account enters tenantID
-// with after accepting its invitation while signed in. fromSessionID is the
-// caller's session (uuid.Nil: none, so no factor carries): its second factor
-// carries on as for SwitchTenant, and the entry is refused the same way
-// (ErrStepUpRequired, ErrMFAEnrollmentRequired) while the organisation
-// requires one it didn't meet. The invitation stays accepted, so
-// the caller can step up or set a factor up and switch in.
+// EnterInvitedTenant issues a session in tenantID for an account that accepted
+// its invitation while signed in. Like SwitchTenant, it is refused while the
+// organisation's second-factor requirement isn't met; the invitation stays
+// accepted so the user can step up and switch in.
 func (s *Service) EnterInvitedTenant(ctx context.Context, userID, tenantID, fromSessionID uuid.UUID, ip, ua string) (*TokenPair, error) {
 	carried := ""
 	if fromSessionID != uuid.Nil {
@@ -708,21 +673,14 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 	return &LoginResult{Pair: pair}, nil
 }
 
-// BeginLoginSession is the hosted-login (cookie) equivalent of Login: it
-// verifies the password and, when the account holds a second factor or must
-// have one, returns an MFA challenge instead of an SSO session (complete it
-// via CompleteMFALoginSessionWith). Otherwise it mints the SSO session cookie
-// value. Without this check the cookie flow would bypass MFA that the token
-// flow enforces.
+// BeginLoginSession is the hosted-login (cookie) form of Login. It verifies the
+// password and returns an MFA challenge when the account needs a second factor,
+// or the SSO session cookie value otherwise.
 func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, trustedToken, country string) (*LoginSessionResult, error) {
-	// Hook-issued claims aren't threaded into the hosted-login cookie flow: the
-	// SSO cookie is opaque, and any JWT is minted later by the OIDC authorize
-	// flow for a specific client, decoupled from this call — a separate,
-	// larger integration than the direct API-token login this powers.
-	// The hosted login opens a session for the browser, not for one
-	// organisation; the application it is serving belongs to one, whose address
-	// rules refuse here, not later at authorize. Before the password is
-	// checked, so the answer is the same whether it is right or wrong.
+	// Hook claims don't apply here: the SSO cookie is opaque, and tokens are
+	// minted later by the OIDC authorize flow. The application's organisation
+	// applies its address rules before the password is checked, so the answer is
+	// the same whether the password is right or wrong.
 	clientTenant, err := s.SignInTenant(ctx, in.ClientID)
 	if err != nil {
 		return nil, err
@@ -764,14 +722,10 @@ func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, t
 	return &LoginSessionResult{UserID: u.ID, RawCookie: raw}, nil
 }
 
-// RegisterInTenant creates a new end-user in the given tenant from the hosted
-// signup flow and signs them in by minting the SSO session cookie value. It is
-// gated by the tenant's self_registration_enabled policy, refused with
-// ErrAuthMethodDisabled where the tenant has password sign-in off, and checks
-// the password against that tenant's rules (see RegistrationPolicy). Returns
-// the created user and either the raw cookie value to write via
-// SetLoginSessionCookie or, when the organisation requires MFA, an enrolment
-// challenge to meet first (see mfapolicy.go).
+// RegisterInTenant creates a user in tenantID from the hosted sign-up flow and
+// signs them in. It honours the tenant's self-registration, password sign-in and
+// password rules, and returns the SSO cookie value or, when the organisation
+// requires MFA, an enrolment challenge.
 func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, email, plain, displayName, ip, ua string) (*user.User, *LoginSessionResult, error) {
 	if s.regPolicy == nil {
 		return nil, nil, errs.ErrNotImplemented
@@ -864,11 +818,9 @@ const (
 	firstFactorSocial    = "social"
 )
 
-// challengeSignIn records a single-use, short-lived pending sign-in that
-// CompleteMFALoginWith (or CompleteMFALoginSessionWith) later exchanges for a
-// session, and audits why it was challenged. claims (nilable) are any
-// Auth-Hook-issued custom claims to carry across the MFA step into the
-// eventual access token.
+// challengeSignIn records a short-lived, single-use pending sign-in that the MFA
+// step later exchanges for a session, and audits why it was challenged. claims
+// are hook claims carried across the MFA step.
 func (s *Service) challengeSignIn(ctx context.Context, userID, tenantID uuid.UUID, claims map[string]any, gate mfaGate, firstFactor, ip, ua string) (MFAChallenge, error) {
 	var tid any
 	var tenantPtr *uuid.UUID
@@ -961,16 +913,10 @@ func (m metChallenge) method() string {
 	return m.firstFactor + "_mfa"
 }
 
-// verifyAndConsumeMFAChallenge validates a pending MFA login challenge and the
-// proof offered for it. On a valid proof it consumes (deletes) the challenge
-// and returns the user, its tenant, and any claims stashed by challengeSignIn.
-// A wrong proof is rejected WITHOUT consuming the challenge so the user can
-// retry within the TTL. An enrolment challenge is met by the code that
-// confirms the authenticator app started for it, or skipped while the grace
-// period runs (see mfapolicy.go). Shared by the token flow
-// (CompleteMFALoginWith) and the hosted cookie flow
-// (CompleteMFALoginSessionWith). A wrong proof is recorded as a failed
-// sign-in, from ip and ua.
+// verifyAndConsumeMFAChallenge checks a pending MFA challenge and its proof. A
+// valid proof consumes the challenge and returns the user, tenant and claims. A
+// wrong proof is recorded as a failed sign-in and leaves the challenge for a
+// retry.
 func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken string, proof MFAProof, ip, ua string) (metChallenge, error) {
 	if s.mfa == nil {
 		return metChallenge{}, errs.ErrNotImplemented
@@ -1284,10 +1230,8 @@ type MFALoginSession struct {
 }
 
 // CompleteMFALoginSession verifies the second-factor code for a pending
-// hosted-login challenge and, on success, mints the SSO session cookie value
-// (the cookie-flow analogue of CompleteMFALogin). Returns the user id, its
-// tenant (uuid.Nil when tenant-less), and the raw cookie value to write via
-// SetLoginSessionCookie.
+// hosted-login challenge and returns the user ID, the tenant ID (uuid.Nil if
+// none) and the SSO session cookie value.
 func (s *Service) CompleteMFALoginSession(ctx context.Context, mfaToken, code, ip, ua string) (uuid.UUID, uuid.UUID, string, error) {
 	res, err := s.CompleteMFALoginSessionWith(ctx, mfaToken, MFAProof{Code: code}, ip, ua)
 	if err != nil {
@@ -1318,20 +1262,13 @@ func (s *Service) CompleteMFALoginSessionWith(ctx context.Context, mfaToken stri
 		RecoveryCodes: met.recoveryCodes, Deferred: met.deferred || met.riskVerified}, nil
 }
 
-// CheckPassword runs the full credential check — sign-in lockout (see
-// lockout.go), user lookup, password verify, transparent Argon2id
-// rehash-on-login, and clear-on-success — returning the authenticated user
-// plus any custom claims a wired Auth Hook asked to be injected into the
-// eventual access token (nil when no hook is wired, or the hook returned
-// none). Shared by API login (which then issues tokens) and the hosted-login
-// SSO session (which sets a cookie). It deliberately does not mint tokens or
-// sessions itself.
+// CheckPassword runs the full password check (lockout, lookup, verification and
+// Argon2id rehash) and returns the user and any hook claims for the access
+// token. It does not create tokens or sessions.
 func (s *Service) CheckPassword(ctx context.Context, in SignInAttempt) (*user.User, map[string]any, error) {
-	// Whether the organisation allows password sign-in. A hosted login names
-	// the application, so its organisation decides before the password is
-	// looked at — the same answer for any account or none. Without one, the
-	// account's own organisation decides once the password is verified, so
-	// only its owner sees that answer.
+	// A hosted login names the application, so its organisation decides whether
+	// password sign-in is allowed before the password is checked. Otherwise the
+	// account's own organisation decides after verification.
 	signInTenant, err := s.SignInTenant(ctx, in.ClientID)
 	if err != nil {
 		return nil, nil, err
@@ -1420,11 +1357,8 @@ func (s *Service) CheckPassword(ctx context.Context, in SignInAttempt) (*user.Us
 	return u, nil, nil
 }
 
-// IssuePair creates a session, mints an access+refresh pair, and records
-// an audit row labelled with the login method ("password", "magic_link",
-// "invite_accept", "oidc", "passkey", "social", …). The audit row lives
-// inside the session-insert transaction so analytics never see a session
-// without its provenance event.
+// IssuePair creates a session, issues an access and refresh token pair, and
+// records the sign-in method in an audit row in the same transaction.
 func (s *Service) IssuePair(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, method string) (*TokenPair, error) {
 	return s.issuePair(ctx, userID, tenantID, ip, ua, method, nil)
 }
@@ -1581,11 +1515,9 @@ func (s *Service) refreshExpiry(sessionExp time.Time) time.Time {
 	return exp
 }
 
-// Refresh rotates the provided refresh token: the old row is marked used,
-// a new one is inserted, and a fresh access token is signed. Reuse of an
-// already-used token revokes the whole session (token theft mitigation)
-// and emits an audit event + outbox event so notifications (email,
-// webhook) can reach the user.
+// Refresh rotates a refresh token and issues a new access token. Reusing an
+// already-used token revokes the whole session as suspected theft and notifies
+// the user.
 func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, error) {
 	hash := tokens.HashRefresh(in.RefreshToken)
 
@@ -1602,7 +1534,7 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 		expiresAt   time.Time
 		sessionRev  *time.Time
 		userID      uuid.UUID
-		tenantPtr   *uuid.UUID // NULL for a tenant-less session
+		tenantPtr   *uuid.UUID
 		userStatus  string
 		userDeleted *time.Time
 		hookClaims  []byte
@@ -1663,11 +1595,8 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 	if sessionRev != nil {
 		return nil, errs.ErrAuthSessionRevoked
 	}
-	// A session can outlive the account it belongs to: a plain status
-	// change (PATCH /users/{id}) or a soft-delete doesn't touch
-	// auth.sessions at all, so without this check a suspended/deleted
-	// user's still-valid refresh token would keep minting fresh access
-	// tokens indefinitely.
+	// Status changes and soft deletes don't end sessions, so without this check a
+	// suspended or deleted user's refresh token would keep working.
 	if userDeleted != nil || userStatus == "suspended" {
 		return nil, errs.ErrAuthAccountSuspended
 	}
@@ -1680,11 +1609,8 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 		return nil, errs.ErrAuthRefreshTokenInvalid
 	}
 	if usedAt != nil {
-		// Reuse — assume theft. Revoke the session, write an audit row,
-		// and enqueue an outbox event so downstream notifiers (email,
-		// webhook) can alert the user. All three happen atomically with
-		// the revocation so a partial failure leaves no inconsistent
-		// state.
+		// Reuse means theft: revoke the session and record the audit and outbox
+		// events atomically with the revocation.
 		if err := s.handleRefreshReuse(ctx, tx, userID, tenantID, sessionID, id, in); err != nil {
 			return nil, err
 		}
@@ -1827,13 +1753,8 @@ func (s *Service) handleRefreshReuse(ctx context.Context, tx pgx.Tx,
 	return nil
 }
 
-// Logout revokes a session (covers both self-service logout and an
-// admin/API-driven revoke of another session — same call, same effect).
-// Idempotent: revoking an already-revoked or nonexistent session is a no-op,
-// not an error.
-// Logout revokes a session, scoped to its owner: a caller can only revoke a
-// session that belongs to them (userID), so passing another user's session id
-// is a no-op rather than a cross-user takedown.
+// Logout revokes sessionID if it belongs to userID. It is idempotent: an
+// already-revoked, unknown or other user's session is a no-op.
 func (s *Service) Logout(ctx context.Context, sessionID, userID uuid.UUID) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -1867,16 +1788,10 @@ type RevokeOtherSessionsInput struct {
 	RequestID        string
 }
 
-// RevokeOtherSessions ends every live session the user holds except the current
-// one and returns how many it ended. Ending a session is what invalidates its
-// refresh tokens: Refresh rejects any token whose session is revoked.
-//
-// It is all-or-nothing: the revocation and its audit record commit together, so
-// a failure ends nothing and is never reported as success. The user row is
-// locked first, so two of the user's sessions asking at once run one after the
-// other; the second then finds its own session ended and gets
-// ErrAuthSessionRevoked. That check also stops a still-unexpired access token
-// from an ended session from ending the sessions that remain.
+// RevokeOtherSessions ends every live session of the user except the current one
+// and returns how many it ended. It is all-or-nothing and locks the user row, so
+// concurrent calls run in turn; a call from an already-ended session gets
+// ErrAuthSessionRevoked.
 func (s *Service) RevokeOtherSessions(ctx context.Context, in RevokeOtherSessionsInput) (int64, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -1938,17 +1853,10 @@ type RevokeAllSessionsInput struct {
 	RequestID string
 }
 
-// RevokeAllSessions signs the caller out everywhere: every API and console
-// session including the current one, every hosted-login session and every
-// application grant (see EndAllSignIns), and records it as a self-initiated
-// global sign-out. Access tokens already issued stay valid until they expire.
-//
-// The presented token must stand for one of the caller's own sessions — live or
-// already ended — so an application's access token (which names no session) or
-// a token naming someone else's session is refused. An ended session is allowed
-// so that repeating the call, e.g. after a lost response, succeeds and changes
-// nothing (all counts zero). It is all-or-nothing: the ending and its audit
-// record commit together.
+// RevokeAllSessions signs the caller out everywhere: API and console sessions,
+// hosted-login sessions and application grants. Issued access tokens stay valid
+// until they expire. The token must name one of the caller's own sessions, and
+// repeating the call is safe.
 func (s *Service) RevokeAllSessions(ctx context.Context, in RevokeAllSessionsInput) (SignInsEnded, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -1995,22 +1903,10 @@ func (s *Service) RevokeAllSessions(ctx context.Context, in RevokeAllSessionsInp
 // application grants (see there).
 const maxGrantPasses = 5
 
-// EndAllSignIns ends, inside tx, every way the user is signed in, in all three
-// places, and returns how many it ended in each:
-//   - sessions: every live API and console session (their refresh tokens stop
-//     working with them);
-//   - loginSessions: every hosted-login browser session, deleted as hosted
-//     sign-out deletes one, counting those not yet expired;
-//   - appGrants: every application's refresh grant, for every application.
-//
-// It locks the user row first (the order bulk session revocation uses), so it
-// runs one at a time with other bulk revocations and password changes for the
-// same user. Nothing is committed here: the caller records its audit event in
-// the same tx and commits. Used by self-service sign-out everywhere and by the
-// administrator's force sign-out. errs.ErrNotFound for an unknown user.
-//
-// reason is why, for the session.revoked signals of the sessions it ends
-// (self-service sign out everywhere, or an administrator's force sign-out).
+// EndAllSignIns ends, inside tx, the user's sessions, hosted-login sessions and
+// application grants, and returns how many of each it ended. It locks the user
+// row first and does not commit; reason is sent with the session.revoked
+// signals. It returns errs.ErrNotFound for an unknown user.
 func (s *Service) EndAllSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID, reason string) (SignInsEnded, error) {
 	var ended SignInsEnded
 	q := s.q.WithTx(tx)
@@ -2036,11 +1932,8 @@ func (s *Service) EndAllSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID
 	if ended.LoginSessions, err = sessionsignal.EndLoginSessions(ctx, tx, userID); err != nil {
 		return SignInsEnded{}, err
 	}
-	// The ways back in that are not sessions: a remembered device would skip
-	// the second factor at the next password sign-in, and an unredeemed code
-	// or an approved device or back-channel request would still turn into a
-	// grant. Codes are spent before the grant passes below, so a grant a
-	// redemption under way writes is ended by them.
+	// Also end the ways back in that aren't sessions: remembered devices skip the
+	// second factor, and pending codes or approved requests would become grants.
 	if ended.TrustedDevices, err = q.DeleteTrustedDevicesForUser(ctx, userID); err != nil {
 		return SignInsEnded{}, err
 	}
@@ -2056,12 +1949,8 @@ func (s *Service) EndAllSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID
 		}
 		ended.PendingAuthorizations += n
 	}
-	// An application renewing a grant at this moment locks the token it
-	// presented, writes the successor and commits — possibly after a pass has
-	// already taken its snapshot, so that pass cannot see the successor. A
-	// further pass (a new statement, a new snapshot) does; repeat until a pass
-	// finds nothing left. Bounded: a renewal has to win a race against a pass
-	// that is already waiting for it, so one extra pass is the norm.
+	// A grant renewed concurrently can commit after this pass's snapshot, so repeat
+	// in new statements until a pass finds nothing; one extra pass is the norm.
 	for pass := 0; pass < maxGrantPasses; pass++ {
 		row, err := q.RevokeAppGrantsForUser(ctx, userID)
 		if err != nil {
@@ -2086,15 +1975,10 @@ type ChangePasswordInput struct {
 	RequestID     string
 }
 
-// ChangePassword atomically updates the credential, revokes every other
-// session, and records durable audit/outbox evidence. The authenticated current
-// session remains active so the user is not signed out of the initiating flow.
-//
-// The new password is checked against the rules of the organisation the
-// account belongs to — not the session's tenant, which the user chooses — or
-// the platform baseline for a tenant-less account. The check runs before the
-// current password is verified and depends only on the new one, so a refusal
-// says nothing about the stored credential.
+// ChangePassword updates the password, revokes every other session and records
+// audit evidence in one transaction; the current session stays. The new password
+// is checked against the account's organisation's rules before the current one
+// is verified.
 func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) error {
 	account, err := s.users.Get(ctx, in.UserID)
 	if err != nil {

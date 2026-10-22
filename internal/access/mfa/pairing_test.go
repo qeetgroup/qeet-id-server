@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// TestPairingCodeIsReadable: a code is ten characters of Crockford base32 in
-// two groups, and reads back the same however it is typed.
+// TestPairingCodeIsReadable checks that a code is ten Crockford base32
+// characters in two groups and reads back the same however it is typed.
 func TestPairingCodeIsReadable(t *testing.T) {
 	seen := map[string]bool{}
 	for range 200 {
@@ -28,8 +28,8 @@ func TestPairingCodeIsReadable(t *testing.T) {
 	}
 }
 
-// TestPairingCodeNormalisation: letters mistaken for digits read as the
-// digits; anything that cannot be a code is rejected.
+// TestPairingCodeNormalisation checks that letters mistaken for digits read as
+// the digits and that anything that cannot be a code is rejected.
 func TestPairingCodeNormalisation(t *testing.T) {
 	for in, want := range map[string]string{
 		"ABCDE-FGHJK":   "ABCDEFGHJK",

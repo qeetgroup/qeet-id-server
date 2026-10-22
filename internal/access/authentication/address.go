@@ -6,17 +6,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// AddressPolicy is the organisation's address rules: CheckSignIn returns
-// errs.ErrAuthAddressNotAllowed (having recorded the refusal) when ip may not
-// sign in to tenantID, and nil when it may or the rules are off. Satisfied by
-// *ipallow.Service; an interface so auth doesn't import it. Wired via
-// SetAddressPolicy.
+// AddressPolicy applies an organisation's address rules. CheckSignIn returns
+// errs.ErrAuthAddressNotAllowed, after recording the refusal, when ip may not
+// sign in to tenantID. Satisfied by *ipallow.Service.
 type AddressPolicy interface {
 	CheckSignIn(ctx context.Context, tenantID, userID uuid.UUID, ip, path string) error
 }
 
 // SetAddressPolicy wires the address rules into every sign-in and renewal.
-// Called from internal/bootstrap/dependencies.go.
 func (s *Service) SetAddressPolicy(p AddressPolicy) { s.addresses = p }
 
 // CheckSignInAddress asks tenantID's address rules whether ip may sign in to it

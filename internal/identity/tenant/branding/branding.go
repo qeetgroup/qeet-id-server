@@ -1,4 +1,5 @@
-// Package branding stores per-tenant theming and custom-domain settings.
+// Package branding stores per-tenant theming, custom-domain and email-sender
+// settings.
 package branding
 
 import (
@@ -44,14 +45,13 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool, q: dbgen.New(pool)}
 }
 
-// PlanGate reports whether a plan-gated boolean feature is included in the
-// tenant's plan. Satisfied by operations/entitlements.Service, injected via
-// SetPlanGate.
+// PlanGate reports whether a boolean plan feature is in the tenant's plan.
+// Satisfied by *entitlements.Service.
 type PlanGate interface {
 	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
 }
 
-// SetPlanGate wires the plan-feature gate (nil allows all features).
+// SetPlanGate sets the plan-feature gate (nil allows all features).
 func (r *Repository) SetPlanGate(g PlanGate) { r.gate = g }
 
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
@@ -80,11 +80,9 @@ func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Branding, er
 	return toDomain(tenantID, row), nil
 }
 
-// LoginBranding returns the tenant's hosted-login branding (logo + brand colors)
-// as plain strings for the OIDC login-context endpoint, so the login app can
-// render the tenant's brand without a second round-trip. Missing/unset fields
-// come back empty. Satisfies oidc.BrandingLister (deps stay one-way: primitives
-// only, no branding types leak into federation).
+// LoginBranding returns the tenant's hosted-login logo and colors as plain
+// strings, empty when unset or on error. It satisfies oidc.BrandingLister,
+// which takes primitives so federation doesn't depend on this package.
 func (r *Repository) LoginBranding(ctx context.Context, tenantID uuid.UUID) (logoURL, primaryColor, secondaryColor, backgroundColor string) {
 	b, err := r.Get(ctx, tenantID)
 	if err != nil || b == nil {

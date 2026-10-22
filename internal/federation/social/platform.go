@@ -1,11 +1,8 @@
 package social
 
-// Platform-level (tenant-less) social login for the console's own Qeet ID
-// accounts. The per-tenant social flow (social.go) requires a tenant; the
-// console sign-in has none, so this parallel path uses env-configured providers,
-// dedicated tenant-less state/code tables (migration 0085), resolves the user by
-// globally-unique email, and issues a tenant-less session — reusing the same
-// generic OIDC ceremony (oauthclient.go).
+// Platform sign-in is the console's own tenant-less social sign-in. It uses
+// env-configured providers and its own state and code tables, matches people by
+// their globally unique email, and issues a tenant-less session.
 
 import (
 	"context"
@@ -35,9 +32,9 @@ func (s *Service) SetPlatformGitHub(clientID, clientSecret string) {
 	s.setPlatform("github", providerConfig{clientID: clientID, clientSecret: clientSecret, kind: "github"})
 }
 
-// SetPlatformApple registers Sign in with Apple. clientID is the Services ID; the
-// client secret is derived per-request as a signed ES256 JWT from teamID/keyID/
-// privateKey (a .p8 key). See apple.go.
+// SetPlatformApple registers Sign in with Apple. servicesID is the Services ID;
+// the client secret is signed per request from teamID, keyID and privateKey (a
+// .p8 key). See apple.go.
 func (s *Service) SetPlatformApple(servicesID, teamID, keyID, privateKey string) {
 	s.setPlatform("apple", providerConfig{
 		clientID: servicesID, kind: "apple", teamID: teamID, keyID: keyID, privateKey: privateKey,
@@ -210,14 +207,10 @@ func emailPtr(s string) *string {
 	return &s
 }
 
-// CompletePlatformCallback consumes the state and exchanges the code. For a
-// login ceremony it resolves/creates the tenant-less user by global email,
-// records the connected identity, and mints a one-time login code; startedHere
-// says the browser that arrived is the one that began it, and without that it
-// is refused with ErrSocialBrowserMismatch. For a link ceremony (state carried
-// a link_user_id) it holds the identity under a one-time link code for that
-// user to complete. Returns ErrSocialStateInvalid when the state isn't a
-// platform state, so the caller can fall back to the tenant flow.
+// CompletePlatformCallback consumes the state and exchanges the code. A sign-in
+// yields a one-time LoginCode and needs startedHere (else ErrSocialBrowserMismatch);
+// a link yields a LinkCode for CompletePlatformLink. ErrSocialStateInvalid means
+// the state isn't a platform one, so the caller can try the tenant flow.
 func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state, code string, startedHere bool) (*PlatformCallbackResult, error) {
 	if state == "" || code == "" {
 		return nil, errs.ErrSocialCallbackParamsMissing
@@ -365,12 +358,10 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 	return &PlatformCallbackResult{LoginCode: rawCode, Provider: provider}, nil
 }
 
-// CompletePlatformLink attaches the provider identity a link callback held
-// under rawCode to userID, and returns the provider. Only the account that
-// began the link completes it; the code is spent either way. An authenticated
-// link ceremony proves control of the local account, so it may bind the
-// provider subject without using email as identity proof, but an identity
-// already linked to someone else is refused.
+// CompletePlatformLink attaches the identity held under rawCode to userID and
+// returns the provider. Only the account that began the link may complete it,
+// but the code is spent either way. Email isn't checked, since the signed-in
+// account is the proof; an identity linked to someone else is refused.
 func (s *Service) CompletePlatformLink(ctx context.Context, rawCode string, userID uuid.UUID) (string, error) {
 	if rawCode == "" {
 		return "", errs.ErrSocialCodeRequired
@@ -418,21 +409,17 @@ func (s *Service) CompletePlatformLink(ctx context.Context, rawCode string, user
 	return provider, nil
 }
 
-// findOrCreatePlatformUser resolves a tenant-less Qeet ID user by globally-unique
-// email, creating a password-less one if none exists (they create their first
-// org from the dashboard, exactly like a normal tenant-less signup).
+// findOrCreatePlatformUser returns the user with ui.Email. With none, it creates
+// a password-less tenant-less user when allowCreate (sign-up) and otherwise
+// fails with ErrSocialNoAccount.
 func (s *Service) findOrCreatePlatformUser(ctx context.Context, ui userInfo, allowCreate bool) (uuid.UUID, error) {
 	var userID uuid.UUID
 	err := s.pool.QueryRow(ctx,
 		`SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`, ui.Email,
 	).Scan(&userID)
 	if err == nil {
-		// Adopting an account the provider's address matches: only one whose
-		// address was proved there. Someone else may have registered it with a
-		// password of their own, which would keep working on the adopted
-		// account; until a code or link sent to the address is used (verifying
-		// it, or resetting the password), the provider's word doesn't hand it
-		// over.
+		// Adopt the account only if it has proved owning the address, or a squatter
+		// who registered it unverified keeps a working password on it.
 		if err := requireVerifiedAddress(ctx, s.pool, userID); err != nil {
 			return uuid.Nil, err
 		}
@@ -471,10 +458,9 @@ func (s *Service) findOrCreatePlatformUser(ctx context.Context, ui userInfo, all
 }
 
 // ExchangePlatformLogin trades a one-time platform login code for a tenant-less
-// Qeet token pair, or the second-factor challenge to complete first (see
-// auth.Service.BeginSocialSignIn). Returns ErrSocialLoginCodeInvalid when
-// the code isn't a platform code (so the caller can fall back to the tenant
-// exchange).
+// token pair, or the second-factor challenge to meet first. A code that isn't a
+// platform one fails with ErrSocialLoginCodeInvalid, so the caller can try the
+// tenant exchange.
 func (s *Service) ExchangePlatformLogin(ctx context.Context, rawCode, ip, ua string) (*auth.LoginResult, error) {
 	if rawCode == "" {
 		return nil, errs.ErrSocialCodeRequired

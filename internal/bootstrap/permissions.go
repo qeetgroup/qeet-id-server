@@ -6,18 +6,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 )
 
-// userPermissionMap is the user-permission portion of the authorization policy
-// table consumed by rbac.Enforce. RoutePolicies adds explicit self-service and
-// handler-authorized routes; anything absent from the combined table is denied.
-//
-// Convention: reads → <resource>.read, mutations → <resource>.write. Built-in
-// roles: owner/admin hold every permission; member holds only the four basic
-// reads (tenant/user/role/group .read), so members can browse the org but
-// cannot mutate it or read sensitive surfaces (audit, secrets, keys, SSO,
-// billing, analytics, webhooks).
-//
-// NB: keys MUST match chi's composed RoutePattern (the "/v1" prefix included).
-// A missing mutation entry = a silently ungated write, so keep this exhaustive.
+// userPermissionMap maps "METHOD /v1/pattern" routes to the user permission
+// they need: <resource>.read for reads and <resource>.write for writes. Routes
+// missing from the combined policy table are denied, so every mutation must be
+// listed.
 func userPermissionMap() map[string]string {
 	return map[string]string{
 		// Tenants (GET /v1/tenants lists the caller's own memberships — ungated).
@@ -346,14 +338,9 @@ func userPermissionMap() map[string]string {
 	}
 }
 
-// RoutePolicies is the authorization policy of every authenticated route,
-// keyed "METHOD /v1/pattern", as rbac.Enforce applies it.
-//
-// Each policy names the scope an application's token needs on the route
-// (rbac.RoutePolicy.ApplicationScope; TestEveryRouteNamesAnApplicationScope):
-// the permission itself on an administrative route, account.read or
-// account.write on the user's own account, openid on userinfo. Only the routes
-// in ApplicationTokenRoutes accept an application's token in the first place.
+// RoutePolicies returns the authorization policy of every authenticated route,
+// keyed "METHOD /v1/pattern", as rbac.Enforce applies it. Each policy names the
+// scope an application's token needs on that route.
 func RoutePolicies() map[string]rbac.RoutePolicy {
 	policies := make(map[string]rbac.RoutePolicy)
 	for route, permission := range userPermissionMap() {

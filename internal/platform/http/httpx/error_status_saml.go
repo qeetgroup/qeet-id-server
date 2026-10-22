@@ -6,9 +6,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// SAML federation code→status mappings. Registered from this per-domain file so
-// the saml bounded context owns its own transport mapping without editing the
-// shared statusByCode table.
+// init registers the HTTP statuses of the SAML error codes.
 func init() {
 	registerStatuses(map[string]int{
 		errs.CodeSAMLTenantIDInvalid:          http.StatusBadRequest,

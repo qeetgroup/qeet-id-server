@@ -23,8 +23,8 @@ const (
 type SMTPSender struct {
 	Addr     string // host:port (e.g. "email-smtp.us-east-1.amazonaws.com:587")
 	Host     string // host alone, for PLAIN auth's server name
-	Username string
-	Password string
+	Username string // SMTP username
+	Password string // SMTP password
 	From     string // RFC 5322 From, e.g. `Qeet ID <noreply@qeet.in>`
 }
 

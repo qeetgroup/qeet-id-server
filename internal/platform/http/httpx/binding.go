@@ -7,21 +7,15 @@ import (
 	"time"
 )
 
-// A BindingCookie ties a sign-in ceremony to the browser that began it: the
-// response that begins the ceremony names it in the cookie, and the step that
-// finishes it checks the browser still holds that name. A link or form post
-// that carries someone else's ceremony into this browser then finds it isn't
-// held here.
-//
-// The cookie is HttpOnly and, outside dev, __Host- prefixed, so neither a
-// script nor a sibling sub-domain can plant a name in it. It keeps the last few
-// ceremonies, so two begun in one browser (another tab, or passkey autofill
-// alongside the button) both still finish.
+// BindingCookie ties a sign-in ceremony to the browser that began it, so a link
+// or form post carrying another browser's ceremony fails Holds. The cookie is
+// HttpOnly and, when Secure, __Host- prefixed, so scripts and sibling subdomains
+// can't plant ids; it keeps the last few, so parallel ceremonies all finish.
 type BindingCookie struct {
-	Name     string // without the __Host- prefix
-	Secure   bool
-	SameSite http.SameSite
-	MaxAge   time.Duration
+	Name     string        // without the __Host- prefix
+	Secure   bool          // the cookie's Secure attribute
+	SameSite http.SameSite // the cookie's SameSite attribute
+	MaxAge   time.Duration // the cookie's lifetime
 }
 
 // bindingCookieKeep is how many ceremonies a browser can have in flight.

@@ -149,26 +149,15 @@ func NewRouter(d Deps) http.Handler {
 
 	r.Use(chimw.RequestID)
 	r.Use(httpx.ClientIPContext) // the client address, for audit records written below a handler
-	// NOTE: chimw.RealIP is deliberately NOT used. It rewrites r.RemoteAddr from
-	// X-Forwarded-For / X-Real-IP unconditionally, with no notion of a trusted
-	// proxy — which would re-introduce the spoofing that httpx.ClientIP now
-	// defends against by making the transport peer (our safe fallback) equally
-	// caller-controlled. Client IP resolution lives in httpx.ClientIP, governed
-	// by TRUSTED_PROXY_HOPS.
+	// chimw.RealIP is deliberately not used: it trusts X-Forwarded-For from anyone.
+	// Client IPs come from httpx.ClientIP, governed by TRUSTED_PROXY_HOPS.
 	r.Use(chimw.Recoverer)
 	r.Use(httpx.GeoCountryContext) // the trusted upstream country, for the sessions a request opens
 	r.Use(d.InFlight.Middleware)
 	r.Use(httpx.SecurityHeaders(d.ServiceEnv != config.EnvDev))
-	// Tracing wraps metrics so the server span spans the whole request; both
-	// derive low-cardinality names from the matched chi route pattern. When no
-	// OTLP endpoint is configured the global tracer is a no-op, so this is a
-	// cheap pass-through.
-	//
-	// It must also sit ABOVE AccessLog: chi middleware is outer-to-inner, and
-	// AccessLog reads trace.SpanFromContext(r.Context()) when it writes its line.
-	// With AccessLog outermost it only ever saw its own pre-span context, so the
-	// trace_id/span_id attrs were silently never emitted and Grafana's
-	// log-to-trace correlation had nothing to link on.
+	// Tracing wraps metrics so the server span covers the whole request, and it sits
+	// above AccessLog so log lines carry trace_id and span_id. With no OTLP endpoint
+	// the tracer is a no-op.
 	r.Use(tracing.Middleware)
 	r.Use(httpx.AccessLog)
 	r.Use(metrics.Middleware)
@@ -183,12 +172,8 @@ func NewRouter(d Deps) http.Handler {
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
-	// CSRF: enforced on browser cookie-bearing requests; traffic authorised by
-	// a bearer token or an API key bypasses it. Lives above the route groups so
-	// every cookie-session mutation inherits the check.
-	//
-	// CSRFDisabled is an explicit escape hatch for dev/Postman testing only
-	// — main.go refuses to start with CSRF_DISABLED outside SERVICE_ENV=dev.
+	// CSRF applies to cookie-bearing browser requests; bearer tokens and API keys
+	// bypass it. CSRFDisabled is for dev only, and startup refuses it elsewhere.
 	if !d.CSRFDisabled {
 		r.Use(CSRF(d.AllowedOrigins, d.ServiceEnv != config.EnvDev, d.CSRFCookieDomain))
 	}
@@ -211,22 +196,10 @@ func NewRouter(d Deps) http.Handler {
 	userLimiter := newLimiter(30, 100)
 	apiKeyLimiter := newLimiter(50, 200)
 
-	// Root-mounted protocol routes (OIDC discovery/revoke/introspect, SCIM,
-	// SAML, LDAP) sit OUTSIDE the /v1 group and therefore inherited no rate
-	// limit at all — mountRootPublicRoutes used to run before any limiter even
-	// existed. Two of those are unauthenticated or near-free to call:
-	//
-	//   POST /ldap/{id}/authenticate  verifies a username+password against the
-	//     customer's own directory. Unthrottled, it is a password-spray gateway
-	//     into a tenant's Active Directory that will also trip AD's lockout
-	//     policy and take the customer's directory down.
-	//   POST /oauth/introspect        needs only a public client_id (no secret),
-	//     making it a token-liveness oracle.
-	//
-	// credentialLimiter matches the /v1 login throttle. protocolLimiter is
-	// deliberately generous: SCIM sync and SAML SSO are legitimate machine
-	// traffic and must not be throttled into failure — it exists to bound abuse,
-	// not to shape normal load.
+	// Rate limits for root-mounted protocol routes. credentialLimiter matches the /v1
+	// login throttle (LDAP authenticate is a password-spray target, introspect a token
+	// oracle); protocolLimiter is generous, since SCIM and SAML are legitimate machine
+	// traffic.
 	credentialLimiter := newLimiter(5, 20)
 	protocolLimiter := newLimiter(50, 200)
 
@@ -261,15 +234,9 @@ func NewRouter(d Deps) http.Handler {
 			// applications (ApplicationTokenRoutes); everything else here is account
 			// and organisation management, which only the user's own tokens may do.
 			r.Use(httpx.RefuseApplicationTokens(ApplicationTokenRoutes()))
-			// Central cross-tenant guard: any route with a {tenantID} path param
-			// must match the caller's own tenant (QID-18). Belt to the individual
-			// handlers' suspenders. NOTE: this relies on the nested Route("/v1")
-			// + Group structure — chi only exposes the {tenantID} param to a
-			// group-level middleware when routes are matched by the nested
-			// subrouter. Do NOT flatten these routes onto the top mux, or this
-			// guard stops seeing the param and silently fails open. (rbac + users
-			// also self-scope in-handler, so those two survive a refactor; the
-			// other tenant-scoped resources rely on this middleware.)
+			// Cross-tenant guard: a {tenantID} path parameter must match the caller's
+			// tenant. It needs the nested Route("/v1") + Group structure to see the
+			// parameter; flattening these routes onto the top mux makes it fail open.
 			r.Use(httpx.EnforceTenantScope)
 			r.Use(tenantLimiter.MiddlewareBy("tenant", ratelimit.PerTenant))
 			r.Use(userLimiter.MiddlewareBy("user", ratelimit.PerUser))
@@ -289,14 +256,9 @@ func NewRouter(d Deps) http.Handler {
 	return r
 }
 
-// mountRootPublicRoutes is the single production registration point for
-// protocol and operational routes mounted outside /v1.
-//
-// The chi.Group wrappers attach rate limiting without altering any route
-// pattern — Group only composes middleware onto the same mux, so path matching,
-// path parameters and the OpenAPI route set are unchanged. Probes are left
-// unlimited on purpose: throttling /healthz or /readyz would make an
-// orchestrator kill a pod that is merely busy.
+// mountRootPublicRoutes registers the protocol and operational routes outside
+// /v1. Groups add rate limits without changing route patterns. Health probes are
+// unlimited, so a busy pod isn't killed.
 func mountRootPublicRoutes(r chi.Router, d Deps, credentialLimiter, protocolLimiter *ratelimit.Limiter) {
 	r.Get("/healthz", d.Health.Liveness)
 	r.Get("/readyz", d.Health.Readiness)
@@ -401,10 +363,8 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 }
 
 // ApplicationTokenRoutes lists the authenticated routes that accept a token
-// issued to an application (one carrying client_id). Every other authenticated
-// route refuses it (httpx.RefuseApplicationTokens): an application's token
-// lets it read who the user is, not manage their account or organisation.
-// Keep it to endpoints meant for applications (TestApplicationTokenRoutesStayNarrow).
+// issued to an application. Every other authenticated route refuses it: an
+// application may read who the user is, not manage their account.
 func ApplicationTokenRoutes() []string {
 	return []string{
 		"GET /v1/oauth/userinfo",
@@ -413,17 +373,8 @@ func ApplicationTokenRoutes() []string {
 }
 
 // LoginSessionRoutes lists the authenticated routes that also accept the hosted
-// login's session cookie (qe_ls) in place of a bearer token, because the hosted
-// login's own signed-in pages call them and it never holds a token. Every other
-// authenticated route stays token-only.
-//
-// Keep it short: each entry lets a browser that is signed in to the hosted
-// login act through that route. All must be user-only self-service routes and
-// none may be CSRF-exempt (TestLoginSessionRoutesStayNarrow). Removing a
-// passkey is deliberately not here: it stays token-only until removal checks
-// that the user keeps a way to sign in. The three reads tell a signed-in page
-// (and the React SDK's useUser and organisation switcher, which hold only the
-// cookie) who the person is and which organisations they belong to.
+// login's session cookie (qe_ls), because its pages hold no token. Keep it to
+// user-only self-service routes that aren't CSRF-exempt.
 func LoginSessionRoutes() []string {
 	return []string{
 		"GET /v1/auth/me",
@@ -443,29 +394,10 @@ func CSRF(allowedOrigins []string, cookieSecure bool, cookieDomain string) func(
 		AllowedOrigins: allowedOrigins,
 		CookieSecure:   cookieSecure,
 		CookieDomain:   cookieDomain,
-		// Exempt paths, two buckets:
-		//  1. Machine/IdP-driven, authenticated by something other than a
-		//     browser session: SAML ACS (XML-DSig) + IdP SSO POST binding;
-		//     OAuth revoke/introspect (client creds, RFC 7009/7662); the
-		//     code + device-authorization token endpoints (RFC 8628).
-		//  2. Public PRE-AUTH endpoints that bootstrap a *Bearer* token (not a
-		//     cookie session): signup/login/refresh, password recovery, magic
-		//     link, passkey login, social, invite-accept. They carry no cookie
-		//     session to forge; the token response can't be read or stored
-		//     cross-origin by an attacker; and CORS origin-checks + rate limits
-		//     already gate them — so the double-submit only adds friction.
-		//     NB: /v1/auth/session (the cookie-session creator) is deliberately
-		//     NOT exempt — it stays CSRF-protected, as does the hosted
-		//     magic-link exchange (/v1/auth/magic-link/session) and the
-		//     hosted passkey sign-in (/v1/passkeys/login/session), which set
-		//     the same cookie.
-		// Entries are exact paths unless they end in "/" (prefix) or contain
-		// "*" (one path segment). Keep them narrow: a prefix over a whole
-		// feature area also exempts every authenticated mutation later added
-		// under it. Two such cases were found and closed here — "/v1/social/"
-		// was exempting POST /v1/social/providers (a connection.write that
-		// overwrites a tenant's social IdP), and "/v1/oauth/bc-authorize" as
-		// a prefix was exempting the authenticated .../decision endpoint.
+		// Exempt: machine and IdP endpoints authenticated otherwise (SAML ACS, OAuth
+		// revoke, introspect and token) and public pre-auth endpoints that return bearer
+		// tokens; cookie-setting endpoints stay protected. Entries are exact, end in "/"
+		// (prefix) or use "*" (one segment), so keep prefixes narrow.
 		ExemptPaths: csrfExemptPaths(),
 	})
 }

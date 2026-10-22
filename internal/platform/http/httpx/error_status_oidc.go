@@ -6,10 +6,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// OIDC / OAuth2 provider code→status mappings. Registered from init() so the
-// federation/oidc bounded context owns its own mappings without editing the
-// shared error_status.go. Each code maps to the SAME status as the generic
-// sentinel it replaced.
+// init registers the HTTP statuses of the OIDC and OAuth 2.0 provider error codes.
 func init() {
 	registerStatuses(map[string]int{
 		// Client identity & authentication.

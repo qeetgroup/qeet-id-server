@@ -2,23 +2,10 @@ package bootstrap
 
 import "github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 
-// StepUpRoutes is the catalogue of authenticated routes that need a step-up
-// of the calling session, consumed by mfa.Service.StepUpGate. A stolen access
-// token alone must not be able to add or remove a factor, mint or revoke a
-// machine credential, read or change a secret, weaken sign-in or security
-// policy, reconfigure single sign-on, change retention or audit streaming,
-// hand out authority (permissions, roles, invitations, relationship rules,
-// attribute policies), bring an account back, move an account's email
-// address, or destroy an account or organisation.
-//
-// StepUpWhenFactorHeld covers a person's own factors and sign-in methods: a
-// first factor can be set up with nothing to step up with. Everything else is
-// StepUpAlways, which machine principals (API keys, service principals,
-// agents) can never meet, as they hold no session.
-//
-// Keys MUST match the composed route pattern ("/v1" included).
-// TestSensitiveRoutesNeedStepUp fails when a route that looks sensitive is
-// neither listed here nor in stepUpExempt.
+// StepUpRoutes lists the authenticated routes that need a recent step-up, so a
+// stolen access token alone can't change factors, credentials, secrets, policy or
+// authority. StepUpWhenFactorHeld applies to a person's own factors; everything
+// else is StepUpAlways, which machine principals can never meet.
 func StepUpRoutes() map[string]mfa.StepUpRule {
 	routes := map[string]mfa.StepUpRule{}
 	for _, route := range []string{

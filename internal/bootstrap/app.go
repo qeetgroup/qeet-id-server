@@ -1,3 +1,5 @@
+// Package bootstrap is the composition root: it loads configuration, wires every
+// service, builds the HTTP router and runs the server and its background workers.
 package bootstrap
 
 import (
@@ -35,6 +37,8 @@ func parseLogLevel(s string) slog.Level {
 	}
 }
 
+// Run loads and validates the configuration, then runs the API server and its
+// workers until shutdown. It exits the process if startup fails.
 func Run() {
 	cfg, err := config.Load()
 	if err != nil {

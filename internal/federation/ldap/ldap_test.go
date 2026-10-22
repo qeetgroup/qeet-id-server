@@ -49,8 +49,8 @@ func TestTLSConfig(t *testing.T) {
 	}
 }
 
-// Guards the user-search filter substitution: the supplied username must be
-// LDAP-escaped before being interpolated into the filter (injection defence).
+// TestUserFilterEscaping checks that the username is LDAP-escaped before it is
+// put into the user-search filter, so it can't inject filter syntax.
 func TestUserFilterEscaping(t *testing.T) {
 	filter := "(uid=%s)"
 	malicious := "*)(uid=*"

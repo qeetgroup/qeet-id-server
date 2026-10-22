@@ -63,12 +63,10 @@ func Code(secret string, t time.Time) (string, error) {
 	return fmt.Sprintf("%0*d", digits, bin%mod), nil
 }
 
-// Verify accepts the code if it matches the current 30s window or the
-// preceding/following one, allowing for small clock skew.
-//
-// Verify alone does NOT prevent replay: the same code stays acceptable for the
-// whole ~90s window. Callers that authenticate with TOTP must use VerifyStep and
-// persist the returned step, rejecting any step already consumed (RFC 6238 §5.2).
+// Verify reports whether code matches the current 30s window or an adjacent
+// one. It does not prevent replay: a code stays valid for about 90s, so callers
+// that authenticate with it must use VerifyStep and refuse a step already used
+// (RFC 6238 §5.2).
 func Verify(secret, code string) bool {
 	_, ok := VerifyStep(secret, code)
 	return ok

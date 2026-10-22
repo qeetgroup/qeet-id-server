@@ -1,15 +1,7 @@
-// Package rebac is fine-grained, relationship-based authorization (ReBAC),
-// a Zanzibar/OpenFGA-style subset: relationship tuples plus a recursive Check.
-//
-// A tuple asserts "subject is `relation` of object". A subject is either a
-// direct user (user:<id>) or a userset (<type>:<id>#<relation>) — meaning
-// everyone with that relation on that object. Check answers "does user U have
-// `relation` on object?" by walking direct tuples and expanding usersets
-// recursively, with a depth cap and a visited-set so cycles can't loop forever.
-// It complements RBAC (coarse roles) and ABAC (policy attributes); per-tenant.
-//
-// Expand (and the /relation-tuples/graph endpoint) reuse the same traversal to
-// return the full reachable graph — "who/what can reach this resource?".
+// Package rebac is per-tenant relationship-based authorization (ReBAC), a
+// Zanzibar-style subset. A tuple says a subject (user:<id>, or the userset
+// <type>:<id>#<relation>) holds a relation on an object; Check walks tuples and
+// expands usersets recursively, with a depth cap and a visited set for cycles.
 package rebac
 
 import (
@@ -339,11 +331,12 @@ type Graph struct {
 // graphNodeID formats a GraphNode ID from type+id parts.
 func graphNodeID(typ, id string) string { return typ + ":" + id }
 
-// expand is the pure recursive helper for Expand — builds nodes+edges by BFS
-// through the fetcher, capped at maxExpandDepth hops. visited tracks "node+relation"
-// pairs already enqueued to prevent cycle-induced infinite loops.
+// maxExpandDepth caps how many userset hops Expand follows.
 const maxExpandDepth = 10
 
+// expand adds the nodes and edges reachable from objType:objID#relation to
+// nodes and edges, depth first, up to maxExpandDepth hops. visited holds the
+// object#relation pairs already expanded, so cycles end.
 func expand(fetch fetcher, objType, objID, relation string, depth int, visited map[string]bool, nodes map[string]GraphNode, edges *[]GraphEdge) error {
 	if depth > maxExpandDepth {
 		return nil
@@ -387,10 +380,9 @@ func expand(fetch fetcher, objType, objID, relation string, depth int, visited m
 	return nil
 }
 
-// Expand builds a graph of all subject nodes reachable from object+relation.
-// depth is capped at maxExpandDepth. The result's Nodes and Edges are
-// deduplicated. This is the "who/what can reach this resource?" query, answering
-// it as a graph rather than as a single boolean.
+// Expand returns the graph of every subject reachable from object#relation
+// ("who can reach this resource?"), following usersets up to depth hops
+// (maxExpandDepth when depth is out of range). Each node appears once.
 func (s *Service) Expand(ctx context.Context, tenantID uuid.UUID, object, relation string, depth int) (*Graph, error) {
 	o, ok := parseObject(object)
 	if !ok {
@@ -416,9 +408,8 @@ func (s *Service) Expand(ctx context.Context, tenantID uuid.UUID, object, relati
 	return &Graph{Nodes: nodeList, Edges: edges}, nil
 }
 
-// ListBySubject returns all tuples in which a given subject (type:id) appears —
-// the reverse-lookup counterpart of List (which anchors on the object side).
-// Uses the idx_relation_tuple_subject index added in migration 0078.
+// ListBySubject returns every tuple in which subject (type:id) appears, the
+// reverse of List.
 func (s *Service) ListBySubject(ctx context.Context, tenantID uuid.UUID, subject string) ([]Tuple, error) {
 	subj, ok := parseSubject(subject)
 	if !ok {
@@ -446,10 +437,11 @@ func (s *Service) ListBySubject(ctx context.Context, tenantID uuid.UUID, subject
 
 // --- handlers ---
 
+// Handler serves the relationship-tuple routes. Decider answers the
+// relationship check across every engine: an attribute (ABAC) deny refuses,
+// and a role grant counts without a tuple.
 type Handler struct {
 	Service *Service
-	// Decider answers the relationship check across every engine: an
-	// attribute (ABAC) deny refuses, and a role grant counts without a tuple.
 	Decider *decide.Decider
 }
 
@@ -603,12 +595,9 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-// graph expands a subgraph rooted at an object+relation, returning nodes+edges.
-//
-// GET /v1/tenants/{tenantID}/relation-tuples/graph?object=<type:id>&relation=<rel>[&depth=<n>]
-//
-// Answers "who/what can reach this resource, through which chain of
-// relationships?" — the ReBAC equivalent of a privilege-path graph.
+// graph answers GET /v1/tenants/{tenantID}/relation-tuples/graph with Expand's
+// graph for ?object=<type:id>&relation=<rel>[&depth=<n>]: who or what can reach
+// the resource, and through which relationships.
 func (h *Handler) graph(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := requirePathTenant(r)
 	if err != nil {

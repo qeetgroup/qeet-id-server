@@ -1,15 +1,8 @@
 package user
 
-// User 360 — admin read surfaces for the console's per-user "identity
-// investigation" workspace. These endpoints answer, for a single user: how do
-// they authenticate (security posture), where are they signed in (sessions),
-// and what can they access (roles / groups / org / apps / policies).
-//
-// Every handler goes through scopedID, so it parses {id} AND enforces that the
-// target user belongs to the caller's own tenant (ErrNotFound on any
-// cross-tenant probe). The route→permission gating lives in bootstrap's
-// permissionMap: the reads require user.read, the session revoke-all is a
-// user.write mutation.
+// User 360: the console's per-user investigation views (security posture,
+// sessions, access). Reads resolve {id} with memberID and actions with
+// scopedID, so a user outside the caller's tenant is ErrNotFound.
 
 import (
 	"context"
@@ -27,14 +20,12 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// SecuritySummary is a user's authentication posture, as shown in the console's
-// "Security posture" tiles and Security tab.
+// SecuritySummary is a user's authentication posture for the console. MFARequired
+// is the account's policy flag; MFAEnabled reports a usable second factor
+// (confirmed TOTP, a verified OTP factor or a push device). DistinctDevices is
+// estimated from session User-Agents.
 type SecuritySummary struct {
-	// MFARequired reflects the users.mfa_required flag (policy), independent of
-	// whether the user has actually enrolled a factor.
-	MFARequired bool `json:"mfa_required"`
-	// MFAEnabled is derived: the user has at least one usable second factor
-	// (confirmed TOTP, a verified email/SMS OTP factor, or a push device).
+	MFARequired            bool       `json:"mfa_required"`
 	MFAEnabled             bool       `json:"mfa_enabled"`
 	TOTPEnabled            bool       `json:"totp_enabled"`
 	OTPFactors             int        `json:"otp_factors"`
@@ -45,9 +36,7 @@ type SecuritySummary struct {
 	PasswordSet            bool       `json:"password_set"`
 	PasswordChangedAt      *time.Time `json:"password_changed_at"`
 	ActiveSessions         int        `json:"active_sessions"`
-	// DistinctDevices is a User-Agent-based approximation (there is no true
-	// device identifier on sessions today).
-	DistinctDevices int `json:"distinct_devices"`
+	DistinctDevices        int        `json:"distinct_devices"`
 }
 
 // SessionInfo is one live session for a user. Device/OS/geo are intentionally
@@ -61,43 +50,39 @@ type SessionInfo struct {
 	LastSeenAt time.Time `json:"last_seen_at"`
 }
 
-// RoleInfo / GroupInfo / OrganizationInfo are the access primitives surfaced in
-// the Access tab.
+// RoleInfo is a role shown in the console's Access tab.
 type RoleInfo struct {
 	ID          uuid.UUID `json:"id"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 }
 
+// GroupInfo is a group shown in the console's Access tab.
 type GroupInfo struct {
 	ID          uuid.UUID `json:"id"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 }
 
+// OrganizationInfo is the organization shown in the console's Access tab.
 type OrganizationInfo struct {
 	ID   uuid.UUID `json:"id"`
 	Name string    `json:"name"`
 	Slug string    `json:"slug"`
 }
 
-// AccessSummary answers "what can this user access?" within the caller's tenant.
-// Organizations map 1:1 to tenants in Qeet ID (a user belongs to exactly one),
-// so Organization is a single object rather than a list. Roles are direct
-// assignments; effective permissions (which also fold in group-inherited roles)
-// are served by the existing RBAC endpoint.
+// AccessSummary is what a user can access in the caller's tenant. Organization
+// is that tenant and Roles are direct assignments; the Permissions counts split
+// the effective set into direct and group-inherited.
 type AccessSummary struct {
-	Organization      *OrganizationInfo `json:"organization"`
-	Roles             []RoleInfo        `json:"roles"`
-	Groups            []GroupInfo       `json:"groups"`
-	ApplicationsCount int               `json:"applications_count"`
-	PoliciesCount     int               `json:"policies_count"`
-	// Permission breakdown: PermissionsTotal is the distinct effective set;
-	// PermissionsDirect comes from directly-assigned roles; PermissionsInherited
-	// (= total − direct) is what the user gains only through group membership.
-	PermissionsDirect    int `json:"permissions_direct"`
-	PermissionsInherited int `json:"permissions_inherited"`
-	PermissionsTotal     int `json:"permissions_total"`
+	Organization         *OrganizationInfo `json:"organization"`
+	Roles                []RoleInfo        `json:"roles"`
+	Groups               []GroupInfo       `json:"groups"`
+	ApplicationsCount    int               `json:"applications_count"`
+	PoliciesCount        int               `json:"policies_count"`
+	PermissionsDirect    int               `json:"permissions_direct"`
+	PermissionsInherited int               `json:"permissions_inherited"`
+	PermissionsTotal     int               `json:"permissions_total"`
 }
 
 // UserStats is the tenant-wide member summary shown in the Users KPI cards.
@@ -313,8 +298,7 @@ func (r *Repository) SetMfaRequired(ctx context.Context, id uuid.UUID, required 
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
-// getUserStats → GET /v1/users/stats (user.read). Tenant-wide member counts for
-// the Users admin summary strip; scoped to the caller's own tenant principal.
+// getUserStats handles GET /v1/users/stats: member counts for the caller's tenant.
 func (h *Handler) getUserStats(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.TenantID == nil {
@@ -329,7 +313,8 @@ func (h *Handler) getUserStats(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, stats)
 }
 
-// getUserTrends → GET /v1/users/trends (user.read). 30-day KPI-sparkline series.
+// getUserTrends handles GET /v1/users/trends: 30-day daily series for the
+// caller's tenant.
 func (h *Handler) getUserTrends(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.TenantID == nil {
@@ -344,7 +329,7 @@ func (h *Handler) getUserTrends(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, trends)
 }
 
-// getSecurity → GET /v1/users/{id}/security (user.read).
+// getSecurity handles GET /v1/users/{id}/security: the user's SecuritySummary.
 func (h *Handler) getSecurity(w http.ResponseWriter, r *http.Request) {
 	id, _, err := h.memberID(r)
 	if err != nil {
@@ -359,7 +344,7 @@ func (h *Handler) getSecurity(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, sum)
 }
 
-// getSessions → GET /v1/users/{id}/sessions (user.read).
+// getSessions handles GET /v1/users/{id}/sessions: the user's live sessions.
 func (h *Handler) getSessions(w http.ResponseWriter, r *http.Request) {
 	id, _, err := h.memberID(r)
 	if err != nil {
@@ -374,11 +359,9 @@ func (h *Handler) getSessions(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
-// revokeAllSessions → POST /v1/users/{id}/sessions/revoke-all (user.write).
-// Admin force sign-out: ends every way the user is signed in — API and console
-// sessions, hosted-login sessions, applications' refresh grants — and records
-// it, all in one transaction. Reports {"revoked": total} plus the count per
-// place, the shape of the user's own sign-out everywhere. Access tokens already
+// revokeAllSessions handles POST /v1/users/{id}/sessions/revoke-all: in one
+// transaction it ends every way the user is signed in and records it, then
+// reports {"revoked": total} with a count per kind. Access tokens already
 // issued stay valid until they expire.
 func (h *Handler) revokeAllSessions(w http.ResponseWriter, r *http.Request) {
 	id, tenantID, err := h.scopedID(r)
@@ -440,7 +423,7 @@ func (h *Handler) revokeAllSessions(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// getAccess → GET /v1/users/{id}/access (user.read).
+// getAccess handles GET /v1/users/{id}/access: the user's AccessSummary.
 func (h *Handler) getAccess(w http.ResponseWriter, r *http.Request) {
 	id, tenantID, err := h.memberID(r)
 	if err != nil {
@@ -460,8 +443,8 @@ type setMfaRequiredInput struct {
 	Required *bool `json:"required"`
 }
 
-// setMfaRequired → PUT /v1/users/{id}/mfa-required (user.write). Toggles the
-// per-user MFA-required policy flag; audited.
+// setMfaRequired handles PUT /v1/users/{id}/mfa-required: it sets the user's
+// MFA-required flag and audits the change.
 func (h *Handler) setMfaRequired(w http.ResponseWriter, r *http.Request) {
 	id, _, err := h.scopedID(r)
 	if err != nil {

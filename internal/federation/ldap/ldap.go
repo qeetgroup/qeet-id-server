@@ -1,8 +1,7 @@
-// Package ldap bridges on-prem Active Directory / LDAPv3 directories. A user
-// authenticates with username + password: Qeet ID binds with the connection's
-// service account, searches for the user under the base DN, then re-binds as that
-// user's DN to verify the password — JIT-provisioning a Qeet ID user and issuing a
-// session on success.
+// Package ldap signs people in against on-prem Active Directory and LDAPv3
+// directories: it binds as the connection's service account, finds the user
+// under the base DN, then binds as that user to check the password, creating
+// the Qeet ID user on first sign-in.
 package ldap
 
 import (
@@ -61,13 +60,14 @@ type connFull struct {
 	BindPassword string
 }
 
+// Service manages LDAP connections and directory sign-in. A nil gate leaves
+// connection creation ungated.
 type Service struct {
-	pool   *pgxpool.Pool
-	q      *dbgen.Queries
-	auth   *auth.Service
-	egress *egress.Policy
-	box    *envelope.Cipher
-	// gate enforces the plan LDAP feature on connection creation (nil = off).
+	pool     *pgxpool.Pool
+	q        *dbgen.Queries
+	auth     *auth.Service
+	egress   *egress.Policy
+	box      *envelope.Cipher
 	gate     PlanGate
 	observer OperationObserver
 	mapper   ProfileMapper
@@ -80,8 +80,7 @@ func NewService(pool *pgxpool.Pool, authSvc *auth.Service, policies ...*egress.P
 func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
 
 // PlanGate reports whether a plan-gated boolean feature is included in the
-// tenant's plan. Satisfied by operations/entitlements.Service, injected via
-// SetPlanGate.
+// tenant's plan. Satisfied by *entitlements.Service.
 type PlanGate interface {
 	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
 }
@@ -509,8 +508,9 @@ func (s *Service) authenticate(ctx context.Context, c *connFull, username, passw
 	return &ldapUser{DN: entry.DN, Email: email, Name: name, ConnectionID: c.ID.String(), Profile: profile}, nil
 }
 
-// findOrCreateUser links the directory DN to a user (by linked identity, then
-// globally-unique email) or provisions a new one. Mirrors social/saml.
+// findOrCreateUser returns the user linked to the directory DN, else the user
+// with the directory's email (who must belong to tenantID), else a new user,
+// then links the DN and stores the mapped profile, in one transaction.
 func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *ldapUser) (uuid.UUID, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -551,13 +551,10 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *l
 	} else if err != nil {
 		return uuid.Nil, err
 	} else {
-		// An existing user matched the directory's email. Emails are globally
-		// unique (migration 0022), so that row may belong to another tenant. A
-		// successful bind proves only that this connection's directory
-		// accepted the credentials — not that the account belongs here. Without
-		// this check, an admin who points a connection at a directory they run
-		// could assert a victim's address and receive a token pair carrying the
-		// victim's user id. See internal/federation/identitylink.
+		// The email may be another tenant's user's (emails are globally unique), and a
+		// bind only proves this connection's directory accepted the credentials.
+		// Otherwise an admin pointing a connection at a directory they run could assert
+		// a victim's address and receive the victim's tokens.
 		belongs, berr := identitylink.UserInTenant(ctx, tx, userID, tenantID)
 		if berr != nil {
 			return uuid.Nil, berr

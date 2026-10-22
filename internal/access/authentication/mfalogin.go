@@ -12,19 +12,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// A sign-in's second factor. When the account holds any confirmed second
-// factor — an authenticator app, an email or SMS code factor, a passkey (while
-// its organisation allows passkeys) or a push device — password sign-in
-// returns a challenge instead of a session, listing exactly the factors the
-// account holds. The challenge is met by:
-//
-//   - a code: an authenticator-app code, a recovery code, or an email/SMS code
-//     sent for it (SendMFACode);
-//   - a passkey assertion from the ceremony started for it (BeginMFAPasskey);
-//   - an approval of the push request sent for it (StartMFAPush).
-//
-// The passkey ceremony and the push request are bound to the challenge, which
-// is deleted once met, so neither can complete any other sign-in.
+// When an account holds a confirmed second factor, password sign-in returns a
+// challenge listing those factors. It is met by a code, a passkey assertion
+// (BeginMFAPasskey) or an approved push (StartMFAPush); both ceremonies are bound
+// to the challenge, so they can't complete another sign-in.
 
 // LoginFactor is one way a person can meet a sign-in's second-factor
 // challenge.

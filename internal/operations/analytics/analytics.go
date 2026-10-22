@@ -1,6 +1,6 @@
-// Package analytics powers the admin dashboard: one endpoint returns every KPI
-// and chart projection in a single payload. Projections with no data yet return
-// empty buckets so the dashboard degrades gracefully rather than erroring.
+// Package analytics serves the admin dashboard: one endpoint returns every KPI
+// and chart series in a single payload. Series with no data yet come back as
+// empty or zero buckets rather than errors.
 package analytics
 
 import (
@@ -18,26 +18,25 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
+// Reader computes a tenant's dashboard projections.
 type Reader struct {
-	// pool serves the projections whose result types sqlc cannot infer
-	// cleanly (mixed-type CASE, jsonb ->>, bigint+numeric) — see queries.sql.
-	pool *pgxpool.Pool
-	// q serves the static aggregations moved into queries.sql / dbgen.
-	q *dbgen.Queries
+	pool *pgxpool.Pool  // queries sqlc cannot type: mixed-type CASE, jsonb ->>, bigint+numeric
+	q    *dbgen.Queries // the static aggregations of queries.sql
 }
 
+// NewReader returns a Reader over pool.
 func NewReader(pool *pgxpool.Pool) *Reader {
 	return &Reader{pool: pool, q: dbgen.New(pool)}
 }
 
-// pgUUID wraps a non-nil uuid.UUID as the pgtype.UUID the generated dbgen
-// query params expect; the encoded value is identical to passing the bare UUID.
+// pgUUID converts id to the pgtype.UUID that the generated query parameters
+// take.
 func pgUUID(id uuid.UUID) pgtype.UUID {
 	return pgtype.UUID{Bytes: id, Valid: true}
 }
 
-// Overview is the response shape consumed by the admin dashboard. All
-// timestamps are RFC3339 UTC; the frontend converts to local time.
+// Overview is the admin dashboard's payload. Timestamps are RFC3339 UTC.
+// WeeklyActivity8w has one bucket per ISO week, oldest first.
 type Overview struct {
 	GeneratedAt time.Time `json:"generated_at"`
 
@@ -52,9 +51,6 @@ type Overview struct {
 		StickinessPct      Metric `json:"stickiness_pct"`
 	} `json:"kpis"`
 
-	// 8-week weekly active users + daily active users trend (one bucket
-	// per ISO week, oldest first). Powers the analytics page's "Active
-	// users" area chart.
 	WeeklyActivity8w []WeeklyActivityPoint `json:"weekly_activity_8w"`
 
 	UserTrend14d   []TrendPoint `json:"user_trend_14d"`
@@ -68,18 +64,21 @@ type Overview struct {
 	FailedLoginsHourly24h []HourlyPoint   `json:"failed_logins_hourly_24h"`
 }
 
+// Metric is a KPI value and its change from the previous period, in percent;
+// MFAAdoptionPct and StickinessPct change in percentage points.
 type Metric struct {
 	Value    float64 `json:"value"`
 	DeltaPct float64 `json:"delta_pct"`
 }
 
+// TrendPoint is one day of a trend series.
 type TrendPoint struct {
 	Date  string  `json:"date"`
 	Value float64 `json:"value"`
 }
 
-// ActivityPoint is a daily bucket grouped by method. Missing methods are
-// emitted as 0 so the frontend's stacked-area chart doesn't gap.
+// ActivityPoint is one day of sign-ins by method. A method with none is 0, so
+// the console's stacked chart has no gaps.
 type ActivityPoint struct {
 	Date     string `json:"date"`
 	Password int64  `json:"password"`
@@ -89,35 +88,37 @@ type ActivityPoint struct {
 	OIDC     int64  `json:"oidc"`
 }
 
+// MethodSlice is one sign-in method's share, in percent, of the last 30 days'
+// successful sign-ins.
 type MethodSlice struct {
 	Method string  `json:"method"`
 	Value  float64 `json:"value"`
 }
 
+// MethodCount is the number of users enrolled in an MFA method.
 type MethodCount struct {
 	Method string `json:"method"`
 	Users  int64  `json:"users"`
 }
 
+// HourlyPoint is the failed sign-in attempts of one hour.
 type HourlyPoint struct {
 	Hour     string `json:"hour"`
 	Attempts int64  `json:"attempts"`
 }
 
+// WeeklyActivityPoint is one ISO week of activity.
 type WeeklyActivityPoint struct {
 	Week string `json:"week"` // "Wnn" — ISO week number
 	WAU  int64  `json:"wau"`  // distinct users with a session in that week
 	DAU  int64  `json:"dau"`  // average DAU within the week
 }
 
-// Overview runs all the aggregations needed for the dashboard in
-// parallel-ish (one round-trip per projection) and returns one payload.
-// Failure of any one projection aborts the request — the dashboard
-// shows a single error state rather than partially-populated charts.
+// Overview runs every dashboard projection for the tenant, one query at a
+// time, and returns them in one payload. Any failure fails the whole request,
+// so the dashboard shows one error rather than partial charts.
 func (r *Reader) Overview(ctx context.Context, tenantID uuid.UUID) (*Overview, error) {
-	// Initialise every slice non-nil so empty result sets serialise as
-	// JSON `[]` rather than `null` — frontends can iterate without
-	// guarding every access site.
+	// Non-nil slices, so empty series encode as [] rather than null.
 	out := &Overview{
 		GeneratedAt:           time.Now().UTC(),
 		WeeklyActivity8w:      []WeeklyActivityPoint{},
@@ -159,24 +160,23 @@ func (r *Reader) Overview(ctx context.Context, tenantID uuid.UUID) (*Overview, e
 }
 
 func (r *Reader) kpis(ctx context.Context, tid uuid.UUID, out *Overview) error {
-	// MAU = distinct users with a session created in the last 30 days.
-	// Delta = % change vs the prior 30-day window.
+	// MAU: distinct users with a session created in the last 30 days, against
+	// the 30 days before.
 	mau, err := r.q.CountMAUWindows(ctx, pgUUID(tid))
 	if err != nil {
 		return err
 	}
 	out.KPIs.MAU = Metric{Value: float64(mau.MauNow), DeltaPct: pctChange(mau.MauNow, mau.MauPrev)}
 
-	// Logins today + delta vs yesterday.
+	// Logins today, against yesterday.
 	logins, err := r.q.CountLoginsTodayWindows(ctx, pgUUID(tid))
 	if err != nil {
 		return err
 	}
 	out.KPIs.LoginsToday = Metric{Value: float64(logins.LoginsToday), DeltaPct: pctChange(logins.LoginsToday, logins.LoginsYday)}
 
-	// MFA adoption = % of (active, non-deleted) tenant users with a
-	// confirmed TOTP factor. Delta is pp change vs a week ago (the
-	// dashboard treats this metric specially).
+	// MFA adoption: % of active users with a confirmed TOTP factor. Its delta is
+	// in percentage points, against a week ago.
 	var mfaPct, mfaPctPrev float64
 	if err := r.pool.QueryRow(ctx, `
 		WITH active AS (
@@ -214,9 +214,8 @@ func (r *Reader) kpis(ctx context.Context, tid uuid.UUID, out *Overview) error {
 	}
 	out.KPIs.MFAAdoptionPct = Metric{Value: mfaPct, DeltaPct: mfaPct - mfaPctPrev}
 
-	// Failed logins in the last 24h. Audit-event source — only lights
-	// up once §1.10-style failed-login auditing ships. Until then this
-	// stays at 0 and the dashboard reports the same.
+	// Failed logins in the last 24h, against the 24h before, from
+	// auth.login_failed audit events.
 	failed, err := r.q.CountFailedLogins24hWindows(ctx, pgUUID(tid))
 	if err != nil {
 		return err
@@ -226,8 +225,8 @@ func (r *Reader) kpis(ctx context.Context, tid uuid.UUID, out *Overview) error {
 }
 
 func (r *Reader) trends14d(ctx context.Context, tid uuid.UUID, out *Overview) error {
-	// Generate 14 daily buckets starting 13 days ago so the chart
-	// always shows exactly 14 points even on days with no activity.
+	// One bucket per day for the last 14 days, so the chart always has 14
+	// points.
 	rows, err := r.pool.Query(ctx, `
 		WITH days AS (
 			SELECT date_trunc('day', d)::date AS day
@@ -367,9 +366,8 @@ func (r *Reader) loginMethodsMix(ctx context.Context, tid uuid.UUID, out *Overvi
 }
 
 func (r *Reader) mfaMethodsAdoption(ctx context.Context, tid uuid.UUID, out *Overview) error {
-	// Only TOTP + Recovery Codes are first-class today. Other methods
-	// (Passkey-MFA, SMS OTP, Email OTP) will appear once their tables
-	// exist; until then the dashboard renders just the populated bars.
+	// Only TOTP and recovery codes are counted, and a method with no users is
+	// left out.
 	totp, err := r.q.CountMFATotpUsers(ctx, pgUUID(tid))
 	if err != nil {
 		return err
@@ -401,12 +399,11 @@ func (r *Reader) failedHourly24h(ctx context.Context, tid uuid.UUID, out *Overvi
 	return nil
 }
 
-// extraKPIs populates the analytics-page-specific KPIs that aren't on
-// the dashboard overview: DAU, total users, average sessions/user (last
-// 30 days), and stickiness (DAU/MAU). Each one runs as its own SQL so
-// a slow query in one stat doesn't block the rest of the dashboard.
+// extraKPIs fills the analytics page's KPIs that the dashboard overview lacks:
+// DAU, total users, average sessions per user over 30 days, and stickiness
+// (DAU/MAU).
 func (r *Reader) extraKPIs(ctx context.Context, tid uuid.UUID, out *Overview) error {
-	// DAU = distinct users with a session today vs yesterday.
+	// DAU: distinct users with a session today, against yesterday.
 	dau, err := r.q.CountDAUWindows(ctx, pgUUID(tid))
 	if err != nil {
 		return err
@@ -414,14 +411,14 @@ func (r *Reader) extraKPIs(ctx context.Context, tid uuid.UUID, out *Overview) er
 	dauNow, dauPrev := dau.DauNow, dau.DauPrev
 	out.KPIs.DAU = Metric{Value: float64(dauNow), DeltaPct: pctChange(dauNow, dauPrev)}
 
-	// Total users in tenant + delta vs 30 days ago.
+	// Total users, against 30 days ago.
 	users, err := r.q.CountTotalUsersWindows(ctx, pgUUID(tid))
 	if err != nil {
 		return err
 	}
 	out.KPIs.TotalUsers = Metric{Value: float64(users.UsersNow), DeltaPct: pctChange(users.UsersNow, users.UsersPrev)}
 
-	// Avg sessions per active user, last 30d vs prior 30d.
+	// Average sessions per active user, last 30 days against the 30 before.
 	var avgNow, avgPrev float64
 	if err := r.pool.QueryRow(ctx, `
 		SELECT
@@ -451,14 +448,13 @@ func (r *Reader) extraKPIs(ctx context.Context, tid uuid.UUID, out *Overview) er
 	}
 	out.KPIs.AvgSessionsPerUser = Metric{Value: avgNow, DeltaPct: deltaAvg}
 
-	// Stickiness = DAU / MAU expressed as a percentage. Industry-
-	// standard product-engagement signal.
+	// Stickiness: DAU as a percentage of MAU.
 	mauVal := out.KPIs.MAU.Value
 	stickNow := 0.0
 	if mauVal > 0 {
 		stickNow = 100.0 * float64(dauNow) / mauVal
 	}
-	// For the delta, compare to the same ratio a week ago.
+	// Its delta is in percentage points, against the same ratio a week ago.
 	stick, err := r.q.CountStickinessPriorWeek(ctx, pgUUID(tid))
 	if err != nil {
 		return err
@@ -472,9 +468,9 @@ func (r *Reader) extraKPIs(ctx context.Context, tid uuid.UUID, out *Overview) er
 	return nil
 }
 
-// weeklyActivity8w returns 8 trailing ISO-week buckets of (WAU, avg DAU
-// in week). Buckets are always 8 wide — missing weeks return zero —
-// so the chart doesn't compress on a brand-new tenant.
+// weeklyActivity8w fills 8 trailing ISO-week buckets of WAU and average DAU.
+// A week with no activity is zero, so the chart keeps its width for a new
+// tenant.
 func (r *Reader) weeklyActivity8w(ctx context.Context, tid uuid.UUID, out *Overview) error {
 	rows, err := r.q.GetWeeklyActivity8w(ctx, pgUUID(tid))
 	if err != nil {
@@ -490,6 +486,8 @@ func (r *Reader) weeklyActivity8w(ctx context.Context, tid uuid.UUID, out *Overv
 	return nil
 }
 
+// pctChange returns the percentage change from prev to now. From a prev of 0 it
+// is 100, or 0 if now is 0 too.
 func pctChange(now, prev int64) float64 {
 	if prev == 0 {
 		if now == 0 {
@@ -500,10 +498,12 @@ func pctChange(now, prev int64) float64 {
 	return 100.0 * float64(now-prev) / float64(prev)
 }
 
+// Handler serves the dashboard endpoint.
 type Handler struct {
 	Reader *Reader
 }
 
+// Mount registers GET /tenants/{tenantID}/analytics/overview.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/analytics/overview", h.overview)
 }
@@ -514,7 +514,7 @@ func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrAnalyticsTenantInvalid)
 		return
 	}
-	// Cross-tenant guard: the JWT's tenant must match the path param.
+	// The caller's tenant must be the path's.
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.TenantID == nil || *p.TenantID != tid {
 		httpx.WriteError(w, r, errs.ErrAnalyticsTenantMismatch)

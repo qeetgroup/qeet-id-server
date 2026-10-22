@@ -1,9 +1,7 @@
-// Package authhook implements synchronous Auth Actions/Hooks: after credentials
-// verify, Run POSTs a signed event to a tenant's policy endpoint that returns
-// allow/deny. Inert until a hook is enabled; whenever the hook gives no answer
-// — it can't be read, its secret can't be opened, the call fails or the answer
-// can't be read — fail_open decides (default allow, so a hook outage never
-// locks everyone out), and the skip is recorded.
+// Package authhook runs an organisation's synchronous sign-in hook: after the
+// credentials check, Run POSTs a signed event to the hook's URL, which answers
+// allow or deny. When the hook gives no answer, fail_open decides (allow by
+// default, so an outage never locks everyone out) and the skip is recorded.
 package authhook
 
 import (
@@ -82,15 +80,16 @@ type Hook struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Service manages and runs sign-in hooks. known holds each organisation's hook
+// as last read (uuid.UUID → hookState), for a sign-in made while the hook can't
+// be read.
 type Service struct {
 	pool   *pgxpool.Pool
 	q      *dbgen.Queries
 	client *http.Client
 	egress *egress.Policy
 	box    *envelope.Cipher
-	// known holds each organisation's hook as last read (uuid.UUID →
-	// hookState), for a sign-in made while the hook can't be read.
-	known sync.Map
+	known  sync.Map
 }
 
 func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
@@ -100,12 +99,10 @@ func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
 
 func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
 
-// Run implements auth.LoginHook. It returns a non-nil (ErrAuthHookDenied) error to
-// DENY the sign-in, or nil to allow — in which case the returned map (possibly
-// nil) carries any custom claims the hook asked to be injected into the
-// issued access token. A missing/disabled hook allows with no claims. Whenever
-// the hook gives no answer the hook's fail_open decides, and the skip is
-// recorded (skipped).
+// Run implements auth.LoginHook. It returns ErrAuthHookDenied to refuse the
+// sign-in, or nil with any custom claims the hook asked to add to the access
+// token. No enabled hook allows with no claims; a hook that gives no answer is
+// handled by skipped.
 func (s *Service) Run(ctx context.Context, tenantID, userID uuid.UUID, email string) (map[string]any, error) {
 	if tenantID == uuid.Nil {
 		return nil, nil
@@ -176,11 +173,9 @@ func (s *Service) Run(ctx context.Context, tenantID, userID uuid.UUID, email str
 	return claims, nil
 }
 
-// skipped answers a sign-in the hook gave no answer for — refused with
-// hookUnavailable where the hook fails closed, allowed where it fails open —
-// and records the skip: an auth_hook.skipped audit event and the
-// auth_hook_skipped_total metric, so the organisation can see its control
-// didn't run and an alert can fire.
+// skipped answers a sign-in the hook gave no answer for, refusing it with
+// hookUnavailable unless failOpen, and records the skip (an auth_hook.skipped
+// audit event and the auth_hook_skipped_total metric) so an alert can fire.
 func (s *Service) skipped(ctx context.Context, tenantID, userID, hookID uuid.UUID, reason string, failOpen bool, cause error) (map[string]any, error) {
 	outcome := "allowed"
 	if !failOpen {
@@ -266,21 +261,10 @@ func sign(secret string, body []byte) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// decide turns a hook call's outcome into an allow (denied=false) or deny
-// decision, plus any custom claims the hook asked to inject on allow. Pure, so
-// it's unit-tested. On a call error it honours fail_open; on success it denies
-// only when the body explicitly says decision="deny", and otherwise carries
-// through an optional "claims" object verbatim.
-//
-// An UNPARSEABLE body is treated as a call failure, not as an allow. Fail-open
-// by default is a deliberate product decision (there is an ADR for it), but that
-// decision is about what happens when the hook cannot be reached — it is not a
-// licence to ignore a tenant that has explicitly set fail_open=false. A hook
-// answering 2xx with a truncated, empty or non-JSON body has told us nothing,
-// and swallowing the unmarshal error meant `decision` stayed "" and the sign-in
-// was ALLOWED even for a fail-closed tenant. Routing it through the same
-// failOpen branch keeps the documented default intact while making the opt-out
-// actually enforceable.
+// decide turns a hook call's outcome into a deny message, or an allow with the
+// hook's custom claims. It denies on decision "deny" and, unless failOpen, when
+// the call failed or the body can't be parsed: a 2xx with an unreadable body
+// has said nothing, so it must not get past a fail-closed hook.
 func decide(failOpen bool, callErr error, body []byte) (denyMsg string, denied bool, claims map[string]any) {
 	if callErr != nil {
 		if failOpen {

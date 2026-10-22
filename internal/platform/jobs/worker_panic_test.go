@@ -8,13 +8,9 @@ import (
 	"time"
 )
 
-// TestSupervisorRecoversWorkerPanic is the regression test for the availability
-// bug: a panic in any single background worker used to unwind past the
-// supervisor goroutine and terminate the whole process — HTTP server, in-flight
-// requests and all six sibling workers with it.
-//
-// The test asserts three things: the panic does not propagate, the sibling
-// worker keeps running, and the wait func still returns on cancellation.
+// TestSupervisorRecoversWorkerPanic checks that a worker panic doesn't escape
+// the supervisor, a sibling worker keeps running, and wait still returns once
+// ctx is cancelled.
 func TestSupervisorRecoversWorkerPanic(t *testing.T) {
 	s := New()
 
@@ -49,11 +45,8 @@ func TestSupervisorRecoversWorkerPanic(t *testing.T) {
 		t.Fatal("sibling worker never started — the panic took the process path")
 	}
 
-	// Wait for the panicking worker itself rather than asserting straight after
-	// the sibling starts. The two are independent goroutines, so under `-race`
-	// on a loaded runner the sibling could close its channel before the panicker
-	// was scheduled at all — the assertion then read 0 and failed even though
-	// the supervisor was working correctly.
+	// Wait for the panicking worker itself: the workers are independent
+	// goroutines, so under -race the sibling can start before the panicker runs.
 	select {
 	case <-panicked:
 	case <-time.After(2 * time.Second):

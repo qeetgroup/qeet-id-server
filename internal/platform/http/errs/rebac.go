@@ -1,9 +1,6 @@
 package errs
 
-// ReBAC (relationship-based access control) error codes — stable, namespaced
-// machine identifiers for relation-tuple validation and the object/subject
-// query filters. Clients branch and localize on these, never on the message
-// text. Once shipped, a code MUST NOT change.
+// ReBAC (relationship-based access control) error codes.
 const (
 	CodeReBACObjectInvalid           = "rebac.object_invalid"
 	CodeReBACSubjectInvalid          = "rebac.subject_invalid"

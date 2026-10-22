@@ -201,8 +201,8 @@ func TestDecodeMemberRefs(t *testing.T) {
 	}
 }
 
-// parseGroupPatch is the heart of Okta/Entra membership sync — verify each op
-// shape resolves to the right effect.
+// TestParseGroupPatch checks that each PatchOp shape IdPs send for group
+// membership resolves to the right effect.
 func TestParseGroupPatch(t *testing.T) {
 	a, b := uuid.New(), uuid.New()
 

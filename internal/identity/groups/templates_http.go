@@ -10,8 +10,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// MountTemplates registers the template and bulk-import endpoints. Kept separate
-// from Mount so the directory's core CRUD surface stays readable.
+// MountTemplates registers the template and bulk-import routes.
 func (h *Handler) MountTemplates(r chi.Router) {
 	r.Get("/groups/templates", h.listTemplates)
 	r.Post("/groups/templates", h.createTemplate)

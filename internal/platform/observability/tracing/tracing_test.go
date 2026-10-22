@@ -10,10 +10,8 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 )
 
-// TestInit_DisabledByDefault is the load-bearing guarantee: with no endpoint
-// configured, Init must not build an exporter, must not connect anywhere, must
-// return a nil error, and must hand back a usable no-op shutdown. The app and
-// CI rely on this.
+// TestInit_DisabledByDefault checks that, with no endpoint, Init builds no
+// exporter, connects nowhere and returns a usable no-op shutdown.
 func TestInit_DisabledByDefault(t *testing.T) {
 	shutdown, err := Init(context.Background(), Config{ServiceName: "test"})
 	if err != nil {
@@ -42,8 +40,8 @@ func TestConfig_Enabled(t *testing.T) {
 	}
 }
 
-// TestMiddleware_NoopSafe confirms the middleware is a safe pass-through when
-// tracing is disabled (global no-op tracer) and does not alter the response.
+// TestMiddleware_NoopSafe checks that the middleware passes requests through
+// unchanged when tracing is disabled.
 func TestMiddleware_NoopSafe(t *testing.T) {
 	if _, err := Init(context.Background(), Config{ServiceName: "test"}); err != nil {
 		t.Fatalf("Init: %v", err)

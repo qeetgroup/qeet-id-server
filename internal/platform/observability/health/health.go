@@ -1,12 +1,6 @@
-// Package health exposes Kubernetes-shaped liveness and readiness probes.
-//
-// /healthz reports process aliveness. It returns 200 unconditionally — if
-// Go can answer the request at all, the process is alive. Kubernetes uses
-// this signal to decide whether to restart the pod.
-//
-// /readyz runs every registered dependency check with a short shared
-// timeout and returns 503 if any check fails. Kubernetes uses this signal
-// to decide whether to route traffic to the pod.
+// Package health serves the liveness (/healthz), readiness (/readyz) and
+// /version endpoints. Liveness always returns 200; readiness runs every
+// registered check under one 2s timeout and returns 503 if any fails.
 package health
 
 import (
@@ -31,21 +25,21 @@ type namedCheck struct {
 	fn   Check
 }
 
+// Handler serves the health endpoints. ServiceProfile (dev/test/staging, empty
+// elsewhere) is added to the liveness body when set; Schema, the migration found
+// at startup, is reported by /version when non-nil.
 type Handler struct {
-	ServiceName string
-	ServiceEnv  string
-	// ServiceProfile is the local environment (dev/test/staging); empty elsewhere
-	// and then omitted from the liveness body.
+	ServiceName    string
+	ServiceEnv     string
 	ServiceProfile string
 	StartedAt      time.Time
 	Build          buildinfo.Info
-	// Schema is the database's migration as this process found it at start
-	// (after migrating), reported by /version; nil omits it.
-	Schema *migrations.Status
+	Schema         *migrations.Status
 
 	checks []namedCheck
 }
 
+// New returns a Handler carrying this binary's build metadata.
 func New(serviceName, serviceEnv string, startedAt time.Time) *Handler {
 	return &Handler{
 		ServiceName: serviceName,
