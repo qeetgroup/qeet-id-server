@@ -26,9 +26,9 @@ import (
 //      modern browsers.
 //
 // We deliberately keep the middleware *additive*: requests that
-// authenticate purely via `Authorization: Bearer …` (today's default)
-// are skipped because they aren't browser-attackable in the cookie
-// sense. The hooks land now so the day cookie-bearing sessions ship
+// authenticate via `Authorization: Bearer …` or `Authorization: ApiKey …`
+// (how the server libraries call) are skipped because they aren't
+// browser-attackable in the cookie sense. The hooks land now so the day cookie-bearing sessions ship
 // (IMPROVEMENTS §1.1 done-when), the wiring is already on every
 // mutation route.
 
@@ -103,10 +103,14 @@ func CSRF(cfg CSRFConfig) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Bearer-token requests aren't browser-CSRF-attackable in
-			// the cookie sense. Skip the check so M2M API key /
-			// service-JWT traffic isn't burdened with token plumbing.
-			if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+			// A request authorised by a credential a browser never sends
+			// on its own — a bearer token or an API key — can't be forged
+			// cross-site: a page on another site can't add an
+			// Authorization header without a CORS preflight, which only
+			// an allowed origin passes. Skip the check so server-side
+			// callers, which send no Origin, aren't refused. Basic
+			// credentials don't count: a browser replays those itself.
+			if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") || strings.HasPrefix(h, "ApiKey ") {
 				next.ServeHTTP(w, r)
 				return
 			}

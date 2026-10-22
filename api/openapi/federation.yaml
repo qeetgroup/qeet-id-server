@@ -26,7 +26,7 @@ info:
 
     ## Authentication
 
-    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to `ssoCookie` sessions; `bearerAuth` requests bypass it.
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /v1/ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it.
 
     ## Related APIs
 

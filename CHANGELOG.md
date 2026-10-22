@@ -685,6 +685,16 @@ The changes below are the work staged for that first release.
   (200, then two a second), counted in `sign_in_failures_unrecorded_total{method}` past the bound; request
   records per account (ten, then one a minute), counted in `recovery_requests_unrecorded_total{action}`.
 
+**Server callers pass the cross-site check (2026-10-21)**
+
+* **csrf:** the cross-site check let a request skip it only when its `Authorization` header began `Bearer `, so
+  every write made with an API key (`Authorization: ApiKey …`, how the Go and Node libraries call), which sends no
+  Origin, was refused with `csrf_failed`, as were back ends exchanging service-principal credentials
+  (`POST /v1/oauth/token`) or signing in against a directory (`POST /v1/ldap/{id}/authenticate`). An API key now
+  passes like a bearer token — a page on another site can't add either header without a preflight — and the two
+  exchanges are exempt (credentials in the request, no cookie session). Basic credentials, which a browser can
+  replay on its own, a cookie change without the token and a cross-site form post are still refused.
+
 **Toolchain (2026-10-21)**
 
 * **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:

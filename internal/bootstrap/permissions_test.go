@@ -375,3 +375,37 @@ func TestHostedLoginCookieRoutesKeepTheCSRFCheck(t *testing.T) {
 		}
 	}
 }
+
+// TestServerCallersPassTheCSRFCheck: the production check let only a bearer
+// token skip it, so writes the server libraries make with an API key, and back
+// ends exchanging service-principal or directory credentials, were refused for
+// sending no Origin. Those pass now; a cookie change without the token, a
+// cross-site form post and Basic credentials still don't.
+func TestServerCallersPassTheCSRFCheck(t *testing.T) {
+	reached := false
+	h := CSRF([]string{"https://console.example"}, true, "")(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
+	for _, c := range []struct {
+		name, path, authorization, cookie, origin, contentType string
+		want                                                   bool
+	}{
+		{name: "an API-key write", path: "/v1/users", authorization: "ApiKey qk_test", want: true},
+		{name: "the service-principal token exchange", path: "/v1/oauth/token", contentType: "application/x-www-form-urlencoded", want: true},
+		{name: "a directory sign-in", path: "/v1/ldap/" + uuid.NewString() + "/authenticate", want: true},
+		{name: "a cookie change without the token", path: "/v1/passkeys/register/begin", cookie: "qe_ls=session", origin: "https://console.example"},
+		{name: "a cross-site form post", path: "/v1/auth/session", origin: "https://attacker.example", contentType: "text/plain"},
+		{name: "Basic credentials from another site", path: "/v1/users", authorization: "Basic dXNlcjpwYXNz", origin: "https://attacker.example"},
+	} {
+		reached = false
+		req := httptest.NewRequest(http.MethodPost, c.path, nil)
+		for k, v := range map[string]string{"Authorization": c.authorization, "Cookie": c.cookie, "Origin": c.origin, "Content-Type": c.contentType} {
+			if v != "" {
+				req.Header.Set(k, v)
+			}
+		}
+		h.ServeHTTP(httptest.NewRecorder(), req)
+		if reached != c.want {
+			t.Errorf("%s: reached handler = %v, want %v", c.name, reached, c.want)
+		}
+	}
+}

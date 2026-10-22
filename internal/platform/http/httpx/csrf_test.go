@@ -118,6 +118,28 @@ func TestCSRF_BearerBypass(t *testing.T) {
 	}
 }
 
+// TestCSRF_APIKeyBypassButNotBasic: the server libraries authorise with
+// `Authorization: ApiKey …` and send no Origin, so their writes were refused.
+// An API key passes like a bearer token; Basic credentials, which a browser can
+// replay on its own, still need the check.
+func TestCSRF_APIKeyBypassButNotBasic(t *testing.T) {
+	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://app.id.qeet.in"}})
+	for scheme, want := range map[string]int{
+		"ApiKey qk_live_abc": http.StatusOK,
+		"Basic dXNlcjpwYXNz": http.StatusForbidden,
+		"ApiKeyqk_live_abc":  http.StatusForbidden,
+		"apikey qk_live_abc": http.StatusForbidden,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		req.Header.Set("Authorization", scheme)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != want {
+			t.Errorf("Authorization %q with no cookie or Origin = %d, want %d", scheme, rec.Code, want)
+		}
+	}
+}
+
 func TestCSRF_RefererFallback(t *testing.T) {
 	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://api.id.qeet.in"}})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
