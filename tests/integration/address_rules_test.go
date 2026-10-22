@@ -332,7 +332,7 @@ func TestTheHostedLoginRefusesAnAddressAtSignIn(t *testing.T) {
 		h := &social.Handler{Service: f.svc, LoginBaseURL: "http://login.test"}
 		r := chi.NewRouter()
 		r.Route("/v1", h.MountPublic)
-		req := httptest.NewRequest(http.MethodGet, "/v1/social/"+f.provider+"/callback?state="+url.QueryEscape(f.begin(t, ctx))+"&code=upstream-code", nil)
+		req := socialCallback(f.provider, f.begin(t, ctx))
 		rr := httptest.NewRecorder()
 		r.ServeHTTP(rr, req)
 		loc, err := url.Parse(rr.Header().Get("Location"))

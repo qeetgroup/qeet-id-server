@@ -195,10 +195,11 @@ func (s *Service) beginAppleLogin(ctx context.Context, provider string, pc provi
 
 // PlatformCallbackResult is the outcome of a platform OAuth callback: a login
 // ceremony yields a one-time LoginCode the SPA trades for a session; an
-// authenticated link ceremony sets Linked (no session is issued).
+// authenticated link ceremony yields a one-time LinkCode the account that began
+// it completes the link with (CompletePlatformLink). Neither issues a session.
 type PlatformCallbackResult struct {
 	LoginCode string
-	Linked    bool
+	LinkCode  string
 	Provider  string
 }
 
@@ -211,12 +212,13 @@ func emailPtr(s string) *string {
 
 // CompletePlatformCallback consumes the state and exchanges the code. For a
 // login ceremony it resolves/creates the tenant-less user by global email,
-// records the connected identity, and mints a one-time login code. For a link
-// ceremony (state carried a link_user_id) it attaches the identity to *that*
-// user without creating or switching accounts — refusing an identity already
-// linked to someone else. Returns ErrSocialStateInvalid when the state isn't a
+// records the connected identity, and mints a one-time login code; startedHere
+// says the browser that arrived is the one that began it, and without that it
+// is refused with ErrSocialBrowserMismatch. For a link ceremony (state carried
+// a link_user_id) it holds the identity under a one-time link code for that
+// user to complete. Returns ErrSocialStateInvalid when the state isn't a
 // platform state, so the caller can fall back to the tenant flow.
-func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state, code string) (*PlatformCallbackResult, error) {
+func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state, code string, startedHere bool) (*PlatformCallbackResult, error) {
 	if state == "" || code == "" {
 		return nil, errs.ErrSocialCallbackParamsMissing
 	}
@@ -249,6 +251,12 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 	}
 	if time.Now().After(expiresAt) {
 		return nil, errs.ErrSocialStateExpired
+	}
+	// A sign-in completes only in the browser that began it. A link is begun
+	// through the console's server, which sets no cookie in the browser; it is
+	// bound to its account instead, when the account completes it.
+	if linkUserID == nil && !startedHere {
+		return nil, errs.ErrSocialBrowserMismatch
 	}
 
 	var ui userInfo
@@ -284,33 +292,34 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 			return nil, errs.ErrSocialUserinfoFailed.Wrap(err)
 		}
 	}
+	// A link ceremony doesn't attach here: whoever arrived may not be the
+	// account that began it. What the provider returned waits under a one-time
+	// code that only that account can complete.
+	if linkUserID != nil {
+		verifiedEmail := ""
+		if ui.EmailVerified {
+			verifiedEmail = ui.Email
+		}
+		rawCode, codeHash, err := codes.URLToken()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := s.pool.Exec(ctx, `
+			INSERT INTO auth.platform_social_link_codes (code_hash, user_id, provider, subject, email, expires_at)
+			VALUES ($1, $2, $3, $4, $5, $6)`,
+			codeHash, *linkUserID, provider, ui.Subject, emailPtr(verifiedEmail), time.Now().UTC().Add(socialCodeTTL),
+		); err != nil {
+			return nil, err
+		}
+		return &PlatformCallbackResult{LinkCode: rawCode, Provider: provider}, nil
+	}
+
 	owner, ownerErr := s.q.GetPlatformSocialIdentityOwner(ctx, dbgen.GetPlatformSocialIdentityOwnerParams{
 		Provider: provider,
 		Subject:  ui.Subject,
 	})
 	if ownerErr != nil && !errors.Is(ownerErr, pgx.ErrNoRows) {
 		return nil, ownerErr
-	}
-
-	// An authenticated link ceremony proves control of the local account, so it
-	// may bind the provider subject without using email as identity proof.
-	if linkUserID != nil {
-		if ownerErr == nil && owner != *linkUserID {
-			return nil, errs.ErrSocialAlreadyLinked
-		}
-		verifiedEmail := ""
-		if ui.EmailVerified {
-			verifiedEmail = ui.Email
-		}
-		if err := s.q.UpsertPlatformSocialIdentity(ctx, dbgen.UpsertPlatformSocialIdentityParams{
-			UserID:   *linkUserID,
-			Provider: provider,
-			Subject:  ui.Subject,
-			Email:    emailPtr(verifiedEmail),
-		}); err != nil {
-			return nil, err
-		}
-		return &PlatformCallbackResult{Linked: true, Provider: provider}, nil
 	}
 
 	var userID uuid.UUID
@@ -338,6 +347,10 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 		}
 	}
 
+	// A suspended or deleted account gets no code to sign in with.
+	if err := s.auth.CheckSignInAccount(ctx, userID, uuid.Nil, "social", "", ""); err != nil {
+		return nil, err
+	}
 	rawCode, codeHash, err := codes.URLToken()
 	if err != nil {
 		return nil, err
@@ -352,6 +365,59 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 	return &PlatformCallbackResult{LoginCode: rawCode, Provider: provider}, nil
 }
 
+// CompletePlatformLink attaches the provider identity a link callback held
+// under rawCode to userID, and returns the provider. Only the account that
+// began the link completes it; the code is spent either way. An authenticated
+// link ceremony proves control of the local account, so it may bind the
+// provider subject without using email as identity proof, but an identity
+// already linked to someone else is refused.
+func (s *Service) CompletePlatformLink(ctx context.Context, rawCode string, userID uuid.UUID) (string, error) {
+	if rawCode == "" {
+		return "", errs.ErrSocialCodeRequired
+	}
+	var (
+		linkUserID        uuid.UUID
+		provider, subject string
+		email             *string
+		expiresAt         time.Time
+	)
+	err := s.pool.QueryRow(ctx, `
+		DELETE FROM auth.platform_social_link_codes WHERE code_hash = $1
+		RETURNING user_id, provider, subject, email, expires_at`, codes.Hash(rawCode),
+	).Scan(&linkUserID, &provider, &subject, &email, &expiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errs.ErrSocialLinkCodeInvalid
+	}
+	if err != nil {
+		return "", err
+	}
+	if time.Now().After(expiresAt) {
+		return "", errs.ErrSocialLinkCodeInvalid
+	}
+	if linkUserID != userID {
+		return "", errs.ErrSocialLinkAccountMismatch
+	}
+	owner, err := s.q.GetPlatformSocialIdentityOwner(ctx, dbgen.GetPlatformSocialIdentityOwnerParams{
+		Provider: provider,
+		Subject:  subject,
+	})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return "", err
+	}
+	if err == nil && owner != userID {
+		return "", errs.ErrSocialAlreadyLinked
+	}
+	if err := s.q.UpsertPlatformSocialIdentity(ctx, dbgen.UpsertPlatformSocialIdentityParams{
+		UserID:   userID,
+		Provider: provider,
+		Subject:  subject,
+		Email:    email,
+	}); err != nil {
+		return "", err
+	}
+	return provider, nil
+}
+
 // findOrCreatePlatformUser resolves a tenant-less Qeet ID user by globally-unique
 // email, creating a password-less one if none exists (they create their first
 // org from the dashboard, exactly like a normal tenant-less signup).
@@ -361,6 +427,15 @@ func (s *Service) findOrCreatePlatformUser(ctx context.Context, ui userInfo, all
 		`SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`, ui.Email,
 	).Scan(&userID)
 	if err == nil {
+		// Adopting an account the provider's address matches: only one whose
+		// address was proved there. Someone else may have registered it with a
+		// password of their own, which would keep working on the adopted
+		// account; until a code or link sent to the address is used (verifying
+		// it, or resetting the password), the provider's word doesn't hand it
+		// over.
+		if err := requireVerifiedAddress(ctx, s.pool, userID); err != nil {
+			return uuid.Nil, err
+		}
 		// Existing account: adopt the provider's avatar only if none is set yet,
 		// so we never clobber a picture the user chose themselves.
 		if ui.Picture != "" {
@@ -396,9 +471,11 @@ func (s *Service) findOrCreatePlatformUser(ctx context.Context, ui userInfo, all
 }
 
 // ExchangePlatformLogin trades a one-time platform login code for a tenant-less
-// Qeet token pair. Returns ErrSocialLoginCodeInvalid when the code isn't a
-// platform code (so the caller can fall back to the tenant exchange).
-func (s *Service) ExchangePlatformLogin(ctx context.Context, rawCode, ip, ua string) (*auth.TokenPair, error) {
+// Qeet token pair, or the second-factor challenge to complete first (see
+// auth.Service.BeginSocialSignIn). Returns ErrSocialLoginCodeInvalid when
+// the code isn't a platform code (so the caller can fall back to the tenant
+// exchange).
+func (s *Service) ExchangePlatformLogin(ctx context.Context, rawCode, ip, ua string) (*auth.LoginResult, error) {
 	if rawCode == "" {
 		return nil, errs.ErrSocialCodeRequired
 	}
@@ -417,6 +494,6 @@ func (s *Service) ExchangePlatformLogin(ctx context.Context, rawCode, ip, ua str
 	if err != nil {
 		return nil, err
 	}
-	// Tenant-less session, exactly like signup.
-	return s.auth.IssuePair(ctx, userID, uuid.Nil, ip, ua, "social")
+	// Tenant-less, exactly like signup.
+	return s.auth.BeginSocialSignIn(ctx, userID, uuid.Nil, ip, ua)
 }

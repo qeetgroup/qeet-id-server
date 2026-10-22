@@ -179,8 +179,10 @@ func TestAcceptInvitationWithPasskey(t *testing.T) {
 		Scan(&tenant, &verified, &hasPassword, &passkeys, &inRole); err != nil {
 		t.Fatalf("read account: %v", err)
 	}
-	if tenant != f.tenantID || !verified || hasPassword || passkeys != 1 || !inRole {
-		t.Errorf("account: tenant %v verified %v password %v passkeys %d role %v; want the inviting organisation, verified, no password, one passkey, the invited role",
+	// The address stays unverified: the invitation link was handed to the
+	// inviter too, so it proves nothing about who owns the address.
+	if tenant != f.tenantID || verified || hasPassword || passkeys != 1 || !inRole {
+		t.Errorf("account: tenant %v verified %v password %v passkeys %d role %v; want the inviting organisation, unverified, no password, one passkey, the invited role",
 			tenant, verified, hasPassword, passkeys, inRole)
 	}
 	if got := inviteStatus(t, ctx, inviteID); got != "accepted" {

@@ -15,7 +15,7 @@ import (
 )
 
 // Scheduled is a maintenance job that runs once per Interval across every
-// instance running the scheduler (QTID-326). Before running it an instance
+// instance running the scheduler. Before running it an instance
 // claims it in platform.scheduled_job_runs, and only a claim older than the
 // interval can be taken, so two instances never both run it in one interval.
 type Scheduled struct {

@@ -56,13 +56,23 @@ func (c *Cipher) Seal(tenantID uuid.UUID, purpose, resource string, plaintext []
 	return ciphertext, nonce, nil
 }
 
+// errNonceSize refuses opening with a stored nonce of the wrong length, which
+// the AEAD would otherwise panic on.
+var errNonceSize = errors.New("envelope: nonce has the wrong length")
+
 func (c *Cipher) Open(tenantID uuid.UUID, purpose, resource string, ciphertext, nonce []byte) ([]byte, error) {
 	if len(ciphertext) >= len(versionPrefix) && hmac.Equal(ciphertext[:len(versionPrefix)], versionPrefix) {
 		aead, aad, err := c.contextAEAD(tenantID, purpose, resource)
 		if err != nil {
 			return nil, err
 		}
+		if len(nonce) != aead.NonceSize() {
+			return nil, errNonceSize
+		}
 		return aead.Open(nil, nonce, ciphertext[len(versionPrefix):], aad)
+	}
+	if len(nonce) != c.legacy.NonceSize() {
+		return nil, errNonceSize
 	}
 	return c.legacy.Open(nil, nonce, ciphertext, nil)
 }

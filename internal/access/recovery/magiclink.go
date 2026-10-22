@@ -55,6 +55,8 @@ type MagicLinkRequest struct {
 	ReturnTo string
 	// Caller identifies the requester for the per-caller bound (its IP).
 	Caller string
+	// UserAgent is the requester's, for the record of the request.
+	UserAgent string
 }
 
 // Limiter bounds how often something may happen per key. Satisfied by
@@ -155,7 +157,7 @@ func (s *Service) RequestMagicLink(ctx context.Context, req MagicLinkRequest) er
 	if req.TenantID != uuid.Nil {
 		tenant = req.TenantID.String()
 	}
-	return s.sender.Send(ctx, notifier.Message{
+	if err := s.sender.Send(ctx, notifier.Message{
 		TemplateKey:       "magic_link",
 		TemplateVariables: map[string]string{"magic_url": magicURL},
 		TenantID:          tenant,
@@ -169,7 +171,20 @@ func (s *Service) RequestMagicLink(ctx context.Context, req MagicLinkRequest) er
 			"Sign in", magicURL,
 			"If you didn't ask for this link, you can safely ignore this email.",
 		),
-	})
+	}); err != nil {
+		return err
+	}
+	// Recorded under the organisation that asked, or the account's own.
+	org := req.TenantID
+	if org == uuid.Nil && account.TenantID.Valid {
+		org = account.TenantID.Bytes
+	}
+	var orgOf *uuid.UUID
+	if org != uuid.Nil {
+		orgOf = &org
+	}
+	s.recordRequest(ctx, "auth.magic_link_requested", account.ID, orgOf, AuditCtx{IP: req.Caller, UserAgent: req.UserAgent}, map[string]any{"app": app})
+	return nil
 }
 
 // magicLink is the emailed URL: the hosted login's magic page (with the

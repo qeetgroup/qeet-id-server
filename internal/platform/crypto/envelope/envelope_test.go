@@ -60,3 +60,26 @@ func TestCipherReadsLegacyAESGCM(t *testing.T) {
 		t.Fatalf("legacy open = %q, %v", plain, err)
 	}
 }
+
+// TestCipherRefusesANonceOfTheWrongLength: a stored nonce that was cut short
+// or replaced made the AEAD panic, taking down the request that read it. Open
+// now refuses it with an error, for current and legacy ciphertext alike.
+func TestCipherRefusesANonceOfTheWrongLength(t *testing.T) {
+	box, err := New([]byte("01234567890123456789012345678901"))
+	if err != nil {
+		t.Fatalf("new cipher: %v", err)
+	}
+	tenant := uuid.New()
+	ciphertext, nonce, err := box.Seal(tenant, "secret", "api-key", []byte("value"))
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	for _, bad := range [][]byte{nil, nonce[:4], append(append([]byte(nil), nonce...), 0)} {
+		if _, err := box.Open(tenant, "secret", "api-key", ciphertext, bad); err == nil {
+			t.Errorf("open with a %d-byte nonce succeeded", len(bad))
+		}
+		if _, err := box.Open(tenant, "secret", "api-key", []byte("legacy-ciphertext"), bad); err == nil {
+			t.Errorf("legacy open with a %d-byte nonce succeeded", len(bad))
+		}
+	}
+}

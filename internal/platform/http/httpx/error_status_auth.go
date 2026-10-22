@@ -28,6 +28,7 @@ func init() {
 		errs.CodeAuthLastSignInMethod:            http.StatusConflict,
 		errs.CodeAuthSessionLimit:                http.StatusForbidden,
 		errs.CodeAuthAccountSuspended:            http.StatusUnauthorized,
+		errs.CodeAuthTenantInactive:              http.StatusForbidden,
 		errs.CodeAuthSignInUnavailable:           http.StatusServiceUnavailable,
 		errs.CodeAuthAddressNotAllowed:           http.StatusForbidden,
 	})

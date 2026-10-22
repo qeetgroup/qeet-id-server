@@ -31,8 +31,9 @@ type Principal struct {
 	// tokens. See RefuseApplicationTokens.
 	ClientID string
 	// SignedInAt is set for a principal authenticated by the hosted login's
-	// session cookie, which has no API session: when that sign-in happened. A
-	// fresh one counts as a step-up (see mfa.Service.StepUpGate).
+	// session cookie, which has no API session, when that sign-in proved a
+	// second factor (a met challenge or a passkey): when it happened. A fresh
+	// one counts as a step-up (see mfa.Service.StepUpGate).
 	SignedInAt *time.Time
 }
 

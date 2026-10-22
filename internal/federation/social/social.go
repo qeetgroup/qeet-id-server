@@ -6,6 +6,7 @@ package social
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -555,8 +556,10 @@ type CallbackResult struct {
 
 // CompleteCallback consumes the CSRF state, exchanges the code with the upstream
 // provider, find-or-creates the local user + external identity, and mints a
-// one-time code the SPA trades for a session.
-func (s *Service) CompleteCallback(ctx context.Context, provider, state, code string) (*CallbackResult, error) {
+// one-time code the SPA trades for a session. startedHere says the browser that
+// arrived is the one that began the sign-in; without it the sign-in is refused
+// with ErrSocialBrowserMismatch (the return_to comes back with the refusal).
+func (s *Service) CompleteCallback(ctx context.Context, provider, state, code string, startedHere bool) (*CallbackResult, error) {
 	if state == "" || code == "" {
 		return nil, errs.ErrSocialCallbackParamsMissing
 	}
@@ -575,6 +578,9 @@ func (s *Service) CompleteCallback(ctx context.Context, provider, state, code st
 	}
 	if time.Now().After(st.ExpiresAt) {
 		return nil, errs.ErrSocialStateExpired
+	}
+	if !startedHere {
+		return &CallbackResult{ReturnTo: st.ReturnTo, TenantID: st.TenantID}, errs.ErrSocialBrowserMismatch
 	}
 
 	pc, err := s.loadProvider(ctx, st.TenantID, provider)
@@ -606,6 +612,10 @@ func (s *Service) CompleteCallback(ctx context.Context, provider, state, code st
 		return nil, err
 	}
 
+	// A suspended or deleted account gets no code to sign in with.
+	if err := s.auth.CheckSignInAccount(ctx, userID, st.TenantID, "social", "", ""); err != nil {
+		return nil, err
+	}
 	rawCode, codeHash, err := codes.URLToken()
 	if err != nil {
 		return nil, err
@@ -627,10 +637,12 @@ func (s *Service) EnabledProviderNames(ctx context.Context, tenantID uuid.UUID) 
 	return s.q.EnabledSocialProviderNames(ctx, tenantID)
 }
 
-// StartLoginSession mints a hosted-login SSO session for a social-authenticated
-// user, so social login can drive the OAuth authorize/consent flow.
-func (s *Service) StartLoginSession(ctx context.Context, userID uuid.UUID, ip, ua string) (string, error) {
-	return s.auth.CreateLoginSession(ctx, userID, ip, ua)
+// BeginLoginSession signs a social-authenticated user in to the hosted login
+// for tenantID, so social login can drive the OAuth authorize/consent flow: the
+// SSO session cookie value, or the second-factor challenge to complete first
+// (see auth.Service.BeginSocialLoginSession).
+func (s *Service) BeginLoginSession(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, trustedToken, country string) (*auth.LoginSessionResult, error) {
+	return s.auth.BeginSocialLoginSession(ctx, userID, tenantID, ip, ua, trustedToken, country)
 }
 
 // CheckHostedSignIn asks the organisation's address rules whether the browser
@@ -731,6 +743,14 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 		if !belongs {
 			return uuid.Nil, errs.ErrSocialAccountNotInTenant
 		}
+		// Third, the account must own the address: someone may have registered
+		// the victim's address without proving it (open hosted sign-up), and
+		// adopting it would hand the real person an account whose password the
+		// squatter keeps. Until a code or link sent to the address is used, the
+		// provider's word doesn't adopt it.
+		if err := requireVerifiedAddress(ctx, tx, userID); err != nil {
+			return uuid.Nil, err
+		}
 	}
 
 	var emailPtr *string
@@ -794,8 +814,9 @@ func (s *Service) recordSignUpRefused(ctx context.Context, tenantID uuid.UUID, p
 	return tx.Commit(ctx)
 }
 
-// ExchangeLogin trades a one-time social login code for a Qeet token pair.
-func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*auth.TokenPair, error) {
+// ExchangeLogin trades a one-time social login code for a Qeet token pair, or
+// the second-factor challenge to complete first.
+func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*auth.LoginResult, error) {
 	if rawCode == "" {
 		return nil, errs.ErrSocialCodeRequired
 	}
@@ -828,7 +849,7 @@ func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*a
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return s.auth.IssuePair(ctx, row.UserID, row.TenantID, ip, ua, "social")
+	return s.auth.BeginSocialSignIn(ctx, row.UserID, row.TenantID, ip, ua)
 }
 
 type Handler struct {
@@ -857,6 +878,7 @@ func (h *Handler) Mount(r chi.Router) {
 	// authorize URL for the browser to navigate to. The callback links the
 	// identity to the caller (never creates/switches accounts).
 	r.Post("/social/{provider}/link/start", h.linkStart)
+	r.Post("/social/link/complete", h.linkComplete)
 }
 
 // MountPublic mounts the browser-facing OAuth ceremony, which carries no JWT.
@@ -1009,6 +1031,32 @@ func (h *Handler) linkStart(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"authorize_url": authURL})
 }
 
+type linkCompleteInput struct {
+	Code string `json:"code"`
+}
+
+// linkComplete attaches the provider a link callback returned (held under the
+// link_code the account page was sent back with) to the caller — only when the
+// caller is the account that began the link.
+func (h *Handler) linkComplete(w http.ResponseWriter, r *http.Request) {
+	userID, err := httpx.RequireUser(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var in linkCompleteInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	provider, err := h.Service.CompletePlatformLink(r.Context(), in.Code, userID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"provider": provider})
+}
+
 // unlinkMine removes a social login from the caller's own account.
 func (h *Handler) unlinkMine(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
@@ -1042,16 +1090,45 @@ func (h *Handler) redirectSocialError(w http.ResponseWriter, r *http.Request, er
 		return
 	}
 	q := url.Values{"error": {"social"}}
+	// A suspended or deleted account is told so, as at password sign-in, and
+	// one that can't be adopted yet is told to verify its address.
+	switch {
+	case errors.Is(err, errs.ErrAuthAccountInactive):
+		q.Set("error", "account_inactive")
+	case errors.Is(err, errs.ErrSocialAccountUnverified):
+		q.Set("error", "account_unverified")
+	}
 	if rt := r.URL.Query().Get("return_to"); rt != "" {
 		q.Set("return_to", rt)
 	}
 	http.Redirect(w, r, h.LoginBaseURL+"/login?"+q.Encode(), http.StatusFound)
 }
 
+// binding ties a sign-in begun at start to the browser that began it, so the
+// callback completes it only there. SameSite=None so Apple's cross-site
+// form_post callback carries it — Lax where the cookie can't be Secure (dev).
+func (h *Handler) binding() httpx.BindingCookie {
+	sameSite := http.SameSiteNoneMode
+	if !h.CookieSecure {
+		sameSite = http.SameSiteLaxMode
+	}
+	return httpx.BindingCookie{Name: "qe_social", Secure: h.CookieSecure, SameSite: sameSite, MaxAge: socialStateTTL}
+}
+
+// stateOf is the state a provider authorization URL carries.
+func stateOf(authURL string) string {
+	u, err := url.Parse(authURL)
+	if err != nil {
+		return ""
+	}
+	return u.Query().Get("state")
+}
+
 // start redirects the browser to the provider's authorization endpoint.
 // Tenant is supplied as ?tenant=<slug> or ?tenant_id=<uuid> (no JWT here).
 // ?return_to=<url> opts into the hosted flow: the callback sets the SSO cookie
-// and bounces back there instead of handing a one-time code to the SPA.
+// and bounces back there instead of handing a one-time code to the SPA. The
+// browser is given the binding the callback checks.
 func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
 	tenantRef := r.URL.Query().Get("tenant")
@@ -1068,6 +1145,7 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 			h.redirectSocialError(w, r, err)
 			return
 		}
+		h.binding().Add(w, r, stateOf(authURL))
 		http.Redirect(w, r, authURL, http.StatusFound)
 		return
 	}
@@ -1076,12 +1154,15 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 		h.redirectSocialError(w, r, err)
 		return
 	}
+	h.binding().Add(w, r, stateOf(authURL))
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
 // callback handles the provider redirect. In the hosted flow (return_to set) it
 // establishes the SSO cookie and bounces back to the authorize URL; otherwise it
 // bounces to the SPA with a one-time code (tokens are never placed in the URL).
+// A sign-in completes only in the browser start gave the binding to: the same
+// return link opened anywhere else is refused, and nothing is issued.
 func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
 	// Apple uses response_mode=form_post (params in the POST body); the other
@@ -1093,26 +1174,36 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	state, code := r.FormValue("state"), r.FormValue("code")
+	startedHere := h.binding().Holds(r, state)
 
 	// Platform (tenant-less) console sign-in: complete it and bounce the SPA to
 	// /sign-in with a one-time code to exchange. Fall through to the tenant flow
 	// only when the state isn't a platform state.
 	if h.Service.PlatformProviderEnabled(provider) {
-		res, perr := h.Service.CompletePlatformCallback(r.Context(), provider, state, code)
+		res, perr := h.Service.CompletePlatformCallback(r.Context(), provider, state, code, startedHere)
 		if perr == nil {
-			if res.Linked {
+			if res.LinkCode != "" {
 				// Authenticated link ceremony: no session issued — return to the
-				// account page where the newly-connected provider now shows.
-				http.Redirect(w, r, h.Service.appBaseURL+"/account/security?linked="+url.QueryEscape(res.Provider), http.StatusFound)
+				// account page, which completes the link as the account that
+				// began it (POST /v1/social/link/complete).
+				q := url.Values{"link_code": {res.LinkCode}, "provider": {res.Provider}}
+				http.Redirect(w, r, h.Service.appBaseURL+"/account/security?"+q.Encode(), http.StatusFound)
 			} else {
+				h.binding().Remove(w, r, state)
 				http.Redirect(w, r, h.Service.appBaseURL+"/sign-in?social_code="+url.QueryEscape(res.LoginCode), http.StatusFound)
 			}
 			return
 		}
-		// A link that collided with another account: send the user back to the
-		// account page with a clear error rather than the login app.
-		if errors.Is(perr, errs.ErrSocialAlreadyLinked) {
-			http.Redirect(w, r, h.Service.appBaseURL+"/account/security?link_error=already_linked", http.StatusFound)
+		// A suspended or deleted account: say so on the console's own sign-in
+		// page, not the hosted login's.
+		if errors.Is(perr, errs.ErrAuthAccountInactive) {
+			http.Redirect(w, r, h.Service.appBaseURL+"/sign-in?social_error=account_inactive", http.StatusFound)
+			return
+		}
+		// A sign-in begun in another browser: say so, so the person starts it
+		// again here.
+		if errors.Is(perr, errs.ErrSocialBrowserMismatch) {
+			http.Redirect(w, r, h.Service.appBaseURL+"/sign-in?social_error=other_browser", http.StatusFound)
 			return
 		}
 		// Sign-in with a provider that has no account yet: bounce to sign-in with
@@ -1121,17 +1212,27 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, h.Service.appBaseURL+"/sign-in?social_error=no_account", http.StatusFound)
 			return
 		}
+		// An account uses the address but hasn't proved owning it: say so, so
+		// the person verifies it or resets its password first.
+		if errors.Is(perr, errs.ErrSocialAccountUnverified) {
+			http.Redirect(w, r, h.Service.appBaseURL+"/sign-in?social_error=account_unverified", http.StatusFound)
+			return
+		}
 		if !errors.Is(perr, errs.ErrSocialStateInvalid) {
 			h.redirectSocialError(w, r, perr)
 			return
 		}
 	}
 
-	res, err := h.Service.CompleteCallback(r.Context(), provider, state, code)
-	if errors.Is(err, errs.ErrAuthSelfRegistrationDisabled) && h.LoginBaseURL != "" {
-		// A closed organisation, not a provider failure: say so, and keep the
-		// way back to the application (validated when the sign-in began).
+	res, err := h.Service.CompleteCallback(r.Context(), provider, state, code, startedHere)
+	if (errors.Is(err, errs.ErrAuthSelfRegistrationDisabled) || errors.Is(err, errs.ErrSocialBrowserMismatch)) && h.LoginBaseURL != "" {
+		// A closed organisation, or a sign-in begun in another browser, not a
+		// provider failure: say so, and keep the way back to the application
+		// (validated when the sign-in began).
 		q := url.Values{"error": {"registration_closed"}}
+		if errors.Is(err, errs.ErrSocialBrowserMismatch) {
+			q.Set("error", "other_browser")
+		}
 		if res != nil && res.ReturnTo != "" {
 			q.Set("return_to", res.ReturnTo)
 		}
@@ -1142,6 +1243,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		h.redirectSocialError(w, r, err)
 		return
 	}
+	h.binding().Remove(w, r, state)
 	if res.ReturnTo != "" {
 		// An address the organisation refuses is told so on the hosted login,
 		// as every other method is, not shown a provider failure.
@@ -1154,10 +1256,29 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 			h.redirectSocialError(w, r, aerr)
 			return
 		}
-		// Hosted flow: set the SSO cookie and return to /oauth/authorize.
-		if raw, serr := h.Service.StartLoginSession(r.Context(), res.UserID, httpx.ClientIP(r), r.UserAgent()); serr == nil {
-			auth.SetLoginSessionCookie(w, raw, h.CookieSecure)
+		// Hosted flow: set the SSO cookie and return to /oauth/authorize — or,
+		// when the sign-in must meet a second factor first, hand the challenge to
+		// the hosted login. It travels in the fragment, which the
+		// browser never sends to a server or in a Referer.
+		trusted := ""
+		if c, cerr := r.Cookie(auth.TrustedDeviceCookie); cerr == nil {
+			trusted = c.Value
 		}
+		ls, serr := h.Service.BeginLoginSession(r.Context(), res.UserID, res.TenantID, httpx.ClientIP(r), r.UserAgent(),
+			trusted, httpx.GeoCountry(r.Context()))
+		if serr != nil {
+			h.redirectSocialError(w, r, serr)
+			return
+		}
+		if ls.MFARequired {
+			if h.LoginBaseURL == "" {
+				h.redirectSocialError(w, r, errs.ErrInternalServer)
+				return
+			}
+			http.Redirect(w, r, h.LoginBaseURL+"/login?"+url.Values{"return_to": {res.ReturnTo}}.Encode()+"#"+challengeFragment(ls.MFAChallenge), http.StatusFound)
+			return
+		}
+		auth.SetLoginSessionCookie(w, ls.RawCookie, h.CookieSecure)
 		http.Redirect(w, r, res.ReturnTo, http.StatusFound)
 		return
 	}
@@ -1169,6 +1290,38 @@ type exchangeInput struct {
 	Code string `json:"code"`
 }
 
+// challengeFragment is a hosted social sign-in's second-factor challenge as
+// the hosted login reads it from the URL fragment: the challenge token, the
+// methods it offers, the factors it can be met with (JSON, as a password
+// sign-in's challenge lists them: an email or SMS factor's id and masked
+// destination are what a code is sent with), and for an enrolment one
+// enrollment_required (and enrollment_due_at while it may be put off).
+func challengeFragment(c auth.MFAChallenge) string {
+	v := url.Values{"mfa_token": {c.MFAToken}, "methods": {strings.Join(c.Methods, ",")}}
+	if len(c.Factors) > 0 {
+		if factors, err := json.Marshal(c.Factors); err == nil {
+			v.Set("factors", string(factors))
+		}
+	}
+	if c.EnrollmentRequired {
+		v.Set("enrollment_required", "true")
+		if c.EnrollmentDueAt != nil {
+			v.Set("enrollment_due_at", c.EnrollmentDueAt.UTC().Format(time.RFC3339))
+		}
+	}
+	return v.Encode()
+}
+
+// writeSignIn answers a social code exchange: the token pair, or the
+// second-factor challenge shaped as a password sign-in's, met at /v1/auth/mfa.
+func writeSignIn(w http.ResponseWriter, res *auth.LoginResult) {
+	if res.MFARequired {
+		httpx.WriteJSON(w, http.StatusOK, res.Body())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res.Pair)
+}
+
 // exchange trades a one-time social login code for a token pair.
 func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {
 	var in exchangeInput
@@ -1178,19 +1331,34 @@ func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {
 	}
 	// Platform (tenant-less) code first; fall back to the tenant exchange when
 	// the code isn't a platform one.
-	if pair, perr := h.Service.ExchangePlatformLogin(r.Context(), in.Code, httpx.ClientIP(r), r.UserAgent()); perr == nil {
-		httpx.WriteJSON(w, http.StatusOK, pair)
+	if res, perr := h.Service.ExchangePlatformLogin(r.Context(), in.Code, httpx.ClientIP(r), r.UserAgent()); perr == nil {
+		writeSignIn(w, res)
 		return
 	} else if !errors.Is(perr, errs.ErrSocialLoginCodeInvalid) {
 		httpx.WriteError(w, r, perr)
 		return
 	}
-	pair, err := h.Service.ExchangeLogin(r.Context(), in.Code, httpx.ClientIP(r), r.UserAgent())
+	res, err := h.Service.ExchangeLogin(r.Context(), in.Code, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, pair)
+	writeSignIn(w, res)
+}
+
+// requireVerifiedAddress refuses, with ErrSocialAccountUnverified, adopting an
+// account whose address nobody has proved owning.
+func requireVerifiedAddress(ctx context.Context, db interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, userID uuid.UUID) error {
+	var verified bool
+	if err := db.QueryRow(ctx, `SELECT email_verified_at IS NOT NULL FROM "user".users WHERE id = $1`, userID).Scan(&verified); err != nil {
+		return err
+	}
+	if !verified {
+		return errs.ErrSocialAccountUnverified
+	}
+	return nil
 }
 
 // userInTenant reports whether a user is one this tenant can sign in.

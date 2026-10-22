@@ -1659,7 +1659,7 @@ func TestSocialOIDCLoginFlow(t *testing.T) {
 		t.Fatal("expected PKCE S256 challenge")
 	}
 
-	res, err := svc.CompleteCallback(ctx, provider, state, "upstream-auth-code")
+	res, err := svc.CompleteCallback(ctx, provider, state, "upstream-auth-code", true)
 	if err != nil {
 		t.Fatalf("callback: %v", err)
 	}
@@ -1683,12 +1683,12 @@ func TestSocialOIDCLoginFlow(t *testing.T) {
 		t.Fatalf("external identity rows = %d (err %v), want 1", n, err)
 	}
 
-	pair, err := svc.ExchangeLogin(ctx, res.Code, "1.2.3.4", "test-agent")
+	signedIn, err := svc.ExchangeLogin(ctx, res.Code, "1.2.3.4", "test-agent")
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
-	if pair.AccessToken == "" || pair.RefreshToken == "" {
-		t.Fatal("exchange should return access + refresh tokens")
+	if signedIn.MFARequired || signedIn.Pair == nil || signedIn.Pair.AccessToken == "" || signedIn.Pair.RefreshToken == "" {
+		t.Fatal("exchange should return access + refresh tokens (the account holds no factor and nothing requires one)")
 	}
 
 	// One-time: a second exchange of the same code must fail.
@@ -1722,7 +1722,7 @@ func TestSocialUnverifiedEmailCannotAutoLink(t *testing.T) {
 		t.Fatalf("begin unverified login: %v", err)
 	}
 	parsed, _ := url.Parse(authorizeURL)
-	_, err = service.CompleteCallback(ctx, "unverified", parsed.Query().Get("state"), "code")
+	_, err = service.CompleteCallback(ctx, "unverified", parsed.Query().Get("state"), "code", true)
 	if !errors.Is(err, errs.ErrSocialEmailUnverified) {
 		t.Fatalf("unverified email collision error = %v", err)
 	}
@@ -1756,9 +1756,12 @@ func TestSocialExplicitLinkAllowsUnverifiedEmailWithoutAutoMatching(t *testing.T
 		t.Fatalf("begin explicit link: %v", err)
 	}
 	parsed, _ := url.Parse(linkURL)
-	linked, err := service.CompletePlatformCallback(ctx, "explicit", parsed.Query().Get("state"), "link-code")
-	if err != nil || !linked.Linked {
-		t.Fatalf("complete explicit link: result=%+v err=%v", linked, err)
+	linked, err := service.CompletePlatformCallback(ctx, "explicit", parsed.Query().Get("state"), "link-code", false)
+	if err != nil || linked.LinkCode == "" {
+		t.Fatalf("explicit link callback: result=%+v err=%v", linked, err)
+	}
+	if _, err := service.CompletePlatformLink(ctx, linked.LinkCode, userID); err != nil {
+		t.Fatalf("complete explicit link: %v", err)
 	}
 	var storedEmail *string
 	if err := testPool.QueryRow(ctx, `
@@ -1776,7 +1779,7 @@ func TestSocialExplicitLinkAllowsUnverifiedEmailWithoutAutoMatching(t *testing.T
 		t.Fatalf("begin linked subject login: %v", err)
 	}
 	parsed, _ = url.Parse(loginURL)
-	login, err := service.CompletePlatformCallback(ctx, "explicit", parsed.Query().Get("state"), "login-code")
+	login, err := service.CompletePlatformCallback(ctx, "explicit", parsed.Query().Get("state"), "login-code", true)
 	if err != nil || login.LoginCode == "" {
 		t.Fatalf("existing subject login should survive missing assurance: result=%+v err=%v", login, err)
 	}
@@ -2616,7 +2619,7 @@ func TestSocialEmailVerifiedStatesOnProvisioning(t *testing.T) {
 				t.Fatalf("begin login: %v", err)
 			}
 			parsed, _ := url.Parse(authorizeURL)
-			if _, err := service.CompleteCallback(ctx, provider, parsed.Query().Get("state"), "code"); err != nil {
+			if _, err := service.CompleteCallback(ctx, provider, parsed.Query().Get("state"), "code", true); err != nil {
 				t.Fatalf("provisioning a new account must succeed regardless of the claim, got %v", err)
 			}
 
@@ -2670,7 +2673,7 @@ func TestSocialAbsentEmailVerifiedCannotAdoptExistingAccount(t *testing.T) {
 		t.Fatalf("begin login: %v", err)
 	}
 	parsed, _ := url.Parse(authorizeURL)
-	if _, err := service.CompleteCallback(ctx, "absentprov", parsed.Query().Get("state"), "code"); !errors.Is(err, errs.ErrSocialEmailUnverified) {
+	if _, err := service.CompleteCallback(ctx, "absentprov", parsed.Query().Get("state"), "code", true); !errors.Is(err, errs.ErrSocialEmailUnverified) {
 		t.Fatalf("absent email_verified adopting an existing account: err = %v, want unverified", err)
 	}
 	var links int

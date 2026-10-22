@@ -22,5 +22,6 @@ func init() {
 		errs.CodePasskeyMFAFailed:          http.StatusUnauthorized,
 		errs.CodePasskeyCeremonyFailed:     http.StatusBadRequest,
 		errs.CodePasskeyDisabled:           http.StatusForbidden,
+		errs.CodePasskeyBrowserMismatch:    http.StatusForbidden,
 	})
 }

@@ -251,8 +251,11 @@ func TestApplicationTokenRoutesStayNarrow(t *testing.T) {
 
 // sensitiveLooking matches the paths of routes that change factors, machine
 // credentials, secrets, sign-in or security policy, single sign-on, retention
-// or audit streaming, or destroy an account or organisation.
+// or audit streaming, hand out authority (roles, permissions, invitations,
+// relationship rules, attribute policies), bring an account back, move an
+// account's email address, or destroy an account or organisation.
 var sensitiveLooking = regexp.MustCompile(`/mfa/|/passkeys|/api-keys|/service-principals|/agents|` +
+	`/roles|/permissions|/invites|/relation-tuples|/abac|/reactivate|/restore|/email|` +
 	`/oidc/clients|/scim/token|/credentials|/webhooks|/auth-hooks|/secrets|/vault/tokens|/provider-config|` +
 	`/policy$|/auth-policy|/risk-settings|/bots/settings|/ip-rules|/rate-limits|/mfa-required|/mfa$|` +
 	`/password$|/saml|/ldap|/social/|/domains|/mappings|/admin-portal|/email-templates|/retention|` +
@@ -274,7 +277,7 @@ func TestSensitiveRoutesNeedStepUp(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("walk authenticated router: %v", err)
 	}
-	gated, exempt := stepUpRoutes(), stepUpExempt()
+	gated, exempt := StepUpRoutes(), stepUpExempt()
 	var unclassified, stale, both []string
 	for route := range mounted {
 		method, path, _ := strings.Cut(route, " ")
@@ -305,7 +308,7 @@ func TestSensitiveRoutesNeedStepUp(t *testing.T) {
 	sort.Strings(stale)
 	sort.Strings(both)
 	if len(unclassified) > 0 {
-		t.Errorf("sensitive-looking routes neither in stepUpRoutes nor stepUpExempt:\n  %s", strings.Join(unclassified, "\n  "))
+		t.Errorf("sensitive-looking routes neither in StepUpRoutes nor stepUpExempt:\n  %s", strings.Join(unclassified, "\n  "))
 	}
 	if len(stale) > 0 {
 		t.Errorf("step-up catalogue names routes that are not mounted:\n  %s", strings.Join(stale, "\n  "))
@@ -336,6 +339,73 @@ func TestLinkedPhoneCallsPassCSRF(t *testing.T) {
 		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, path, nil))
 		if reached != want {
 			t.Errorf("POST %s with no cookie, token or Origin: reached handler = %v, want %v", path, reached, want)
+		}
+	}
+}
+
+// TestHostedLoginCookieRoutesKeepTheCSRFCheck: the routes that give a browser
+// the hosted-login cookie must not skip the CSRF check, or a page on another
+// site could sign a visitor's browser in to an account of its choosing. The
+// hosted magic-link exchange sat under the magic-link exemption, and the hosted
+// passkey sign-in sits beside the passkey token steps; the bearer steps still
+// skip the check.
+func TestHostedLoginCookieRoutesKeepTheCSRFCheck(t *testing.T) {
+	reached := false
+	h := httpx.CSRF(httpx.CSRFConfig{AllowedOrigins: []string{"https://login.example"}, ExemptPaths: csrfExemptPaths()})(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
+	for path, want := range map[string]bool{
+		"/v1/auth/session":            false,
+		"/v1/auth/session/mfa":        false,
+		"/v1/auth/register":           false,
+		"/v1/register/passkey/finish": false,
+		"/v1/auth/magic-link/session": false,
+		"/v1/auth/magic-link/start":   true,
+		"/v1/auth/magic-link/consume": true,
+		"/v1/auth/magic-link/resend":  true,
+		"/v1/passkeys/login/session":  false,
+		"/v1/passkeys/login/begin":    true,
+		"/v1/passkeys/login/finish":   true,
+	} {
+		reached = false
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		req.Header.Set("Origin", "https://attacker.example")
+		h.ServeHTTP(httptest.NewRecorder(), req)
+		if reached != want {
+			t.Errorf("POST %s from another site with no CSRF token: reached handler = %v, want %v", path, reached, want)
+		}
+	}
+}
+
+// TestServerCallersPassTheCSRFCheck: the production check let only a bearer
+// token skip it, so writes the server libraries make with an API key, and back
+// ends exchanging service-principal or directory credentials, were refused for
+// sending no Origin. Those pass now; a cookie change without the token, a
+// cross-site form post and Basic credentials still don't.
+func TestServerCallersPassTheCSRFCheck(t *testing.T) {
+	reached := false
+	h := CSRF([]string{"https://console.example"}, true, "")(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
+	for _, c := range []struct {
+		name, path, authorization, cookie, origin, contentType string
+		want                                                   bool
+	}{
+		{name: "an API-key write", path: "/v1/users", authorization: "ApiKey qk_test", want: true},
+		{name: "the service-principal token exchange", path: "/v1/oauth/token", contentType: "application/x-www-form-urlencoded", want: true},
+		{name: "a directory sign-in", path: "/v1/ldap/" + uuid.NewString() + "/authenticate", want: true},
+		{name: "a cookie change without the token", path: "/v1/passkeys/register/begin", cookie: "qe_ls=session", origin: "https://console.example"},
+		{name: "a cross-site form post", path: "/v1/auth/session", origin: "https://attacker.example", contentType: "text/plain"},
+		{name: "Basic credentials from another site", path: "/v1/users", authorization: "Basic dXNlcjpwYXNz", origin: "https://attacker.example"},
+	} {
+		reached = false
+		req := httptest.NewRequest(http.MethodPost, c.path, nil)
+		for k, v := range map[string]string{"Authorization": c.authorization, "Cookie": c.cookie, "Origin": c.origin, "Content-Type": c.contentType} {
+			if v != "" {
+				req.Header.Set(k, v)
+			}
+		}
+		h.ServeHTTP(httptest.NewRecorder(), req)
+		if reached != c.want {
+			t.Errorf("%s: reached handler = %v, want %v", c.name, reached, c.want)
 		}
 	}
 }

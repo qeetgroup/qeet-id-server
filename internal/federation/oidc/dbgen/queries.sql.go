@@ -307,7 +307,7 @@ WHERE client_row_id = $1 AND locked_until > NOW()
 `
 
 // ==========================================================================
-// Application secret lockout (QTID-215)
+// Application secret lockout
 // ==========================================================================
 // GetClientLockedUntil reports a lockout still in force for an application.
 func (q *Queries) GetClientLockedUntil(ctx context.Context, clientRowID uuid.UUID) (pgtype.Timestamptz, error) {
@@ -452,7 +452,7 @@ func (q *Queries) GetConsentRequest(ctx context.Context, arg GetConsentRequestPa
 }
 
 const getDeviceByUserCode = `-- name: GetDeviceByUserCode :one
-SELECT client_id, scopes, status, expires_at
+SELECT client_id, scopes, status, expires_at, tenant_id
 FROM auth.oidc_device_codes WHERE user_code = $1
 `
 
@@ -461,6 +461,7 @@ type GetDeviceByUserCodeRow struct {
 	Scopes    []string
 	Status    string
 	ExpiresAt time.Time
+	TenantID  uuid.UUID
 }
 
 func (q *Queries) GetDeviceByUserCode(ctx context.Context, userCode string) (GetDeviceByUserCodeRow, error) {
@@ -471,6 +472,7 @@ func (q *Queries) GetDeviceByUserCode(ctx context.Context, userCode string) (Get
 		&i.Scopes,
 		&i.Status,
 		&i.ExpiresAt,
+		&i.TenantID,
 	)
 	return i, err
 }
@@ -615,8 +617,8 @@ type GetUserinfoRow struct {
 	Locale          string
 }
 
-// GetUserinfo is what userinfo and the ID token may say about a live account
-// (QTID-165). locale is read from the profile metadata when set.
+// GetUserinfo is what userinfo and the ID token may say about a live account.
+// locale is read from the profile metadata when set.
 func (q *Queries) GetUserinfo(ctx context.Context, id uuid.UUID) (GetUserinfoRow, error) {
 	row := q.db.QueryRow(ctx, getUserinfo, id)
 	var i GetUserinfoRow
@@ -1689,7 +1691,7 @@ type ResourceRegisteredParams struct {
 }
 
 // ==========================================================================
-// Resources (RFC 8707 resource indicators, QTID-157)
+// Resources (RFC 8707 resource indicators)
 // ==========================================================================
 func (q *Queries) ResourceRegistered(ctx context.Context, arg ResourceRegisteredParams) (bool, error) {
 	row := q.db.QueryRow(ctx, resourceRegistered, arg.TenantID, arg.Identifier)
@@ -1883,7 +1885,7 @@ type SessionClientsRow struct {
 }
 
 // ==========================================================================
-// Sign-out notices (OpenID Connect Back- and Front-Channel Logout, QTID-166)
+// Sign-out notices (OpenID Connect Back- and Front-Channel Logout)
 // ==========================================================================
 // SessionClients is every application that holds a code or a grant from a
 // hosted-login session, with where it hears of a sign-out.

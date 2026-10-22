@@ -18,7 +18,7 @@ import (
 	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
 )
 
-// TestScheduledJobsRunOncePerInterval pins the scheduler (QTID-326): a due
+// TestScheduledJobsRunOncePerInterval pins the scheduler: a due
 // job runs once however many instances look for it at the same moment, not
 // again within its interval, and again once the interval has passed; a job
 // that fails or panics is recorded and the next one still runs.
@@ -105,8 +105,8 @@ func TestScheduledJobsRunOncePerInterval(t *testing.T) {
 	})
 }
 
-// TestEveryAuditChainIsVerifiedAndStored pins the scheduled verification
-// (QTID-326): it walks every organisation's chain, not only the platform's,
+// TestEveryAuditChainIsVerifiedAndStored pins the scheduled verification:
+// it walks every organisation's chain, not only the platform's,
 // stores each run, and a tampered row fails the run, naming the organisation
 // and the row.
 func TestEveryAuditChainIsVerifiedAndStored(t *testing.T) {

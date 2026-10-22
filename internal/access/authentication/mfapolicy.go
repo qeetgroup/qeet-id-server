@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,7 +30,7 @@ import (
 // meets the challenge, so no session is issued before a factor exists.
 //
 // Grace period: for mfa_grace_days after the organisation turns its
-// requirement on, the accounts it already had may put the setup off — they
+// requirement on, the members it already had may put the setup off — they
 // still get the enrolment challenge, and may skip it (MFAProof.Skip) until
 // the grace period ends. Accounts created later, and accounts marked
 // individually, have none.
@@ -70,7 +71,7 @@ func decideMFARequirement(row dbgen.MFARequirementRow, now time.Time) mfaRequire
 	default:
 		return req
 	}
-	if row.GraceDays > 0 && row.MfaEnforcedSince.Valid && row.CreatedAt.Before(row.MfaEnforcedSince.Time) {
+	if row.GraceDays > 0 && row.MfaEnforcedSince.Valid && row.JoinedAt.Before(row.MfaEnforcedSince.Time) {
 		until := row.MfaEnforcedSince.Time.Add(time.Duration(row.GraceDays) * 24 * time.Hour)
 		if now.Before(until) {
 			req.graceUntil = &until
@@ -92,6 +93,83 @@ func (s *Service) mfaRequirementFor(ctx context.Context, userID, tenantID uuid.U
 	return decideMFARequirement(row, time.Now()), nil
 }
 
+// The requirement belongs to the organisation being entered, not only to the
+// one the account calls home. Signing in reads the home
+// organisation's; everything that issues a session or a code for another
+// organisation — switching into it, accepting its invitation, signing in to one
+// of its applications, approving a device for one — asks tenantFactorShortfall
+// first. For that every session records whether, and how, its sign-in met a
+// second factor (auth.sessions and auth.login_sessions second_factor,
+// migration 0149).
+const (
+	secondFactorMFA           = "mfa"
+	secondFactorPasskey       = "passkey"
+	secondFactorTrustedDevice = "trusted_device"
+	secondFactorStepUp        = "step_up"
+)
+
+// secondFactorOfMethod is the second factor a session opened by a sign-in of
+// this method met ("" for none): a met challenge ("<first factor>_mfa") or a
+// passkey.
+func secondFactorOfMethod(method string) string {
+	switch {
+	case strings.HasSuffix(method, "_mfa"):
+		return secondFactorMFA
+	case method == "passkey":
+		return secondFactorPasskey
+	}
+	return ""
+}
+
+// stricterRequirement is the requirement of two organisations an account
+// meets at once: either one's, and a grace period only while both allow one,
+// ending at the earlier.
+func stricterRequirement(a, b mfaRequirement) mfaRequirement {
+	switch {
+	case a.reason == "":
+		return b
+	case b.reason == "":
+		return a
+	}
+	out := mfaRequirement{reason: a.reason}
+	if a.graceUntil != nil && b.graceUntil != nil {
+		out.graceUntil = a.graceUntil
+		if b.graceUntil.Before(*a.graceUntil) {
+			out.graceUntil = b.graceUntil
+		}
+	}
+	return out
+}
+
+// tenantFactorShortfall is what stops a session or a code being issued for
+// tenantID to userID, whose sign-in met secondFactor ("": none): nil when
+// nothing does — the organisation doesn't require a factor of the account, the
+// sign-in met one, or the account holds none and the organisation's grace
+// period still lets it put the setup off. Otherwise ErrMFAEnrollmentRequired
+// when the account must set a factor up first, or ErrStepUpRequired when it
+// holds one this sign-in didn't use.
+func (s *Service) tenantFactorShortfall(ctx context.Context, userID, tenantID uuid.UUID, secondFactor string) error {
+	if s.mfa == nil || tenantID == uuid.Nil || secondFactor != "" {
+		return nil
+	}
+	req, err := s.mfaRequirementFor(ctx, userID, tenantID)
+	if err != nil || req.reason == "" {
+		return err
+	}
+	factors, err := s.mfa.LoginFactors(ctx, userID)
+	if err != nil {
+		return err
+	}
+	meta := map[string]any{"reason": req.reason, "tenant_id": tenantID}
+	if len(factors) == 0 {
+		if req.graceUntil != nil {
+			return nil
+		}
+		return errs.ErrMFAEnrollmentRequired.WithMetadata(meta)
+	}
+	return errs.ErrStepUpRequired.WithMetadata(meta)
+}
+
 // mfaGate is what decides a password sign-in's second factor: the factors the
 // account holds and whether it must use one.
 type mfaGate struct {
@@ -105,6 +183,17 @@ func (g mfaGate) challenged() bool { return len(g.factors) > 0 || g.req.reason !
 // enrollment reports whether the challenge is met by setting up a factor.
 func (g mfaGate) enrollment() bool { return len(g.factors) == 0 && g.req.reason != "" }
 
+// skippedFactor is the second factor recorded for a sign-in that went on to a
+// session without a challenge: a gate that would have challenged was passed by
+// a remembered device (see nextSignInStep), which stands in for the factor;
+// otherwise none was met.
+func (g mfaGate) skippedFactor() string {
+	if g.challenged() && !g.enrollment() {
+		return secondFactorTrustedDevice
+	}
+	return ""
+}
+
 // reason is why the sign-in is challenged, as audited.
 func (g mfaGate) reason() string {
 	if g.req.reason != "" {
@@ -116,6 +205,13 @@ func (g mfaGate) reason() string {
 // mfaGate reads the account's factors and requirement. With no MFA service
 // wired nothing is challenged.
 func (s *Service) mfaGate(ctx context.Context, userID, tenantID uuid.UUID) (mfaGate, error) {
+	return s.mfaGateFor(ctx, userID, tenantID, uuid.Nil)
+}
+
+// mfaGateFor is mfaGate for a sign-in that also enters alsoTenant (uuid.Nil:
+// none) — the organisation of the application a hosted sign-in serves — whose
+// requirement applies as well as the home organisation's.
+func (s *Service) mfaGateFor(ctx context.Context, userID, tenantID, alsoTenant uuid.UUID) (mfaGate, error) {
 	if s.mfa == nil {
 		return mfaGate{}, nil
 	}
@@ -126,6 +222,13 @@ func (s *Service) mfaGate(ctx context.Context, userID, tenantID uuid.UUID) (mfaG
 	req, err := s.mfaRequirementFor(ctx, userID, tenantID)
 	if err != nil {
 		return mfaGate{}, err
+	}
+	if alsoTenant != uuid.Nil && alsoTenant != tenantID {
+		also, err := s.mfaRequirementFor(ctx, userID, alsoTenant)
+		if err != nil {
+			return mfaGate{}, err
+		}
+		req = stricterRequirement(req, also)
 	}
 	return mfaGate{factors: factors, req: req}, nil
 }

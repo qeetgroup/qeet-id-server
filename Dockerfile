@@ -27,7 +27,7 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/qeet-id-server /qeet-id-server
 # The API runs the scheduled jobs itself (embedded workers); the standalone
-# scheduler is here for deployments that run them apart (QTID-326).
+# scheduler is here for deployments that run them apart.
 COPY --from=build /out/qeet-id-scheduler /qeet-id-scheduler
 EXPOSE 4001
 USER nonroot:nonroot

@@ -348,8 +348,18 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (*AcceptResult, er
 		return nil, err
 	}
 
-	// The new account will belong to the inviting organisation, so its rules
-	// apply. Checked once the invite is known to be good.
+	// The new account will belong to the inviting organisation, so its
+	// methods and rules apply: no password account where passwords can't sign
+	// in. Checked once the invite is known to be good.
+	if s.methods != nil {
+		passwordOn, _, _, err := s.methods.AllowedSignInMethods(ctx, inv.TenantID)
+		if err != nil {
+			return nil, err
+		}
+		if !passwordOn {
+			return nil, errs.ErrAuthMethodDisabled
+		}
+	}
 	if err := s.rules.ValidateForTenant(ctx, inv.TenantID, inv.Email, in.Password); err != nil {
 		return nil, err
 	}

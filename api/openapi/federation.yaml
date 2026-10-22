@@ -26,7 +26,7 @@ info:
 
     ## Authentication
 
-    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to `ssoCookie` sessions; `bearerAuth` requests bypass it.
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /v1/ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it.
 
     ## Related APIs
 
@@ -214,7 +214,7 @@ paths:
   /v1/oauth/authorize:
     get:
       operationId: get_v1_oauth_authorize
-      description: 'Begins the OAuth 2.0 / OpenID Connect authorization-code flow with Qeet as the provider. The end user is identified by the hosted-login SSO session cookie: with no session the browser is redirected to the hosted login, with missing consent to the hosted consent screen, and otherwise back to the client''s redirect_uri carrying an authorization code and state. Exchange that code for tokens at the token-code endpoint (authorization_code grant), not at the client-credentials token endpoint. The redirect_uri must be one the client registered; otherwise the error is shown here and nothing is sent to that address. When consent is needed, the request is stored server-side and the hosted consent screen is given only its request_id. While the client organisation''s address rules are on, a browser address they refuse gets access_denied at the redirect_uri and no code, and the refusal is audited (auth.address_refused). Every application, confidential ones included, must send a PKCE code_challenge with code_challenge_method S256, and a nonce whenever scope includes openid; the nonce comes back in the ID token. A request without them gets invalid_request at the redirect_uri (oidc.code_challenge_required, oidc.nonce_required) before any consent is asked. A confidential application whose pkce_exempt_until is still ahead is excused both until then. response_type is required and only code is served (else invalid_request / unsupported_response_type at the redirect_uri); request and request_uri are refused (request_not_supported, request_uri_not_supported), as is a response_mode other than query. prompt=none never shows a page: no sign-in answers login_required, no consent consent_required. prompt=login, and a sign-in older than max_age seconds, send the browser to sign in again and then complete the request; prompt=consent asks for consent again. The ID token carries auth_time (when the person signed in) and sid (the hosted-login session).'
+      description: 'Begins the OAuth 2.0 / OpenID Connect authorization-code flow with Qeet as the provider. The end user is identified by the hosted-login SSO session cookie: with no session the browser is redirected to the hosted login, with missing consent to the hosted consent screen, and otherwise back to the client''s redirect_uri carrying an authorization code and state. Exchange that code for tokens at the token-code endpoint (authorization_code grant), not at the client-credentials token endpoint. The redirect_uri must be one the client registered; otherwise the error is shown here and nothing is sent to that address. When consent is needed, the request is stored server-side and the hosted consent screen is given only its request_id. While the client organisation''s address rules are on, a browser address they refuse gets access_denied at the redirect_uri and no code, and the refusal is audited (auth.address_refused). Every application, confidential ones included, must send a PKCE code_challenge with code_challenge_method S256, and a nonce whenever scope includes openid; the nonce comes back in the ID token. A request without them gets invalid_request at the redirect_uri (oidc.code_challenge_required, oidc.nonce_required) before any consent is asked. A confidential application whose pkce_exempt_until is still ahead is excused both until then. response_type is required and only code is served (else invalid_request / unsupported_response_type at the redirect_uri); request and request_uri are refused (request_not_supported, request_uri_not_supported), as is a response_mode other than query. prompt=none never shows a page: no sign-in answers login_required, no consent consent_required. prompt=login, and a sign-in older than max_age seconds, send the browser to sign in again and then complete the request; prompt=consent asks for consent again. The ID token carries auth_time (when the person signed in) and sid (the hosted-login session). When the client''s organisation requires a second factor the hosted sign-in didn''t meet, the browser is sent to sign in again for this request (where the hosted login asks for it), once; prompt=none answers interaction_required, and a fresh sign-in that still hasn''t met one gets access_denied at the redirect_uri.'
       summary: Authorize
       tags:
         - OIDC
@@ -401,7 +401,7 @@ paths:
     post:
       operationId: post_v1_oauth_device_decision
       summary: Device decision (approve)
-      description: The SSO-cookie-identified user approves or denies a pending device request identified by user_code. On approval the user (who must belong to the client's tenant, and approve from an address its address rules allow, else 403 auth.address_not_allowed) is bound and the device can complete its token poll.
+      description: The SSO-cookie-identified user approves or denies a pending device request identified by user_code. On approval the user (who must belong to the client's tenant, and approve from an address its address rules allow, else 403 auth.address_not_allowed) is bound and the device can complete its token poll. Approving for an organisation that requires a second factor of the user needs a hosted sign-in that met one (403 step_up_required or mfa.enrollment_required otherwise).
       tags:
         - OIDC
       security:
@@ -1702,7 +1702,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Trades the one-time code a social sign-in callback handed back (the console''s own, or an organisation''s) for the sign-in''s result. Social sign-in takes the same second-factor decision as a password sign-in: the response is a token pair, or, when the account holds a second factor, the organisation requires one, or the sign-in is risky, the challenge instead (mfa_required, mfa_token, methods, factors, and enrollment_required for an account that must set one up), completed at POST /v1/auth/mfa.'
       responses:
         '201':
           description: Created
@@ -1769,7 +1769,7 @@ paths:
     post:
       operationId: post_v1_social_ByProvider_link_start
       summary: Begin linking a provider to my account
-      description: Authenticated "connect this provider" ceremony. Returns the provider authorize URL for the browser to navigate to; the callback attaches the identity to the caller — never creating or switching accounts, and refusing an identity already linked elsewhere (`social.already_linked`).
+      description: 'Authenticated "connect this provider" ceremony. Returns the provider authorize URL for the browser to navigate to. The callback never creates or switches accounts, and attaches nothing itself: it sends the browser back to the account page (/account/security) with a one-time link_code and the provider, and the identity is attached only when the account that began the link completes it at POST /v1/social/link/complete.'
       tags:
         - Social
       parameters:
@@ -1799,6 +1799,47 @@ paths:
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/social/link/complete:
+    post:
+      operationId: post_v1_social_link_complete
+      summary: Complete linking a provider to my account
+      description: 'Attaches the provider identity a link callback returned, held under the one-time link_code the account page was sent back with, to the caller. Only the account that began the link (POST /v1/social/{provider}/link/start) completes it; for any other the code is spent and the answer is 403 social.link_account_mismatch, so a connect link sent to someone else never attaches their provider account to the sender''s. An unknown, used or expired code answers 400 social.link_code_invalid (codes live two minutes); an identity already linked to another account answers 409 social.already_linked.'
+      tags:
+        - Social
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  description: The link_code from the callback's redirect.
+      responses:
+        '200':
+          description: Linked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  provider:
+                    type: string
+                required:
+                  - provider
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v1/social/identities/{id}:
     delete:
       operationId: delete_v1_social_identities_ById
@@ -1980,7 +2021,7 @@ paths:
   /v1/social/{provider}/callback:
     get:
       operationId: get_v1_social_ByProvIDer_callback
-      description: 'Completes a social sign-in: exchanges the provider''s code, then signs in the account linked to that provider identity, adopts the organisation''s existing account for a verified address, or creates an account. Creating one is self-registration: when the organisation does not allow it, nothing is created, the attempt is audited (social.signup_refused, naming the provider and the address), and the browser is sent to the hosted login with error=registration_closed and the original return_to. An address the organisation''s address rules refuse is sent there with error=address_not_allowed and the return_to, and no hosted-login session is opened. Other failures send it there with error=social.'
+      description: 'Completes a social sign-in: exchanges the provider''s code, then signs in the account linked to that provider identity, adopts the organisation''s existing account for a verified address, or creates an account. The callback completes only in the browser that began the sign-in, which holds the binding cookie from GET /v1/social/{provider}/start: the same return link opened in another browser, or without the cookie, is refused and nothing is issued — the browser is sent to the hosted login with error=other_browser and the return_to (the console flow gets social_error=other_browser). A link ceremony (POST /v1/social/{provider}/link/start) attaches nothing here: the browser is sent to the account page with a one-time link_code and the provider, which the account that began the link completes at POST /v1/social/link/complete. Creating one is self-registration: when the organisation does not allow it, nothing is created, the attempt is audited (social.signup_refused, naming the provider and the address), and the browser is sent to the hosted login with error=registration_closed and the original return_to. An address the organisation''s address rules refuse is sent there with error=address_not_allowed and the return_to, and no hosted-login session is opened. An existing account whose address has never been verified is not adopted by the provider''s word (error=account_unverified; the console flow gets social_error=account_unverified): it must verify the address, or reset its password from the emailed link, first. A suspended or deleted account gets error=account_inactive (the console flow gets social_error=account_inactive). When the sign-in must meet a second factor first (the account holds one, the organisation requires one, or the sign-in is risky; a remembered device may skip it as for a password sign-in), no hosted-login session is opened either: the browser is sent to the hosted login with the return_to, and the challenge in the URL fragment (mfa_token, methods, factors — the JSON list a password sign-in''s challenge carries, with an email or SMS factor''s id and masked destination — and enrollment_required / enrollment_due_at for one to set up), to complete at POST /v1/auth/session/mfa. Other failures send it there with error=social.'
       summary: Social login callback
       tags:
         - Social
@@ -2008,7 +2049,7 @@ paths:
     post:
       operationId: post_v1_social_ByProvider_callback
       summary: Social login callback using form_post
-      description: Sign in with Apple returns the authorization response as a bounded form POST. Successful callbacks redirect with a one-time Qeet login code.
+      description: 'Sign in with Apple returns the authorization response as a bounded form POST. Successful callbacks redirect with a one-time Qeet login code. The browser must hold the binding cookie, as for the GET callback.'
       tags: [Social]
       security: []
       parameters:
@@ -2060,7 +2101,7 @@ paths:
           schema:
             type: string
       security: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Begins a social sign-in and redirects the browser to the provider. ?tenant (slug) or ?tenant_id names the organisation; without either it is the console''s own sign-in, where ?intent=signup allows creating an account. ?return_to opts into the hosted flow. The browser is given an HttpOnly binding cookie (qe_social, __Host- prefixed outside dev, SameSite=None so a form_post callback carries it) naming the sign-in, which the callback requires.'
       responses:
         '200':
           description: OK

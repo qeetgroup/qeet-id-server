@@ -130,7 +130,7 @@ func subjectIs(id uuid.UUID) json.RawMessage {
 	return json.RawMessage(`{"attr":"subject.id","op":"eq","value":"` + id.String() + `"}`)
 }
 
-// TestDenyPolicyRefusesAtEveryEnforcementPoint reproduces QTID-313: Uma's role
+// TestDenyPolicyRefusesAtEveryEnforcementPoint: Uma's role
 // grants doc:write and user.read, and she holds a write tuple on a document.
 // An attribute (ABAC) deny for Uma must refuse her at the general check, the
 // relationship check, AuthZEN and the platform's route guard, while a role

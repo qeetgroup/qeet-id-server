@@ -28,6 +28,14 @@ ON CONFLICT (user_id) DO UPDATE SET password_hash = EXCLUDED.password_hash, upda
 -- name: MarkPasswordResetUsed :exec
 UPDATE auth.password_resets SET used_at = NOW() WHERE id = $1;
 
+-- name: VerifyEmailByReset :one
+-- A used reset link was sent to the account's address and to nobody else, so
+-- it proves the person owns the address: verify it if it wasn't. No row when
+-- it already was.
+UPDATE "user".users SET email_verified_at = NOW(), updated_at = NOW()
+WHERE id = @user_id AND email_verified_at IS NULL AND deleted_at IS NULL
+RETURNING email;
+
 -- name: RevokeUserSessions :exec
 UPDATE auth.sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL;
 

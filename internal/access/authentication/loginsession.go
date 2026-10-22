@@ -55,9 +55,27 @@ func (s *Service) loginSessionLifetime(ctx context.Context, userID uuid.UUID) (t
 	return min(loginSessionTTL, maxAge, idle), nil
 }
 
-// CreateLoginSession mints a hosted SSO session for a user and returns the raw
-// cookie value. Only the hash is persisted (like refresh tokens).
+// CreateLoginSession mints a hosted SSO session for a user whose sign-in met
+// no second factor and returns the raw cookie value. Only the hash is
+// persisted (like refresh tokens).
 func (s *Service) CreateLoginSession(ctx context.Context, userID uuid.UUID, ip, ua string) (string, error) {
+	return s.createLoginSession(ctx, userID, ip, ua, "")
+}
+
+// CreatePasskeyLoginSession is CreateLoginSession for a passkey sign-in: the
+// passkey is its second factor, so an organisation that requires one is
+// satisfied (see tenantFactorShortfall).
+func (s *Service) CreatePasskeyLoginSession(ctx context.Context, userID uuid.UUID, ip, ua string) (string, error) {
+	return s.createLoginSession(ctx, userID, ip, ua, secondFactorPasskey)
+}
+
+// createLoginSession mints the session, recording how its sign-in met a
+// second factor ("": it didn't).
+func (s *Service) createLoginSession(ctx context.Context, userID uuid.UUID, ip, ua, secondFactor string) (string, error) {
+	// Every hosted sign-in ends here, whatever its method.
+	if err := s.refuseInactiveAccount(ctx, userID, uuid.Nil, "hosted", ip, ua); err != nil {
+		return "", err
+	}
 	raw, hash, err := tokens.NewRefreshToken()
 	if err != nil {
 		return "", err
@@ -67,15 +85,32 @@ func (s *Service) CreateLoginSession(ctx context.Context, userID uuid.UUID, ip, 
 		return "", err
 	}
 	if err := s.q.InsertLoginSession(ctx, dbgen.InsertLoginSessionParams{
-		TokenHash: hash,
-		UserID:    userID,
-		ExpiresAt: time.Now().Add(ttl),
-		Ip:        ip,
-		UserAgent: &ua,
+		TokenHash:    hash,
+		UserID:       userID,
+		ExpiresAt:    time.Now().Add(ttl),
+		Ip:           ip,
+		UserAgent:    &ua,
+		SecondFactor: secondFactor,
 	}); err != nil {
 		return "", err
 	}
 	return raw, nil
+}
+
+// LoginSessionFactorShortfall is what stops a code or token being issued for
+// tenantID through the user's hosted-login session: nil when nothing does, or
+// ErrStepUpRequired / ErrMFAEnrollmentRequired while the organisation requires
+// a second factor the session's sign-in didn't meet (see
+// tenantFactorShortfall). An unknown or expired session is ErrUnauthorized.
+func (s *Service) LoginSessionFactorShortfall(ctx context.Context, loginSessionID, userID, tenantID uuid.UUID) error {
+	factor, err := s.q.LoginSessionSecondFactor(ctx, dbgen.LoginSessionSecondFactorParams{ID: loginSessionID, UserID: userID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errs.ErrUnauthorized
+	}
+	if err != nil {
+		return err
+	}
+	return s.tenantFactorShortfall(ctx, userID, tenantID, factor)
 }
 
 // ResolveLoginSession returns the user id behind a valid, unexpired SSO session
@@ -123,7 +158,8 @@ func (s *Service) ResolveLoginSessionUser(ctx context.Context, raw string) (user
 }
 
 // resolveLoginSession is ResolveLoginSessionUser plus when the sign-in that
-// opened the session happened.
+// opened the session happened, if that sign-in proved a second factor (zero
+// otherwise): what a hosted-login principal's step-up is judged by.
 func (s *Service) resolveLoginSession(ctx context.Context, raw string) (userID, tenantID uuid.UUID, signedInAt time.Time, err error) {
 	if raw == "" {
 		return uuid.Nil, uuid.Nil, time.Time{}, errs.ErrUnauthorized
@@ -137,6 +173,12 @@ func (s *Service) resolveLoginSession(ctx context.Context, raw string) (userID, 
 	}
 	if row.TenantID.Valid {
 		tenantID = uuid.UUID(row.TenantID.Bytes)
+	}
+	// A fresh hosted sign-in counts as a step-up only when it proved a second
+	// factor itself — a met challenge or a passkey — not when a remembered
+	// device stood in for one or none was asked for, as for a social sign-in.
+	if row.SecondFactor != secondFactorMFA && row.SecondFactor != secondFactorPasskey {
+		return row.UserID, tenantID, time.Time{}, nil
 	}
 	return row.UserID, tenantID, row.CreatedAt, nil
 }
@@ -182,12 +224,15 @@ func (s *Service) LoginSessionAuth(routes []string) func(http.Handler) http.Hand
 				next.ServeHTTP(w, r)
 				return
 			}
-			userID, tenantID, signedInAt, err := s.resolveLoginSession(r.Context(), c.Value)
+			userID, tenantID, factorAt, err := s.resolveLoginSession(r.Context(), c.Value)
 			if err != nil {
 				httpx.WriteError(w, r, err)
 				return
 			}
-			p := &httpx.Principal{ActorType: "user", Subject: userID.String(), UserID: &userID, SignedInAt: &signedInAt}
+			p := &httpx.Principal{ActorType: "user", Subject: userID.String(), UserID: &userID}
+			if !factorAt.IsZero() {
+				p.SignedInAt = &factorAt
+			}
 			if tenantID != uuid.Nil {
 				p.TenantID = &tenantID
 			}

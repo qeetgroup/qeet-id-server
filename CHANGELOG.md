@@ -483,6 +483,228 @@ The changes below are the work staged for that first release.
   had no profile and its organisation switcher showed a bare id. The cookie still opens nothing else
   (`LoginSessionRoutes`, pinned by `TestLoginSessionRoutesStayNarrow`); every other route still needs a token.
 
+**An organisation's second-factor requirement applies wherever it is entered (2026-10-21)**
+
+* **auth / oidc:** an organisation's MFA requirement (`mfa_enforcement` required, or admin_only for its
+  administrators) was read only for the organisation an account calls home, at sign-in. A member at home
+  elsewhere, or with no home, signed in with a password and then switched in (`POST /v1/auth/switch-tenant`),
+  accepted its invitation while signed in (`POST /v1/me/invites/accept`, `.../{id}/accept`), signed in to one of
+  its applications (`GET /oauth/authorize` and the consent decision) or approved a device for one
+  (`POST /oauth/device/decision`), and got a session or a code with no factor asked for. Each now
+  requires the sign-in to have met a second factor, or the session switched from to hold a fresh step-up:
+  otherwise 403 `step_up_required`, or `mfa.enrollment_required` for an account with none (unless the
+  organisation's grace period still lets it put the setup off). The hosted sign-in applies the requirement of
+  the application it serves as well as the account's own; authorize sends a sign-in that lacks the factor to
+  sign in again, once, then answers `access_denied` (`interaction_required` for prompt=none). An account an
+  invitation creates is signed in as at sign-up, so it gets the enrolment challenge instead of a session where
+  one is required. Sessions and hosted-login sessions record how their sign-in met a factor (`second_factor`,
+  migration 0149: a met challenge, a passkey, a remembered device, or a step-up carried over); sessions from
+  before it count as none. The grace period is judged by when the person joined that organisation, not when
+  the account was created.
+
+**Social sign-in asks for the second factor (2026-10-21)**
+
+* **social / auth:** signing in with Google, Microsoft, GitHub, Apple or an organisation's own provider issued
+  the session on the provider's word alone: no challenge for a factor the account held, no enrolment where the
+  organisation required one, no risk assessment. It now takes the same decision as a password
+  sign-in. `POST /v1/social/exchange` (the console's own and an organisation's) answers with the token pair or
+  the sign-in challenge, met at `POST /v1/auth/mfa`; the hosted callback opens no hosted-login session while a
+  factor is due, and sends the browser to the hosted login with the challenge in the URL fragment, to meet at
+  `POST /v1/auth/session/mfa`. A remembered device skips the factor on the same terms as the hosted password
+  sign-in. The completed sign-in is a `social_mfa` one (migration 0150). A hosted sign-in counts as a step-up
+  only when it proved a second factor itself (a met challenge or a passkey), so a social one no longer
+  unlocks factor-gated actions.
+
+**A suspended account can't sign in any other way (2026-10-21)**
+
+* **auth / social / passkeys:** password and magic-link sign-in refused a suspended account, but a passkey or a
+  social provider (the console's own or an organisation's, token or hosted) signed it straight back in with a
+  working token, so suspending an account during an incident didn't contain it. Every sign-in now ends in one
+  issuing step, for sessions and hosted-login cookies alike, which refuses an account that is deleted or
+  neither active nor invited once its credential is proved, with the password path's
+  `auth.account_inactive`, and audits it as `auth.sign_in_refused` (reason `account_inactive`). A social
+  sign-in gets no one-time code to begin with; the hosted callback sends the browser to the hosted login with
+  `error=account_inactive`.
+
+**An address belongs to whoever proves it (2026-10-21)**
+
+* **invitations / social / recovery:** whoever holds the account for an address gets that person's invitations
+  and federated sign-ins, but an address could be claimed without proving it. Accepting an invitation link marked
+  the new account's address verified, though the link is also returned to the inviter to share; it no longer
+  does, for the password and the passkey acceptance alike. A social sign-in, the console's own or an
+  organisation's, adopted an existing account whose address was never verified, leaving whoever registered it
+  with a working password; it now refuses with 403 `social.account_unverified` (the callbacks say
+  `account_unverified`). Completing a password reset, whose link reaches only the address, now verifies the
+  address, so its owner can take an account registered with it back (the reset already replaces the password and
+  ends every session). Each verification records its proof in `email.verified` (`emailed_code` or
+  `password_reset`). The invitations inbox already needed a verified address.
+
+**An organisation keeps an active owner (2026-10-21)**
+
+* **tenant / users / rbac:** nothing counted an organisation's owners after its creator became the first one, so
+  the only owner could be suspended, soft-deleted or stripped of the owner role, by an administrator or by
+  themselves, leaving an organisation nobody could administer. The database now refuses any change that would
+  take away the last active owner, on every path (migration 0151), and the API answers 409
+  `tenant.last_owner` with nothing changed. A suspended or deleted owner doesn't count; two removals at once
+  queue on the organisation, so at most one goes; a deleted organisation frees its owners. To hand ownership
+  over, make someone else an owner (role assignment) and then remove the old one; both are audited.
+
+**Suspending an organisation cuts off access to it (2026-10-21)**
+
+* **tenant / auth:** suspending or deleting an organisation changed its row and nothing else: every member
+  already signed in kept working sessions, refresh kept minting tokens for it (it checked the user's status,
+  never the organisation's), and no audit row said who had done it. Now suspension and deletion end every
+  session in the organisation in the same transaction (`session.revoked`, reason `tenant_suspended` /
+  `tenant_deleted`); refresh and every sign-in and switch refuse an organisation that isn't active (403
+  `auth.tenant_inactive`); and suspending, reactivating and deleting are audited (`tenant.suspended`,
+  `tenant.reactivated`, `tenant.deleted`, with the actor and the status it had) and queued as events. Members'
+  own status is unchanged, and reactivating lets them sign in again. An access token already issued lasts out
+  its short lifetime, as for a suspended account.
+
+**A password change ends hosted sign-ins too (2026-10-21)**
+
+* **auth / recovery / users:** a password reset, a self-service password change and an administrator setting a
+  password ended the person's console and API sessions but left every hosted sign-in (browser) session alive
+  for up to its thirty minutes, able to start an application's sign-in or, on an account with no second
+  factor, enrol a passkey that outlasts the reset. All three now end every hosted sign-in session of the
+  person, through the helper signing out everywhere uses, and their audit records count them
+  (`revoked_login_sessions`); the self-service change keeps the session it was made from.
+
+**An organisation can't take over a person's other memberships (2026-10-21)**
+
+* **users:** a person's one account carries the same password and second factors into every organisation they
+  belong to, so an administrator of the organisation the account calls home could set its password or reset
+  its factors, sign in as the person and switch into their other organisations. `POST /v1/users/{id}/password`
+  and `DELETE /v1/users/{id}/mfa` now refuse an account that also belongs to another organisation (403
+  `user.credentials_shared`); the person changes those credentials themselves. For an account that belongs only
+  to the administrator's organisation they work as before, and the person is emailed that an administrator of
+  that organisation made the change.
+
+**Handing out authority needs a step-up (2026-10-21)**
+
+* **mfa / rbac / invitations:** step-up asked a session to prove a factor again before changing factors,
+  machine credentials, secrets and security policy, but not before the actions that hand out authority or move
+  an account's recovery address, so a stolen administrator token could grant the owner role, attach permissions
+  to a role, invite an accomplice as owner or point the account's email at the attacker. Granting and revoking a
+  role's permissions, assigning and removing user and group roles, creating invitations, writing relationship
+  tuples and attribute policies, and reactivating or restoring an account now need a step-up of the session
+  (403 `step_up_required` otherwise), and starting an email change does for anyone holding a factor.
+  Containment (suspending, ending sessions) stays instant. The route-classification test now covers these route
+  families, so a new one has to be classified.
+
+**Nobody hands out authority they don't hold (2026-10-21)**
+
+* **rbac / invitations:** managing roles or members was checked by one permission and nothing more, so a holder
+  of `role.write` could make itself owner or add `secret.read` to its own role, and a holder of `user.write`
+  could invite its own second address as owner. Granting a permission to a role now needs the caller to hold
+  it in the organisation; assigning a role, to a person or a group, and inviting someone with a role need the
+  caller to hold every permission the role carries (403 `rbac.grant_exceeds_caller`, naming one it lacks); and
+  only an owner gives the owner role (403 `rbac.owner_only`). An owner may still give anything.
+
+**A linked phone is a step-up factor (2026-10-21)**
+
+* **mfa:** a linked phone that approves sign-ins counted as a second factor at sign-in but not for step-up, and
+  no route stepped up with one, so an account whose only factor is a phone was treated as having none: a stolen
+  token could unlink the phone, pair another or add a passkey without a step-up, while the person could never
+  complete an always-gated action (nor anyone in an organisation that counted only push). A linked phone now
+  counts as a factor held for step-up, and a session steps up with it: `POST /v1/mfa/push/step-up` sends the
+  request to the person's phones, and `POST /v1/mfa/push/step-up/{id}/complete` records the session's step-up
+  (method `push`) once it is approved, spending the request.
+
+**Sign-in completes only in the browser that began it (2026-10-21)**
+
+* **social:** a social sign-in remembered its request by the state value alone, so someone who began one with
+  their own provider account and stopped before the return could send the return link on, and whoever opened it
+  was signed in as the sender — in an organisation's hosted and application flows and in the console's own.
+  `GET /v1/social/{provider}/start` now gives the browser an HttpOnly binding cookie (`qe_social`, `__Host-`
+  prefixed outside dev, SameSite=None so Apple's form_post return carries it) naming the sign-in, and the
+  callback completes it only in a browser holding it. Anywhere else the return is refused before anything is
+  issued: the hosted login gets `error=other_browser` with the `return_to`, the console `social_error=other_browser`.
+* **social:** connecting a provider (`POST /v1/social/{provider}/link/start`) attached whatever the provider
+  returned to the account the link was asked for, in whichever browser the return arrived, so a connect link sent
+  to someone else attached their provider account to the sender's. The return now attaches nothing: it sends the
+  account page a one-time `link_code` (with the `provider`), and the new `POST /v1/social/link/complete` attaches
+  the identity only for the account that began the link (403 `social.link_account_mismatch` otherwise, the code
+  spent; 400 `social.link_code_invalid` for an unknown, used or expired one). Migration `0152` adds
+  `auth.platform_social_link_codes`. The console's account page has to complete the link with the code.
+* **passkeys:** passkey sign-in finish sets the hosted-login cookie, yet skipped the cross-site check and nothing
+  tied the ceremony to a browser, so a page on another site could post its owner's own signed assertion from a
+  visitor's browser and sign it in as that owner. `POST /v1/passkeys/login/begin` now gives the browser a binding
+  cookie (`qe_passkey`) naming the ceremony, and only a browser holding it finishes the hosted passkey sign-in
+  (`POST /v1/passkeys/login/session`, below).
+* **csrf:** the hosted magic-link exchange (`POST /v1/auth/magic-link/session`), which sets the hosted-login
+  cookie, sat under the magic-link CSRF exemption; it is now checked as `POST /v1/auth/session` is. The
+  bearer-only steps beside it stay exempt.
+* **http:** request bodies were decoded as JSON whatever content type they arrived with, so a cross-site
+  text/plain form reached JSON routes. The routes that sign a browser in (`/v1/auth/session`,
+  `/v1/auth/session/mfa`, `/v1/auth/register`, `/v1/auth/magic-link/session`, `/v1/passkeys/login/begin`,
+  `/finish` and `/session`, `/v1/register/passkey/finish`) now refuse a body not sent as JSON with
+  `415 unsupported_media_type`.
+
+**Hosted passkey sign-in hands script no tokens (2026-10-21)**
+
+* **passkeys:** passkey sign-in finish answered every caller with a full access and refresh token pair as well as
+  setting the hosted-login cookie, and the hosted sign-in page calls it from page script only for the cookie, so a
+  thirty-day renewal credential reached browser script at every passkey sign-in. Passkey sign-in now has two forms:
+  `POST /v1/passkeys/login/session` (hosted) sets only the cookie and answers with the user id, finishing only in the
+  browser that began the ceremony (403 `passkey.browser_mismatch` elsewhere, the ceremony left untouched) and keeping
+  the CSRF check; `POST /v1/passkeys/login/finish` (token form, for the console's server) answers with the token
+  pair and sets no cookie. The hosted sign-in page and the React library must use the hosted form. Password and magic
+  link already have cookie-only hosted forms (`/v1/auth/session`, `/v1/auth/magic-link/session`), and a test now
+  checks that no hosted sign-in answer carries a token.
+
+**A fail-closed sign-in hook is never skipped silently (2026-10-21)**
+
+* **auth hooks:** an organisation can mark its sign-in hook fail-closed so no sign-in completes without the hook's
+  answer, but when the hook couldn't be read, the cipher was missing or its signing secret couldn't be opened, the
+  sign-in completed anyway and nothing recorded it. Every case where the hook gives no answer — unreadable,
+  secret unavailable, the call failing or timing out, an unreadable answer — now follows the hook's `fail_open`
+  (refused as temporarily unavailable when false). Where the hook can't be read, the setting last read for the
+  organisation is followed, so a fail-closed organisation stays fail-closed; never read, the default (fail open,
+  ADR-0011) applies. Each skip is recorded as an `auth_hook.skipped` audit event (reason, outcome) and counted in
+  `auth_hook_skipped_total{reason,outcome}`.
+* **crypto:** opening an envelope-encrypted value with a stored nonce of the wrong length panicked; it is now
+  refused with an error.
+
+**Failed sign-ins and recovery requests reach the organisation's trail (2026-10-21)**
+
+* **audit:** an organisation's audit trail, and the log stream built on it, recorded successful sign-ins only, so
+  a credential-stuffing run against its members was invisible to it, and a completed password reset was recorded
+  with no organisation. Now recorded, under the organisation the sign-in was for (or the account's own), naming
+  the account or no one for an address with no account, with the reason and the source and never what was
+  submitted:
+  * `auth.sign_in_failed` for a wrong password, an unknown address, an attempt against a locked account or from a
+    throttled network (method `password`), a wrong second-factor proof (`mfa`, reason `code_invalid`) and a
+    refused passkey ceremony or assertion (`passkey`, reason the error code);
+  * `auth.account_locked` (with `locked_until`, when the lock lifts) and `auth.source_throttled` for the locks and
+    throttles failures set;
+  * `auth.password_reset_requested` and `auth.magic_link_requested` for requests for an account, and
+    `auth.password_reset_confirmed` and the reset's `email.verified` now carry the account's organisation.
+
+  Failure records are bounded per organisation and source network (20, then ten a minute) and per organisation
+  (200, then two a second), counted in `sign_in_failures_unrecorded_total{method}` past the bound; request
+  records per account (ten, then one a minute), counted in `recovery_requests_unrecorded_total{action}`.
+
+**Server callers pass the cross-site check (2026-10-21)**
+
+* **csrf:** the cross-site check let a request skip it only when its `Authorization` header began `Bearer `, so
+  every write made with an API key (`Authorization: ApiKey …`, how the Go and Node libraries call), which sends no
+  Origin, was refused with `csrf_failed`, as were back ends exchanging service-principal credentials
+  (`POST /v1/oauth/token`) or signing in against a directory (`POST /v1/ldap/{id}/authenticate`). An API key now
+  passes like a bearer token — a page on another site can't add either header without a preflight — and the two
+  exchanges are exempt (credentials in the request, no cookie session). Basic credentials, which a browser can
+  replay on its own, a cookie change without the token and a cross-site form post are still refused.
+
+**Registration honours the organisation's sign-in methods (2026-10-21)**
+
+* **registration:** an organisation can switch password or passkey sign-in off, but hosted self-registration
+  still made a password account where passwords were off and signed the person straight in, passkey-founded
+  registration still enrolled a passkey where passkeys were off, and an invitation could still be accepted with a
+  password where passwords were off. `POST /v1/auth/register` and `POST /v1/invites/accept` are now refused with
+  `403 auth.method_disabled`, and `POST /v1/register/passkey/begin` with `403 passkey.disabled` before a ceremony
+  starts (`/finish` too, if passkeys were switched off since); nothing is created. Where the method is allowed,
+  registration works as before.
+
 **Toolchain (2026-10-21)**
 
 * **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:

@@ -215,3 +215,19 @@ func (q *Queries) UpsertPasswordCredential(ctx context.Context, arg UpsertPasswo
 	_, err := q.db.Exec(ctx, upsertPasswordCredential, arg.UserID, arg.PasswordHash)
 	return err
 }
+
+const verifyEmailByReset = `-- name: VerifyEmailByReset :one
+UPDATE "user".users SET email_verified_at = NOW(), updated_at = NOW()
+WHERE id = $1 AND email_verified_at IS NULL AND deleted_at IS NULL
+RETURNING email
+`
+
+// A used reset link was sent to the account's address and to nobody else, so
+// it proves the person owns the address: verify it if it wasn't. No row when
+// it already was.
+func (q *Queries) VerifyEmailByReset(ctx context.Context, userID uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, verifyEmailByReset, userID)
+	var email string
+	err := row.Scan(&email)
+	return email, err
+}

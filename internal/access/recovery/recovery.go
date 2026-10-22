@@ -7,15 +7,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
 	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
@@ -60,6 +64,9 @@ type Service struct {
 	// signals announces ended sessions (nil = announces nothing). Set via
 	// SetSessionSignals.
 	signals *sessionsignal.Signaller
+	// requestRecords bounds the record of recovery requests per account; see
+	// recordRequest.
+	requestRecords Limiter
 }
 
 // PasswordRules is the one password check every path that sets a password
@@ -112,7 +119,9 @@ func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, b
 	if ttl <= 0 {
 		ttl = time.Hour
 	}
-	return &Service{pool: pool, q: dbgen.New(pool), sender: sender, ttl: ttl, baseAppURL: baseAppURL}
+	return &Service{pool: pool, q: dbgen.New(pool), sender: sender, ttl: ttl, baseAppURL: baseAppURL,
+		// Ten records per account, then one a minute.
+		requestRecords: ratelimit.New(1.0/60, 10)}
 }
 
 // SetPasswordRules wires the password check run on reset. Called from
@@ -135,6 +144,8 @@ type ResetOrigin struct {
 	// ReturnTo (hosted login only) is where to continue after the reset. The
 	// caller must already have validated it; it is passed through as given.
 	ReturnTo string
+	// Audit is the request, for the record of it.
+	Audit AuditCtx
 }
 
 // resetLink builds the emailed reset link: hosted login's own reset page for a
@@ -170,9 +181,10 @@ func (s *Service) StartPasswordReset(ctx context.Context, email string) (string,
 // given application: the emailed link lands back there (see resetLink).
 func (s *Service) StartPasswordResetFrom(ctx context.Context, email string, from ResetOrigin) (string, error) {
 	var userID uuid.UUID
+	var tenantID *uuid.UUID
 	err := s.pool.QueryRow(ctx,
-		`SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`, email,
-	).Scan(&userID)
+		`SELECT id, tenant_id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`, email,
+	).Scan(&userID, &tenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -205,7 +217,56 @@ func (s *Service) StartPasswordResetFrom(ctx context.Context, email string, from
 	}); err != nil {
 		return "", err
 	}
+	s.recordRequest(ctx, "auth.password_reset_requested", userID, tenantID, from.Audit, map[string]any{"app": from.App})
 	return raw, nil
+}
+
+// unrecordedRequests counts recovery requests left out of the audit trail by
+// recordRequest's bound.
+var unrecordedRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "recovery_requests_unrecorded_total",
+	Help: "Password-reset and magic-link requests not written to the audit trail because the bound per account was reached, by action.",
+}, []string{"action"})
+
+func init() {
+	// Publish every series at zero so an alert can rate() it from the start.
+	for _, action := range []string{"auth.password_reset_requested", "auth.magic_link_requested"} {
+		unrecordedRequests.WithLabelValues(action)
+	}
+}
+
+// recordRequest records a recovery request for an account in the audit trail
+// of its organisation (tenantID nil: none), and so its log stream. Whoever
+// asked isn't known to be the account, so the record names it as the subject,
+// not the actor. Bounded per account so a flood of requests can't flood the
+// trail. Best effort: a record that can't be written is logged.
+func (s *Service) recordRequest(ctx context.Context, action string, userID uuid.UUID, tenantID *uuid.UUID, ac AuditCtx, meta map[string]any) {
+	if s.requestRecords != nil {
+		if ok, _ := s.requestRecords.Take(ctx, action+":"+userID.String()); !ok {
+			unrecordedRequests.WithLabelValues(action).Inc()
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	err := func() error {
+		tx, err := s.pool.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx)
+		subject := userID
+		if err := audit.Record(ctx, tx, audit.Event{
+			TenantID: tenantID, ActorType: "anonymous", Action: action, ResourceType: "user", ResourceID: &subject,
+			IP: ac.IP, UserAgent: ac.UserAgent, RequestID: ac.RequestID, Metadata: meta,
+		}); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}()
+	if err != nil {
+		slog.Warn("recovery: record a request", "action", action, "err", err)
+	}
 }
 
 // ConfirmPasswordReset sets a new password with a reset link. The password is
@@ -243,8 +304,10 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 		return err
 	}
 	var tenantID uuid.UUID // uuid.Nil: the account belongs to no organisation
+	var orgOf *uuid.UUID   // the trail the reset is recorded in
 	if account.TenantID.Valid {
 		tenantID = account.TenantID.Bytes
+		orgOf = &tenantID
 	}
 	if err := s.rules.ValidateForTenant(ctx, tenantID, account.Email, newPassword); err != nil {
 		return err
@@ -262,15 +325,45 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 	if err := qtx.MarkPasswordResetUsed(ctx, row.ID); err != nil {
 		return err
 	}
+	// The link reached the address and nobody else: it proves the address,
+	// so an account registered with it unproved becomes the owner's here —
+	// its old password and every session it had end below.
+	verifiedEmail, err := qtx.VerifyEmailByReset(ctx, row.UserID)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+	case err != nil:
+		return err
+	default:
+		verifiedID := row.UserID
+		if err := audit.Record(ctx, tx, audit.Event{
+			TenantID:     orgOf,
+			ActorUserID:  &verifiedID,
+			ActorType:    "user",
+			Action:       "email.verified",
+			ResourceType: "user",
+			ResourceID:   &verifiedID,
+			IP:           ac.IP,
+			UserAgent:    ac.UserAgent,
+			RequestID:    ac.RequestID,
+			Metadata:     map[string]any{"email": verifiedEmail, "proof": "password_reset"},
+		}); err != nil {
+			return err
+		}
+	}
 	// Invalidate all existing sessions on password reset, and announce them.
 	ended, err := sessionsignal.EndUserSessions(ctx, tx, row.UserID)
 	if err != nil {
 		return err
 	}
 	s.signals.Revoked(ctx, tx, sessionsignal.ReasonPasswordReset, ended...)
+	hosted, err := sessionsignal.EndLoginSessions(ctx, tx, row.UserID)
+	if err != nil {
+		return err
+	}
 	userID := row.UserID
 	target := userID
 	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     orgOf,
 		ActorUserID:  &target,
 		ActorType:    "system",
 		Action:       "auth.password_reset_confirmed",
@@ -279,7 +372,7 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 		IP:           ac.IP,
 		UserAgent:    ac.UserAgent,
 		RequestID:    ac.RequestID,
-		Metadata:     map[string]any{"sessions_revoked": true},
+		Metadata:     map[string]any{"sessions_revoked": true, "revoked_sessions": len(ended), "revoked_login_sessions": hosted},
 	}); err != nil {
 		return err
 	}

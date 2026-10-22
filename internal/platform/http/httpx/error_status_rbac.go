@@ -15,6 +15,8 @@ func init() {
 		errs.CodeRBACGroupOrRoleNotFound: http.StatusNotFound,
 		errs.CodeRBACUserOrRoleNotFound:  http.StatusNotFound,
 		errs.CodeRBACPermissionDenied:    http.StatusForbidden,
+		errs.CodeRBACGrantExceedsCaller:  http.StatusForbidden,
+		errs.CodeRBACOwnerOnly:           http.StatusForbidden,
 		errs.CodeRBACPermissionRequired:  http.StatusBadRequest,
 	})
 }

@@ -176,6 +176,15 @@ func (h *Handler) grant(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid permID"))
 		return
 	}
+	scope, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Repo.CheckGrantPermission(r.Context(), httpx.PrincipalFromCtx(r.Context()), scope, permID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	if err := h.Service.GrantPermission(r.Context(), roleID, permID, actorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -215,6 +224,10 @@ func (h *Handler) assign(w http.ResponseWriter, r *http.Request) {
 	rid, err := uuid.Parse(chi.URLParam(r, "roleID"))
 	if err != nil {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid roleID"))
+		return
+	}
+	if err := h.Repo.CheckGrantRole(r.Context(), httpx.PrincipalFromCtx(r.Context()), tid, rid); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	actor := actorOf(r)
@@ -357,6 +370,10 @@ func (h *Handler) assignGroupRole(w http.ResponseWriter, r *http.Request) {
 	rid, err := uuid.Parse(chi.URLParam(r, "roleID"))
 	if err != nil {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid roleID"))
+		return
+	}
+	if err := h.Repo.CheckGrantRole(r.Context(), httpx.PrincipalFromCtx(r.Context()), tid, rid); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	actor := actorOf(r)

@@ -28,11 +28,15 @@ func init() {
 		errs.CodeSocialReturnToInvalid:       http.StatusBadRequest,
 		errs.CodeSocialAccountNotInTenant:    http.StatusForbidden,
 		errs.CodeSocialEmailUnverified:       http.StatusForbidden,
+		errs.CodeSocialAccountUnverified:     http.StatusForbidden,
 		errs.CodeSocialCodeRequired:          http.StatusBadRequest,
 		errs.CodeSocialLoginCodeInvalid:      http.StatusUnauthorized,
 		errs.CodeSocialLoginCodeUsed:         http.StatusUnauthorized,
 		errs.CodeSocialLoginCodeExpired:      http.StatusUnauthorized,
 		errs.CodeSocialAlreadyLinked:         http.StatusConflict,
 		errs.CodeSocialNoAccount:             http.StatusNotFound,
+		errs.CodeSocialBrowserMismatch:       http.StatusForbidden,
+		errs.CodeSocialLinkCodeInvalid:       http.StatusBadRequest,
+		errs.CodeSocialLinkAccountMismatch:   http.StatusForbidden,
 	})
 }

@@ -1,7 +1,7 @@
 // Command scheduler runs the Qeet ID scheduled maintenance jobs (audit-chain
 // verification and the cleanups) standalone. The API normally runs them as
 // its embedded "scheduler" worker; either way each job runs once per interval
-// across every instance, so running this beside the API is safe (QTID-326).
+// across every instance, so running this beside the API is safe.
 package main
 
 import (

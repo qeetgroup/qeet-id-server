@@ -291,7 +291,7 @@ func (s *Service) confirmEmail(ctx context.Context, userID uuid.UUID, code strin
 		return err
 	}
 	if err := audit.Record(ctx, tx, who.event("email.verified", userID,
-		map[string]any{"email": row.value})); err != nil {
+		map[string]any{"email": row.value, "proof": "emailed_code"})); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
