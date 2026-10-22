@@ -486,7 +486,6 @@ func csrfExemptPaths() []string {
 		"/v1/auth/forgot-password", "/v1/auth/reset-password",
 		"/v1/auth/magic-link/start", "/v1/auth/magic-link/consume", "/v1/auth/magic-link/resend", // not .../session: it sets the hosted-login cookie
 		"/v1/passkeys/login/begin", "/v1/passkeys/login/finish", // not .../session: it sets the hosted-login cookie
-		"/v1/signup/passkey/begin", "/v1/signup/passkey/finish", // the body's session_id carries the ceremony, as for login; no cookie session
 		"/v1/social/exchange",           // one-time code exchange, no cookie session
 		"/v1/social/*/callback",         // Apple response_mode=form_post lands cross-site
 		"/v1/invites/accept",            // invitation token in the body, no cookie session

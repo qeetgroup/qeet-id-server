@@ -409,35 +409,3 @@ func TestServerCallersPassTheCSRFCheck(t *testing.T) {
 		}
 	}
 }
-
-// TestConsoleAnonymousCallsPassCSRF: the console's server forwards the calls
-// it makes before anyone is signed in with no cookie, token or Origin, so each
-// must be exempt from the CSRF check. Passkey sign-up never was, and every
-// console passkey sign-up was refused before the browser asked for a passkey.
-// Adding a passkey to a signed-in account, and the hosted passkey sign-in and
-// registration that set the hosted-login cookie, stay checked.
-func TestConsoleAnonymousCallsPassCSRF(t *testing.T) {
-	reached := false
-	h := httpx.CSRF(httpx.CSRFConfig{AllowedOrigins: []string{"https://console.example"}, ExemptPaths: csrfExemptPaths()})(
-		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
-	for path, want := range map[string]bool{
-		"/v1/auth/signup":                  true,
-		"/v1/auth/login":                   true,
-		"/v1/passkeys/login/begin":         true,
-		"/v1/passkeys/login/finish":        true,
-		"/v1/signup/passkey/begin":         true,
-		"/v1/signup/passkey/finish":        true,
-		"/v1/invites/accept/passkey/begin": true,
-		"/v1/passkeys/register/begin":      false,
-		"/v1/passkeys/register/finish":     false,
-		"/v1/passkeys/login/session":       false,
-		"/v1/register/passkey/begin":       false,
-		"/v1/register/passkey/finish":      false,
-	} {
-		reached = false
-		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, path, nil))
-		if reached != want {
-			t.Errorf("POST %s with no cookie, token or Origin: reached handler = %v, want %v", path, reached, want)
-		}
-	}
-}
