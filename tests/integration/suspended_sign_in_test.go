@@ -173,4 +173,37 @@ func TestSuspendedAccountsCannotSignInAnyWay(t *testing.T) {
 			t.Fatalf("platform exchange = %+v, %v; want auth.account_inactive", res, err)
 		}
 	})
+
+	t.Run("a suspended console account's social return says so on the console's sign-in page", func(t *testing.T) {
+		sub := uniqueSlug("console-sub")
+		idp := fakeIdPWithUserinfo(t, fmt.Sprintf(`{"sub":%q,"email":%q,"email_verified":true}`, sub, sub+"@example.com"))
+		t.Cleanup(idp.Close)
+		platform := uniqueSlug("console-idp")
+		authSvc, _ := newAuth()
+		svc := social.NewService(testPool, authSvc, "http://app.local", egress.DevelopmentPolicy())
+		svc.SetPlatformProvider(platform, "cid", "cs", idp.URL+"/.well-known/openid-configuration")
+		router := chi.NewRouter()
+		router.Route("/v1", (&social.Handler{Service: svc, LoginBaseURL: "http://login.test"}).MountPublic)
+		signIn := func(t *testing.T) *url.URL {
+			t.Helper()
+			b := newBrowser()
+			rr := b.do(router, httptest.NewRequest(http.MethodGet, "/v1/social/"+platform+"/start?intent=signup", nil))
+			start, _ := url.Parse(rr.Header().Get("Location"))
+			rr = b.do(router, httptest.NewRequest(http.MethodGet, "/v1/social/"+platform+"/callback?"+
+				url.Values{"state": {start.Query().Get("state")}, "code": {"upstream-code"}}.Encode(), nil))
+			loc, _ := url.Parse(rr.Header().Get("Location"))
+			return loc
+		}
+		if loc := signIn(t); loc.Path != "/sign-in" || loc.Query().Get("social_code") == "" {
+			t.Fatalf("first sign-in = %s, want a code", loc)
+		}
+		var userID uuid.UUID
+		if err := testPool.QueryRow(ctx, `SELECT id FROM "user".users WHERE email = $1`, sub+"@example.com").Scan(&userID); err != nil {
+			t.Fatal(err)
+		}
+		suspend(t, userID)
+		if loc := signIn(t); loc.Host != "app.local" || loc.Path != "/sign-in" || loc.Query().Get("social_error") != "account_inactive" {
+			t.Fatalf("suspended account's social return = %s, want the console's sign-in page with social_error=account_inactive", loc)
+		}
+	})
 }

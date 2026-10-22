@@ -1194,6 +1194,12 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
+		// A suspended or deleted account: say so on the console's own sign-in
+		// page, not the hosted login's.
+		if errors.Is(perr, errs.ErrAuthAccountInactive) {
+			http.Redirect(w, r, h.Service.appBaseURL+"/sign-in?social_error=account_inactive", http.StatusFound)
+			return
+		}
 		// A sign-in begun in another browser: say so, so the person starts it
 		// again here.
 		if errors.Is(perr, errs.ErrSocialBrowserMismatch) {
