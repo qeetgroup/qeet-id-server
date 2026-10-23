@@ -31,8 +31,9 @@ database, chi router, port 4001.
 
 ## Non-negotiables
 
-1. **Tenant scope comes from `httpx.RequireTenant(r)`**, never from request input. There is **no
-   RLS** — a missing `WHERE tenant_id = $1` exposes another tenant's data.
+1. **Tenant scope comes from `httpx.RequireTenant(r)`**, never from request input. Row-level
+   security covers only organisation-owned tables in organisation-administration requests —
+   elsewhere a missing `WHERE tenant_id = $1` exposes another tenant's data.
 2. **Wiring belongs in `internal/bootstrap`.** `internal/platform` must not import a bounded context
    — a build-time test enforces it.
 3. **A route without an OpenAPI entry fails CI.**

@@ -108,8 +108,15 @@ something, mark it `deprecated: true` in the spec and answer with `Deprecation` 
 - Use `httpx.RequireTenant(r)`. It is the only trustworthy source.
 - `httpx.EnforceTenantScope` compares any `{tenantID}` path parameter to the caller's own tenant.
 - Every tenant-scoped query carries `WHERE tenant_id = $1`.
-- **There is no PostgreSQL RLS.** Verified: zero policies across all 104 migrations. A missing
-  predicate is a cross-tenant data exposure, not an error the database will catch.
+- **Row-level security is the second layer** (migration 0160). Organisation-administration
+  requests — routes whose policy needs a permission or a machine scope — run scoped to the caller's
+  organisation (`scopeOrganisationRoutes` in `bootstrap/router.go`), and the organisation-owned
+  tables show and accept only its rows. A person's own routes, background jobs, sign-in and the
+  account-level tables (`accountLevelTables` in `migrations/schema_db_test.go`) run unscoped, so a
+  missing predicate there is still a cross-tenant data exposure. Code that acts across
+  organisations by design calls `postgres.AcrossTenants`. The DB tests' `dbtest.Serve` scopes every
+  request, so handler tests catch a cross-organisation read. A new table with `tenant_id` needs a
+  `tenant_isolation` policy in its migration; the schema test fails otherwise.
 
 **Restructuring the chi route tree is a security change.** The guard depends on chi's nested-route
 matching; `internal/bootstrap/router.go` warns that flattening the routes makes it *silently fail
@@ -135,7 +142,7 @@ internal/platform/database/migrations/NNNN_description.up.sql
 internal/platform/database/migrations/NNNN_description.down.sql
 ```
 
-Numbering continues from the highest present (currently `0107`; `0082` is absent and is not to be
+Numbering continues from the highest present (currently `0160`; `0082` is absent and is not to be
 reused). Migrations are embedded with `//go:embed` and applied on startup. Additive first —
 expand, migrate, contract across releases.
 

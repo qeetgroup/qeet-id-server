@@ -80,7 +80,7 @@ data:
     path: internal/platform/database/migrations/
     tool: golang-migrate
     embedded: true         # //go:embed *.sql in runner.go
-    range: "0001..0105"    # 104 pairs; 0082 absent
+    range: "0001..0160"    # 159 pairs; 0082 absent
     schemas: [auth, tenant, "user", rbac, audit, platform, qeetai]
 
 http:
@@ -98,8 +98,8 @@ dependencies:
 
 security:
   tenant_isolation:
-    mechanism: application-layer
-    rls: false             # VERIFIED: zero RLS policies across all migrations
+    mechanism: application-layer, backed by row-level security
+    rls: true              # migration 0160: tenant_isolation on organisation-owned tables, organisation-administration requests only
     guard: internal/platform/http/httpx/auth.go  # EnforceTenantScope, RequireTenant
   authentication: internal/platform/http/httpx/auth.go
   authorization: internal/access/authorization/

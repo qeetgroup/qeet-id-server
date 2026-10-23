@@ -429,7 +429,8 @@ func TestSCIMCreateRollsBackWithoutEvidence(t *testing.T) {
 	ctx := dbtest.Context(t)
 	f := newSCIMFixture(t, ctx)
 
-	if _, err := dbtest.Pool(t).Exec(ctx, `
+	owner := dbtest.Owner(t)
+	if _, err := owner.Exec(ctx, `
 		CREATE OR REPLACE FUNCTION scim_audit_block() RETURNS trigger AS $$
 		BEGIN RAISE EXCEPTION 'audit write blocked'; END; $$ LANGUAGE plpgsql;
 		CREATE TRIGGER scim_audit_block_trg BEFORE INSERT ON audit.events
@@ -438,7 +439,7 @@ func TestSCIMCreateRollsBackWithoutEvidence(t *testing.T) {
 		t.Fatalf("install audit trigger: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = dbtest.Pool(t).Exec(context.Background(), `DROP TRIGGER IF EXISTS scim_audit_block_trg ON audit.events`)
+		_, _ = owner.Exec(context.Background(), `DROP TRIGGER IF EXISTS scim_audit_block_trg ON audit.events`)
 	})
 
 	email := "rollback-" + uuid.NewString()[:8] + "@example.com"

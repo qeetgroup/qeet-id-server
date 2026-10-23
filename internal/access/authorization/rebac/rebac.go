@@ -88,17 +88,18 @@ type Explanation struct {
 
 // resolve answers "does user `userID` have `relation` on objType:objID?" by
 // expanding direct + userset tuples, and — when found — the root-to-leaf chain
-// of tuples that granted it. Pure given the fetcher, so it's unit-tested
-// independently of the database.
-func resolve(fetch fetcher, objType, objID, relation, userID string, visited map[string]bool, depth int) (bool, []ExplainStep, error) {
+// of tuples that granted it. visited holds the shallowest depth each
+// object#relation was expanded at, so a cycle stops and a shorter path to one
+// first met near maxDepth is still walked. Pure given the fetcher.
+func resolve(fetch fetcher, objType, objID, relation, userID string, visited map[string]int, depth int) (bool, []ExplainStep, error) {
 	if depth > maxDepth {
 		return false, nil, nil
 	}
 	key := objType + ":" + objID + "#" + relation
-	if visited[key] {
+	if at, seen := visited[key]; seen && at <= depth {
 		return false, nil, nil
 	}
-	visited[key] = true
+	visited[key] = depth
 
 	tuples, err := fetch(objType, objID, relation)
 	if err != nil {
@@ -255,10 +256,16 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, object string) (
 	return out, nil
 }
 
-// tupleFetcher returns a fetcher scoped to one tenant, backed by the database.
+// tupleFetcher returns a fetcher scoped to one tenant, backed by the database
+// and reading each object#relation once, however often a walk meets it.
 // FetchSubjects is the hot-path query for Check/Explain/Expand.
 func (s *Service) tupleFetcher(ctx context.Context, tenantID uuid.UUID) fetcher {
+	read := map[string][]tuple{}
 	return func(objectType, objectID, rel string) ([]tuple, error) {
+		key := objectType + ":" + objectID + "#" + rel
+		if ts, ok := read[key]; ok {
+			return ts, nil
+		}
 		rows, err := s.q.FetchSubjects(ctx, dbgen.FetchSubjectsParams{
 			TenantID:   tenantID,
 			ObjectType: objectType,
@@ -272,6 +279,7 @@ func (s *Service) tupleFetcher(ctx context.Context, tenantID uuid.UUID) fetcher 
 		for i, r := range rows {
 			ts[i] = tuple{subjectType: r.SubjectType, subjectID: r.SubjectID, subjectRelation: r.SubjectRelation}
 		}
+		read[key] = ts
 		return ts, nil
 	}
 }
@@ -282,7 +290,7 @@ func (s *Service) Check(ctx context.Context, tenantID uuid.UUID, object, relatio
 	if !ok {
 		return false, errs.ErrReBACObjectInvalid
 	}
-	allowed, _, err := resolve(s.tupleFetcher(ctx, tenantID), o.Type, o.ID, relation, userID, map[string]bool{}, 0)
+	allowed, _, err := resolve(s.tupleFetcher(ctx, tenantID), o.Type, o.ID, relation, userID, map[string]int{}, 0)
 	return allowed, err
 }
 
@@ -294,7 +302,7 @@ func (s *Service) CheckExplain(ctx context.Context, tenantID uuid.UUID, object, 
 	if !ok {
 		return nil, errs.ErrReBACObjectInvalid
 	}
-	allowed, path, err := resolve(s.tupleFetcher(ctx, tenantID), o.Type, o.ID, relation, userID, map[string]bool{}, 0)
+	allowed, path, err := resolve(s.tupleFetcher(ctx, tenantID), o.Type, o.ID, relation, userID, map[string]int{}, 0)
 	if err != nil {
 		return nil, err
 	}

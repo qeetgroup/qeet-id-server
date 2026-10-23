@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -156,6 +157,18 @@ func EnforceTenantScope(next http.Handler) http.Handler {
 				WriteError(w, r, errs.ErrForbidden.WithDetail("tenant mismatch"))
 				return
 			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// ScopeDatabase scopes the request's database work to the caller's
+// organisation, so row-level security shows it only that organisation's rows
+// of the protected tables. A caller with no organisation is left unscoped.
+func ScopeDatabase(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p := PrincipalFromCtx(r.Context()); p != nil && p.TenantID != nil && *p.TenantID != uuid.Nil {
+			r = r.WithContext(postgres.WithTenant(r.Context(), *p.TenantID))
 		}
 		next.ServeHTTP(w, r)
 	})

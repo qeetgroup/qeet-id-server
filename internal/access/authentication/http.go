@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -522,6 +523,9 @@ type switchTenantInput struct {
 // with one in another organization they belong to (Service.SwitchTenant); the
 // session in the presented access token is the one that ends.
 func (h *Handler) switchTenant(w http.ResponseWriter, r *http.Request) {
+	// The switch reads the target organisation's policies and roles, so it runs
+	// across organisations; membership of the target is checked below.
+	r = r.WithContext(postgres.AcrossTenants(r.Context()))
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil || p.SessionID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)

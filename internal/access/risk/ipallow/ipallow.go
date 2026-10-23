@@ -185,13 +185,18 @@ func (s *Service) SetEnabled(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID,
 	})
 }
 
-// AddRule adds an allow or deny rule for a CIDR range to the tenant.
+// AddRule adds an allow or deny rule for a CIDR range to the tenant. No action
+// means allow; any other action is refused, so a mistyped deny never allows.
 func (s *Service) AddRule(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, cidr, label, action string) (*Rule, error) {
 	if _, err := parsePrefix(cidr); err != nil {
 		return nil, errs.ErrRiskCIDRInvalid
 	}
-	if action != "allow" && action != "deny" {
+	switch action {
+	case "":
 		action = "allow"
+	case "allow", "deny":
+	default:
+		return nil, errs.ErrRiskRuleActionInvalid
 	}
 	m, err := s.q.WithTx(tx).InsertIPRule(ctx, dbgen.InsertIPRuleParams{
 		TenantID: tenantID,

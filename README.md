@@ -251,8 +251,9 @@ and a `gosec` scan.
 Three things reliably surprise newcomers:
 
 1. **Tenant scope comes from the authenticated principal**, via `httpx.RequireTenant(r)` — never
-   from a path, body, query or header. There is no PostgreSQL row-level security, so a missing
-   `WHERE tenant_id = $1` is a cross-tenant data exposure rather than an error the database catches.
+   from a path, body, query or header. Row-level security backs it up on organisation-owned tables
+   in organisation-administration requests only; elsewhere a missing `WHERE tenant_id = $1` is a cross-tenant data
+   exposure rather than an error the database catches.
 2. **Migrations are immutable once applied.** Add a new `.up.sql`/`.down.sql` pair; never edit an
    existing one.
 3. **Two behaviours look like bugs and are deliberate**, each with an ADR: the rate limiter fails

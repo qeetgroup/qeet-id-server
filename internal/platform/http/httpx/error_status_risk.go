@@ -10,6 +10,7 @@ import (
 func init() {
 	registerStatuses(map[string]int{
 		errs.CodeRiskCIDRInvalid:        http.StatusUnprocessableEntity,
+		errs.CodeRiskRuleActionInvalid:  http.StatusUnprocessableEntity,
 		errs.CodeRiskRulesLockOutCaller: http.StatusConflict,
 	})
 }

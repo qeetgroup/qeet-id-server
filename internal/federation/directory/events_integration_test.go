@@ -27,7 +27,7 @@ import (
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
 func TestDirectoryMigrationsRoundTrip(test *testing.T) {
-	pool := dbtest.Pool(test)
+	pool := dbtest.Owner(test)
 	ctx := dbtest.Context(test)
 	_, source, _, _ := runtime.Caller(0)
 	directory := filepath.Join(filepath.Dir(source), "..", "..", "platform", "database", "migrations")
