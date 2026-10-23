@@ -93,21 +93,28 @@ type ListFilter struct {
 }
 
 // categoryPrefixes maps an action prefix to its category. The first match wins,
-// so order matters.
+// so order matters. Every recorded action's prefix is listed, the system ones
+// too, so none is filed under system for want of an entry.
 var categoryPrefixes = []struct {
 	prefix   string
 	category string
 }{
 	{"auth.", CategoryAuthentication},
+	{"auth_policy.", CategoryAuthentication},
 	{"passkey.", CategoryAuthentication},
 	{"recovery.", CategoryAuthentication},
 	{"saml.", CategoryAuthentication},
 	{"social.", CategoryAuthentication},
+	{"social_provider.", CategoryAuthentication},
 	{"ldap.", CategoryAuthentication},
 	{"oidc.", CategoryAuthentication},
+	{"oauth.", CategoryAuthentication},
 	{"mfa.", CategoryAuthentication},
+	{"session.", CategoryAuthentication},
+	{"admin_portal.", CategoryAuthentication},
 	{"rbac.", CategoryAuthorization},
 	{"abac.", CategoryAuthorization},
+	{"abac_policy.", CategoryAuthorization},
 	{"rebac.", CategoryAuthorization},
 	{"role.", CategoryAuthorization},
 	{"policy.", CategoryAuthorization},
@@ -116,22 +123,36 @@ var categoryPrefixes = []struct {
 	{"risk.", CategorySecurity},
 	{"anomaly.", CategorySecurity},
 	{"bot.", CategorySecurity},
-	{"ip_rule.", CategorySecurity},
+	{"ip_rules.", CategorySecurity},
+	{"rate_limits.", CategorySecurity},
+	{"security_policy.", CategorySecurity},
 	{"audit.", CategorySecurity},
+	{"siem.", CategorySecurity},
+	{"retention.", CategorySecurity},
+	{"compliance.", CategorySecurity},
 	{"user.", CategoryDirectory},
 	{"group.", CategoryDirectory},
+	{"group_template.", CategoryDirectory},
 	{"tenant.", CategoryDirectory},
 	{"invite.", CategoryDirectory},
 	{"scim.", CategoryDirectory},
+	{"directory.", CategoryDirectory},
 	{"domain.", CategoryDirectory},
+	{"branding.", CategoryDirectory},
+	{"email.", CategoryDirectory},
+	{"email_template.", CategoryDirectory},
 	{"agent.", CategoryDeveloper},
 	{"apikey.", CategoryDeveloper},
 	{"api_key.", CategoryDeveloper},
+	{"service_principal.", CategoryDeveloper},
 	{"webhook.", CategoryDeveloper},
-	{"credentials.", CategoryDeveloper},
+	{"credential.", CategoryDeveloper},
 	{"secret.", CategoryDeveloper},
+	{"vault.", CategoryDeveloper},
 	{"auth_hook.", CategoryDeveloper},
 	{"vc.", CategoryDeveloper},
+	{"qeetai.", CategoryDeveloper},
+	{"billing.", CategorySystem},
 	{"system.", CategorySystem},
 }
 
