@@ -338,13 +338,18 @@ type GrantStep struct {
 
 // Explanation is the structured "why?" for a single Check. Allowed is the same
 // boolean the hot-path Check returns; Paths lists every distinct grant that
-// confers the permission (direct and group-derived), and Reason is set only on
-// a denial.
+// confers the permission (direct and group-derived), and Reason, with its
+// ReasonCode, is set only on a denial.
 type Explanation struct {
-	Allowed bool        `json:"allowed"`
-	Paths   []GrantStep `json:"paths"`
-	Reason  string      `json:"reason,omitempty"`
+	Allowed    bool        `json:"allowed"`
+	Paths      []GrantStep `json:"paths"`
+	Reason     string      `json:"reason,omitempty"`
+	ReasonCode string      `json:"reason_code,omitempty"`
 }
+
+// ReasonNoRoleGrant is an Explanation's reason code when no role grants the
+// permission.
+const ReasonNoRoleGrant = "authz.no_role_grant"
 
 // Explain lists every role, direct or through a group, that grants permKey to
 // userID in tenantID; Allowed reports whether there is any. Both paths are
@@ -381,6 +386,7 @@ func (r *Repository) Explain(ctx context.Context, userID, tenantID uuid.UUID, pe
 	exp.Allowed = len(exp.Paths) > 0
 	if !exp.Allowed {
 		exp.Reason = "no role grants this permission for this user in this tenant"
+		exp.ReasonCode = ReasonNoRoleGrant
 	}
 	return exp, nil
 }

@@ -120,7 +120,7 @@ func TestDeliver_SignsBodyAndSetsHeaders(t *testing.T) {
 
 	s := &Service{client: &http.Client{Timeout: 5 * time.Second}}
 	deliveryID := uuid.New()
-	status, respBody, err := s.deliver(context.Background(), deliveryID, srv.URL, secret, eventType, body)
+	status, respBody, err := s.deliver(context.Background(), deliveryID, srv.URL, []string{secret}, eventType, body)
 	if err != nil {
 		t.Fatalf("deliver: %v", err)
 	}
@@ -153,6 +153,27 @@ func TestDeliver_SignsBodyAndSetsHeaders(t *testing.T) {
 	wantSig := "sha256=" + sign(secret, gotTimestamp, body)
 	if gotSig != wantSig {
 		t.Errorf("X-Qeet-Signature = %q; want %q", gotSig, wantSig)
+	}
+}
+
+// TestDeliver_SignsWithEachSecret checks that while a rotated-out secret
+// overlaps the new one, the signature header holds a value for each, in order.
+func TestDeliver_SignsWithEachSecret(t *testing.T) {
+	var gotSig, gotTimestamp string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSig, gotTimestamp = r.Header.Get("X-Qeet-Signature"), r.Header.Get("X-Qeet-Timestamp")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	body := []byte(`{"id":"1"}`)
+	s := &Service{client: &http.Client{Timeout: 5 * time.Second}}
+	if _, _, err := s.deliver(context.Background(), uuid.New(), srv.URL, []string{"new", "old"}, "evt", body); err != nil {
+		t.Fatalf("deliver: %v", err)
+	}
+	want := "sha256=" + sign("new", gotTimestamp, body) + ",sha256=" + sign("old", gotTimestamp, body)
+	if gotSig != want {
+		t.Errorf("X-Qeet-Signature = %q; want %q", gotSig, want)
 	}
 }
 
@@ -203,7 +224,7 @@ func TestDeliver_Non2xxReturnsError(t *testing.T) {
 	defer srv.Close()
 
 	s := &Service{client: &http.Client{Timeout: 5 * time.Second}}
-	status, respBody, err := s.deliver(context.Background(), uuid.New(), srv.URL, "secret", "evt", []byte("{}"))
+	status, respBody, err := s.deliver(context.Background(), uuid.New(), srv.URL, []string{"secret"}, "evt", []byte("{}"))
 	if err == nil {
 		t.Error("expected an error for a non-2xx response")
 	}

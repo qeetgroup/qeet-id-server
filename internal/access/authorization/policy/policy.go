@@ -37,7 +37,7 @@ type Policy struct {
 
 	// MaxSessions caps one person's live sessions here (nil: no limit). At the
 	// cap a sign-in ends their least recently used one ("evict_oldest"; its
-	// access tokens last out their short TTL) or is refused ("refuse").
+	// access tokens are refused from then on) or is refused ("refuse").
 	MaxSessions        *int   `json:"max_sessions"`
 	SessionLimitAction string `json:"session_limit_action"`
 

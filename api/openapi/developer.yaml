@@ -60,12 +60,17 @@ tags:
       guaranteed order. Headers: X-Qeet-Event (the type), X-Qeet-Delivery-ID,
       X-Qeet-Timestamp (Unix seconds) and X-Qeet-Signature, "sha256=" and the
       hex HMAC-SHA256, keyed by the subscription's secret, of the timestamp, a
-      ".", and the raw body. Verify the signature in constant time before
-      parsing, and refuse a timestamp more than a few minutes old. Answer 2xx
-      quickly: a network error, a 5xx, 408 or 429 is retried with jittered
-      backoff from 30 seconds up to an hour, for 60 attempts; any other 4xx
-      dead-letters the delivery at once. A dead-lettered delivery stays in the
-      delivery list and can be sent again.
+      ".", and the raw body. For 24 hours after the secret is rotated the
+      header holds two comma-separated values, the new secret's first; accept
+      the delivery if any one matches. Verify in constant time before parsing,
+      and refuse a timestamp more than a few minutes old. Answer 2xx quickly: a
+      network error, a 5xx, 408 or 429 is retried with jittered backoff from 30
+      seconds up to an hour, for 60 attempts; any other 4xx dead-letters the
+      delivery at once. A dead-lettered delivery stays in the delivery list and
+      can be sent again. A subscription whose deliveries fail for 3 days with no
+      success is disabled (disabled_reason "failing") and the members who hold
+      webhook.write are alerted in-app; deliveries queued meanwhile are sent
+      once it is enabled again.
   - name: Secrets
     description: Per-tenant encrypted secrets vault.
   - name: Token Vault
@@ -979,6 +984,90 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/webhooks/{id}/enable:
+    post:
+      operationId: post_v1_tenants_ByTenantID_webhooks_ById_enable
+      summary: Enable webhook
+      tags:
+        - Webhooks
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: 'Turns a disabled webhook subscription back on, whether an administrator or its failures disabled it, with its failures forgotten, and returns it. Deliveries queued while it was off are then sent. Enabling one already on changes nothing. The organisation''s plan must include webhooks (402 billing.upgrade_required). Requires webhook.write. Needs a recent step-up.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookSubscription'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '402': {description: 'The organisation''s plan does not include webhooks.'}
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/webhooks/{id}/rotate-secret:
+    post:
+      operationId: post_v1_tenants_ByTenantID_webhooks_ById_rotateSecret
+      summary: Rotate webhook secret
+      tags:
+        - Webhooks
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: 'Replaces the subscription''s signing secret and returns the new one, shown only in this answer. The old secret goes on signing deliveries alongside the new one until previous_secret_expires_at (24 hours), so the receiver can switch without missing one; rotating again within that time ends the older secret''s at once. Audited as webhook.secret_rotated. Requires webhook.write. Needs a recent step-up.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [previous_secret_expires_at, secret]
+                properties:
+                  previous_secret_expires_at:
+                    type: string
+                    format: date-time
+                  secret:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/webhooks:
@@ -2019,6 +2108,11 @@ components:
           type: string
         reason:
           type: string
+          description: Why an invalid credential is refused, in English. Show reason_code's meaning instead.
+        reason_code:
+          type: string
+          enum: [vc.not_credential, vc.signature_invalid, vc.unknown, vc.revoked]
+          description: 'Why an invalid credential is refused: not a JWT-VC, a bad signature or expired, not one this server issued, or revoked.'
         subject:
           type: string
         valid:
@@ -2060,13 +2154,25 @@ components:
         disabled_at:
           type: [string, 'null']
           format: date-time
+        disabled_reason:
+          type: [string, 'null']
+          enum: [disabled, failing, null]
+          description: Who disabled it, an administrator (disabled) or its failures (failing).
         events:
           type: array
           items:
             type: string
+        failing_since:
+          type: [string, 'null']
+          format: date-time
+          description: When deliveries started failing, with no success since.
         id:
           type: string
           format: uuid
+        previous_secret_expires_at:
+          type: [string, 'null']
+          format: date-time
+          description: Until when the secret replaced by the last rotation also signs deliveries.
         secret:
           type: string
         tenant_id:

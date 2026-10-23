@@ -8063,6 +8063,48 @@
               ]
             }
           }
+        },
+        {
+          "name": "09 Enable webhook",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/webhooks/{{webhookId}}/enable",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "webhooks",
+                "{{webhookId}}",
+                "enable"
+              ]
+            }
+          }
+        },
+        {
+          "name": "10 Rotate webhook secret",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/webhooks/{{webhookId}}/rotate-secret",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "webhooks",
+                "{{webhookId}}",
+                "rotate-secret"
+              ]
+            }
+          }
         }
       ]
     },

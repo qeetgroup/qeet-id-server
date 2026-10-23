@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"slices"
@@ -93,16 +94,29 @@ type EvaluationInput struct {
 	Context  map[string]any     `json:"context"`
 }
 
-// Decision is the result of an Evaluate call. Trace lists, readably, each
-// policy evaluated and why; the evaluate endpoint returns it only with
+// Decision is the result of an Evaluate call. ReasonCode is one of the
+// authz.* codes below and Reason the same in English; ReasonParams names the
+// policy that decided (policy_id, policy_name, priority). Trace lists, readably,
+// each policy evaluated and why; the evaluate endpoint returns it only with
 // ?explain=true.
 type Decision struct {
-	Allow           bool       `json:"allow"`
-	Effect          string     `json:"effect"`
-	MatchedPolicyID *uuid.UUID `json:"matched_policy_id,omitempty"`
-	Reason          string     `json:"reason,omitempty"`
-	Trace           []string   `json:"trace,omitempty"`
+	Allow           bool           `json:"allow"`
+	Effect          string         `json:"effect"`
+	MatchedPolicyID *uuid.UUID     `json:"matched_policy_id,omitempty"`
+	Reason          string         `json:"reason,omitempty"`
+	ReasonCode      string         `json:"reason_code,omitempty"`
+	ReasonParams    map[string]any `json:"reason_params,omitempty"`
+	Trace           []string       `json:"trace,omitempty"`
 }
+
+// Decision.ReasonCode values.
+const (
+	ReasonAllowedByPolicy = "authz.allowed_by_policy" // an allow policy matched
+	ReasonDeniedByPolicy  = "authz.denied_by_policy"  // a deny policy matched
+	ReasonAttributeAbsent = "authz.attribute_absent"  // a deny policy applied as an attribute it compares is absent
+	ReasonConditionError  = "authz.condition_error"   // a policy's condition failed to evaluate, so it refused
+	ReasonNoMatchingAllow = "authz.no_matching_allow" // no allow policy matched: refused by default
+)
 
 // Condition evaluator — pure functions, no I/O.
 
@@ -1029,8 +1043,11 @@ func combine(policies []candidate, bag AttributeBag) *Decision {
 
 	var denyPolicyID *uuid.UUID
 	var allowPolicyID *uuid.UUID
-	denyReason := ""
-	allowReason := ""
+	denyReason, denyCode, allowReason := "", "", ""
+	var denyParams, allowParams map[string]any
+	params := func(p candidate) map[string]any {
+		return map[string]any{"policy_id": p.id, "policy_name": p.name, "priority": p.priority}
+	}
 
 	for _, p := range policies {
 		cond := json.RawMessage(p.condition)
@@ -1039,12 +1056,15 @@ func combine(policies []candidate, bag AttributeBag) *Decision {
 		}
 		t, err := evaluateNode(cond, bag)
 		if err != nil {
-			// Malformed condition → fail-closed; record as deny.
-			trace = append(trace, fmt.Sprintf("policy %q: condition error (%v) → fail-closed deny", p.name, err))
+			// Malformed condition → fail-closed; record as deny. The error stays in
+			// the log: it can carry evaluation internals.
+			slog.Warn("abac condition error", "policy_id", p.id, "err", err)
+			trace = append(trace, fmt.Sprintf("policy %q: condition error → fail-closed deny", p.name))
 			if denyPolicyID == nil {
 				id := p.id
 				denyPolicyID = &id
-				denyReason = fmt.Sprintf("condition error in policy %q: %v", p.name, err)
+				denyReason = fmt.Sprintf("condition error in policy %q", p.name)
+				denyCode, denyParams = ReasonConditionError, params(p)
 			}
 			continue
 		}
@@ -1066,13 +1086,16 @@ func combine(policies []candidate, bag AttributeBag) *Decision {
 			id := p.id
 			denyPolicyID = &id
 			denyReason = fmt.Sprintf("explicitly denied by policy %q (priority %d)", p.name, p.priority)
+			denyCode, denyParams = ReasonDeniedByPolicy, params(p)
 			if t == isUnknown {
 				denyReason = fmt.Sprintf("denied by policy %q (priority %d): an attribute it compares is absent", p.name, p.priority)
+				denyCode = ReasonAttributeAbsent
 			}
 		} else if p.effect == "allow" && allowPolicyID == nil {
 			id := p.id
 			allowPolicyID = &id
 			allowReason = fmt.Sprintf("allowed by policy %q (priority %d)", p.name, p.priority)
+			allowParams = params(p)
 		}
 	}
 
@@ -1083,6 +1106,8 @@ func combine(policies []candidate, bag AttributeBag) *Decision {
 			Effect:          "deny",
 			MatchedPolicyID: denyPolicyID,
 			Reason:          denyReason,
+			ReasonCode:      denyCode,
+			ReasonParams:    denyParams,
 			Trace:           trace,
 		}
 	}
@@ -1092,16 +1117,19 @@ func combine(policies []candidate, bag AttributeBag) *Decision {
 			Effect:          "allow",
 			MatchedPolicyID: allowPolicyID,
 			Reason:          allowReason,
+			ReasonCode:      ReasonAllowedByPolicy,
+			ReasonParams:    allowParams,
 			Trace:           trace,
 		}
 	}
 
 	trace = append(trace, "no matching allow policy found → default deny")
 	return &Decision{
-		Allow:  false,
-		Effect: "deny",
-		Reason: "no matching allow policy",
-		Trace:  trace,
+		Allow:      false,
+		Effect:     "deny",
+		Reason:     "no matching allow policy",
+		ReasonCode: ReasonNoMatchingAllow,
+		Trace:      trace,
 	}
 }
 

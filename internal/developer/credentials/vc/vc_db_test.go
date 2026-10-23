@@ -41,13 +41,13 @@ func TestVerifyChecksTheRegistry(t *testing.T) {
 	if err := svc.Revoke(ctx, revoked.CredentialID, tenant, audit.Actor{Type: "system"}); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
-	if res := verify(revoked.JWT); res.Valid || res.Reason != "credential revoked" {
+	if res := verify(revoked.JWT); res.Valid || res.Reason != "credential revoked" || res.ReasonCode != ReasonRevoked {
 		t.Errorf("a revoked credential: %+v, want invalid: credential revoked", res)
 	}
 	if _, err := dbtest.Pool(t).Exec(ctx, `DELETE FROM auth.credentials WHERE id = $1`, deleted.CredentialID); err != nil {
 		t.Fatal(err)
 	}
-	if res := verify(deleted.JWT); res.Valid || res.Reason != "unknown credential" {
+	if res := verify(deleted.JWT); res.Valid || res.Reason != "unknown credential" || res.ReasonCode != ReasonUnknown {
 		t.Errorf("a credential with no record: %+v, want invalid: unknown credential", res)
 	}
 }

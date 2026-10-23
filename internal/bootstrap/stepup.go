@@ -52,6 +52,8 @@ func StepUpRoutes() map[string]mfa.StepUpRule {
 		"POST /v1/tenants/{tenantID}/credentials/{id}/revoke",
 		"POST /v1/webhooks",
 		"DELETE /v1/webhooks/{id}",
+		"POST /v1/tenants/{tenantID}/webhooks/{id}/enable",
+		"POST /v1/tenants/{tenantID}/webhooks/{id}/rotate-secret",
 		"POST /v1/tenants/{tenantID}/auth-hooks",
 		"PATCH /v1/tenants/{tenantID}/auth-hooks/{id}",
 		"DELETE /v1/tenants/{tenantID}/auth-hooks/{id}",

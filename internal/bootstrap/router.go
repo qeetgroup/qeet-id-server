@@ -483,6 +483,7 @@ func NoStoreRoutes() []string {
 		"POST /v1/service-principals",
 		"POST /v1/tenants/{tenantID}/agents",
 		"POST /v1/webhooks",
+		"POST /v1/tenants/{tenantID}/webhooks/{id}/rotate-secret",
 		"POST /v1/mfa/totp/enroll/start",
 		"POST /v1/mfa/totp/enroll/confirm",
 		"POST /v1/mfa/recovery-codes/regenerate",

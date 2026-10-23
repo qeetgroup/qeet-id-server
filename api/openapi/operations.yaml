@@ -725,7 +725,7 @@ paths:
         - apiKeyAuth: []
       responses:
         '200':
-          description: '{ ok: bool, rows_checked: int, last_verified_id?: uuid, broken_at_id?: uuid, broken_reason?: string }'
+          description: '{ ok: bool, rows_checked: int, last_verified_id?: uuid, broken_at_id?: uuid, broken_reason?: string, reason_code?: string }'
           content:
             application/json:
               schema:
@@ -3787,11 +3787,16 @@ components:
           format: uuid
         broken_reason:
           type: string
+          description: Why the chain is broken at broken_at_id, in English. Show reason_code's meaning instead.
         last_verified_id:
           type: string
           format: uuid
         ok:
           type: boolean
+        reason_code:
+          type: string
+          enum: [audit.chain_prev_hash_mismatch, audit.chain_row_hash_mismatch]
+          description: 'Set when the chain is broken: the row''s link to the one before it is wrong, or its contents no longer match its hash.'
         rows_checked:
           type: integer
     BillingProfile:

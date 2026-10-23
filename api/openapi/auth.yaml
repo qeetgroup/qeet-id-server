@@ -3000,7 +3000,15 @@ paths:
                       $ref: '#/components/schemas/AuthzGrantStep'
                   reason:
                     type: string
-                    description: Set only on a denial, with explain=true.
+                    description: Set only on a denial, with explain=true, in English. Show reason_code's meaning instead.
+                  reason_code:
+                    type: string
+                    enum: [authz.no_role_grant, authz.denied_by_policy, authz.attribute_absent, authz.condition_error]
+                    description: Set with reason. authz.no_role_grant when no role grants the permission; an ABAC code when a policy refused it.
+                  reason_params:
+                    type: object
+                    additionalProperties: true
+                    description: With an ABAC code, the policy (policy_id, policy_name, priority), to a caller holding policy.read.
                   trace:
                     type: array
                     items:
@@ -4290,13 +4298,13 @@ paths:
         allowed, and the reason. The same decision every sign-in gets while the
         rules are on; an address that can't be read is refused.
       responses:
-        '201':
-          description: Created
+        '200':
+          description: OK
           content:
             application/json:
               schema:
                 type: object
-                required: [allowed, enabled, reason]
+                required: [allowed, enabled, reason, reason_code]
                 properties:
                   allowed:
                     type: boolean
@@ -4304,6 +4312,15 @@ paths:
                     type: boolean
                   reason:
                     type: string
+                    description: The reason in English. Show reason_code's meaning instead.
+                  reason_code:
+                    type: string
+                    enum: [ip.allowed, ip.deny_rule, ip.not_in_allow_rules, ip.address_unknown, ip.enforcement_disabled]
+                    description: 'Allowed; refused by a deny rule; outside every allow rule; refused as the address can''t be read; or allowed because the rules are off.'
+                  reason_params:
+                    type: object
+                    additionalProperties: true
+                    description: For ip.deny_rule, the rule's cidr.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -5401,6 +5418,17 @@ components:
           enum: [tenant, abac, rbac, rebac, none]
         rule:
           type: string
+          description: What decided it, in English. Show reason_code's meaning instead.
+        reason_code:
+          type: string
+          enum: [authz.no_tenant, authz.engine_error, authz.role_grant, authz.relation_grant, authz.nothing_allows, authz.allowed_by_policy, authz.denied_by_policy, authz.attribute_absent, authz.condition_error]
+          description: >-
+            What decided it: no organisation, an engine failure (refused), a role or a relationship tuple granting it, nothing allowing it, or an ABAC policy (allowing, denying, denying as an attribute it compares is absent, or refusing as its condition failed to evaluate).
+        reason_params:
+          type: object
+          additionalProperties: true
+          description: >-
+            What reason_code names: permission for authz.role_grant; relation and object for authz.relation_grant; policy_id, policy_name and priority for an ABAC policy, shown only to a caller holding policy.read.
         policy_id:
           type: string
           format: uuid
@@ -5583,7 +5611,16 @@ components:
           description: ID of the policy that determined the outcome, if any.
         reason:
           type: string
-          description: Human-readable explanation of the decision.
+          description: Human-readable explanation of the decision. Show reason_code's meaning instead.
+        reason_code:
+          type: string
+          enum: [authz.allowed_by_policy, authz.denied_by_policy, authz.attribute_absent, authz.condition_error, authz.no_matching_allow]
+          description: >-
+            Why: an allow policy matched; a deny policy matched; a deny policy applied as an attribute it compares is absent; a policy's condition failed to evaluate, so it refused (the error is logged, not returned); or no allow policy matched.
+        reason_params:
+          type: object
+          additionalProperties: true
+          description: The policy that decided (policy_id, policy_name, priority); absent for authz.no_matching_allow.
         trace:
           type: array
           description: Grant-path trace (present only when ?explain=true).
