@@ -10,7 +10,7 @@ func (m memStore) fetch(objType, objID, relation string) ([]tuple, error) {
 }
 
 func check(m memStore, objType, objID, relation, userID string) bool {
-	ok, _, _ := resolve(m.fetch, objType, objID, relation, userID, map[string]bool{}, 0)
+	ok, _, _ := resolve(m.fetch, objType, objID, relation, userID, map[string]int{}, 0)
 	return ok
 }
 
@@ -68,7 +68,7 @@ func TestResolve_ExplainPath_Direct(t *testing.T) {
 	m := memStore{
 		"document:readme#editor": {{subjectType: "user", subjectID: "alice"}},
 	}
-	ok, path, err := resolve(m.fetch, "document", "readme", "editor", "alice", map[string]bool{}, 0)
+	ok, path, err := resolve(m.fetch, "document", "readme", "editor", "alice", map[string]int{}, 0)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestResolve_ExplainPath_NestedUserset(t *testing.T) {
 		"group:all#member":       {{subjectType: "group", subjectID: "eng", subjectRelation: "member"}},
 		"group:eng#member":       {{subjectType: "user", subjectID: "erin"}},
 	}
-	ok, path, err := resolve(m.fetch, "document", "readme", "viewer", "erin", map[string]bool{}, 0)
+	ok, path, err := resolve(m.fetch, "document", "readme", "viewer", "erin", map[string]int{}, 0)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestResolve_ExplainPath_Denial(t *testing.T) {
 	m := memStore{
 		"document:readme#editor": {{subjectType: "user", subjectID: "alice"}},
 	}
-	ok, path, err := resolve(m.fetch, "document", "readme", "editor", "bob", map[string]bool{}, 0)
+	ok, path, err := resolve(m.fetch, "document", "readme", "editor", "bob", map[string]int{}, 0)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}

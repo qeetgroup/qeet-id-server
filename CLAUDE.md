@@ -26,8 +26,12 @@ organization or product understanding; this repository does not restate them.
 
 ## The five things most likely to trip you up here
 
-1. **Tenant scope comes from `httpx.RequireTenant(r)`** — never from a path, body or header. There
-   is **no PostgreSQL RLS**; a missing `WHERE tenant_id = $1` is a cross-tenant data exposure.
+1. **Tenant scope comes from `httpx.RequireTenant(r)`** — never from a path, body or header.
+   Row-level security (migration 0160) backs it up only on organisation-owned tables in
+   organisation-administration requests; a person's own routes, background jobs, sign-in and
+   account-level tables run unscoped, so a missing `WHERE tenant_id = $1` is still a cross-tenant
+   data exposure there. Code that acts across organisations by design says so with
+   `postgres.AcrossTenants`.
 2. **A query on a tenant-owned table must mention `tenant_id`.** `internal/platform/database/tenantguard` fails `go test`
    otherwise; an exception needs an allowlist line with a reason.
 3. **A new route without an OpenAPI entry fails CI** — `internal/bootstrap/openapi_coverage_test.go`.

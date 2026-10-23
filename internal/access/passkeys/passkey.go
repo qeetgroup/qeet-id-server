@@ -26,6 +26,7 @@ import (
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/passkeys/dbgen"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -162,6 +163,8 @@ func (s *Service) Rename(ctx context.Context, id, userID uuid.UUID, name string)
 // ErrNotFound and nothing is deleted; removing the account's only way to sign
 // in is refused with ErrAuthLastSignInMethod, and the refusal recorded.
 func (s *Service) Delete(ctx context.Context, id, userID uuid.UUID, by user.Remover) error {
+	// The account's other ways to sign in span its organisations.
+	ctx = postgres.AcrossTenants(ctx)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err

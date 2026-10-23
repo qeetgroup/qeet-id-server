@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/gdpr/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -800,6 +801,8 @@ func (h *Handler) Mount(r chi.Router) {
 // exportSelf returns the current user's portable data as a downloadable JSON
 // document.
 func (h *Handler) exportSelf(w http.ResponseWriter, r *http.Request) {
+	// A person's data spans every organisation they belong to.
+	r = r.WithContext(postgres.AcrossTenants(r.Context()))
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
@@ -822,6 +825,8 @@ type deleteSelfInput struct {
 // deleteSelf erases the current user's PII and credentials at once and ends
 // their sessions. The client signs the user out afterwards.
 func (h *Handler) deleteSelf(w http.ResponseWriter, r *http.Request) {
+	// A person's data spans every organisation they belong to.
+	r = r.WithContext(postgres.AcrossTenants(r.Context()))
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)

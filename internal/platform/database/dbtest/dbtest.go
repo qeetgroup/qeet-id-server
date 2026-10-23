@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	tclog "github.com/testcontainers/testcontainers-go/log"
@@ -99,6 +100,19 @@ func DSN(t testing.TB) string {
 	t.Helper()
 	Pool(t)
 	return dsn
+}
+
+// Owner returns a connection as the database's owner, outside the pool and its
+// row-level security, for a test that changes the schema. It closes when t
+// ends.
+func Owner(t testing.TB) *pgx.Conn {
+	t.Helper()
+	conn, err := pgx.Connect(Context(t), DSN(t))
+	if err != nil {
+		t.Fatalf("dbtest: connect as owner: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close(context.Background()) })
+	return conn
 }
 
 // Context returns a context that ends when t does or after 30 seconds, so a

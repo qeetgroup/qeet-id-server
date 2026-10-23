@@ -92,8 +92,11 @@ later release has migrated past the build's newest migration, and a half-applied
 recovery step (`migrations.SchemaError`). So rolling back to a release from before a migration means a
 restore or a roll forward, never an automatic down-migration.
 
-**New tenant-scoped table?** It needs a `tenant_id` column and every query needs the predicate.
-There is no RLS to catch a mistake.
+**New tenant-scoped table?** It needs a `tenant_id` column, every query needs the predicate, and its
+migration needs `ENABLE ROW LEVEL SECURITY` and the `tenant_isolation` policy (copy one from 0160),
+unless it holds a person's own data across organisations — then list it in `accountLevelTables`
+with why. `TestTenantTablesHaveRowSecurity` fails otherwise. A new schema needs its grants to
+`qeet_app` too.
 
 ---
 
@@ -158,8 +161,8 @@ all — check both paths.
 nested-route matching and fails **open** if the routes are flattened. It looks like a refactor. It
 is not.
 
-**Do not add RLS as a side effect of another task.** It is a recorded future improvement and needs
-its own decision.
+**Don't widen `postgres.AcrossTenants` as a side effect of another task.** A request runs across
+organisations only where it must, and checks the caller's right to each organisation itself.
 
 ---
 

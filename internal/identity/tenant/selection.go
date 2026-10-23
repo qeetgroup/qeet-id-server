@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -90,7 +91,9 @@ func (h *Handler) eligibleOrganizations(w http.ResponseWriter, r *http.Request) 
 	if principal.SessionID != nil {
 		currentSession = *principal.SessionID
 	}
-	page, err := h.Repo.EligibleOrganizations(r.Context(), *principal.UserID, currentSession, limit, r.URL.Query().Get("cursor"))
+	// The picker lists every organisation the person belongs to, not only the
+	// one they're signed in to.
+	page, err := h.Repo.EligibleOrganizations(postgres.AcrossTenants(r.Context()), *principal.UserID, currentSession, limit, r.URL.Query().Get("cursor"))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
