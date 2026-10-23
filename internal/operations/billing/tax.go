@@ -5,31 +5,26 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+
+	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
 )
 
-// Tax computation for invoices. This is deliberately config-gated and OFF by
-// default: until an operator sets their registered jurisdiction (TaxConfig),
-// computeTax returns zero tax, so no tax is ever charged on a guess. Rates and
-// place-of-supply rules are money-sensitive — keep this pure + tested and adjust
-// the config, not hardcoded assumptions.
-//
-// Model: catalog prices are treated as NET (tax-exclusive); tax is added on top.
-// Amounts are integer minor units.
+// Invoice tax. It is off until an operator configures the seller's jurisdiction
+// (TaxConfig), so tax is never charged on a guess. Catalogue prices are net and
+// tax is added on top, in integer minor units.
 
-// TaxConfig holds seller-side tax settings (wired from config at bootstrap).
+// TaxConfig holds the seller's tax settings. Tax applies only when Enabled is
+// set and SellerCountry is not empty. An empty SellerState makes every Indian
+// sale inter-state (IGST).
 type TaxConfig struct {
-	Enabled bool
-	// SellerCountry is the ISO-3166 alpha-2 code of the seller's tax jurisdiction
-	// (e.g. "IN"). Empty disables tax regardless of Enabled.
-	SellerCountry string
-	// SellerState is the seller's state (India only) — used to decide intra-state
-	// (CGST+SGST) vs inter-state (IGST). Empty ⇒ always treated as inter-state (IGST).
-	SellerState string
-	// GSTRateBps is the India GST rate in basis points (1800 = 18%). Defaults to 1800.
-	GSTRateBps int
+	Enabled       bool   // charge tax; off by default
+	SellerCountry string // ISO 3166-1 alpha-2 code of the seller's tax jurisdiction
+	SellerState   string // seller's Indian state, for intra- versus inter-state GST
+	GSTRateBps    int    // India GST rate in basis points; 0 means 1800 (18%)
 }
 
-// TaxInput is the per-invoice input derived from the plan price + billing profile.
+// TaxInput is the tax input of one invoice, from the plan price and the billing
+// profile.
 type TaxInput struct {
 	AmountMinor  int64  // net (tax-exclusive) taxable amount
 	BuyerCountry string // billing profile country (ISO alpha-2)
@@ -39,11 +34,11 @@ type TaxInput struct {
 
 // Tax type codes stored on the invoice.
 const (
-	TaxTypeNone         = "none"
-	TaxTypeGSTIntra     = "gst_cgst_sgst" // intra-state India GST (CGST + SGST)
-	TaxTypeGSTInter     = "gst_igst"      // inter-state India GST (IGST)
-	TaxTypeGSTZeroRated = "gst_zero_rated"
-	TaxTypeVATReverse   = "vat_reverse_charge"
+	TaxTypeNone         = "none"               // no tax
+	TaxTypeGSTIntra     = "gst_cgst_sgst"      // intra-state India GST (CGST + SGST)
+	TaxTypeGSTInter     = "gst_igst"           // inter-state India GST (IGST)
+	TaxTypeGSTZeroRated = "gst_zero_rated"     // zero-rated India GST, such as exports
+	TaxTypeVATReverse   = "vat_reverse_charge" // VAT paid by the buyer (reverse charge)
 )
 
 // TaxResult is the computed breakdown recorded on the invoice.
@@ -56,12 +51,11 @@ type TaxResult struct {
 	PlaceOfSupply string
 }
 
-// taxFor resolves the tenant's billing profile and computes the tax on a net
-// amount. A missing/unreadable profile falls back to a bare input (still safe:
-// disabled config ⇒ zero tax).
-func (s *Service) taxFor(ctx context.Context, tenantID uuid.UUID, amountMinor int64) TaxResult {
+// taxFor computes the tax on a net amount for the tenant's billing profile,
+// read through q. A profile that cannot be read is treated as empty.
+func (s *Service) taxFor(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, amountMinor int64) TaxResult {
 	in := TaxInput{AmountMinor: amountMinor}
-	if p, err := s.GetBillingProfile(ctx, tenantID); err == nil && p != nil {
+	if p, err := billingProfile(ctx, q, tenantID); err == nil && p != nil {
 		in.BuyerCountry = p.Country
 		in.BuyerState = p.State
 		in.TaxIDType = p.TaxIDType
@@ -73,7 +67,7 @@ func noTax(amount int64, place string) TaxResult {
 	return TaxResult{TaxableMinor: amount, TotalMinor: amount, RateBps: 0, Type: TaxTypeNone, PlaceOfSupply: place}
 }
 
-// computeTax applies the seller's tax rules to a net amount. Pure + deterministic.
+// computeTax applies the seller's tax rules to a net amount. It is pure.
 func computeTax(cfg TaxConfig, in TaxInput) TaxResult {
 	if !cfg.Enabled || strings.TrimSpace(cfg.SellerCountry) == "" {
 		return noTax(in.AmountMinor, strings.ToUpper(strings.TrimSpace(in.BuyerCountry)))
@@ -83,7 +77,7 @@ func computeTax(cfg TaxConfig, in TaxInput) TaxResult {
 
 	// India GST.
 	if seller == "IN" {
-		// Domestic supply (buyer in India, or unknown → assume domestic to be safe).
+		// Domestic supply: a buyer in India, or of unknown country.
 		if buyer == "" || buyer == "IN" {
 			rate := cfg.GSTRateBps
 			if rate <= 0 {
@@ -112,10 +106,9 @@ func computeTax(cfg TaxConfig, in TaxInput) TaxResult {
 		}
 	}
 
-	// Non-India seller: EU B2B reverse charge when the buyer supplies a VAT ID.
-	// Destination-country VAT *rates* are not modelled yet (needs a validated
-	// rate table) — until then, non-reverse-charge cases are left untaxed rather
-	// than guessing a rate.
+	// Non-India seller: EU B2B reverse charge when the buyer has a VAT ID.
+	// Destination VAT rates are not modelled, so other sales are left untaxed
+	// rather than guess a rate.
 	if in.TaxIDType == "vat" {
 		return TaxResult{
 			TaxableMinor: in.AmountMinor, TaxMinor: 0, TotalMinor: in.AmountMinor,

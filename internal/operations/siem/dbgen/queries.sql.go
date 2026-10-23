@@ -140,6 +140,9 @@ type ListLogSinksRow struct {
 	CreatedAt       time.Time
 }
 
+// Queries for the siem domain.
+// Static queries against tenant.log_sinks and audit.events live here and are
+// compiled by sqlc into ./dbgen.
 func (q *Queries) ListLogSinks(ctx context.Context, tenantID uuid.UUID) ([]ListLogSinksRow, error) {
 	rows, err := q.db.Query(ctx, listLogSinks, tenantID)
 	if err != nil {

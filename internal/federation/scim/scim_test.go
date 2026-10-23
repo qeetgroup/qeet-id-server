@@ -167,6 +167,13 @@ func TestMemberIDFromFilterPath(t *testing.T) {
 		{"case-insensitive EQ", `members[VALUE EQ "` + id.String() + `"]`, id, true},
 		{"missing bracket", `members value eq "` + id.String() + `"`, uuid.Nil, false},
 		{"bad uuid", `members[value eq "nope"]`, uuid.Nil, false},
+		{"mixed-case Eq", `members[value Eq "` + id.String() + `"]`, id, true},
+		// Multi-byte runes and invalid UTF-8 that change length when lowercased.
+		{"multibyte attribute", `members[ȺȺȺ eq "` + id.String() + `"]`, id, true},
+		{"invalid utf-8 attribute", "members[\xff\xff eq \"" + id.String() + `"]`, id, true},
+		{"multibyte runes before eq", "members[ȺȺȺeq]", uuid.Nil, false},
+		{"invalid utf-8 before eq", "members[\xff\xff\xffeq]", uuid.Nil, false},
+		{"invalid utf-8 byte before eq", "[\xabeq]", uuid.Nil, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -201,8 +208,8 @@ func TestDecodeMemberRefs(t *testing.T) {
 	}
 }
 
-// parseGroupPatch is the heart of Okta/Entra membership sync — verify each op
-// shape resolves to the right effect.
+// TestParseGroupPatch checks that each PatchOp shape IdPs send for group
+// membership resolves to the right effect.
 func TestParseGroupPatch(t *testing.T) {
 	a, b := uuid.New(), uuid.New()
 
@@ -213,6 +220,19 @@ func TestParseGroupPatch(t *testing.T) {
 		}
 		return body
 	}
+
+	t.Run("remove externalId", func(t *testing.T) {
+		p, err := parseGroupPatch(mkBody(`[{"op":"remove","path":"externalId"}]`))
+		if err != nil || p.setExternalID == nil || *p.setExternalID != "" {
+			t.Fatalf("got %+v, %v; want externalId cleared", p, err)
+		}
+	})
+
+	t.Run("remove displayName", func(t *testing.T) {
+		if _, err := parseGroupPatch(mkBody(`[{"op":"remove","path":"displayName"}]`)); err == nil {
+			t.Fatal("removing the required displayName was accepted")
+		}
+	})
 
 	t.Run("add members", func(t *testing.T) {
 		p, _ := parseGroupPatch(mkBody(`[{"op":"add","path":"members","value":[{"value":"` + a.String() + `"}]}]`))
@@ -256,10 +276,45 @@ func TestParseGroupPatch(t *testing.T) {
 		}
 	})
 
+	t.Run("displayName is trimmed and can't be emptied", func(t *testing.T) {
+		p, err := parseGroupPatch(mkBody(`[{"op":"replace","path":"displayName","value":"  Renamed "}]`))
+		if err != nil || p.setName == nil || *p.setName != "Renamed" {
+			t.Fatalf("padded displayName: got %+v, %v", p, err)
+		}
+		if p, err := parseGroupPatch(mkBody(`[{"op":"replace","value":{"displayName":"   "}}]`)); err == nil {
+			t.Fatalf("blank displayName: got %+v, want an error", p)
+		}
+	})
+
 	t.Run("path-less replace object", func(t *testing.T) {
 		p, _ := parseGroupPatch(mkBody(`[{"op":"replace","value":{"displayName":"X","members":[{"value":"` + a.String() + `"}]}}]`))
 		if p.setName == nil || *p.setName != "X" || !p.replaceMembers || len(p.addMembers) != 1 {
 			t.Fatalf("path-less replace: got %+v", p)
 		}
 	})
+}
+
+// TestLocationsUseConfiguredOrigin checks that resource locations are built on
+// PublicBaseURL, not on the Host the client sent.
+func TestLocationsUseConfiguredOrigin(t *testing.T) {
+	handler := &Handler{PublicBaseURL: "https://api.id.qeet.in"}
+	request := httptest.NewRequest(http.MethodGet, "/scim/v2/ServiceProviderConfig", nil)
+	request.Host = "evil.example"
+	recorder := httptest.NewRecorder()
+	handler.serviceProviderConfig(recorder, request)
+	var body struct {
+		DocumentationURI string `json:"documentationUri"`
+		Meta             struct {
+			Location string `json:"location"`
+		} `json:"meta"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.DocumentationURI != "https://api.id.qeet.in/scim/v2" {
+		t.Errorf("documentationUri = %q", body.DocumentationURI)
+	}
+	if body.Meta.Location != "https://api.id.qeet.in/scim/v2/ServiceProviderConfig" {
+		t.Errorf("meta.location = %q", body.Meta.Location)
+	}
 }

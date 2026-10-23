@@ -50,7 +50,7 @@ func TestNATSPublisher_PublishesToSubject(t *testing.T) {
 
 	payload := []byte(`{"hello":"world"}`)
 	eventID := uuid.New()
-	if err := pub.Publish(context.Background(), eventID, subject, "test.created", payload); err != nil {
+	if err := pub.Publish(context.Background(), Message{ID: eventID, Topic: subject, EventType: "test.created", Payload: payload}); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 

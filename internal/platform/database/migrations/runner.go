@@ -1,3 +1,5 @@
+// Package migrations embeds the SQL schema migrations and applies them with
+// golang-migrate, refusing a database this build can't run on.
 package migrations
 
 import (
@@ -17,13 +19,10 @@ import (
 //go:embed *.sql
 var sqlFiles embed.FS
 
-// Run applies all pending UP migrations against dbURL (postgres:// scheme).
-// Returns nil when already up-to-date.
-//
-// It refuses, changing nothing, a database this build can't run on
-// (CheckCompatible): one already migrated past this build's latest migration
-// by a later release, which is what rolling back across a schema change
-// leaves. Migrations only ever run up.
+// Run applies every pending up migration to dbURL (a postgres:// URL), returning
+// nil when there is none. It changes nothing on a database this build can't run
+// on (see CheckCompatible), such as one a later release migrated further.
+// Migrations only ever run up.
 func Run(dbURL string) error {
 	m, err := open(dbURL)
 	if err != nil {
@@ -74,8 +73,10 @@ type SchemaError struct {
 	Err error
 }
 
+// Unwrap returns the underlying error.
 func (e *SchemaError) Unwrap() error { return e.Err }
 
+// Error describes the schema state and how to recover.
 func (e *SchemaError) Error() string {
 	if errors.Is(e.Err, ErrSchemaDirty) {
 		return fmt.Sprintf("database schema is dirty at migration %d: that migration failed part-way. "+
@@ -89,10 +90,8 @@ func (e *SchemaError) Error() string {
 		e.Database, e.Latest, e.Database)
 }
 
-// CheckCompatible reports whether this build can run on dbURL: nil, or a
-// *SchemaError when the database is dirty or newer than this build. The host
-// runs it with the target image before switching versions
-// (`qeet-id-server schema-check`).
+// CheckCompatible returns dbURL's schema state, and a *SchemaError if the
+// database is dirty or newer than this build, without changing anything.
 func CheckCompatible(dbURL string) (Status, error) {
 	m, err := open(dbURL)
 	if err != nil {

@@ -6,16 +6,13 @@ import (
 	"net"
 )
 
-// Router dispatches a Message to the sender configured for its channel, falling
-// back to Default (typically LogSender) for channels with no real provider — so
-// dev works with no vendor and a half-configured prod still logs rather than
-// dropping silently.
+// Router sends each Message through its channel's sender, or Default when the
+// channel has none. EmailProviderName ("ses", "smtp") names the email transport
+// in delivery records.
 type Router struct {
-	Email   Sender
-	SMS     Sender
-	Default Sender
-	// EmailProviderName names the email transport in delivery records ("ses",
-	// "smtp"); empty when there is none.
+	Email             Sender
+	SMS               Sender
+	Default           Sender
 	EmailProviderName string
 }
 
@@ -40,6 +37,7 @@ func (r Router) SendID(ctx context.Context, m Message) (string, error) {
 	return "", r.Send(ctx, m)
 }
 
+// Send implements notifier.Sender.
 func (r Router) Send(ctx context.Context, m Message) error {
 	switch m.Channel {
 	case "sms":
@@ -61,13 +59,9 @@ func (r Router) Send(ctx context.Context, m Message) error {
 // Config selects the real providers. Empty fields leave a channel on the
 // LogSender fallback.
 type Config struct {
-	// EmailProvider: "ses-api" routes email through the SES v2 API (for regions
-	// with no SMTP endpoint); anything else uses SMTP when SMTPHost is set.
-	EmailProvider string
-	AWSRegion     string
-	// SESConfigurationSet is the SES configuration set every email names, so
-	// its events reach the server (ses-api only; empty for none).
-	SESConfigurationSet string
+	EmailProvider       string // "ses-api" for the SES v2 API; otherwise SMTP when SMTPHost is set
+	AWSRegion           string // the SES region; empty uses AWS_REGION
+	SESConfigurationSet string // SES configuration set for delivery events (ses-api only)
 
 	SMTPHost     string
 	SMTPPort     string
@@ -79,16 +73,12 @@ type Config struct {
 	TwilioAuthToken  string
 	TwilioFrom       string
 
-	// Dev enables the LogSender body, so a developer can read an OTP out of the
-	// console. It must be false outside development: any channel left without a
-	// provider routes live credentials to the log fallback. See LogSender.
-	Dev bool
+	Dev bool // reveal LogSender bodies; must be false outside development
 }
 
-// New builds a channel-routing Sender from config. Email is wired when an SMTP
-// host + From are present; SMS when Twilio credentials are present. Anything
-// unconfigured falls back to LogSender. It logs which providers went live so a
-// misconfigured deploy is obvious in the boot logs.
+// New returns a Router built from c: email through the SES API or SMTP, SMS
+// through Twilio, and LogSender for anything unconfigured. It logs which
+// providers are live.
 func New(c Config) Sender {
 	r := Router{Default: LogSender{Reveal: c.Dev}}
 

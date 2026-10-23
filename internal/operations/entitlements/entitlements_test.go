@@ -92,24 +92,6 @@ func TestForReturnsCopy(t *testing.T) {
 	}
 }
 
-func TestLimitReached(t *testing.T) {
-	cases := []struct {
-		limit, current int
-		want           bool
-	}{
-		{5, 4, false},
-		{5, 5, true},
-		{5, 6, true},
-		{0, 0, true},            // free custom_roles/webhooks: none allowed
-		{Unlimited, 999, false}, // unlimited never reached
-	}
-	for _, c := range cases {
-		if got := LimitReached(c.limit, c.current); got != c.want {
-			t.Errorf("LimitReached(%d,%d) = %v, want %v", c.limit, c.current, got, c.want)
-		}
-	}
-}
-
 type stubResolver struct {
 	plan string
 	err  error

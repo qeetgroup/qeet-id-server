@@ -1,11 +1,12 @@
-// Package risk aggregates bot-detection, impossible-travel, and
-// device-reputation signals into a per-request risk level. The level drives
-// adaptive MFA: a High request is forced through a second factor even if the
-// device is trusted.
+// Package risk combines bot-detection, impossible-travel and device-reputation
+// signals into a per-request risk level. A level at or above the tenant's
+// force-MFA level sends the sign-in through a second factor, even from a
+// trusted device.
 package risk
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -30,6 +31,7 @@ const (
 	High
 )
 
+// String returns the level's name.
 func (l Level) String() string {
 	switch l {
 	case Medium:
@@ -42,20 +44,16 @@ func (l Level) String() string {
 }
 
 // Settings are the per-tenant risk thresholds stored in auth.risk_settings.
+// ImpossibleTravelEnabled flags a sign-in from a new country sooner than
+// MinTravelHours after the last; DeviceReputationEnabled flags a browser-OS
+// pair never seen for the user. Both are off until a tenant opts in.
 type Settings struct {
-	MediumThreshold float64 `json:"medium_threshold"`
-	HighThreshold   float64 `json:"high_threshold"`
-	ForceMFAAtLevel string  `json:"force_mfa_at_level"`
-	// ImpossibleTravelEnabled flags a login from a different country than the
-	// user's last-seen one, sooner than MinTravelHours could plausibly allow.
-	// Off by default: it needs a country signal (see Assess) to do anything,
-	// and — like any new heuristic — shouldn't start affecting logins until a
-	// tenant opts in.
+	MediumThreshold         float64 `json:"medium_threshold"`
+	HighThreshold           float64 `json:"high_threshold"`
+	ForceMFAAtLevel         string  `json:"force_mfa_at_level"`
 	ImpossibleTravelEnabled bool    `json:"impossible_travel_enabled"`
 	MinTravelHours          float64 `json:"min_travel_hours"`
-	// DeviceReputationEnabled flags a login from a browser+OS combination
-	// never seen before for this user.
-	DeviceReputationEnabled bool `json:"device_reputation_enabled"`
+	DeviceReputationEnabled bool    `json:"device_reputation_enabled"`
 }
 
 func defaultSettings() Settings {
@@ -65,19 +63,15 @@ func defaultSettings() Settings {
 	}
 }
 
-// Additive score contributions for the two new signals, on top of the
-// existing bot.Score(ua) base — "additive checks on the existing threshold
-// engine," not a reweighting of it. Impossible travel is treated as the
-// stronger signal (few legitimate reasons to cross a border in under
-// MinTravelHours); a brand-new device is common (new phone, cleared
-// cookies) so contributes less.
+// Score added to bot.Score(ua) for each signal. Impossible travel weighs more:
+// a new device is common (new phone, cleared cookies).
 const (
 	impossibleTravelBump = 0.5
 	newDeviceBump        = 0.25
 )
 
-// computeLevel is Assess's pure decision core, split out so it's unit-testable
-// without a database: given the already-resolved signals, what Level results.
+// computeLevel returns the Level for already-resolved signals; Assess's
+// decision without the database.
 func computeLevel(settings Settings, botScore float64, impossibleTravel, newDevice bool) Level {
 	score := botScore
 	if impossibleTravel {
@@ -105,15 +99,13 @@ type Service struct {
 	q    *dbgen.Queries
 }
 
+// NewService returns the risk setting service.
 func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool, q: dbgen.New(pool)} }
 
-// Assess returns the risk Level for an authentication request, and records
-// this login's device/country into the user's history for future
-// assessments. country is resolved by the caller (e.g. from a trusted
-// upstream proxy header); pass "" when no geo signal is available — an
-// impossible-travel check with no country data simply never fires.
-// Fails open (Low) on any DB error so a misconfigured risk table never
-// blocks login.
+// Assess returns the risk Level of a sign-in against earlier completed ones,
+// which RecordSignIn adds. country "" disables the impossible-travel check.
+// Database errors fail open (Low, or the signal is skipped), so a broken risk
+// table never blocks sign-in.
 func (s *Service) Assess(ctx context.Context, tenantID, userID uuid.UUID, ip, ua, country string) Level {
 	settings, err := s.GetSettings(ctx, tenantID)
 	if err != nil {
@@ -140,9 +132,14 @@ func (s *Service) Assess(ctx context.Context, tenantID, userID uuid.UUID, ip, ua
 		}
 	}
 
-	s.recordLogin(ctx, tenantID, userID, dk, country)
-
 	return computeLevel(settings, bot.Score(ua), impossibleTravel, newDevice)
+}
+
+// RecordSignIn records a completed sign-in's device and country for later
+// assessments. A sign-in still to meet a challenge, or refused, is not
+// recorded, so asking again is assessed the same.
+func (s *Service) RecordSignIn(ctx context.Context, tenantID, userID uuid.UUID, ua, country string) {
+	s.recordLogin(ctx, tenantID, userID, deviceKey(ua), country)
 }
 
 // ForceMFA reports whether the risk level should force MFA regardless of
@@ -160,17 +157,18 @@ func (s *Service) ForceMFA(ctx context.Context, tenantID uuid.UUID, level Level)
 	}
 }
 
-// ShouldForceMFA satisfies the auth.RiskAssessor interface. It assesses the
-// request and returns true when the resulting risk level exceeds the
-// tenant's force-MFA threshold.
+// ShouldForceMFA satisfies auth.RiskAssessor: it assesses the request, without
+// recording it, and reports whether its level reaches the tenant's force-MFA
+// level.
 func (s *Service) ShouldForceMFA(ctx context.Context, tenantID, userID uuid.UUID, ip, ua, country string) bool {
 	level := s.Assess(ctx, tenantID, userID, ip, ua, country)
 	return s.ForceMFA(ctx, tenantID, level)
 }
 
+// GetSettings returns the tenant's risk settings.
 func (s *Service) GetSettings(ctx context.Context, tenantID uuid.UUID) (Settings, error) {
 	row, err := s.q.GetRiskSettings(ctx, tenantID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return defaultSettings(), nil
 	}
 	if err != nil {
@@ -189,6 +187,7 @@ func (s *Service) GetSettings(ctx context.Context, tenantID uuid.UUID) (Settings
 // Handler exposes risk settings over HTTP.
 type Handler struct{ Service *Service }
 
+// Mount registers the risk setting routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/security/risk-settings", h.get)
 	r.Put("/tenants/{tenantID}/security/risk-settings", h.put)
@@ -242,6 +241,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, st)
 }
 
+// UpdateSettings stores the tenant's risk settings.
 func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Settings) (Settings, error) {
 	if in.MediumThreshold < 0.1 {
 		in.MediumThreshold = 0.1

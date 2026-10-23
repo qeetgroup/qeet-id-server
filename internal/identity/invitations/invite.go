@@ -1,6 +1,6 @@
-// Package invite lets a tenant admin invite an email address into a
-// tenant with a pre-assigned role. The invitee follows the link, creates
-// their account, and the invite is consumed in the same transaction.
+// Package invite lets a tenant admin invite an email address into a tenant with
+// a pre-assigned role. The invitee accepts by link, either creating an account
+// or, when signed in, joining with their existing one.
 package invite
 
 import (
@@ -17,13 +17,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/invitations/dbgen"
-	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
+// Invite is an invitation, without its token.
 type Invite struct {
 	ID         uuid.UUID  `json:"id"`
 	TenantID   uuid.UUID  `json:"tenant_id"`
@@ -60,28 +61,28 @@ func deliveryOf(err error) *Delivery {
 	return d
 }
 
+// CreateInput is what Create takes.
 type CreateInput struct {
 	TenantID uuid.UUID  `json:"tenant_id" validate:"required"`
 	Email    string     `json:"email" validate:"required,email"`
 	RoleID   *uuid.UUID `json:"role_id"`
 }
 
+// Service manages invitations. Until SetPasswordRules is called Accept refuses
+// with 501 rather than set an unchecked password; without SetPlanLimiter there
+// is no seat limit.
 type Service struct {
 	pool       *pgxpool.Pool
 	q          *dbgen.Queries
 	sender     notifier.Sender
 	ttl        time.Duration
 	baseAppURL string
-	// rules checks the invitee's password on Accept (nil = Accept is refused
-	// rather than set an unchecked password). Set via SetPasswordRules.
-	rules PasswordRules
-	// limits gates invite creation by the plan seat limit (nil = off).
-	limits PlanLimiter
-	// methods says which ways of accepting an organisation allows (nil = a
-	// password only). Set via SetAcceptMethods; see passkey.go.
-	methods AcceptMethods
+	rules      PasswordRules
+	limits     PlanLimiter
+	methods    AcceptMethods
 }
 
+// NewService returns the invitation service.
 func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, baseAppURL string) *Service {
 	if ttl <= 0 {
 		ttl = 14 * 24 * time.Hour
@@ -97,18 +98,16 @@ type PasswordRules interface {
 	ValidateForTenant(ctx context.Context, tenantID uuid.UUID, email, pw string) error
 }
 
-// SetPasswordRules wires the password check run on Accept. Called from
-// internal/bootstrap/dependencies.go.
+// SetPasswordRules sets the password check Accept runs.
 func (s *Service) SetPasswordRules(r PasswordRules) { s.rules = r }
 
-// PlanLimiter returns the numeric cap for a plan-gated resource (negative =
-// unlimited). Satisfied by operations/entitlements.Service, injected via
-// SetPlanLimiter.
+// PlanLimiter returns the cap for a plan-gated resource (negative means
+// unlimited). Satisfied by *entitlements.Service.
 type PlanLimiter interface {
 	Limit(ctx context.Context, tenantID uuid.UUID, resource string) (int, error)
 }
 
-// SetPlanLimiter wires the seat-limit checker (nil disables the gate).
+// SetPlanLimiter sets the seat-limit checker (nil disables the limit).
 func (s *Service) SetPlanLimiter(l PlanLimiter) { s.limits = l }
 
 // CountSeats returns the tenant's seats in use (members + pending invites) — the
@@ -185,6 +184,12 @@ func inviteFromListRow(row dbgen.ListInvitesRow) Invite {
 	}
 }
 
+// errRoleNotFound refuses an invitation whose role isn't the tenant's. A missing
+// and another tenant's role get the same answer, as on the rbac role routes.
+var errRoleNotFound = errs.ErrNotFound.WithDetail("role not found")
+
+// Create stores an invitation and emails its link. A role it carries must be
+// the tenant's, or it is errRoleNotFound.
 func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UUID) (*Invite, string, error) {
 	// Plan gate: a new invite consumes a seat, so refuse once the tenant's seat
 	// limit (members + pending invites) is reached.
@@ -216,6 +221,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UU
 		TokenHash: hash,
 		ExpiresAt: expires,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, "", errRoleNotFound
+	}
 	if err != nil {
 		return nil, "", err
 	}
@@ -224,11 +232,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UU
 	return &iv, raw, nil
 }
 
-// sendInviteEmail delivers the accept link. A failure does not fail the
-// request — the invite row exists and the admin can resend or copy the
-// returned token — but is logged and returned, so the response says the email
-// didn't go (Invite.Delivery). Delivery to unverified recipients fails while
-// Amazon SES is in sandbox mode.
+// sendInviteEmail emails the accept link. A failure is logged and returned, for
+// Invite.Delivery, but doesn't fail the request: the invite exists and the admin
+// can resend it or share the link.
 func (s *Service) sendInviteEmail(ctx context.Context, tenantID, inviteID uuid.UUID, email, rawToken string) error {
 	inviteURL := fmt.Sprintf("%s/invite/accept?token=%s", s.baseAppURL, rawToken)
 	if err := s.sender.Send(ctx, notifier.Message{
@@ -276,6 +282,7 @@ func (s *Service) Resend(ctx context.Context, tenantID, id uuid.UUID) (*Invite, 
 	return &iv, raw, nil
 }
 
+// List returns the tenant's invitations.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Invite, error) {
 	rows, err := s.q.ListInvites(ctx, tenantID)
 	if err != nil {
@@ -288,6 +295,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Invite, error
 	return out, nil
 }
 
+// Revoke withdraws one of the tenant's pending invitations.
 func (s *Service) Revoke(ctx context.Context, tenantID, id uuid.UUID) error {
 	n, err := s.q.RevokeInvite(ctx, dbgen.RevokeInviteParams{ID: id, TenantID: tenantID})
 	if err != nil {
@@ -299,21 +307,48 @@ func (s *Service) Revoke(ctx context.Context, tenantID, id uuid.UUID) error {
 	return nil
 }
 
+// AcceptInput is what Accept takes.
 type AcceptInput struct {
 	Token       string `json:"token" validate:"required"`
-	Password    string `json:"password" validate:"required,max=256"` // length + rules: checked in Accept
+	Password    string `json:"password" validate:"required,max=256"`
 	DisplayName string `json:"display_name" validate:"omitempty,max=200"`
 }
 
+// AcceptResult is the account an accepted invitation created.
 type AcceptResult struct {
 	UserID   uuid.UUID
 	TenantID uuid.UUID
 }
 
+// Accept creates the invitee's password account from an invitation's token,
+// under the inviting organisation's sign-in rules.
 func (s *Service) Accept(ctx context.Context, in AcceptInput) (*AcceptResult, error) {
 	if s.rules == nil {
 		return nil, errs.ErrNotImplemented
 	}
+	// The new account will belong to the inviting organisation, so its
+	// methods and rules apply: no password account where passwords can't sign
+	// in. Checked once the invite is known to be good and before the
+	// transaction, as they read the policy and may call the breach service.
+	_, tenantID, email, err := s.InvitationForNewAccount(ctx, in.Token)
+	if err != nil {
+		return nil, err
+	}
+	passwordOn, _, err := s.acceptMethods(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if !passwordOn {
+		return nil, errs.ErrAuthMethodDisabled
+	}
+	if err := s.rules.ValidateForTenant(ctx, tenantID, email, in.Password); err != nil {
+		return nil, err
+	}
+	pwHash, err := password.Hash(in.Password)
+	if err != nil {
+		return nil, err
+	}
+
 	hash := codes.Hash(in.Token)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -338,35 +373,15 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (*AcceptResult, er
 		return nil, errs.ErrInviteExpired
 	}
 
-	// Email is globally unique (migration 0022). If the invited address already
-	// has an account, the anonymous set-a-password path can't INSERT a new user
-	// row — that used to surface as an opaque unique-violation 500. Send the
-	// invitee to sign in and accept as themselves (AcceptAuthenticated).
+	// Email is globally unique (migration 0022), so an address that already has
+	// an account can't get a new one here: the invitee signs in and accepts as
+	// themselves (AcceptAuthenticated).
 	if _, err := qtx.FindUserIDByEmail(ctx, inv.Email); err == nil {
 		return nil, errs.ErrInviteAccountExists
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
 
-	// The new account will belong to the inviting organisation, so its
-	// methods and rules apply: no password account where passwords can't sign
-	// in. Checked once the invite is known to be good.
-	if s.methods != nil {
-		passwordOn, _, _, err := s.methods.AllowedSignInMethods(ctx, inv.TenantID)
-		if err != nil {
-			return nil, err
-		}
-		if !passwordOn {
-			return nil, errs.ErrAuthMethodDisabled
-		}
-	}
-	if err := s.rules.ValidateForTenant(ctx, inv.TenantID, inv.Email, in.Password); err != nil {
-		return nil, err
-	}
-	pwHash, err := password.Hash(in.Password)
-	if err != nil {
-		return nil, err
-	}
 	userID, err := qtx.InsertInvitedUser(ctx, dbgen.InsertInvitedUserParams{
 		TenantID:    pgtype.UUID{Bytes: inv.TenantID, Valid: true},
 		Email:       inv.Email,
@@ -487,10 +502,8 @@ type pendingInvite struct {
 	ExpiresAt time.Time
 }
 
-// AcceptAuthenticated lets an already signed-in user join the invited tenant
-// with their existing account (via the emailed token) — no new user row, no
-// password. The path for a user who signed up first (tenant-less) and only
-// then opened an invite link.
+// AcceptAuthenticated lets a signed-in user join the invited tenant with their
+// existing account, using the emailed token: no new user and no password.
 func (s *Service) AcceptAuthenticated(ctx context.Context, userID uuid.UUID, token string) (*AcceptResult, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

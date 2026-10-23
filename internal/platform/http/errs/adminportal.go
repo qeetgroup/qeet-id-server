@@ -1,11 +1,7 @@
 package errs
 
-// Admin Portal error codes — stable, namespaced machine identifiers for the
-// federation/adminportal bounded context (the time-limited, capability-scoped
-// link a tenant admin hands to an account-less IT admin to configure SAML/SCIM).
-// Clients branch and localize on these codes, never on the message text. Once
-// shipped a code MUST NOT change. Every name is prefixed `AdminPortal` so it
-// never collides with another domain's catalog.
+// Admin Portal error codes: the time-limited link a tenant admin gives an IT
+// admin to configure SAML or SCIM.
 const (
 	// Capabilities.
 	CodeAdminPortalCapabilitiesRequired = "adminportal.capabilities_required"

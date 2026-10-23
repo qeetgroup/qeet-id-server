@@ -11,14 +11,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Nobody hands out authority they don't hold. Holding role.write or user.write
-// lets a person manage roles or members, not reach beyond themselves: granting
-// a permission to a role needs the caller to hold that permission in the
-// organisation, giving someone a role — directly, through a group, or by an
-// invitation — needs the caller to hold every permission the role carries,
-// and the owner role is given only by an owner. An owner holds the
-// organisation's full authority and may give anything. A machine caller holds
-// only the scopes of its credential, and is never an owner.
+// Nobody hands out authority they don't hold. Granting a permission to a role
+// needs the caller to hold it; giving a role (directly, by group or by
+// invitation) needs every permission it carries; only an owner gives the owner
+// role. An owner may give anything; a machine caller holds only its scopes.
 
 // CheckGrantPermission refuses, with ErrRBACGrantExceedsCaller naming it, the
 // caller granting permID to a role of tenantID without holding it there.
@@ -34,9 +30,9 @@ func (r *Repository) CheckGrantPermission(ctx context.Context, caller *httpx.Pri
 }
 
 // CheckGrantRole refuses the caller giving roleID of tenantID to anyone: with
-// ErrRBACOwnerOnly when it is the organisation's owner role and the caller
-// isn't an owner, and with ErrRBACGrantExceedsCaller naming a permission the
-// role carries that the caller doesn't hold there.
+// ErrRBACOwnerOnly for the owner role when the caller isn't an owner, and with
+// ErrRBACGrantExceedsCaller naming a permission of the role the caller lacks.
+// A role that isn't tenantID's passes, so the write itself must refuse it.
 func (r *Repository) CheckGrantRole(ctx context.Context, caller *httpx.Principal, tenantID, roleID uuid.UUID) error {
 	var ownerRole bool
 	var keys []string
@@ -49,7 +45,8 @@ func (r *Repository) CheckGrantRole(ctx context.Context, caller *httpx.Principal
 		WHERE ro.id = $1 AND ro.tenant_id = $2
 		GROUP BY ro.id, ro.is_system, ro.name`, roleID, tenantID).Scan(&ownerRole, &keys)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// The assignment itself answers for a role that isn't the tenant's.
+		// The write answers for a role that isn't the tenant's, so a missing
+		// and a foreign role get the same refusal.
 		return nil
 	}
 	if err != nil {

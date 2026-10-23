@@ -105,16 +105,16 @@ SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at
 FROM tenant.saml_service_providers WHERE id = @id AND tenant_id = @tenant_id;
 
--- name: GetSamlSPByUUID :one
-SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
-       name_id_attribute, certificate, status, created_at, updated_at, last_login_at
-FROM tenant.saml_service_providers WHERE id = @id;
-
 -- name: GetSamlSPByEntityID :one
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at
 FROM tenant.saml_service_providers
-WHERE entity_id = @entity_id AND status <> 'disabled' ORDER BY created_at LIMIT 1;
+WHERE tenant_id = @tenant_id AND entity_id = @entity_id AND status <> 'disabled';
+
+-- name: IsTenantActive :one
+SELECT EXISTS (
+    SELECT 1 FROM tenant.tenants WHERE id = @id AND status = 'active' AND deleted_at IS NULL
+);
 
 -- name: UpdateSamlSP :one
 UPDATE tenant.saml_service_providers SET

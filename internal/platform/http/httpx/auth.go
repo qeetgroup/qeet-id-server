@@ -25,6 +25,10 @@ type AuthVerifier struct {
 	// token of one of the user's own sessions (not an application's token),
 	// so the session's last use is known. Best effort; nil skips it.
 	SessionUsed func(ctx context.Context, sessionID uuid.UUID)
+	// SessionLive, when set, reports whether the session of a user's own
+	// access token has not ended, so a signed-out, revoked or timed-out
+	// session's tokens are refused at once rather than when they expire.
+	SessionLive func(ctx context.Context, sessionID, userID uuid.UUID) (bool, error)
 }
 
 // RequireAuth wraps a handler so it only sees authenticated requests.
@@ -62,12 +66,9 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 			raw := strings.TrimSpace(auth[len("bearer "):])
 			claims, err := v.Tokens.VerifyAccess(raw)
 			if err != nil {
-				// Wrap, not WithDetail. The verification error embeds header
-				// values the caller chose (notably an unknown `kid`, echoed
-				// verbatim) and distinguishes "unknown kid" / "retired key" /
-				// "expired" / "issuer mismatch" — an oracle that maps our key
-				// rotation state for an unauthenticated caller. The cause is
-				// logged by WriteError; the client gets a bare 401.
+				// Wrap, not WithDetail: the cause echoes caller-chosen header
+				// values (such as an unknown kid) and would reveal our
+				// key-rotation state. WriteError logs it; the client gets a 401.
 				w.Header().Set("WWW-Authenticate", `Bearer realm="qeet", error="invalid_token"`)
 				WriteError(w, r, errs.ErrUnauthorized.Wrap(err))
 				return
@@ -93,8 +94,22 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 				p.SessionID = &sid
 			}
 			p.ClientID = claims.ClientID
-			if v.SessionUsed != nil && p.SessionID != nil && p.ClientID == "" && p.ActorType == "user" {
-				v.SessionUsed(r.Context(), *p.SessionID)
+			if p.SessionID != nil && p.UserID != nil && p.ClientID == "" && p.ActorType == "user" {
+				if v.SessionLive != nil {
+					live, err := v.SessionLive(r.Context(), *p.SessionID, *p.UserID)
+					if err != nil {
+						WriteError(w, r, errs.ErrInternalServer.Wrap(err))
+						return
+					}
+					if !live {
+						w.Header().Set("WWW-Authenticate", `Bearer realm="qeet", error="invalid_token"`)
+						WriteError(w, r, errs.ErrAuthSessionRevoked)
+						return
+					}
+				}
+				if v.SessionUsed != nil {
+					v.SessionUsed(r.Context(), *p.SessionID)
+				}
 			}
 			// AI-agent token: capture the agent id and enforce the agent's
 			// current lifecycle status, so a suspended/decommissioned agent's
@@ -120,13 +135,10 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 	}
 }
 
-// EnforceTenantScope rejects any request whose matched route carries a
-// {tenantID} path param that isn't the authenticated caller's own tenant.
-// Mounted once on the authed route group, it closes the entire class of
-// cross-tenant "trust the path tenant" bugs (QID-18) centrally, so a handler
-// physically cannot serve another tenant's data even if it forgets to check.
-// Routes without a {tenantID} param (e.g. /users/{id}, /roles/{roleID}) pass
-// through untouched — those are scoped by their own handlers.
+// EnforceTenantScope rejects a request whose route has a {tenantID} path param
+// other than the caller's own tenant, so a handler can't serve another tenant's
+// data even if it forgets to check. Routes without the param pass through;
+// their handlers scope themselves.
 func EnforceTenantScope(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if pathTenant := chi.URLParam(r, "tenantID"); pathTenant != "" {
@@ -147,6 +159,30 @@ func EnforceTenantScope(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// PathTenant returns the caller's tenant once the {tenantID} path parameter
+// names it: bad_request for a malformed parameter, forbidden for another
+// tenant's. It repeats EnforceTenantScope's check inside a handler.
+func PathTenant(r *http.Request) (uuid.UUID, error) {
+	return PathTenantOr(r, errs.ErrBadRequest.WithDetail("invalid tenantID"), errs.ErrForbidden.WithDetail("tenant mismatch"))
+}
+
+// PathTenantOr is PathTenant answering a malformed parameter with invalid and
+// another tenant's with mismatch, for a domain with its own error codes.
+func PathTenantOr(r *http.Request, invalid, mismatch error) (uuid.UUID, error) {
+	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	if err != nil {
+		return uuid.Nil, invalid
+	}
+	scope, err := RequireTenant(r)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if pathTenant != scope {
+		return uuid.Nil, mismatch
+	}
+	return scope, nil
 }
 
 // RequireTenant returns the principal's tenant id — the only trustworthy

@@ -20,7 +20,9 @@ info:
 
     ## Authentication
 
-    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /v1/ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it.
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it.
+
+    The responses of agent token minting and the token vault's access-token read, and of the operations returning a new API key, agent or webhook secret, a revealed secret or an issued credential, are sent with `Cache-Control: no-store` and `Pragma: no-cache`.
 
     ## Related APIs
 
@@ -47,7 +49,28 @@ tags:
   - name: Auth Hooks
     description: 'Custom authentication hooks (actions) invoked during authentication flows.'
   - name: Webhooks
-    description: Outbound webhook endpoint management.
+    description: >-
+      Outbound webhook endpoint management. A subscription names the events it
+      receives, from the event catalogue; an event's name is its version, so an
+      incompatible payload change comes as a new name, while new fields may be
+      added to any payload. Each delivery is a POST whose JSON body is the
+      envelope {id, type, tenant_id, occurred_at, data}: id is the same in
+      every delivery of one event, retries included, so deduplicate on it, and
+      data is the event's own payload. Deliveries are at least once and in no
+      guaranteed order. Headers: X-Qeet-Event (the type), X-Qeet-Delivery-ID,
+      X-Qeet-Timestamp (Unix seconds) and X-Qeet-Signature, "sha256=" and the
+      hex HMAC-SHA256, keyed by the subscription's secret, of the timestamp, a
+      ".", and the raw body. For 24 hours after the secret is rotated the
+      header holds two comma-separated values, the new secret's first; accept
+      the delivery if any one matches. Verify in constant time before parsing,
+      and refuse a timestamp more than a few minutes old. Answer 2xx quickly: a
+      network error, a 5xx, 408 or 429 is retried with jittered backoff from 30
+      seconds up to an hour, for 60 attempts; any other 4xx dead-letters the
+      delivery at once. A dead-lettered delivery stays in the delivery list and
+      can be sent again. A subscription whose deliveries fail for 3 days with no
+      success is disabled (disabled_reason "failing") and the members who hold
+      webhook.write are alerted in-app; deliveries queued meanwhile are sent
+      once it is enabled again.
   - name: Secrets
     description: Per-tenant encrypted secrets vault.
   - name: Token Vault
@@ -56,7 +79,7 @@ paths:
   /v1/api-keys:
     post:
       operationId: post_v1_api_keys
-      description: 'Creates a long-lived API key for machine access. The plaintext key is returned only once at creation and is never retrievable again, so store it securely. Callers present it as `Authorization: ApiKey <key>` and resolve to actor_type `api_key`. A user_id, if sent, must be the caller''s own: a key can act only for the person who creates it (403 apikey.user_not_self otherwise). Creating and revoking keys is audited.'
+      description: 'Creates a long-lived API key for machine access. The plaintext key is returned only once at creation and is never retrievable again, so store it securely. Callers present it as `Authorization: ApiKey <key>` and resolve to actor_type `api_key`. A user_id, if sent, must be the caller''s own: a key can act only for the person who creates it (403 apikey.user_not_self otherwise). Creating and revoking keys is audited. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress.'
       summary: Create API key
       tags:
         - API Keys
@@ -76,7 +99,10 @@ paths:
               expires_at: '2027-01-01T00:00:00Z'
             schema:
               $ref: '#/components/schemas/ApiKeyCreate'
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       responses:
+        '409': {description: 'A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly.'}
         '201':
           description: Created; secret shown once
           content:
@@ -205,8 +231,7 @@ paths:
                 expires_in: 300
                 scope: agent:invoke
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/TokenResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/tenants/{tenantID}/agents:
@@ -233,18 +258,18 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated: {type: boolean, description: 'Present, true, when the list was cut at its limit (1000).'}
                   items:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/Agent'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_agents
-      description: 'Registers a new AI agent identity. Mint short-lived access tokens for it with the mint-agent-token endpoint; agents resolve to actor_type `agent`.'
+      description: 'Registers a new AI agent identity. Mint short-lived access tokens for it with the mint-agent-token endpoint; agents resolve to actor_type `agent`. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress.'
       summary: Create agent
       tags:
         - Agents
@@ -254,6 +279,7 @@ paths:
           required: true
           schema:
             type: string
+        - $ref: '#/components/parameters/IdempotencyKey'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -280,13 +306,13 @@ paths:
                   format: uuid
                   description: The named human owner accountable for this agent. Must be a member of this tenant.
       responses:
+        '409': {description: 'A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly.'}
         '201':
           description: Agent created (secret returned once)
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Agent'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -533,7 +559,15 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Agent'
+                  truncated:
+                    type: boolean
+                    description: 'Present, true, when the list was cut at its limit.'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -594,6 +628,7 @@ paths:
       summary: Verify credential (public)
       description: >-
         Any relying party can present a JWT-serialized W3C Verifiable Credential issued by this server; the response reports validity (signature, issuer, expiry, and revocation status) plus the credential subject + claims. No session required.
+        A token that is not a verifiable credential, such as an access or ID token this server signed, answers valid false with reason "not a verifiable credential"; a failed signature, issuer or expiry check answers reason "signature or expiry invalid", a credential with no record in this server's registry "unknown credential", and a revoked credential "credential revoked".
       tags:
         - Credentials
       security: []
@@ -615,8 +650,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/VerifyResult'
         '422':
           $ref: '#/components/responses/Unprocessable'
   /v1/tenants/{tenantID}/credentials:
@@ -646,8 +680,7 @@ paths:
                   items:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/VcCredential'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -692,8 +725,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/IssueResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -757,15 +789,14 @@ paths:
                   items:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/Hook'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_auth_hooks
-      description: 'Registers an authentication hook invoked during an auth flow. Hooks fail open by default: a hook error does not block authentication.'
+      description: 'Registers an authentication hook, called on every sign-in to the organisation once its first factor is proven, whatever the method: password, passkey, social, SAML, LDAP, magic link, invitation and organisation switch. It may deny the sign-in (authhook.denied), and on a sign-in that returns tokens its claims are added to the access token. A sign-in to no organisation asks the account''s own. Hooks fail open by default: a hook error does not block authentication.'
       summary: Create auth hook
       tags:
         - Auth Hooks
@@ -801,8 +832,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Hook'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -895,7 +925,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the organisation''s webhook subscriptions, without their signing secrets. Requires webhook.read.'
       responses:
         '200':
           description: OK
@@ -903,7 +933,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WebhookSubscription'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -912,6 +947,127 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/webhooks/events:
+    get:
+      operationId: get_v1_tenants_ByTenantID_webhooks_events
+      summary: List webhook events
+      tags:
+        - Webhooks
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: 'Lists the event catalogue: every event a webhook subscription can name, with what it reports. Requires webhook.read.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WebhookEventType'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/webhooks/{id}/enable:
+    post:
+      operationId: post_v1_tenants_ByTenantID_webhooks_ById_enable
+      summary: Enable webhook
+      tags:
+        - Webhooks
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: 'Turns a disabled webhook subscription back on, whether an administrator or its failures disabled it, with its failures forgotten, and returns it. Deliveries queued while it was off are then sent. Enabling one already on changes nothing. The organisation''s plan must include webhooks (402 billing.upgrade_required). Requires webhook.write. Needs a recent step-up.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookSubscription'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '402': {description: 'The organisation''s plan does not include webhooks.'}
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/webhooks/{id}/rotate-secret:
+    post:
+      operationId: post_v1_tenants_ByTenantID_webhooks_ById_rotateSecret
+      summary: Rotate webhook secret
+      tags:
+        - Webhooks
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: 'Replaces the subscription''s signing secret and returns the new one, shown only in this answer. The old secret goes on signing deliveries alongside the new one until previous_secret_expires_at (24 hours), so the receiver can switch without missing one; rotating again within that time ends the older secret''s at once. Audited as webhook.secret_rotated. Requires webhook.write. Needs a recent step-up.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [previous_secret_expires_at, secret]
+                properties:
+                  previous_secret_expires_at:
+                    type: string
+                    format: date-time
+                  secret:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/webhooks:
@@ -924,22 +1080,22 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/WebhookCreateInput'
+      description: 'Subscribes an endpoint to the organisation''s events it names. The endpoint must be an allowed outbound destination; the signing secret is shown only in this answer. events must name at least one event (422 webhook.events_required), each from the event catalogue (422 webhook.event_unknown); a repeated name counts once. Requires webhook.write. Needs a recent step-up. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress.'
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       responses:
+        '409': {description: 'A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly.'}
         '201':
           description: Created
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/WebhookSubscription'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -972,8 +1128,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/WebhookSubscription'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -994,7 +1149,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Disables one of the organisation''s webhook subscriptions: no further events are sent to it. Requires webhook.write. Needs a recent step-up.'
       responses:
         '204':
           description: No Content
@@ -1035,8 +1190,7 @@ paths:
                   items:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/WebhookDelivery'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1086,23 +1240,21 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Queues a test.ping event for this subscription alone, whichever events it names, and answers once it is queued. Its data is {subscription_id}. Requires webhook.write.'
       responses:
-        '201':
-          description: Created
+        '202':
+          description: Accepted
           content:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [queued, subscription]
+                properties:
+                  queued:
+                    type: boolean
+                  subscription:
+                    type: string
+                    format: uuid
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1163,7 +1315,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the organisation''s secrets: names, scopes and the last four characters, never the values. Requires secret.read.'
       responses:
         '200':
           description: OK
@@ -1171,7 +1323,15 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Secret'
+                  truncated:
+                    type: boolean
+                    description: 'Present, true, when the list was cut at its limit.'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1202,17 +1362,22 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              required: [name, scope, value]
+              properties:
+                name:
+                  type: string
+                scope:
+                  type: string
+                value:
+                  type: string
+      description: 'Stores a secret for the organisation, encrypted at rest. A name the organisation already uses is refused. Requires secret.write. Needs a recent step-up.'
       responses:
         '201':
           description: Created
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Secret'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1243,7 +1408,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Deletes one of the organisation''s secrets. Requires secret.write. Needs a recent step-up.'
       responses:
         '204':
           description: No Content
@@ -1281,18 +1446,15 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/SecretUpdateInput'
+      description: 'Replaces a secret''s value or scope, keeping its name. Requires secret.write. Needs a recent step-up.'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Secret'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1323,15 +1485,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Returns a secret''s decrypted value. Each reveal is audited. Requires secret.read. Needs a recent step-up.'
       responses:
         '201':
           description: Created
@@ -1339,7 +1493,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [value]
+                properties:
+                  value:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1401,8 +1558,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/TokenvaultProvider'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1433,7 +1589,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TokenvaultProvider'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1489,7 +1650,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GrantMeta'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '429':
@@ -1599,6 +1765,13 @@ paths:
         '429':
           $ref: '#/components/responses/TooManyRequests'
 components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: 'A key of the client''s choosing, 1 to 255 printable characters, that makes retrying the request safe. Kept for 24 hours.'
+      schema: {type: string, minLength: 1, maxLength: 255}
   securitySchemes:
     bearerAuth:
       type: http
@@ -1789,3 +1962,271 @@ components:
           type: string
           format: date-time
           nullable: true
+    Agent:
+      type: object
+      required: [created_at, disabled, id, name, scopes, status, token_ttl_seconds]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        disabled:
+          type: boolean
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        secret:
+          type: string
+        sponsor_user_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+        token_ttl_seconds:
+          type: integer
+    GrantMeta:
+      type: object
+      required: [created_at, provider, updated_at]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        external_account_id:
+          type: string
+        provider:
+          type: string
+        scope:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+    Hook:
+      type: object
+      required: [created_at, enabled, fail_open, id, trigger, url]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        enabled:
+          type: boolean
+        fail_open:
+          type: boolean
+        id:
+          type: string
+          format: uuid
+        trigger:
+          type: string
+        url:
+          type: string
+    IssueResult:
+      type: object
+      required: [credential_id, jwt]
+      properties:
+        credential_id:
+          type: string
+          format: uuid
+        expires_at:
+          type: string
+          format: date-time
+        jwt:
+          type: string
+    Secret:
+      type: object
+      required: [created_at, id, last4, name, scope, updated_at]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        last4:
+          type: string
+        name:
+          type: string
+        scope:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+    SecretUpdateInput:
+      type: object
+      required: [scope, value]
+      properties:
+        scope:
+          type: [string, 'null']
+        value:
+          type: [string, 'null']
+    TokenResponse:
+      type: object
+      required: [access_token, expires_in, token_type]
+      properties:
+        access_token:
+          type: string
+        expires_in:
+          type: integer
+        scope:
+          type: string
+        token_type:
+          type: string
+    TokenvaultProvider:
+      type: object
+      required: [authorize_url, client_id, created_at, id, provider, scopes, token_url, updated_at]
+      properties:
+        authorize_url:
+          type: string
+        client_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        provider:
+          type: string
+        scopes:
+          type: string
+        token_url:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+    VerifyResult:
+      type: object
+      required: [valid]
+      properties:
+        issuer:
+          type: string
+        reason:
+          type: string
+          description: Why an invalid credential is refused, in English. Show reason_code's meaning instead.
+        reason_code:
+          type: string
+          enum: [vc.not_credential, vc.signature_invalid, vc.unknown, vc.revoked]
+          description: 'Why an invalid credential is refused: not a JWT-VC, a bad signature or expired, not one this server issued, or revoked.'
+        subject:
+          type: string
+        valid:
+          type: boolean
+        vc:
+          type: object
+          additionalProperties: true
+    WebhookCreateInput:
+      type: object
+      required: [events, url]
+      properties:
+        events:
+          type: array
+          minItems: 1
+          description: Event names from the event catalogue.
+          items:
+            type: string
+        tenant_id:
+          type: string
+          format: uuid
+          description: Ignored; the organisation is the caller's.
+        url:
+          type: string
+    WebhookEventType:
+      type: object
+      required: [description, name]
+      properties:
+        description:
+          type: string
+        name:
+          type: string
+    WebhookSubscription:
+      type: object
+      required: [created_at, disabled_at, events, id, tenant_id, url]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        disabled_at:
+          type: [string, 'null']
+          format: date-time
+        disabled_reason:
+          type: [string, 'null']
+          enum: [disabled, failing, null]
+          description: Who disabled it, an administrator (disabled) or its failures (failing).
+        events:
+          type: array
+          items:
+            type: string
+        failing_since:
+          type: [string, 'null']
+          format: date-time
+          description: When deliveries started failing, with no success since.
+        id:
+          type: string
+          format: uuid
+        previous_secret_expires_at:
+          type: [string, 'null']
+          format: date-time
+          description: Until when the secret replaced by the last rotation also signs deliveries.
+        secret:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+        url:
+          type: string
+    VcCredential:
+      type: object
+      required: [id, issued_at, revoked, subject, type]
+      properties:
+        expires_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        issued_at:
+          type: string
+          format: date-time
+        revoked:
+          type: boolean
+        subject:
+          type: string
+        type:
+          type: string
+    WebhookDelivery:
+      type: object
+      required: [attempt, created_at, event_type, id, payload]
+      properties:
+        attempt:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        dead_at:
+          type: string
+          format: date-time
+        delivered_at:
+          type: string
+          format: date-time
+        error:
+          type: string
+        event_type:
+          type: string
+        id:
+          type: string
+          format: uuid
+        next_attempt_at:
+          type: string
+          format: date-time
+        payload:
+          type: string
+        response_body:
+          type: string
+        status_code:
+          type: integer

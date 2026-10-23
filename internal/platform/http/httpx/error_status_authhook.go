@@ -6,9 +6,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// Auth-hook (internal/developer/auth-hooks) code→status mappings. Registered
-// from an init() so this bounded context owns its own transport mappings
-// without editing the shared error_status.go.
+// init registers the HTTP statuses of the auth-hook error codes.
 func init() {
 	registerStatuses(map[string]int{
 		errs.CodeAuthHookNotFound:       http.StatusNotFound,

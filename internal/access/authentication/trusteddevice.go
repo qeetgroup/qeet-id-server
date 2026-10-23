@@ -64,12 +64,9 @@ func (s *Service) CreateTrustedDevice(ctx context.Context, userID, tenantID uuid
 	return raw, tx.Commit(ctx)
 }
 
-// IsTrustedDevice reports whether raw is a live trusted-device token bound to
-// userID in the organisation tenantID that remembered it, refreshing
-// last_used_at and auditing the use on a hit. The user and organisation are
-// part of the WHERE clause, so a token issued to a different account can never
-// match, and trust earned under one organisation's policy skips nothing in
-// another's.
+// IsTrustedDevice reports whether raw is a live trusted-device token for userID
+// in tenantID, and records its use. Trust from one organisation never applies in
+// another.
 func (s *Service) IsTrustedDevice(ctx context.Context, userID, tenantID uuid.UUID, raw string) bool {
 	if raw == "" || tenantID == uuid.Nil {
 		return false
@@ -94,11 +91,9 @@ func (s *Service) IsTrustedDevice(ctx context.Context, userID, tenantID uuid.UUI
 	return true
 }
 
-// MaybeRememberDevice mints a trusted device only when the tenant has opted into
-// adaptive MFA, for as long as the tenant remembers devices. Returns the raw
-// cookie value to set and how long it lasts, or "" when remembering is off (so
-// the HTTP layer never trusts a client-supplied "remember" flag the policy
-// doesn't allow).
+// MaybeRememberDevice creates a trusted device when the tenant has adaptive MFA
+// on, and returns the cookie value and its lifetime. It returns "" when the
+// tenant doesn't remember devices, whatever the client asked for.
 func (s *Service) MaybeRememberDevice(ctx context.Context, userID, tenantID uuid.UUID, label string) (string, time.Duration, error) {
 	if s.devicePolicy == nil || tenantID == uuid.Nil {
 		return "", 0, nil
@@ -117,7 +112,7 @@ func (s *Service) MaybeRememberDevice(ctx context.Context, userID, tenantID uuid
 // SetTrustedDeviceCookie writes the long-lived HttpOnly trusted-device cookie,
 // kept for as long as the device stays trusted.
 func SetTrustedDeviceCookie(w http.ResponseWriter, raw string, maxAge time.Duration, secure bool) {
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is off only in dev
 		Name:     TrustedDeviceCookie,
 		Value:    raw,
 		Path:     "/",
@@ -238,19 +233,8 @@ type TrustedDeviceSummary struct {
 	Users int `json:"users"`
 }
 
-// CountTrustedDevices returns how many live trusted devices a tenant has.
-//
-// Live, not total: an expired row is no longer trusted — MFA is asked for again
-// — so counting it would overstate how much of the estate is remembered.
-//
-// One row is one device (token_hash is UNIQUE), so this counts devices rather
-// than users; a person with a laptop and a phone contributes two.
-//
-// tenant_id is nullable and is written NULL for tenant-less sessions
-// (CreateTrustedDevice above), so the equality check correctly excludes them.
-//
-// Raw SQL because sqlc isn't wired into the build here; fold into queries.sql at
-// the next `sqlc generate`.
+// CountTrustedDevices returns how many live (unexpired) trusted devices a tenant
+// has. Each row is one device, so a person with two devices counts twice.
 func (s *Service) CountTrustedDevices(
 	ctx context.Context, tenantID uuid.UUID,
 ) (TrustedDeviceSummary, error) {

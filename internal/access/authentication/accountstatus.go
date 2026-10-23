@@ -11,14 +11,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// refuseInactiveAccount refuses a sign-in for an account that is deleted, or
-// neither active nor invited, with the answer password sign-in gives
-// (ErrAuthAccountInactive), and audits the refusal as auth.sign_in_refused.
-// It runs where every sign-in issues its session or hosted-login
-// cookie, after the credential has been proved, so a path that proves it some
-// other way — a passkey, a social provider, and any added later — can't skip
-// it: suspending an account during an incident shuts every way back in, not
-// only the password.
+// refuseInactiveAccount refuses, with ErrAuthAccountInactive, a sign-in to an
+// account that is deleted or neither active nor invited, and audits it. Every
+// sign-in path calls it before issuing a session, so suspending an account
+// closes every way in.
 func (s *Service) refuseInactiveAccount(ctx context.Context, userID, tenantID uuid.UUID, method, ip, ua string) error {
 	var status string
 	var deleted bool
@@ -56,6 +52,20 @@ func (s *Service) refuseInactiveTenant(ctx context.Context, tenantID uuid.UUID) 
 		return errs.ErrAuthTenantInactive
 	}
 	return err
+}
+
+// refuseSignIn refuses a session for an inactive account or organisation, or
+// from an address the organisation's rules refuse. Every caller of issuePairTx
+// runs it before beginning the transaction: each check reads, and records a
+// refusal, on the pool.
+func (s *Service) refuseSignIn(ctx context.Context, userID, tenantID uuid.UUID, method, ip, ua string) error {
+	if err := s.refuseInactiveAccount(ctx, userID, tenantID, method, ip, ua); err != nil {
+		return err
+	}
+	if err := s.refuseInactiveTenant(ctx, tenantID); err != nil {
+		return err
+	}
+	return s.checkAddress(ctx, tenantID, userID, ip, method)
 }
 
 // CheckSignInAccount is refuseInactiveAccount for a sign-in that hands out

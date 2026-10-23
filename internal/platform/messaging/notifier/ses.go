@@ -10,17 +10,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sesv2/types"
 )
 
-// SESv2Sender delivers email through the Amazon SES v2 API rather than SMTP.
-// This is required in regions that offer the SES API but no SMTP endpoint
-// (e.g. ap-south-2 / Hyderabad, where email-smtp.ap-south-2.amazonaws.com does
-// not exist). Credentials come from the default AWS chain (EC2 instance role /
-// env), the same as the KMS client.
+// SESv2Sender sends email through the Amazon SES v2 API, for regions with no SES
+// SMTP endpoint (e.g. ap-south-2). Credentials come from the default AWS chain.
+// A non-empty configurationSet routes delivery, bounce and complaint events.
 type SESv2Sender struct {
-	client sesSendEmailAPI
-	from   string
-	// configurationSet, when set, names the SES configuration set whose event
-	// destination publishes delivery, bounce and complaint events (to SNS and
-	// the server's /v1/webhooks/ses).
+	client           sesSendEmailAPI
+	from             string
 	configurationSet string
 }
 
@@ -48,6 +43,7 @@ func NewSESv2Sender(ctx context.Context, region, from, configurationSet string) 
 	return &SESv2Sender{client: sesv2.NewFromConfig(cfg), from: from, configurationSet: configurationSet}, nil
 }
 
+// Send implements notifier.Sender.
 func (s *SESv2Sender) Send(ctx context.Context, m Message) error {
 	_, err := s.SendID(ctx, m)
 	return err

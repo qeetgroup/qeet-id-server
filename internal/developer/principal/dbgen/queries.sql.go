@@ -66,14 +66,14 @@ WHERE id = $1 AND tenant_id = $2 AND disabled_at IS NULL
 RETURNING tenant_id, name
 `
 
-type DisableServicePrincipalRow struct {
-	TenantID uuid.UUID
-	Name     string
-}
-
 type DisableServicePrincipalParams struct {
 	ID       uuid.UUID
 	TenantID uuid.UUID
+}
+
+type DisableServicePrincipalRow struct {
+	TenantID uuid.UUID
+	Name     string
 }
 
 // DisableServicePrincipal marks the principal disabled. RETURNING tenant_id

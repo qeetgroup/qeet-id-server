@@ -11,21 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type TenantSamlConnection struct {
-	ID             uuid.UUID
-	TenantID       uuid.UUID
-	Name           string
-	IdpEntityID    string
-	IdpSsoUrl      string
-	IdpCertificate string
-	EmailAttribute string
-	NameAttribute  string
-	Status         string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	LastLoginAt    pgtype.Timestamptz
-}
-
 type TenantSamlServiceProvider struct {
 	ID              uuid.UUID
 	TenantID        uuid.UUID

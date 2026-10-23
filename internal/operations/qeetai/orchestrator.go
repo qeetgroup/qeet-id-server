@@ -35,16 +35,15 @@ type toolUseAccum struct {
 	Input strings.Builder
 }
 
-// turnContext bundles per-turn execution context for the orchestrator.
+// turnContext is the per-turn input to Orchestrator.Run. pageContext is the
+// console's JSON context (route, selection): untrusted grounding text, never
+// authorization input.
 type turnContext struct {
 	tenantID       uuid.UUID
 	userID         uuid.UUID
 	conversationID uuid.UUID
-	// pageContext is the JSON-serialized console context (route, selection).
-	// Treated as untrusted grounding text, never as authorization input.
-	pageContext string
-	// actor is used for audit.Record calls.
-	actor audit.Actor
+	pageContext    string
+	actor          audit.Actor
 }
 
 // ProviderResolver resolves the effective AI provider for a tenant, applying
@@ -55,35 +54,24 @@ type ProviderResolver interface {
 	ProviderFor(ctx context.Context, tenantID uuid.UUID) (ai.Provider, error)
 }
 
-// Orchestrator drives the provider streaming loop and emits SSE frames.
-// It is stateless per-request: history is reconstructed from the DB each call.
-// The provider is resolved per-tenant (via ProviderResolver) so each turn
-// streams through the tenant's own BYOK provider or the platform fallback —
-// the SSE output is identical regardless of which is used.
+// Orchestrator runs streamed model turns and emits SSE frames. It keeps no state
+// between requests: history is reloaded from the database and the provider is
+// resolved per tenant on every turn.
 type Orchestrator struct {
 	resolver ProviderResolver
 	service  *Service
 }
 
-// NewOrchestrator returns an Orchestrator backed by the given per-tenant
-// provider resolver and qeetai service. The resolver picks the tenant's BYOK
-// provider (or the platform fallback) for each turn; the orchestrator is
-// provider-agnostic at runtime.
+// NewOrchestrator returns an Orchestrator that resolves each tenant's provider
+// through resolver and stores turns through service.
 func NewOrchestrator(resolver ProviderResolver, service *Service) *Orchestrator {
 	return &Orchestrator{resolver: resolver, service: service}
 }
 
-// Run executes one streaming turn of the qeetai:
-//  1. Loads full conversation history from DB.
-//  2. Calls the configured AI provider (streaming) with history + tools.
-//  3. Emits token/thinking SSE frames as text arrives.
-//     4a. On end_turn: persists assistant message, emits done{end_turn}.
-//     4b. On tool_use: persists assistant message (including tool_use blocks),
-//     emits tool_call frames, records audit, emits done{tool_use}.
-//
-// The SSE writer must already have headers flushed before Run is called.
-// The frozen SSE event types (thinking/token/tool_call/error/done) are
-// unchanged regardless of which provider is configured.
+// Run executes one turn: it reloads the history, streams the model's reply as
+// SSE frames, stores the assistant message and ends with a done frame. Tool
+// calls are sent to the client as tool_call frames and audited, never run here.
+// The caller must set the SSE headers first.
 func (o *Orchestrator) Run(ctx context.Context, tc turnContext, sse *sseWriter) {
 	// Load full conversation history (user turn already persisted by handler).
 	_, msgs, err := o.service.GetConversation(ctx, tc.tenantID, tc.userID, tc.conversationID)
@@ -205,13 +193,8 @@ func (o *Orchestrator) handleEndTurn(ctx context.Context, tc turnContext, sse *s
 	sse.send(EventTypeDone, doneData{Reason: "end_turn", MessageID: m.ID.String()})
 }
 
-// handleToolUse persists the assistant message with tool_use blocks, emits
-// tool_call SSE frames for each tool, records audit, then emits done{tool_use}.
-//
-// The content block format stored in the DB uses the canonical Anthropic
-// tool_use shape (type, id, name, input) which is also the neutral format.
-// Both Anthropic and OpenAI providers produce tool accumulators in the same
-// form, so the DB format is provider-agnostic.
+// handleToolUse stores the assistant message with its tool_use blocks, emits a
+// tool_call frame and an audit row per tool, then emits done{tool_use}.
 func (o *Orchestrator) handleToolUse(ctx context.Context, tc turnContext, sse *sseWriter, text string, tools []*toolUseAccum) {
 	// Build the content-block array: optional text block + tool_use blocks.
 	var contentBlocks []map[string]any
@@ -302,11 +285,9 @@ func (o *Orchestrator) recordToolAudit(ctx context.Context, tc turnContext, tool
 	}
 }
 
-// buildMessages converts DB qeetai.Message values to the neutral ai.Message
-// format. The DB stores content as JSON arrays of Anthropic-format content
-// blocks, which are identical to ai.ContentBlock in structure and JSON tags.
-// Role stays as-is ("user", "assistant", "tool"); each provider remaps as
-// needed at the boundary (e.g. Anthropic maps "tool" → "user").
+// buildMessages converts stored messages to ai.Message values; stored content
+// already has the ai.ContentBlock JSON shape. Roles pass through unchanged and
+// each provider remaps them (Anthropic sends "tool" as "user").
 func buildMessages(msgs []Message) []ai.Message {
 	out := make([]ai.Message, 0, len(msgs))
 	for _, m := range msgs {

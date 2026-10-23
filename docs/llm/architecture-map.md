@@ -17,7 +17,6 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Agent instructions | [`AGENTS.md`](../../AGENTS.md) |
 | Product architecture (L1) | `qeetgroup/qeet-id-context` |
 | Organization standards (L0) | `qeetgroup/qeet-context` |
-| Shipped-vs-planned status | [`ROADMAP.md`](../../ROADMAP.md) — see the staleness note in [context.md](context.md#known-technical-debt) |
 
 ## Entrypoints
 
@@ -25,7 +24,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 |---|---|
 | API server | `cmd/api/main.go` → `bootstrap.Run()` |
 | Background workers | `cmd/worker/main.go` |
-| Scheduled maintenance | `internal/bootstrap/maintenance.go` (jobs) · `internal/platform/jobs/scheduled.go` (runner) |
+| Scheduled maintenance | `internal/bootstrap/maintenance.go` (jobs) · `internal/platform/worker/scheduled.go` (runner) |
 | Migration runner | `cmd/migrate/main.go` |
 | Demo data (dev only) | `cmd/seed/main.go` |
 
@@ -34,7 +33,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | | |
 |---|---|
 | Application lifecycle | `internal/bootstrap/app.go` |
-| Dependency construction | `internal/bootstrap/dependencies.go` |
+| Dependency construction | `internal/bootstrap/dependencies.go` (building blocks in `keys.go`, `mail.go`, `infra.go`, `sso.go`, `adapters.go`) |
 | **Router + middleware** | `internal/bootstrap/router.go` |
 | Route → permission map | `internal/bootstrap/permissions.go` |
 | HTTP server | `internal/bootstrap/server.go` |
@@ -63,9 +62,9 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | **CSRF double-submit** | `internal/platform/http/httpx/csrf.go` |
 | Security headers | `internal/platform/http/httpx/` |
 | **JWT issue/verify, ES256, `kid`, rotation** | `internal/platform/crypto/tokens/jwt.go` |
-| **Password hashing (Argon2id)** | `internal/platform/crypto/encryption/hasher.go` |
-| Encryption, secrets vault crypto | `internal/platform/crypto/encryption/` |
-| TOTP | `internal/platform/crypto/encryption/totp/` |
+| **Password hashing (Argon2id)** | `internal/platform/crypto/password/hasher.go` |
+| Encryption, secrets vault crypto | `internal/platform/crypto/envelope/` |
+| TOTP | `internal/platform/crypto/totp/` |
 | Breached-password check | `internal/platform/crypto/hibp/` |
 | **Boot-time production gate** | `internal/platform/config/config.go` — `Config.Validate()` |
 
@@ -73,12 +72,12 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 
 | Flow | Path |
 |---|---|
-| Password login, sessions, refresh | `internal/access/authentication/service.go` |
+| Password login, sessions, refresh | `internal/access/authentication/` — `password.go`, `issue.go`, `refresh.go`, `sessions.go` |
 | Hosted SSO login session (`qe_ls`) | `internal/access/authentication/loginsession.go` |
 | Trusted device (`qe_td`) | `internal/access/authentication/trusteddevice.go` |
 | Account lockout | `internal/access/authentication/lockout.go` |
 | Passkeys / WebAuthn | `internal/access/passkeys/` |
-| MFA — TOTP, OTP, recovery codes | `internal/access/mfa/mfa.go` |
+| MFA — TOTP, OTP, recovery codes | `internal/access/mfa/` — `totp.go`, `otp.go`, `stepup.go` |
 | MFA — push approval | `internal/access/mfa/push.go` |
 | Magic link, password reset | `internal/access/recovery/` |
 | Adaptive risk, login history | `internal/access/threat/risk/` |
@@ -113,7 +112,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 
 | Protocol | Path |
 |---|---|
-| OIDC/OAuth provider, discovery, JWKS | `internal/federation/oidc/oidc.go` |
+| OIDC/OAuth provider, discovery, JWKS | `internal/federation/oidc/` — `token.go`, `authorize.go`, `discovery.go`, `clients.go` |
 | Device grant | `internal/federation/oidc/device.go` |
 | CIBA | `internal/federation/oidc/ciba.go` |
 | OAuth client administration | `internal/federation/oidc/clients_admin.go` |
@@ -172,7 +171,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 |---|---|
 | Transactional outbox | `internal/platform/events/outbox/outbox.go` |
 | NATS publishing | `internal/platform/events/outbox/nats.go` |
-| Worker pool | `internal/platform/jobs/worker.go` |
+| Worker pool | `internal/platform/worker/worker.go` |
 | Standalone worker | `cmd/worker/main.go` — webhooks, anomaly, gdpr, retention, siem, outbox |
 | Scheduler | `cmd/scheduler/main.go` — runs `bootstrap.MaintenanceJobs` standalone; the API embeds the same |
 
@@ -204,13 +203,8 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 
 | Kind | Path |
 |---|---|
-| **Architecture fitness (R1/R2)** | `tests/architecture/arch_test.go` |
-| Integration (Testcontainers) | `tests/integration/` — 18 files, `-tags integration` |
-| **OpenAPI route coverage gate** | `tests/integration/coverage_test.go` |
-| Security regression | `tests/security/{auth_bypass,csrf,headers}_test.go` |
-| Semgrep rule — no raw SQL fmt | `tests/security/semgrep/no-raw-sql-fmt.yaml` |
-| k6 performance | `tests/performance/` |
-| Shared harness | `tests/fixtures/` |
+| Unit | `_test.go` beside the source |
+| **OpenAPI route coverage gate** | `internal/bootstrap/openapi_coverage_test.go` |
 
 ## Build, CI, deploy
 
@@ -220,9 +214,8 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Linter config | `.golangci.yml` |
 | Container | `Dockerfile` |
 | Local dependencies | `docker-compose.yml` — postgres :5001, nats :4222, mailpit :8025 |
-| CI | `.github/workflows/ci.yml` — test · lint · integration · vuln · sast |
+| CI | `.github/workflows/ci.yml` — test · lint · vuln · sast |
 | Deploy (on `main`) | `.github/workflows/deploy.yml` |
-| Tooling | `tools/` — openapi-split, migration-tools, qa, scripts |
 
 **Deployment manifests are not in this repository** — Terraform and the rollout live in
 `qeetgroup/qeet-id-deploy`.

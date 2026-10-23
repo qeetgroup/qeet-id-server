@@ -111,6 +111,7 @@ const listAdminPortalLinksByTenant = `-- name: ListAdminPortalLinksByTenant :man
 SELECT id, tenant_id, capabilities, created_by, expires_at, revoked_at, last_used_at, created_at
 FROM tenant.admin_portal_links
 WHERE tenant_id = $1 ORDER BY created_at DESC
+LIMIT 1001
 `
 
 type ListAdminPortalLinksByTenantRow struct {
@@ -124,6 +125,7 @@ type ListAdminPortalLinksByTenantRow struct {
 	CreatedAt    time.Time
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListAdminPortalLinksByTenant(ctx context.Context, tenantID uuid.UUID) ([]ListAdminPortalLinksByTenantRow, error) {
 	rows, err := q.db.Query(ctx, listAdminPortalLinksByTenant, tenantID)
 	if err != nil {

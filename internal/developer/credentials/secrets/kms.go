@@ -16,14 +16,10 @@ type kmsDecrypter interface {
 	Decrypt(ctx context.Context, params *kms.DecryptInput, optFns ...func(*kms.Options)) (*kms.DecryptOutput, error)
 }
 
-// AWSKMSProvider implements KeyProvider by unwrapping the vault data key from a
-// KMS-encrypted ciphertext blob. The wrapped DEK is generated once, out-of-band:
-//
-//	aws kms generate-data-key --key-id <arn> --key-spec AES_256
-//
-// storing the returned CiphertextBlob (base64) in config / secret manager.
-// At startup DataKey calls kms.Decrypt to recover the plaintext key; it never
-// leaves memory (secret.Service caches the derived AEAD cipher and discards it).
+// AWSKMSProvider implements KeyProvider by decrypting a KMS-wrapped data key,
+// made once out of band with `aws kms generate-data-key --key-spec AES_256`.
+// DataKey calls kms.Decrypt at startup; the plaintext key is kept only in
+// memory.
 type AWSKMSProvider struct {
 	client     kmsDecrypter
 	keyID      string

@@ -6,7 +6,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// Data-retention (operations/retention) code→status mappings, registered from init().
+// init registers the HTTP statuses of the data-retention error codes.
 func init() {
 	registerStatuses(map[string]int{
 		errs.CodeRetentionTenantInvalid:  http.StatusBadRequest,

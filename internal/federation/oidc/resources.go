@@ -18,11 +18,9 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Resource is a downstream service an organisation's tokens may be issued for
-// (RFC 8707 resource indicator). A token issued for it names it alone as its
-// audience, so the platform API and every other service refuse it.
-// ServerClientID is the application that serves it, which may introspect
-// tokens issued for it ("" for none).
+// Resource is a downstream service tokens may be issued for (RFC 8707). A token
+// for it names it as the only audience. ServerClientID is the application that
+// serves it and may introspect its tokens ("" for none).
 type Resource struct {
 	ID             uuid.UUID `json:"id"`
 	TenantID       uuid.UUID `json:"tenant_id"`
@@ -47,15 +45,16 @@ func wellFormedResource(resource string) bool {
 }
 
 // checkResource holds a requested resource ("" for none) to the client's
-// organisation's registry: anything it hasn't registered is invalid_target.
-func (s *Service) checkResource(ctx context.Context, tenantID uuid.UUID, resource string) error {
+// organisation's registry: anything it hasn't registered is invalid_target. q
+// lets it run in the caller's transaction.
+func checkResource(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, resource string) error {
 	if resource == "" {
 		return nil
 	}
 	if !wellFormedResource(resource) {
 		return oauthErr("invalid_target", "resource must be an absolute URI without a fragment")
 	}
-	ok, err := s.q.ResourceRegistered(ctx, dbgen.ResourceRegisteredParams{TenantID: tenantID, Identifier: resource})
+	ok, err := q.ResourceRegistered(ctx, dbgen.ResourceRegisteredParams{TenantID: tenantID, Identifier: resource})
 	if err != nil {
 		return err
 	}
@@ -92,10 +91,11 @@ func (s *Service) CreateResource(ctx context.Context, tx pgx.Tx, tenantID uuid.U
 	if !wellFormedResource(in.Identifier) {
 		return nil, errs.ErrOIDCResourceInvalid
 	}
+	q := s.q.WithTx(tx)
 	var server *string
 	if in.ServerClientID != "" {
-		_, owner, err := s.ClientName(ctx, in.ServerClientID)
-		if errors.Is(err, pgx.ErrNoRows) || (err == nil && owner != tenantID) {
+		owner, err := q.GetClientName(ctx, in.ServerClientID)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && owner.TenantID != tenantID) {
 			return nil, errs.ErrOIDCClientNotFound
 		}
 		if err != nil {
@@ -103,7 +103,7 @@ func (s *Service) CreateResource(ctx context.Context, tx pgx.Tx, tenantID uuid.U
 		}
 		server = &in.ServerClientID
 	}
-	row, err := s.q.WithTx(tx).InsertResource(ctx, dbgen.InsertResourceParams{
+	row, err := q.InsertResource(ctx, dbgen.InsertResourceParams{
 		TenantID: tenantID, Identifier: in.Identifier, Name: strings.TrimSpace(in.Name), ServerClientID: server,
 	})
 	if pgxerr.IsUnique(err) {
@@ -209,7 +209,7 @@ func (h *Handler) deleteResource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) auditResource(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID, id uuid.UUID, action, identifier string) error {
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	return audit.Record(ctx, tx, audit.Event{
 		TenantID: &tenantID, ActorUserID: actorID, ActorType: actorType,
 		Action: action, ResourceType: "oidc_resource", ResourceID: &id,

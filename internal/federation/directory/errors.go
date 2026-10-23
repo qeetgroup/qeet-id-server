@@ -15,6 +15,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
+// ErrorSummary counts the directory errors on a page's filter.
 type ErrorSummary struct {
 	Open          int  `json:"open"`
 	Critical      int  `json:"critical"`
@@ -23,11 +24,13 @@ type ErrorSummary struct {
 	ImpactedUsers *int `json:"impacted_users"`
 }
 
+// Breakdown is how many errors share a key, such as a category.
 type Breakdown struct {
 	Key   string `json:"key"`
 	Count int    `json:"count"`
 }
 
+// ErrorPage is one page of directory errors with their summary.
 type ErrorPage struct {
 	Items        []Event      `json:"items"`
 	Total        int          `json:"total"`
@@ -47,6 +50,7 @@ type errorFilter struct {
 
 const errorWhere = `tenant_id=$1 AND started_at >= $2 AND ($3='' OR connection_id=$3) AND ($4='' OR severity=$4) AND ($5='' OR resolution=$5) AND ($6='' OR message ILIKE '%'||$6||'%' OR error_code ILIKE '%'||$6||'%' OR resource_id ILIKE '%'||$6||'%') AND status <> 'success'`
 
+// Errors returns one page of the tenant's directory errors.
 func (service *Service) Errors(ctx context.Context, tenantID uuid.UUID, filter errorFilter) (ErrorPage, error) {
 	page := ErrorPage{Items: []Event{}, Categories: []Breakdown{}, Connections: []Breakdown{}, Remediations: []Event{}, Limit: filter.Limit, Offset: filter.Offset}
 	if tenantID == uuid.Nil || service.pool == nil {
@@ -145,6 +149,7 @@ func (handler *Handler) errors(response http.ResponseWriter, request *http.Reque
 
 type retryContextKey struct{}
 
+// LDAPTester tests an LDAP connection.
 type LDAPTester interface {
 	TestConnection(context.Context, uuid.UUID, uuid.UUID) error
 }

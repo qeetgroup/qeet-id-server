@@ -1,8 +1,6 @@
-// Package errs defines the canonical, transport-agnostic error vocabulary for
-// qeet-id. Each error carries a stable machine code; the transport layer (see
-// internal/platform/http) maps that code to an HTTP status, so these errors are
-// reusable across HTTP, gRPC, CLI, jobs, and event consumers without any of
-// them being baked into the domain error.
+// Package errs defines qeet-id's transport-agnostic errors. Each error has a
+// stable, namespaced code that clients branch and localize on, never the
+// message, and a shipped code never changes. The HTTP layer maps codes to statuses.
 package errs
 
 import (
@@ -18,6 +16,8 @@ type FieldError struct {
 	Message string `json:"message"`
 }
 
+// Error is a transport-agnostic error: a stable code, a safe message, and
+// optional detail, metadata and cause.
 type Error struct {
 	Code    string // stable machine identifier, e.g. "mfa.code_invalid"
 	Message string // human-facing text shown to the end user
@@ -63,11 +63,10 @@ func (e *Error) Is(target error) bool {
 	return ok && e.Code == t.Code
 }
 
-// Wrap attaches an underlying cause, kept for logs and never shown to users:
+// Wrap attaches err as the cause, kept for logs and never shown to users. It
+// returns e unchanged when err is nil:
 //
 //	return errs.ErrAuthSessionInvalid.Wrap(dbErr)
-//
-// Wrapping nil is a no-op (returns the receiver unchanged, no allocation).
 func (e *Error) Wrap(err error) *Error {
 	if err == nil {
 		return e
@@ -139,6 +138,7 @@ func New(code, msg string) *Error {
 	return &Error{Code: code, Message: msg, TranslationKey: code}
 }
 
+// As returns the *Error in err's chain, or nil.
 func As(err error) *Error {
 	var e *Error
 	if errors.As(err, &e) {

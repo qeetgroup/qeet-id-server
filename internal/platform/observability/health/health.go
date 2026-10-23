@@ -1,17 +1,13 @@
-// Package health exposes Kubernetes-shaped liveness and readiness probes.
-//
-// /healthz reports process aliveness. It returns 200 unconditionally — if
-// Go can answer the request at all, the process is alive. Kubernetes uses
-// this signal to decide whether to restart the pod.
-//
-// /readyz runs every registered dependency check with a short shared
-// timeout and returns 503 if any check fails. Kubernetes uses this signal
-// to decide whether to route traffic to the pod.
+// Package health serves the liveness (/healthz), readiness (/readyz) and
+// /version endpoints. Liveness always returns 200; readiness runs every
+// registered check under one 2s timeout and returns 503 if any fails, or once
+// the server has begun to drain for shutdown.
 package health
 
 import (
 	"context"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -31,21 +27,23 @@ type namedCheck struct {
 	fn   Check
 }
 
+// Handler serves the health endpoints. ServiceProfile (dev/test/staging, empty
+// elsewhere) is added to the liveness body when set; Schema, the migration found
+// at startup, is reported by /version when non-nil.
 type Handler struct {
-	ServiceName string
-	ServiceEnv  string
-	// ServiceProfile is the local environment (dev/test/staging); empty elsewhere
-	// and then omitted from the liveness body.
+	ServiceName    string
+	ServiceEnv     string
 	ServiceProfile string
 	StartedAt      time.Time
 	Build          buildinfo.Info
-	// Schema is the database's migration as this process found it at start
-	// (after migrating), reported by /version; nil omits it.
-	Schema *migrations.Status
+	Schema         *migrations.Status
+
+	draining atomic.Bool
 
 	checks []namedCheck
 }
 
+// New returns a Handler carrying this binary's build metadata.
 func New(serviceName, serviceEnv string, startedAt time.Time) *Handler {
 	return &Handler{
 		ServiceName: serviceName,
@@ -91,9 +89,17 @@ func (h *Handler) Version(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, body)
 }
 
+// Drain makes readiness answer 503 from now on, so a load balancer sends no
+// new requests while the server finishes the ones it has.
+func (h *Handler) Drain() { h.draining.Store(true) }
+
 // Readiness runs every registered check under a 2 s timeout and returns
-// 503 with a per-check breakdown if any one fails.
+// 503 with a per-check breakdown if any one fails, or 503 while draining.
 func (h *Handler) Readiness(w http.ResponseWriter, r *http.Request) {
+	if h.draining.Load() {
+		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "draining"})
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 

@@ -102,6 +102,7 @@ SELECT id, name, scope, last4, created_at, updated_at
 FROM tenant.secrets
 WHERE tenant_id = $1
 ORDER BY created_at DESC
+LIMIT 1001
 `
 
 type ListSecretsRow struct {
@@ -116,6 +117,7 @@ type ListSecretsRow struct {
 // Per-tenant secrets vault (table tenant.secrets, migration 0039_secrets).
 // Values are stored encrypted at rest (AES-256-GCM); plaintext is only ever
 // returned via RevealSecret / GetSecretByName and always audited by the caller.
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListSecrets(ctx context.Context, tenantID uuid.UUID) ([]ListSecretsRow, error) {
 	rows, err := q.db.Query(ctx, listSecrets, tenantID)
 	if err != nil {

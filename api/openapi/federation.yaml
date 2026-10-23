@@ -26,7 +26,9 @@ info:
 
     ## Authentication
 
-    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /v1/ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it.
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it.
+
+    The responses of the two token endpoints, device and back-channel authorization, the consent decision (an authorization code), directory sign-in, social and SAML code exchange, the SAML IdP's sign-on page (a signed assertion), and of the operations returning a new client secret, service-principal credential, SCIM token or admin-portal link, are sent with `Cache-Control: no-store` and `Pragma: no-cache`.
 
     ## Related APIs
 
@@ -149,7 +151,7 @@ paths:
   /oauth/introspect:
     post:
       operationId: post_oauth_introspect
-      description: 'Reports whether a supplied access or refresh token is currently active and returns its associated claims when it is (RFC 7662), with Qeet acting as the OAuth authorization server. Callers authenticate with OAuth client credentials supplied as form parameters or via HTTP Basic. Mounted at the root, not under /v1; it pairs with the revocation endpoint for token lifecycle management. A public client can''t call it: its client_id is in every sign-in link and proves nothing, so the call answers 401 oidc.client_auth_failed. Wrong secrets are audited. An application only learns about tokens it owns: an access token issued to it (its client_id claim), or one issued for a registered resource it serves (server_client_id), and a refresh token issued to it. Any other token, including another application''s in the same organisation or one from another organisation, answers only {"active": false}, so the endpoint never confirms a token exists; asking about another application''s token is audited as oidc.introspection_refused. An active access token reports its real aud (a string for one audience, a list for several), its client_id, and resource when it was issued for one. Introspection is the authoritative answer on revocation: a signature-valid access token whose account is suspended or deleted, whose membership of the organisation has ended, or whose agent is no longer active, answers {"active": false}. A verifier that checks tokens offline (signature and expiry) accepts such a token until it expires (ACCESS_TOKEN_TTL, 10 minutes by default); call introspection where revocation must take effect at once.'
+      description: 'Reports whether a supplied access or refresh token is currently active and returns its associated claims when it is (RFC 7662), with Qeet acting as the OAuth authorization server. Callers authenticate with OAuth client credentials supplied as form parameters or via HTTP Basic. Mounted at the root, not under /v1; it pairs with the revocation endpoint for token lifecycle management. A public client can''t call it: its client_id is in every sign-in link and proves nothing, so the call answers 401 oidc.client_auth_failed. Wrong secrets are audited. An application only learns about tokens it owns: an access token issued to it (its client_id claim), or one issued for a registered resource it serves (server_client_id), and a refresh token issued to it. Any other token, including another application''s in the same organisation or one from another organisation, answers only {"active": false}, so the endpoint never confirms a token exists; asking about another application''s token is audited as oidc.introspection_refused. An active access token reports its real aud (a string for one audience, a list for several), its client_id, and resource when it was issued for one. Introspection is the authoritative answer on revocation: a signature-valid access token whose account is suspended or deleted, whose membership of the organisation has ended, whose session has ended (a person''s own token, not an application''s), or whose agent is no longer active, answers {"active": false}. A verifier that checks tokens offline (signature and expiry) accepts such a token until it expires (ACCESS_TOKEN_TTL, 10 minutes by default); call introspection where revocation must take effect at once.'
       summary: Token introspect (RFC 7662)
       tags:
         - OIDC
@@ -552,7 +554,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CIBAPendingRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/oauth/bc-authorize/decision:
@@ -719,11 +726,15 @@ paths:
       requestBody:
         required: false
         content:
-          application/json:
+          application/x-www-form-urlencoded:
             schema:
               type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+              properties:
+                id_token_hint: {type: string}
+                post_logout_redirect_uri: {type: string}
+                client_id: {type: string}
+                state: {type: string}
+                logout_confirmation: {type: string}
       responses:
         '302':
           description: Redirect to post_logout_redirect_uri
@@ -732,7 +743,7 @@ paths:
   /v1/oauth/token:
     post:
       operationId: post_v1_oauth_token
-      description: 'Issues an access token for the OAuth 2.0 client_credentials grant only, for machine-to-machine callers such as service principals that authenticate with a client id and secret. Every other grant type is rejected here: use the token-code endpoint for authorization_code, refresh_token, device_code, token-exchange and CIBA. Mounted under /v1 and deliberately not advertised as the discovery token_endpoint.'
+      description: 'Issues an access token for the OAuth 2.0 client_credentials grant only, for machine-to-machine callers such as service principals that authenticate with a client id and secret. Every other grant type is rejected here: use the token-code endpoint for authorization_code, refresh_token, device_code, token-exchange and CIBA. Mounted under /v1 and deliberately not advertised as the discovery token_endpoint. Errors take the RFC 6749 §5.2 shape (error, error_description): a missing grant_type is invalid_request, another grant unsupported_grant_type, a disabled principal unauthorized_client, and a missing or wrong secret or an unknown client 401 invalid_client, with WWW-Authenticate: Basic when the client used HTTP Basic. The per-address rate limit answers 429 too_many_requests in the error envelope.'
       summary: OAuth token (client_credentials)
       tags:
         - OIDC
@@ -771,17 +782,20 @@ paths:
                 access_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.eyJhY3RvciI6InNlcnZpY2UifQ.FAKE-signature
                 token_type: Bearer
                 expires_in: 3600
+                expires_at: '2026-09-24T11:15:00Z'
                 scope: audit:read users:read
               schema:
                 $ref: '#/components/schemas/OAuthTokenResponse'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/OAuthBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/OAuthUnauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/oauth/token-code:
     post:
       operationId: post_v1_oauth_token_code
-      description: 'The OAuth token endpoint advertised in discovery, serving the authorization_code, refresh_token, device_code (RFC 8628), token-exchange (RFC 8693) and CIBA grants with Qeet as the authorization server. Clients authenticate with their credentials in the form body or via HTTP Basic. This endpoint does not serve client_credentials: use the client-credentials token endpoint at /v1/oauth/token for machine-to-machine tokens. Every grant refuses an account that is suspended or deleted (auth.account_suspended for code and refresh, invalid_grant account_suspended for device and CIBA polling), and a refused refresh ends the application''s refresh tokens for that user. Device polling from an address the organisation''s address rules refuse answers access_denied address_not_allowed and spends the device code; code redemption and refresh come from the application''s server, so the address rules are asked at authorization instead. An authorization code redeems once, with the code_verifier of its challenge; a code issued under a PKCE exemption redeems only while the exemption lasts. A code presented a second time is refused (oidc.auth_code_used) and the grant its first redemption issued is revoked, every renewal of it included (audited as oidc.authorization_code_reused). Token exchange (RFC 8693) is bounded: the caller must be entitled to the subject token (issued to it, issued for a registered resource it serves, or the person consented to it; else oidc.subject_token_invalid), the person must still be active and the organisation live (auth.account_suspended), the result expires no later than the subject token, carries a new session id, and records its exchange_depth; a token TOKEN_EXCHANGE_MAX_DEPTH exchanges deep (2) can''t be exchanged again (oidc.exchange_depth_exceeded). Every exchange is audited as oidc.token_exchanged.'
+      description: 'The OAuth token endpoint advertised in discovery, serving the authorization_code, refresh_token, device_code (RFC 8628), token-exchange (RFC 8693) and CIBA grants with Qeet as the authorization server. Clients authenticate with their credentials in the form body or via HTTP Basic. This endpoint does not serve client_credentials: use the client-credentials token endpoint at /v1/oauth/token for machine-to-machine tokens. Errors take the RFC 6749 §5.2 shape (error, error_description): a missing grant_type is invalid_request, an unknown grant or client_credentials unsupported_grant_type, and a grant the client may not use unauthorized_client. Every grant refuses an account that is suspended or deleted with invalid_grant, and a refused refresh ends the application''s refresh tokens for that user. Device polling from an address the organisation''s address rules refuse answers access_denied address_not_allowed and spends the device code; code redemption and refresh come from the application''s server, so the address rules are asked at authorization instead. An authorization code redeems once, with the code_verifier of its challenge; a code issued under a PKCE exemption redeems only while the exemption lasts. A code presented a second time is refused with invalid_grant and the grant its first redemption issued is revoked, every renewal of it included (audited as oidc.authorization_code_reused). Token exchange (RFC 8693) is bounded: the caller must be entitled to the subject token (issued to it, issued for a registered resource it serves, or the person consented to it; else invalid_request), the person must still be active and the organisation live (else invalid_grant), the result expires no later than the subject token, carries a new session id, and records its exchange_depth; a token TOKEN_EXCHANGE_MAX_DEPTH exchanges deep (2) can''t be exchanged again (invalid_request). Every exchange is audited as oidc.token_exchanged; a scope beyond the subject token''s is invalid_scope. A refresh may name only the resource (RFC 8707) its grant is bound to: another is refused with 400 invalid_target, and naming none carries the bound resource forward. Device and CIBA polling authenticate the client as the other grants do: a confidential client with a missing or wrong secret, or an unknown client_id, is refused with 401 invalid_client, with WWW-Authenticate: Basic when the client used HTTP Basic; a public client is identified by its client_id, and the device_code or auth_req_id is the proof. The per-address rate limit answers 429 too_many_requests in the error envelope.'
       summary: Token (authorization_code)
       tags:
         - OIDC
@@ -813,9 +827,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/OAuthTokenResponse'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/OAuthBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/OAuthUnauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/oauth/userinfo:
     get:
       operationId: get_v1_oauth_userinfo
@@ -996,7 +1012,7 @@ paths:
   /v1/service-principals:
     post:
       operationId: post_v1_service_principals
-      description: 'Creates a service principal, a non-human machine identity, in the caller''s tenant and returns its client id and one-time client secret, which cannot be retrieved afterward. The principal authenticates for machine-to-machine access at the client-credentials token endpoint (POST /v1/oauth/token). Creation is audited; disable the principal when it is no longer needed.'
+      description: 'Creates a service principal, a non-human machine identity, in the caller''s tenant and returns its client id and one-time client secret, which cannot be retrieved afterward. The principal authenticates for machine-to-machine access at the client-credentials token endpoint (POST /v1/oauth/token). Creation is audited; disable the principal when it is no longer needed. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress.'
       summary: Create service principal
       tags:
         - OIDC
@@ -1009,14 +1025,27 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/ServicePrincipalCreate'
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       responses:
+        '409': {description: 'A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly.'}
         '201':
           description: Service principal created (secret shown once)
           content:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [client_id, client_secret, service_principal, warning]
+                properties:
+                  client_id:
+                    type: string
+                    format: uuid
+                  client_secret:
+                    type: string
+                  service_principal:
+                    $ref: '#/components/schemas/Principal'
+                  warning:
+                    type: string
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -1040,7 +1069,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Disables a service principal: its credentials no longer get tokens. Requires apikey.write. Needs a recent step-up.'
       responses:
         '204':
           description: No Content
@@ -1079,6 +1108,7 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated: {type: boolean, description: 'Present, true, when the list was cut at its limit (1000).'}
                   items:
                     type: array
                     items:
@@ -1316,7 +1346,7 @@ paths:
     get:
       operationId: get_v1_tenants_ByTenantID_oidc_clients_ById_auth_failures
       summary: Application secret failures
-      description: 'An application''s wrong-secret lockout and its last 20 failed authentications, newest first, each with its time and address (no secret material is ever recorded). Wrong secrets count against a confidential application on every endpoint that takes one (code exchange, refresh, token exchange, device and backchannel requests, revocation, introspection); past the threshold (CLIENT_AUTH_LOCKOUT_THRESHOLD in CLIENT_AUTH_LOCKOUT_WINDOW, 10 in 15 minutes by default) every authentication is refused for CLIENT_AUTH_LOCKOUT_DURATION (15 minutes), the right secret included, with the same 401 oidc.client_auth_failed as a wrong secret or an unknown application. Each failure is audited as oidc.client_auth_failed; a lockout as oidc.client_locked_out, and announced as the oidc.client.locked_out event. A successful authentication resets the count. locked_until is null when no lockout is in force.'
+      description: 'An application''s wrong-secret lockout and its last 20 failed authentications, newest first, each with its time and address (no secret material is ever recorded). Wrong secrets count against a confidential application on every endpoint that takes one (code exchange, refresh, token exchange, device and backchannel requests, revocation, introspection); past the threshold (CLIENT_AUTH_LOCKOUT_THRESHOLD in CLIENT_AUTH_LOCKOUT_WINDOW, 10 in 15 minutes by default) every authentication is refused for CLIENT_AUTH_LOCKOUT_DURATION (15 minutes), the right secret included, with the same 401 oidc.client_auth_failed as a wrong secret or an unknown application. Each failure is audited as oidc.client_auth_failed; a lockout as oidc.client_locked_out, and announced as the oidc.client_locked_out event. A successful authentication resets the count. locked_until is null when no lockout is in force.'
       tags:
         - OIDC
       parameters:
@@ -1551,7 +1581,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ShadowAICandidate'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1612,11 +1647,11 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated: {type: boolean, description: 'Present, true, when the list was cut at its limit (1000).'}
                   items:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/Grant'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1668,7 +1703,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the organisation''s service principals, without their secrets. Requires apikey.read.'
       responses:
         '200':
           description: OK
@@ -1676,7 +1711,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Principal'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1699,18 +1739,17 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+              $ref: '#/components/schemas/exchangeInput'
       description: 'Trades the one-time code a social sign-in callback handed back (the console''s own, or an organisation''s) for the sign-in''s result. Social sign-in takes the same second-factor decision as a password sign-in: the response is a token pair, or, when the account holds a second factor, the organisation requires one, or the sign-in is risky, the challenge instead (mfa_required, mfa_token, methods, factors, and enrollment_required for an account that must set one up), completed at POST /v1/auth/mfa.'
       responses:
-        '201':
-          description: Created
+        '200':
+          description: A token pair, or the second-factor challenge to complete first.
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                oneOf:
+                  - $ref: '#/components/schemas/TokenPair'
+                  - $ref: '#/components/schemas/MFAChallenge'
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
@@ -1734,7 +1773,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ExternalIdentity'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '429':
@@ -1855,7 +1899,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Unlinks one of the caller''s social accounts. Requires user.write.'
       responses:
         '204':
           description: No Content
@@ -1909,8 +1953,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Provider'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1969,8 +2012,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Provider'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2033,13 +2075,8 @@ paths:
             type: string
       security: []
       responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
+        '302':
+          description: 'OK'
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
@@ -2087,7 +2124,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [providers]
+                properties:
+                  providers:
+                    type: array
+                    items:
+                      type: string
   /v1/social/{provider}/start:
     get:
       operationId: get_v1_social_ByProvIDer_start
@@ -2103,13 +2145,8 @@ paths:
       security: []
       description: 'Begins a social sign-in and redirects the browser to the provider. ?tenant (slug) or ?tenant_id names the organisation; without either it is the console''s own sign-in, where ?intent=signup allows creating an account. ?return_to opts into the hosted flow. The browser is given an HttpOnly binding cookie (qe_social, __Host- prefixed outside dev, SameSite=None so a form_post callback carries it) naming the sign-in, which the callback requires.'
       responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
+        '302':
+          description: 'OK'
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
@@ -2131,7 +2168,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the organisation''s social sign-in providers, without their client secrets. Requires connection.read.'
       responses:
         '200':
           description: OK
@@ -2139,7 +2176,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Provider'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2165,7 +2207,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the social accounts linked to a user in the organisation. Requires user.read.'
       responses:
         '200':
           description: OK
@@ -2173,7 +2215,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ExternalIdentity'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2246,13 +2293,20 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /saml/idp/metadata:
+  /saml/idp/{tenantID}/metadata:
     get:
-      operationId: get_saml_idp_metadata
-      description: 'Returns Qeet''s SAML Identity Provider metadata XML, including the entity id, signing certificate and the redirect- and POST-binding SingleSignOnService endpoints, for downstream Service Providers to configure Qeet as their IdP. Mounted at the root, not under /v1, and unauthenticated. Register each downstream SP with the SAML SP (IdP side) endpoints before it can obtain assertions at the IdP SSO endpoint.'
+      operationId: get_saml_idp_ByTenantID_metadata
+      description: 'Returns the tenant''s SAML Identity Provider metadata XML, including the tenant''s IdP entity id (/saml/idp/{tenantID}), the signing certificate and the redirect- and POST-binding SingleSignOnService endpoints (/saml/idp/{tenantID}/sso), for downstream Service Providers to configure Qeet as their IdP. Mounted at the root, not under /v1, and unauthenticated. An unknown or inactive tenant returns 404. Register each downstream SP with the SAML SP (IdP side) endpoints before it can obtain assertions at the tenant''s IdP SSO endpoint.'
       summary: "[idp] IdP metadata"
       tags:
         - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
       security: []
       responses:
         '200':
@@ -2261,14 +2315,22 @@ paths:
             application/xml:
               schema:
                 type: string
-  /saml/idp/sso:
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /saml/idp/{tenantID}/sso:
     get:
-      operationId: get_saml_idp_sso
-      description: 'The SAML SingleSignOnService over the HTTP-Redirect binding, with Qeet acting as the Identity Provider. It handles SP-initiated SSO from a registered Service Provider''s AuthnRequest and IdP-initiated SSO by SP reference; the user is authenticated by the hosted-login SSO cookie, and the browser is bounced to the hosted login when no session exists. On success it returns an auto-submitting HTML form that POSTs a signed SAMLResponse to the SP''s registered ACS URL. The POST-binding variant is POST /saml/idp/sso.'
+      operationId: get_saml_idp_ByTenantID_sso
+      description: 'The tenant''s SAML SingleSignOnService over the HTTP-Redirect binding, with Qeet acting as the Identity Provider. It handles SP-initiated SSO from the AuthnRequest of a Service Provider registered in that tenant and IdP-initiated SSO by SP reference; only SPs of the tenant in the path are matched. The user is authenticated by the hosted-login SSO cookie, and the browser is bounced to the hosted login when no session exists. On success it returns an auto-submitting HTML form that POSTs a signed SAMLResponse to the SP''s registered ACS URL. An unknown or inactive tenant, or an unknown SP, returns 404. The POST-binding variant is POST /saml/idp/{tenantID}/sso.'
       summary: "[idp] IdP SSO (redirect binding)"
       tags:
         - SAML
       parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
         - in: query
           name: SAMLRequest
           schema:
@@ -2289,12 +2351,21 @@ paths:
           description: Redirect to hosted login when no SSO session
         '400':
           $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
     post:
-      operationId: post_saml_idp_sso
-      description: 'The SAML SingleSignOnService over the HTTP-POST binding, with Qeet acting as the Identity Provider; equivalent to GET /saml/idp/sso for Service Providers that send the AuthnRequest via POST. The user is authenticated by the hosted-login SSO cookie, with a redirect to the hosted login when no session exists, and any supplied AssertionConsumerServiceURL must match the SP''s registered ACS. On success it returns an auto-submitting form that POSTs a signed SAMLResponse to that ACS.'
+      operationId: post_saml_idp_ByTenantID_sso
+      description: 'The tenant''s SAML SingleSignOnService over the HTTP-POST binding, with Qeet acting as the Identity Provider; equivalent to GET /saml/idp/{tenantID}/sso for Service Providers that send the AuthnRequest via POST. Only SPs of the tenant in the path are matched. The user is authenticated by the hosted-login SSO cookie, with a redirect to the hosted login when no session exists; that sign-in returns to GET /saml/idp/{tenantID}/sso carrying the request and RelayState, so the flow resumes. A posted request over 256 KiB is refused with saml.authn_request_invalid. Any supplied AssertionConsumerServiceURL must match the SP''s registered ACS. On success it returns an auto-submitting form that POSTs a signed SAMLResponse to that ACS. An unknown or inactive tenant, or an unknown SP, returns 404.'
       summary: "[idp] IdP SSO (POST binding)"
       tags:
         - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
       security: []
       requestBody:
         required: true
@@ -2318,6 +2389,8 @@ paths:
           description: Redirect to hosted login when no SSO session
         '400':
           $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /saml/login/{id}:
     get:
       operationId: get_saml_login_ById
@@ -2340,7 +2413,7 @@ paths:
   /saml/metadata/{id}:
     get:
       operationId: get_saml_metadata_ById
-      description: 'Returns Qeet''s Service Provider metadata XML for a specific connection, comprising the SP entity id and the HTTP-POST Assertion Consumer Service location, for an external IdP administrator to configure the trust. Mounted at the root, not under /v1, and unauthenticated. Qeet acts as the Service Provider here; this is distinct from the IdP-side metadata at /saml/idp/metadata.'
+      description: 'Returns Qeet''s Service Provider metadata XML for a specific connection, comprising the SP entity id and the HTTP-POST Assertion Consumer Service location, for an external IdP administrator to configure the trust. Mounted at the root, not under /v1, and unauthenticated. Qeet acts as the Service Provider here; this is distinct from the IdP-side metadata at /saml/idp/{tenantID}/metadata.'
       summary: SP metadata (public)
       tags:
         - SAML
@@ -2462,7 +2535,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_saml_providers
-      description: 'Registers a downstream Service Provider in the tenant, including its entity id, ACS URL and NameID format, so it can obtain signed assertions from Qeet acting as the Identity Provider. Registered SPs are matched by AuthnRequest issuer or SP reference at the IdP SSO endpoint. Give the SP administrator Qeet''s IdP metadata from /saml/idp/metadata to complete the trust.'
+      description: 'Registers a downstream Service Provider in the tenant, including its entity id, ACS URL and NameID format, so it can obtain signed assertions from Qeet acting as the Identity Provider. Registered SPs are matched by AuthnRequest issuer or SP reference at the tenant''s IdP SSO endpoint, /saml/idp/{tenantID}/sso; the entity id need be unique only within the tenant. Give the SP administrator the tenant''s IdP metadata from /saml/idp/{tenantID}/metadata to complete the trust. The ACS URL, where signed assertions are posted, must be an absolute https URL without user information (plain http only to localhost), or the answer is 422 saml.acs_url_invalid.'
       summary: Register SAML SP (IdP side)
       tags:
         - SAML
@@ -2561,7 +2634,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_tenants_ByTenantID_saml_providers_ById
-      description: 'Updates a registered downstream Service Provider''s configuration in the tenant, such as its entity id, ACS URL, NameID settings or status, on the IdP side where Qeet acts as the Identity Provider. Changes are confined to the tenant in the path and are audited.'
+      description: 'Updates a registered downstream Service Provider''s configuration in the tenant, such as its entity id, ACS URL, NameID settings or status, on the IdP side where Qeet acts as the Identity Provider. Changes are confined to the tenant in the path and are audited. A new ACS URL is checked as on registration (422 saml.acs_url_invalid).'
       summary: Update SAML SP
       tags:
         - SAML
@@ -2600,6 +2673,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
   /v1/tenants/{tenantID}/saml/{id}/test:
     post:
       operationId: post_v1_tenants_ByTenantID_saml_ById_test
@@ -2628,8 +2703,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/TestResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2740,6 +2814,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
   /ldap/{id}/authenticate:
     post:
       operationId: post_ldap_ById_authenticate
@@ -2753,21 +2829,71 @@ paths:
           schema:
             type: string
       security: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+                  format: password
+      description: 'Signs a person in with their directory username and password and answers with a token pair, or with a challenge to complete at POST /v1/auth/mfa as for a password sign-in. The connection''s organisation''s network rules apply first (403 auth.address_not_allowed, whatever the password), then the password is checked by a bind against the connection''s directory, under the sign-in lockout, login hook, risk and second-factor rules of that organisation, as a password sign-in is. The lockout counts a username case-insensitively, ignoring extra spaces. A wrong username or password is refused with 401 ldap.invalid_credentials and counted by the lockout like a wrong password. A locked account answers 429 auth.account_locked whatever the password (a throttled source network, 429 too_many_requests), and when the lockout counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable. A disabled connection is refused with 403 ldap.connection_disabled. A sign-in that needs another step (a second factor, setting one up, or a risk confirmation by an emailed code) answers with that challenge, as POST /v1/auth/login does; the session it completes is recorded as an ldap_mfa sign-in. A directory account whose email belongs to an account outside the connection''s organisation is refused with 403 ldap.account_not_in_tenant, and an account that is not active with 403 auth.account_inactive. An empty username or password is refused with 400 ldap.credentials_required, and a connection that does not verify the directory''s certificate with 422 ldap.tls_verify_required.'
       responses:
-        '201':
-          description: Created
+        '200':
+          description: Signed in with a token pair, or a challenge to complete at POST /v1/auth/mfa (the MFAChallenge of the authentication API).
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                oneOf:
+                  - $ref: '#/components/schemas/TokenPair'
+                  - type: object
+                    properties:
+                      mfa_required:
+                        type: boolean
+                      mfa_token:
+                        type: string
+                      methods:
+                        type: array
+                        items:
+                          type: string
+                      enrollment_required:
+                        type: boolean
+                    additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: The directory refused the username or password (`ldap.invalid_credentials`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 'The organisation does not allow sign-in from this network (`auth.address_not_allowed`), the connection is disabled (`ldap.connection_disabled`), or the account may not sign in here (`ldap.account_not_in_tenant`, `auth.account_inactive`).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
-          $ref: '#/components/responses/TooManyRequests'
+          description: The account is locked (`auth.account_locked`), the source network is throttled, or the rate limit is exceeded (`too_many_requests`). A locked account gets the same answer whatever the password.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: The sign-in lockout could not be evaluated, so the attempt was refused (`auth.sign_in_unavailable`, retryable).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /v1/tenants/{tenantID}/ldap:
     get:
       operationId: get_v1_tenants_ByTenantID_ldap
@@ -2783,7 +2909,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the organisation''s LDAP connections, without their bind passwords. Requires connection.read.'
       responses:
         '200':
           description: OK
@@ -2791,7 +2917,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LdapConnection'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2821,18 +2952,15 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/LdapCreateInput'
+      description: 'Creates a directory connection. A connection that turns off verification of the directory server''s certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required, and nothing is saved; only a development server (SERVICE_ENV=dev) allows it. Requires connection.write.'
       responses:
         '201':
           description: Created
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/LdapConnection'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2863,7 +2991,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Deletes one of the organisation''s LDAP connections. Requires connection.write.'
       responses:
         '204':
           description: No Content
@@ -2896,15 +3024,14 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Returns one of the organisation''s LDAP connections, without its bind password. Requires connection.read.'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/LdapConnection'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2939,18 +3066,15 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/LdapUpdateInput'
+      description: 'Applies a partial update to a directory connection. A connection that turns off verification of the directory server''s certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required, and so is any other change to a connection saved that way until it turns verification back on; only a development server (SERVICE_ENV=dev) allows it. Requires connection.write.'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/LdapConnection'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2981,23 +3105,18 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Binds with the connection''s service account to prove its settings, without signing anyone in. A connection that turns off verification of the directory server''s certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required; only a development server (SERVICE_ENV=dev) allows it. Requires connection.write.'
       responses:
-        '201':
-          description: Created
+        '200':
+          description: 'The bind succeeded ({"ok": true})'
           content:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3052,7 +3171,8 @@ paths:
         '201':
           description: Mapping created and audited
           content: {application/json: {schema: {$ref: '#/components/schemas/DirectoryMapping'}}}
-        '400': {description: Invalid source, target, type or transform}
+        '400': {description: 'Invalid id, version or body'}
+        '422': {description: 'Mapping refused: validation_failed, with error.fields[0].field naming the property at fault (source_attribute, target_field, value_type, transform or pattern) and error.fields[0].code the reason: directory.mapping_source_invalid, directory.mapping_source_credential, directory.mapping_target_unsupported, directory.mapping_value_type_mismatch, directory.mapping_transform_unsupported, directory.mapping_pattern_unexpected or directory.mapping_pattern_invalid.'}
         '401': {description: Authentication required}
         '403': {description: Tenant mismatch or missing connection.write}
         '404': {description: Connection not found in this tenant}
@@ -3075,11 +3195,12 @@ paths:
         '200':
           description: Updated mapping and incremented version
           content: {application/json: {schema: {$ref: '#/components/schemas/DirectoryMapping'}}}
-        '400': {description: Invalid mapping or missing version}
+        '400': {description: 'Invalid id, version or body'}
+        '422': {description: 'Mapping refused: validation_failed, with error.fields[0].field naming the property at fault (source_attribute, target_field, value_type, transform or pattern) and error.fields[0].code the reason: directory.mapping_source_invalid, directory.mapping_source_credential, directory.mapping_target_unsupported, directory.mapping_value_type_mismatch, directory.mapping_transform_unsupported, directory.mapping_pattern_unexpected or directory.mapping_pattern_invalid.'}
         '401': {description: Authentication required}
         '403': {description: Tenant mismatch or missing connection.write}
         '404': {description: Connection not found}
-        '409': {description: Stale version, missing mapping or duplicate enabled target}
+        '409': {description: 'Stale version, missing mapping or duplicate enabled target'}
     delete:
       operationId: delete_directory_connection_mapping
       description: 'Deletes a single profile attribute-mapping rule from a directory connection, scoped to the tenant and connection in the path and requiring connection.write. The removal is audited in the same transaction, and subsequent SCIM writes and LDAP provisioning no longer apply the rule. Returns 404 when the mapping does not exist in this tenant and connection.'
@@ -3123,7 +3244,35 @@ paths:
                   values: {type: object, additionalProperties: true}
                   issues:
                     type: array
-                    items: {type: object, properties: {mapping_id: {type: string, format: uuid}, field: {type: string}, message: {type: string}}}
+                    items:
+                      type: object
+                      required: [mapping_id, field, code, message]
+                      properties:
+                        mapping_id: {type: string, format: uuid, description: 'The mapping at fault; the nil UUID for directory.mapping_preview_too_large.'}
+                        field: {type: string, description: 'Target profile field of the mapping at fault; empty for directory.mapping_preview_too_large.'}
+                        code:
+                          type: string
+                          description: Stable reason for the issue; word it from this.
+                          enum:
+                          - directory.mapping_preview_too_large
+                          - directory.mapping_source_invalid
+                          - directory.mapping_source_credential
+                          - directory.mapping_target_unsupported
+                          - directory.mapping_target_duplicate
+                          - directory.mapping_value_type_mismatch
+                          - directory.mapping_transform_unsupported
+                          - directory.mapping_pattern_unexpected
+                          - directory.mapping_pattern_invalid
+                          - directory.mapping_source_missing
+                          - directory.mapping_source_empty
+                          - directory.mapping_value_not_string
+                          - directory.mapping_value_not_array
+                          - directory.mapping_value_too_long
+                          - directory.mapping_value_too_many
+                          - directory.mapping_value_unmatched
+                          - directory.mapping_email_invalid
+                          - directory.mapping_display_name_too_long
+                        message: {type: string, description: 'English text kept for compatibility; it may change.'}
         '400': {description: Invalid source JSON}
         '401': {description: Authentication required}
         '403': {description: Tenant mismatch or missing connection.read}
@@ -3463,7 +3612,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '409':
-          $ref: '#/components/responses/Conflict'
+          $ref: '#/components/responses/SCIMConflict'
   /scim/v2/Groups/{id}:
     delete:
       operationId: delete_scim_v2_Groups_ById
@@ -3542,6 +3691,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/SCIMConflict'
         '404':
           $ref: '#/components/responses/NotFound'
     put:
@@ -3575,6 +3726,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/SCIMConflict'
         '404':
           $ref: '#/components/responses/NotFound'
   /scim/v2/ResourceTypes:
@@ -3861,15 +4014,14 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Returns the organisation''s SCIM settings: whether a token is set and its prefix, never the token. Requires connection.read.'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/ConfigView'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3895,7 +4047,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Deletes the organisation''s SCIM token, which stops provisioning. Requires connection.write. Needs a recent step-up.'
       responses:
         '204':
           description: No Content
@@ -3923,15 +4075,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Issues a new SCIM token, replacing any earlier one; it is shown only in this answer. Requires connection.write. Needs a recent step-up.'
       responses:
         '201':
           description: Created
@@ -3939,7 +4083,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [config, token]
+                properties:
+                  config:
+                    $ref: '#/components/schemas/ConfigView'
+                  token:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3965,7 +4114,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the users provisioned over SCIM. Requires connection.read.'
       responses:
         '200':
           description: OK
@@ -3973,7 +4122,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/adminUser'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4008,6 +4162,7 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated: {type: boolean, description: 'Present, true, when the list was cut at its limit (1000).'}
                   items:
                     type: array
                     items:
@@ -4120,7 +4275,15 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [context, expires_at, redirect_url]
+                properties:
+                  context:
+                    $ref: '#/components/schemas/PortalContext'
+                  expires_at:
+                    type: string
+                    format: date-time
+                  redirect_url:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
     delete:
@@ -4184,7 +4347,7 @@ paths:
     post:
       operationId: post_v1_admin_portal_saml
       summary: Create connection (portal)
-      description: Requires the link's capabilities to include "saml".
+      description: Requires the link's capabilities to include "saml". As on the tenant-admin endpoint, an IdP SSO URL that is not an absolute https URL answers 422 saml.sso_url_invalid, and a certificate that does not parse 422 saml.certificate_invalid.
       tags:
         - Admin Portal
       security:
@@ -4238,7 +4401,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_admin_portal_saml_ById
-      description: 'Updates a SAML connection from the cookie-authenticated admin portal; the link''s capabilities must include saml, and the change is confined to the tenant bound to the portal session and is audited. It lets an external IT admin adjust IdP details without a Qeet ID account; validate the result with the portal test endpoint.'
+      description: 'Updates a SAML connection from the cookie-authenticated admin portal; the link''s capabilities must include saml, and the change is confined to the tenant bound to the portal session and is audited. It lets an external IT admin adjust IdP details without a Qeet ID account; validate the result with the portal test endpoint. A new IdP SSO URL or certificate is checked as on create (422 saml.sso_url_invalid, saml.certificate_invalid).'
       summary: Update connection (portal)
       tags:
         - Admin Portal
@@ -4315,8 +4478,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/TestResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4338,8 +4500,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/ConfigView'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4360,7 +4521,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [config, token]
+                properties:
+                  config:
+                    $ref: '#/components/schemas/ConfigView'
+                  token:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4381,6 +4547,13 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: 'A key of the client''s choosing, 1 to 255 printable characters, that makes retrying the request safe. Kept for 24 hours.'
+      schema: {type: string, minLength: 1, maxLength: 255}
   securitySchemes:
     bearerAuth:
       type: http
@@ -4460,6 +4633,29 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    SCIMConflict:
+      description: 'RFC 7644 error with scimType uniqueness: the externalId is taken, or a group without an externalId takes a displayName, ignoring case, that another group without one uses (including when the change clears the externalId).'
+      content:
+        application/scim+json:
+          schema:
+            $ref: '#/components/schemas/SCIMError'
+    OAuthBadRequest:
+      description: The token request was refused (RFC 6749 §5.2).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OAuthError'
+    OAuthUnauthorized:
+      description: The client failed to authenticate (invalid_client).
+      headers:
+        WWW-Authenticate:
+          description: 'Basic realm="qeet", sent when the client used HTTP Basic.'
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OAuthError'
   schemas:
     DirectoryMapping:
       type: object
@@ -4898,7 +5094,52 @@ components:
           example: Bearer
         expires_in:
           type: integer
+          description: The access token's lifetime in seconds.
+        expires_at:
+          type: string
+          format: date-time
+          description: When the access token expires; client_credentials tokens only.
         scope:
+          type: string
+    SCIMError:
+      type: object
+      description: An RFC 7644 §3.12 SCIM error.
+      required: [schemas, status]
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+            enum: ['urn:ietf:params:scim:api:messages:2.0:Error']
+        status:
+          type: string
+          example: '409'
+        scimType:
+          type: string
+          example: uniqueness
+        detail:
+          type: string
+    OAuthError:
+      type: object
+      description: An RFC 6749 §5.2 token error.
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: string
+          enum:
+            - invalid_request
+            - invalid_client
+            - invalid_grant
+            - unauthorized_client
+            - unsupported_grant_type
+            - invalid_scope
+            - invalid_target
+            - authorization_pending
+            - slow_down
+            - access_denied
+            - expired_token
+        error_description:
           type: string
     Introspection:
       type: object
@@ -4917,8 +5158,7 @@ components:
         keys:
           type: array
           items:
-            type: object
-            additionalProperties: true
+            $ref: '#/components/schemas/JWK'
     SAMLConnection:
       type: object
       properties:
@@ -5220,3 +5460,385 @@ components:
           items:
             type: object
             additionalProperties: true
+    CIBAPendingRequest:
+      type: object
+      required: [client_name, created_at, expires_at, id, scopes]
+      properties:
+        binding_message:
+          type: string
+        client_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        scopes:
+          type: array
+          items:
+            type: string
+    ConfigView:
+      type: object
+      required: [created_at, last_used_at, provisioned_count, token_set]
+      properties:
+        created_at:
+          type: [string, 'null']
+          format: date-time
+        last_used_at:
+          type: [string, 'null']
+          format: date-time
+        provisioned_count:
+          type: integer
+        token_prefix:
+          type: string
+        token_set:
+          type: boolean
+    ExternalIdentity:
+      type: object
+      required: [email, id, linked_at, provider, subject, tenant_id, user_id]
+      properties:
+        email:
+          type: [string, 'null']
+        id:
+          type: string
+          format: uuid
+        linked_at:
+          type: string
+          format: date-time
+        provider:
+          type: string
+        subject:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+    LdapConnection:
+      type: object
+      required: [base_dn, bind_dn, created_at, email_attribute, id, last_login_at, name, name_attribute, server_url, skip_tls_verify, start_tls, status, tenant_id, updated_at, user_filter]
+      properties:
+        base_dn:
+          type: string
+        bind_dn:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        email_attribute:
+          type: string
+        id:
+          type: string
+          format: uuid
+        last_login_at:
+          type: [string, 'null']
+          format: date-time
+        name:
+          type: string
+        name_attribute:
+          type: string
+        server_url:
+          type: string
+        skip_tls_verify:
+          type: boolean
+        start_tls:
+          type: boolean
+        status:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+        updated_at:
+          type: string
+          format: date-time
+        user_filter:
+          type: string
+    LdapCreateInput:
+      type: object
+      required: [base_dn, bind_dn, bind_password, email_attribute, name, name_attribute, server_url, skip_tls_verify, start_tls, status, user_filter]
+      properties:
+        base_dn:
+          type: string
+        bind_dn:
+          type: string
+        bind_password:
+          type: string
+        email_attribute:
+          type: string
+        name:
+          type: string
+        name_attribute:
+          type: string
+        server_url:
+          type: string
+        skip_tls_verify:
+          type: boolean
+        start_tls:
+          type: boolean
+        status:
+          type: string
+        user_filter:
+          type: string
+    LdapUpdateInput:
+      type: object
+      required: [base_dn, bind_dn, bind_password, email_attribute, name, name_attribute, server_url, skip_tls_verify, start_tls, status, user_filter]
+      properties:
+        base_dn:
+          type: [string, 'null']
+        bind_dn:
+          type: [string, 'null']
+        bind_password:
+          type: [string, 'null']
+        email_attribute:
+          type: [string, 'null']
+        name:
+          type: [string, 'null']
+        name_attribute:
+          type: [string, 'null']
+        server_url:
+          type: [string, 'null']
+        skip_tls_verify:
+          type: [boolean, 'null']
+        start_tls:
+          type: [boolean, 'null']
+        status:
+          type: [string, 'null']
+        user_filter:
+          type: [string, 'null']
+    PortalBranding:
+      type: object
+      properties:
+        background_color:
+          type: string
+        logo_url:
+          type: string
+        primary_color:
+          type: string
+        secondary_color:
+          type: string
+    PortalContext:
+      type: object
+      required: [capabilities, expires_at, tenant_name]
+      properties:
+        branding:
+          $ref: '#/components/schemas/PortalBranding'
+        capabilities:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+        tenant_name:
+          type: string
+    Principal:
+      type: object
+      required: [created_at, disabled_at, id, name, scopes, tenant_id]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        disabled_at:
+          type: [string, 'null']
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        tenant_id:
+          type: string
+          format: uuid
+    Provider:
+      type: object
+      required: [client_id, created_at, discovery_url, enabled, id, provider, tenant_id]
+      properties:
+        client_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        discovery_url:
+          type: [string, 'null']
+        enabled:
+          type: boolean
+        id:
+          type: string
+          format: uuid
+        provider:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+    ShadowAICandidate:
+      type: object
+      required: [client_id, created_at, grant_types, id, live_grants, name]
+      properties:
+        client_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        grant_types:
+          type: array
+          items:
+            type: string
+        id:
+          type: string
+          format: uuid
+        live_grants:
+          type: integer
+        name:
+          type: string
+    TestCheck:
+      type: object
+      required: [name, ok]
+      properties:
+        detail:
+          type: string
+        name:
+          type: string
+        ok:
+          type: boolean
+    TestResult:
+      type: object
+      required: [checks, ok]
+      properties:
+        checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/TestCheck'
+        ok:
+          type: boolean
+    adminUser:
+      type: object
+      required: [created_at, display_name, email, external_id, id, status]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        display_name:
+          type: [string, 'null']
+        email:
+          type: string
+        external_id:
+          type: [string, 'null']
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+    exchangeInput:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+    Grant:
+      type: object
+      required: [client_id, expires_at, id, issued_at, scopes, user_email, user_id]
+      properties:
+        client_id:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        issued_at:
+          type: string
+          format: date-time
+        scopes:
+          type: array
+          items:
+            type: string
+        user_email:
+          type: string
+        user_id:
+          type: string
+          format: uuid
+    JWK:
+      type: object
+      required: [alg, crv, kid, kty, use, x, y]
+      properties:
+        alg:
+          type: string
+        crv:
+          type: string
+        kid:
+          type: string
+        kty:
+          type: string
+        use:
+          type: string
+        x:
+          type: string
+        y:
+          type: string
+    MFAChallenge:
+      type: object
+      description: >-
+        A sign-in stopped before its session: the account holds a second factor,
+        or must have one — its organisation requires MFA (of everyone, or of
+        administrators) or it is marked as requiring it. Complete it at POST
+        /v1/auth/mfa (token sign-in) or /v1/auth/session/mfa (hosted login).
+        Each challenge is audited as auth.mfa_challenged with its reason
+        (enrolled, tenant_required, admin_required or user_required) and how
+        the first factor was proven (password, magic_link, social or ldap); meeting it as
+        auth.mfa_verified.
+      properties:
+        mfa_required:
+          type: boolean
+        mfa_token:
+          type: string
+        methods:
+          type: array
+          description: The distinct factor types of factors (["totp"] for an enrolment challenge).
+          items:
+            type: string
+            enum: [totp, recovery_code, email, sms, passkey, push]
+        factors:
+          type: array
+          description: >-
+            Exactly the second factors this person can complete the challenge
+            with — an authenticator app, recovery codes, each confirmed email or
+            SMS factor (with its id and masked destination, for
+            POST /v1/auth/mfa/send), passkeys while the organisation allows them,
+            and push devices. Empty for an enrolment challenge.
+          items:
+            $ref: '#/components/schemas/LoginFactor'
+        enrollment_required:
+          type: boolean
+          description: >-
+            The account must have a second factor and holds none: set up an
+            authenticator app (POST /v1/auth/mfa/enroll) and complete the
+            challenge with a code from it.
+        enrollment_due_at:
+          type: string
+          format: date-time
+          description: >-
+            On an enrolment challenge in the organisation's grace period: when
+            it ends. Until then the setup may be put off (skip: true).
+    LoginFactor:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [totp, recovery_code, email, sms, passkey, push]
+        id:
+          type: string
+          format: uuid
+          description: An email or SMS factor's id.
+        destination:
+          type: string
+          description: An email or SMS factor's masked address or number.

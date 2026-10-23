@@ -7,7 +7,7 @@ VALUES (@tenant_id, @subject, @type, @claims, @expires_at)
 RETURNING id, issued_at;
 
 -- GetCredentialRevocation checks the revocation registry for a presented
--- JWT-VC (jti = credential id). Absent record is treated as valid by the caller.
+-- JWT-VC (jti = credential id). The caller refuses a credential with no record.
 -- name: GetCredentialRevocation :one
 SELECT revoked_at FROM auth.credentials WHERE id = $1;
 

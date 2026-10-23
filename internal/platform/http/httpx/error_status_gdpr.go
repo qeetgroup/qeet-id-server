@@ -6,7 +6,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// GDPR (operations/gdpr) code→status mappings, registered from init().
+// init registers the HTTP statuses of the GDPR error codes.
 func init() {
 	registerStatuses(map[string]int{
 		errs.CodeGDPRFrameworkInvalid: http.StatusBadRequest,

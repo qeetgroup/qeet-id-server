@@ -26,7 +26,7 @@ this repository** — this file points at them and stops.
 handlers usually live in one file named after the package. Additional files split by **feature**,
 not by layer.
 
-Only four packages use `service.go` / `repository.go` naming, and only twelve have a dedicated
+Only four packages use `service.go` / `repository.go` naming, and sixteen have a dedicated
 `http.go`. **Do not assume a `service.go` or `repository.go` exists** — check the L4 pointers below.
 
 Every leaf package additionally carries `queries.sql` + `sqlc.yaml` + a generated `dbgen/`
@@ -62,7 +62,12 @@ with ES256 (asymmetric) and verifiable via the public JWKS."*
 **L4 pointers**
 
 ```text
-service.go          login, refresh, logout, session storage
+service.go          Service, its policies and the shared sign-in types
+password.go         password sign-in and password changes
+issue.go            session issuing, the login hook
+refresh.go          refresh-token rotation and reuse
+sessions.go         sign-out and session listing
+mfachallenge.go     the second-factor step of a sign-in
 http.go             HTTP handlers
 loginsession.go     hosted SSO session cookie  qe_ls; sign-out ends the app grants it started
 trusteddevice.go    MFA-skip cookie            qe_td
@@ -110,14 +115,16 @@ authpolicy/authpolicy.go   password rules, permitted login methods
 codes are bcrypt-hashed."* Passkeys: *"implements WebAuthn passkey registration and login on top of
 go-webauthn."* Recovery: *"forgot-password and magic-link login. Both are stateless tokens."*
 **Path** `internal/access/{mfa,passkeys,recovery}/`
-**Key dependencies** `platform/crypto/encryption` (+`totp`) · `platform/messaging/{notifier,emailtmpl}` ·
+**Key dependencies** `platform/crypto/password` · `platform/crypto/totp` · `platform/messaging/{notifier,emailtmpl}` ·
 `platform/http/{errs,httpx}` · **`operations/audit`**
 **Security** **Critical** — second factors and account recovery
 
 **L4 pointers**
 
 ```text
-mfa/mfa.go           TOTP, OTP, recovery codes
+mfa/totp.go          TOTP and recovery codes
+mfa/otp.go           SMS and email codes
+mfa/stepup.go        step-up of a session
 mfa/push.go          push approval — pairs with the qeet-id-auth mobile app
 passkeys/passkey.go  WebAuthn registration + login ceremonies (single file)
 recovery/http.go     handlers
@@ -200,7 +207,10 @@ JWKS, and userinfo endpoints."*
 **L4 pointers**
 
 ```text
-oidc/oidc.go            provider core, discovery, JWKS, authorize, token-code
+oidc/token.go           token grants (code, refresh, token exchange)
+oidc/authorize.go       authorization and consent
+oidc/discovery.go       discovery and JWKS
+oidc/http*.go           HTTP handlers
 oidc/device.go          RFC 8628 device grant
 oidc/ciba.go            CIBA (poll mode)
 oidc/clients_admin.go   OAuth client administration
@@ -238,7 +248,8 @@ agents/agent.go              lifecycle, sponsor, kill switch, ephemeral tokens
 api-keys/apikey.go           qk_ keys — "<prefix>.<secret>", bcrypt hash stored
 principal/principal.go       client_credentials, /v1/oauth/token
 auth-hooks/authhook.go       post-login hooks — DEFAULT FAIL-OPEN (ADR-0011)
-webhooks/webhook.go          HMAC-SHA256 delivery + dead-letter
+webhooks/webhook.go          HMAC-SHA256 delivery (timestamp + body) + dead-letter
+webhooks/events.go           event catalogue, delivery envelope, outbox relay
 credentials/secrets/secret.go · keyprovider.go · kms.go
 credentials/tokenvault/tokenvault.go
 credentials/vc/vc.go         W3C JWT-VC
@@ -306,17 +317,19 @@ http/httpx/middleware.go · response.go · ctx.go · timing.go
 http/errs/                ~50 files, one per domain
 http/httpx/error_status_*.go   ~40 files, 1:1 mirror of errs/
 crypto/tokens/jwt.go      ES256, RFC 7638 kid, rotation
-crypto/encryption/        Argon2id hashing, AES-256-GCM vault, totp/
+crypto/password/          Argon2id hashing and strength rules
+crypto/envelope/          AES-256-GCM encryption under the data key
+crypto/totp/              TOTP codes
 crypto/hibp/              breached-password k-anonymity
 config/config.go          81 env vars + Config.Validate() boot gate
 database/postgres/pool.go     "owns the single pgx pool shared by every module"
 database/migrations/runner.go //go:embed *.sql
-events/outbox/{outbox,nats,admin}.go
-jobs/worker.go · cache/ratelimit/ · messaging/ · observability/ · ai/
+events/outbox/{outbox,nats}.go
+worker/worker.go · cache/ratelimit/ · messaging/ · observability/ · ai/
 ```
 
 **Tests** `http/httpx/{auth,csrf,middleware}_test.go`, `crypto/tokens/jwt_test.go`,
-`config/config_test.go`, `events/outbox/{outbox,nats}_test.go`, `jobs/worker_test.go` — 24 unit
+`config/config_test.go`, `events/outbox/{outbox,nats}_test.go`, `worker/worker_test.go` — 24 unit
 tests, the densest coverage in the repository
 
 > The `errs/` ↔ `error_status_*.go` pairing is 1:1 by domain. A new error domain needs a file in
@@ -335,7 +348,8 @@ of platform
 **L4 pointers**
 
 ```text
-dependencies.go   645 lines — constructs every service and repository
+dependencies.go   505 lines — constructs every service and repository
+keys.go · mail.go · infra.go · sso.go · adapters.go — its building blocks (keys, message chain, limits, SSO identity, adapters)
 router.go         347 lines — middleware chain, route tree, all mounts
 permissions.go    216 lines — "METHOD /chi/route/pattern" → required permission
 app.go            131 lines — assembly
@@ -347,18 +361,14 @@ server.go          30 lines — HTTP server
 `rbac.Enforce` … Only end-user principals are gated (API keys / service principals bypass — see
 `rbac.Enforce`); routes absent here are ungated (public, self-service, or tenant-create)."*
 
-**Tests** **zero unit tests.** `bootstrap` is covered **only** through `tests/integration/`.
-
-> **Consequence:** a mistake in `router.go` or `permissions.go` will not be caught by `go test ./...`.
-> It needs `make test-integration`. This is the least unit-tested and most security-sensitive package
-> in the repository.
+**Tests** `permissions_test.go` and `openapi_coverage_test.go` walk the production router: every
+authenticated route needs an explicit policy, and every route must be in the OpenAPI spec.
 
 ---
 
 ## Cross-context imports — the unguarded seam
 
-`tests/architecture/arch_test.go` enforces R1 and R2 but states verbatim: *"Cross-context imports are
-not yet enforced."*
+No test enforces R1, R2 or cross-context imports.
 
 **Status:** verified · **Evidence:** import-graph scan — 38 import statements across 8 pairs
 

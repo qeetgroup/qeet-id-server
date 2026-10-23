@@ -37,6 +37,7 @@ func URLToken() (string, string, error) {
 	return raw, Hash(raw), nil
 }
 
+// Hash returns the hash a code is stored as.
 func Hash(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return base64.RawURLEncoding.EncodeToString(sum[:])

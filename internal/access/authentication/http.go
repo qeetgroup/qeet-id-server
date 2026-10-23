@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -22,6 +23,7 @@ type BotEvaluator interface {
 	Evaluate(ctx context.Context, email, ip, ua string)
 }
 
+// Handler serves the sign-in and session HTTP API.
 type Handler struct {
 	Service  *Service
 	Validate *validator.Validate
@@ -30,12 +32,9 @@ type Handler struct {
 	CookieSecure bool
 	// Bot, when set, scores login/session attempts for bot-likeness.
 	Bot BotEvaluator
-	// GeoCountryHeader, when set, is the name of a request header a trusted
-	// upstream proxy (e.g. Cloudflare's CF-IPCountry) sets to the client's
-	// resolved country — the sole geo signal impossible-travel risk assessment
-	// consumes. Empty (the default) means no geo signal is available and that
-	// signal never fires; there is no server-side GeoIP lookup, by design (see
-	// domains/access/threat-detection/risk).
+	// GeoCountryHeader names a header set by a trusted proxy (for example
+	// Cloudflare's CF-IPCountry) with the client's country, used for
+	// impossible-travel checks. Empty disables that signal.
 	GeoCountryHeader string
 	// Throttle wraps sensitive self-service routes (password change/set) with a
 	// tight per-user rate limit to blunt online guessing. Nil = no extra throttle.
@@ -59,6 +58,7 @@ func (h *Handler) geoCountry(r *http.Request) string {
 	return r.Header.Get(h.GeoCountryHeader)
 }
 
+// Mount registers the sign-in and session routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/auth/signup", h.signup)
 	r.Post("/auth/login", h.login)
@@ -106,21 +106,24 @@ func (h *Handler) MountAuthed(r chi.Router) {
 
 type signupInput struct {
 	Email       string `json:"email" validate:"required,email"`
-	Password    string `json:"password" validate:"required,max=256"` // length + rules: the service's password check
+	Password    string `json:"password" validate:"required,max=256"`
 	DisplayName string `json:"display_name" validate:"omitempty,max=200"`
 }
 
+// NeutralSignupError keeps a sign-up's answer from saying whether the email
+// already has an account: ErrAuthEmailExists, and a generic conflict, become
+// one neutral 422. Other errors are returned unchanged.
+func NeutralSignupError(err error) error {
+	if errors.Is(err, errs.ErrAuthEmailExists) || errors.Is(err, errs.ErrConflict) {
+		return errs.ErrUnprocessable.WithMessage(
+			"We couldn't complete your signup. If you already have an account, try signing in or resetting your password.")
+	}
+	return err
+}
+
 func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
-	// Signup is enumeration-sensitive — both the response shape and
-	// the response timing must be indistinguishable for "email
-	// exists" vs "email is new" so attackers can't probe accounts
-	// from the signup form. We achieve this with:
-	//
-	//   1) A neutral 422 response on conflict (no "already exists"
-	//      detail in the body — the verbose error string lived here
-	//      historically and leaked).
-	//   2) A 250ms timing floor on every signup attempt, capturing
-	//      the bcrypt + insert path's slowest case.
+	// An email that already has an account gets the neutral answer of
+	// NeutralSignupError, and every attempt takes at least signupFloor.
 	const signupFloor = 250 * time.Millisecond
 	start := time.Now()
 	defer httpx.ConstantTimeFloor(r.Context(), start, signupFloor)
@@ -142,17 +145,7 @@ func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
 		UserAgent:   r.UserAgent(),
 	})
 	if err != nil {
-		// Conflict (existing email) used to surface "email already
-		// exists" verbatim. Neutralise to a generic 422 so the response
-		// is indistinguishable from other validation failures. Other
-		// backend errors (DB unavailable, etc.) still bubble up so
-		// legitimate operational issues aren't hidden.
-		if e := errs.As(err); e != nil && e.Code == errs.ErrConflict.Code {
-			httpx.WriteError(w, r, errs.ErrUnprocessable.WithMessage(
-				"We couldn't complete your signup. If you already have an account, try signing in or resetting your password."))
-			return
-		}
-		httpx.WriteError(w, r, err)
+		httpx.WriteError(w, r, NeutralSignupError(err))
 		return
 	}
 	// Tenant-less: no tenant or roles; the user creates one from the UI.
@@ -202,12 +195,10 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, res.Pair)
 }
 
-// mfaLoginInput meets a sign-in's second-factor challenge with exactly one
-// proof: a code (authenticator app, recovery, or an emailed/texted code), a
-// passkey assertion from the ceremony begun for the challenge, or push: true
-// once the push request sent for it is approved. An enrolment challenge is met
-// by the code confirming the authenticator app set up for it, or skip: true
-// while the setup may be put off.
+// mfaLoginInput answers a sign-in's second-factor challenge with exactly one
+// proof: a code, a passkey assertion, or push once the push request is approved.
+// An enrolment challenge takes the code confirming the new authenticator app, or
+// skip while setup may still be postponed.
 type mfaLoginInput struct {
 	MFAToken string        `json:"mfa_token" validate:"required"`
 	Code     string        `json:"code"`
@@ -262,12 +253,9 @@ type sessionInput struct {
 }
 
 // createSession is the hosted-login credential endpoint. On success it sets the
-// HttpOnly SSO cookie (qe_ls) and returns the user id — no tokens in the body.
-// It is what the hosted login app posts to before the OAuth consent step. When
-// the user has a second factor enrolled it returns an MFA challenge instead and
-// withholds the cookie until the challenge is completed at POST
-// /v1/auth/session/mfa — without this the cookie flow would bypass MFA that the
-// token flow enforces.
+// HttpOnly SSO cookie (qe_ls) and returns the user ID, with no tokens in the
+// body. When the user needs a second factor it returns an MFA challenge instead,
+// completed at POST /v1/auth/session/mfa.
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	var in sessionInput
 	if err := httpx.DecodeStrictJSON(r, &in); err != nil {
@@ -347,18 +335,14 @@ func (h *Handler) createSessionMFA(w http.ResponseWriter, r *http.Request) {
 type registerInput struct {
 	TenantID    uuid.UUID `json:"tenant_id" validate:"required"`
 	Email       string    `json:"email" validate:"required,email"`
-	Password    string    `json:"password" validate:"required,max=256"` // length + rules: the service's password check
+	Password    string    `json:"password" validate:"required,max=256"`
 	DisplayName string    `json:"display_name" validate:"omitempty,max=200"`
 }
 
-// register is the hosted end-user signup endpoint (B2C self-registration). It
-// creates the user in the client's tenant — gated by that tenant's
-// self_registration_enabled policy — and on success sets the SSO cookie so the
-// new user continues straight into the OAuth authorize flow. Where the tenant
-// requires MFA it answers an enrolment challenge instead (completed at POST
-// /v1/auth/session/mfa), so the first session follows the setup. Like signup it is
-// enumeration-safe: a conflict on an existing email returns a neutral 422 under
-// a timing floor so the response can't distinguish "exists" from "new".
+// register is the hosted self-registration endpoint. It creates the user in the
+// client's tenant, if self-registration is enabled, and sets the SSO cookie, or
+// returns an enrolment challenge when the tenant requires MFA. Like signup, it
+// answers an email that already has an account neutrally, under a timing floor.
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	const registerFloor = 250 * time.Millisecond
 	start := time.Now()
@@ -375,12 +359,7 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	}
 	u, res, err := h.Service.RegisterInTenant(r.Context(), in.TenantID, in.Email, in.Password, in.DisplayName, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
-		if e := errs.As(err); e != nil && e.Code == errs.ErrConflict.Code {
-			httpx.WriteError(w, r, errs.ErrUnprocessable.WithMessage(
-				"We couldn't complete your signup. If you already have an account, try signing in or resetting your password."))
-			return
-		}
-		httpx.WriteError(w, r, err)
+		httpx.WriteError(w, r, NeutralSignupError(err))
 		return
 	}
 	if res.MFARequired {
@@ -393,11 +372,9 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"user_id": u.ID})
 }
 
-// destroySession is the hosted login signing itself out: it ends the browser's
-// SSO session and what it started (EndLoginSession) and clears the cookie. A
-// request without a session cookie ends nothing and still answers 204. If the
-// sign-out cannot be completed the cookie is kept, so the browser can retry
-// instead of believing it is signed out.
+// destroySession signs the browser out of the hosted login and clears the
+// cookie. Without a session cookie it still answers 204. If sign-out fails the
+// cookie is kept so the browser can retry.
 func (h *Handler) destroySession(w http.ResponseWriter, r *http.Request) {
 	var uris []string
 	if c, err := r.Cookie(LoginSessionCookie); err == nil {
@@ -451,7 +428,7 @@ type changePasswordInput struct {
 	// Optional: required only when the account already has a password. A
 	// password-less account (social / passkey signup) omits it to SET one.
 	CurrentPassword string `json:"current_password" validate:"omitempty"`
-	NewPassword     string `json:"new_password" validate:"required,max=256"` // length + rules: the service's password check
+	NewPassword     string `json:"new_password" validate:"required,max=256"`
 }
 
 // signInMethods reports how many ways the caller can sign in, so a client can
@@ -621,11 +598,9 @@ func (h *Handler) revokeSession(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"message": "Session revoked."})
 }
 
-// revokeOtherSessions → POST /v1/auth/sessions/revoke-others. Ends all of the
-// caller's sessions except the one behind the presented access token, in one
-// step, and reports how many ended ({"revoked": n}, the same shape as the admin
-// revoke-all). Access tokens already issued to the ended sessions stay valid
-// until they expire; their refresh tokens stop working at once.
+// revokeOtherSessions handles POST /v1/auth/sessions/revoke-others. It ends
+// every session of the caller except the current one and returns {"revoked": n}.
+// Issued access tokens stay valid until they expire.
 func (h *Handler) revokeOtherSessions(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil || p.SessionID == nil {
@@ -643,13 +618,9 @@ func (h *Handler) revokeOtherSessions(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"revoked": n})
 }
 
-// revokeAllSessions → POST /v1/auth/sessions/revoke-all. Signs the caller out
-// everywhere — every API and console session including the one behind the
-// presented access token, every hosted-login session, every application grant
-// — in one step, and reports how many ended: {"revoked": total} (the shape of
-// the other bulk revocations) plus the count per place. Access tokens already
-// issued stay valid until they expire; renewal stops at once. A repeat
-// succeeds with zeros.
+// revokeAllSessions handles POST /v1/auth/sessions/revoke-all. It signs the
+// caller out everywhere and returns {"revoked": total} with a count per place.
+// Issued access tokens stay valid until they expire; a repeat returns zeros.
 func (h *Handler) revokeAllSessions(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil || p.SessionID == nil {

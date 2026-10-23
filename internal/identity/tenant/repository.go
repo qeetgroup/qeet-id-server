@@ -19,15 +19,18 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
+// Repository reads and writes organisations.
 type Repository struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 }
 
+// NewRepository returns a Repository over pool.
 func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool, q: dbgen.New(pool)}
 }
 
+// Pool returns the connection pool, for handlers that run their own transaction.
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
 // toDomain maps a persistence row to the domain Tenant, decoding JSONB metadata
@@ -151,6 +154,7 @@ func (r *Repository) CreateWithOwnerTx(ctx context.Context, tx pgx.Tx, in Create
 	return t, nil
 }
 
+// Get returns an organisation by id.
 func (r *Repository) Get(ctx context.Context, id uuid.UUID) (*Tenant, error) {
 	row, err := r.q.GetTenant(ctx, id)
 	if err != nil {
@@ -162,6 +166,7 @@ func (r *Repository) Get(ctx context.Context, id uuid.UUID) (*Tenant, error) {
 	return toDomain(row), nil
 }
 
+// GetBySlug returns an organisation by its slug.
 func (r *Repository) GetBySlug(ctx context.Context, slug string) (*Tenant, error) {
 	row, err := r.q.GetTenantBySlug(ctx, slug)
 	if err != nil {
@@ -226,10 +231,9 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit int, curs
 // audit row, the event — commit together or not at all.
 type StatusChange func(ctx context.Context, tx pgx.Tx, from, to string) error
 
-// Update applies a partial update. The SET clause is built dynamically from the
-// non-nil fields, so it intentionally stays hand-written (sqlc has no good story
-// for optional-column updates); it shares the domain's error/RETURNING conventions.
-// onStatus (nil: none) runs in the same transaction when the status changes.
+// Update applies the non-nil fields of in to tenant id. The SET clause is built
+// at run time, so this is hand-written rather than sqlc. When the status
+// changes, onStatus (if non-nil) runs in the same transaction.
 func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput, onStatus StatusChange) (*Tenant, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {

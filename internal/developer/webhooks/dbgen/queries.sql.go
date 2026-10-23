@@ -38,7 +38,7 @@ func (q *Queries) DeadLetterDelivery(ctx context.Context, arg DeadLetterDelivery
 }
 
 const disableWebhookSubscription = `-- name: DisableWebhookSubscription :one
-UPDATE tenant.webhook_subscriptions SET disabled_at = NOW()
+UPDATE tenant.webhook_subscriptions SET disabled_at = NOW(), disabled_reason = 'disabled'
 WHERE id = $1 AND tenant_id = $2 AND disabled_at IS NULL
 RETURNING tenant_id, url
 `
@@ -53,8 +53,8 @@ type DisableWebhookSubscriptionRow struct {
 	Url      string
 }
 
-// DisableWebhookSubscription marks the subscription disabled. RETURNING
-// tenant_id and url for the audit row.
+// DisableWebhookSubscription marks the subscription disabled by an
+// administrator. RETURNING tenant_id and url for the audit row.
 func (q *Queries) DisableWebhookSubscription(ctx context.Context, arg DisableWebhookSubscriptionParams) (DisableWebhookSubscriptionRow, error) {
 	row := q.db.QueryRow(ctx, disableWebhookSubscription, arg.ID, arg.TenantID)
 	var i DisableWebhookSubscriptionRow
@@ -62,10 +62,30 @@ func (q *Queries) DisableWebhookSubscription(ctx context.Context, arg DisableWeb
 	return i, err
 }
 
+const enableWebhookSubscription = `-- name: EnableWebhookSubscription :one
+UPDATE tenant.webhook_subscriptions SET disabled_at = NULL, disabled_reason = NULL, failing_since = NULL
+WHERE id = $1 AND tenant_id = $2
+RETURNING url
+`
+
+type EnableWebhookSubscriptionParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+// EnableWebhookSubscription turns the subscription back on, however it was
+// disabled, with its failures forgotten. RETURNING url for the audit row.
+func (q *Queries) EnableWebhookSubscription(ctx context.Context, arg EnableWebhookSubscriptionParams) (string, error) {
+	row := q.db.QueryRow(ctx, enableWebhookSubscription, arg.ID, arg.TenantID)
+	var url string
+	err := row.Scan(&url)
+	return url, err
+}
+
 const getSubscriptionsForEvent = `-- name: GetSubscriptionsForEvent :many
 SELECT id FROM tenant.webhook_subscriptions
 WHERE tenant_id = $1 AND disabled_at IS NULL
-  AND ($2::text = ANY(events) OR events = '{}'::text[])
+  AND $2::text = ANY(events)
 `
 
 type GetSubscriptionsForEventParams struct {
@@ -73,8 +93,8 @@ type GetSubscriptionsForEventParams struct {
 	EventType string
 }
 
-// GetSubscriptionsForEvent returns subscription IDs for Enqueue: active
-// subscriptions matching the event type (or subscribed to all events).
+// GetSubscriptionsForEvent returns subscription IDs for Enqueue: the active
+// subscriptions that name the event type.
 func (q *Queries) GetSubscriptionsForEvent(ctx context.Context, arg GetSubscriptionsForEventParams) ([]uuid.UUID, error) {
 	rows, err := q.db.Query(ctx, getSubscriptionsForEvent, arg.TenantID, arg.EventType)
 	if err != nil {
@@ -96,7 +116,7 @@ func (q *Queries) GetSubscriptionsForEvent(ctx context.Context, arg GetSubscript
 }
 
 const getWebhookSubscription = `-- name: GetWebhookSubscription :one
-SELECT id, tenant_id, url, events, disabled_at, created_at
+SELECT id, tenant_id, url, events, disabled_at, disabled_reason, failing_since, previous_secret_expires_at, created_at
 FROM tenant.webhook_subscriptions WHERE id = $1 AND tenant_id = $2
 `
 
@@ -106,12 +126,15 @@ type GetWebhookSubscriptionParams struct {
 }
 
 type GetWebhookSubscriptionRow struct {
-	ID         uuid.UUID
-	TenantID   uuid.UUID
-	Url        string
-	Events     []string
-	DisabledAt pgtype.Timestamptz
-	CreatedAt  time.Time
+	ID                      uuid.UUID
+	TenantID                uuid.UUID
+	Url                     string
+	Events                  []string
+	DisabledAt              pgtype.Timestamptz
+	DisabledReason          *string
+	FailingSince            pgtype.Timestamptz
+	PreviousSecretExpiresAt pgtype.Timestamptz
+	CreatedAt               time.Time
 }
 
 func (q *Queries) GetWebhookSubscription(ctx context.Context, arg GetWebhookSubscriptionParams) (GetWebhookSubscriptionRow, error) {
@@ -123,24 +146,36 @@ func (q *Queries) GetWebhookSubscription(ctx context.Context, arg GetWebhookSubs
 		&i.Url,
 		&i.Events,
 		&i.DisabledAt,
+		&i.DisabledReason,
+		&i.FailingSince,
+		&i.PreviousSecretExpiresAt,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const insertDelivery = `-- name: InsertDelivery :exec
-INSERT INTO tenant.webhook_deliveries (subscription_id, event_type, payload, next_attempt_at)
-VALUES ($1, $2, $3, NOW())
+INSERT INTO tenant.webhook_deliveries (subscription_id, event_id, event_type, payload, next_attempt_at)
+VALUES ($1, $2, $3, $4, NOW())
+ON CONFLICT (subscription_id, event_id) DO NOTHING
 `
 
 type InsertDeliveryParams struct {
 	SubscriptionID uuid.UUID
+	EventID        uuid.UUID
 	EventType      string
 	Payload        []byte
 }
 
+// InsertDelivery queues an event for a subscription, once: the same event
+// again is a no-op.
 func (q *Queries) InsertDelivery(ctx context.Context, arg InsertDeliveryParams) error {
-	_, err := q.db.Exec(ctx, insertDelivery, arg.SubscriptionID, arg.EventType, arg.Payload)
+	_, err := q.db.Exec(ctx, insertDelivery,
+		arg.SubscriptionID,
+		arg.EventID,
+		arg.EventType,
+		arg.Payload,
+	)
 	return err
 }
 
@@ -208,21 +243,68 @@ func (q *Queries) ListWebhookDeliveries(ctx context.Context, arg ListWebhookDeli
 	return items, nil
 }
 
+const listWebhookManagers = `-- name: ListWebhookManagers :many
+SELECT u.id FROM "user".users u
+WHERE u.status = 'active' AND u.deleted_at IS NULL AND u.id IN (
+    SELECT ur.user_id FROM rbac.user_roles ur
+    JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
+    JOIN rbac.permissions p ON p.id = rp.permission_id
+    WHERE ur.tenant_id = $1 AND p.key = 'webhook.write'
+    UNION
+    SELECT gm.user_id FROM tenant.group_members gm
+    JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+    JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
+    JOIN rbac.permissions p ON p.id = rp.permission_id
+    WHERE gm.tenant_id = $1 AND p.key = 'webhook.write'
+)
+ORDER BY u.id
+`
+
+// ListWebhookManagers returns the organisation's active members who may
+// manage its webhooks (webhook.write, held directly or through a group).
+func (q *Queries) ListWebhookManagers(ctx context.Context, tenantID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listWebhookManagers, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWebhookSubscriptions = `-- name: ListWebhookSubscriptions :many
-SELECT id, tenant_id, url, events, disabled_at, created_at
+
+SELECT id, tenant_id, url, events, disabled_at, disabled_reason, failing_since, previous_secret_expires_at, created_at
 FROM tenant.webhook_subscriptions
 WHERE tenant_id = $1 ORDER BY created_at DESC
 `
 
 type ListWebhookSubscriptionsRow struct {
-	ID         uuid.UUID
-	TenantID   uuid.UUID
-	Url        string
-	Events     []string
-	DisabledAt pgtype.Timestamptz
-	CreatedAt  time.Time
+	ID                      uuid.UUID
+	TenantID                uuid.UUID
+	Url                     string
+	Events                  []string
+	DisabledAt              pgtype.Timestamptz
+	DisabledReason          *string
+	FailingSince            pgtype.Timestamptz
+	PreviousSecretExpiresAt pgtype.Timestamptz
+	CreatedAt               time.Time
 }
 
+// Queries for the webhooks domain.
+// Create and Disable accept a pgx.Tx from the handler (audit sharing);
+// they are called via q.WithTx(tx). Dispatcher (tick) queries are also
+// static and included here.
 func (q *Queries) ListWebhookSubscriptions(ctx context.Context, tenantID uuid.UUID) ([]ListWebhookSubscriptionsRow, error) {
 	rows, err := q.db.Query(ctx, listWebhookSubscriptions, tenantID)
 	if err != nil {
@@ -238,6 +320,9 @@ func (q *Queries) ListWebhookSubscriptions(ctx context.Context, tenantID uuid.UU
 			&i.Url,
 			&i.Events,
 			&i.DisabledAt,
+			&i.DisabledReason,
+			&i.FailingSince,
+			&i.PreviousSecretExpiresAt,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -248,6 +333,31 @@ func (q *Queries) ListWebhookSubscriptions(ctx context.Context, tenantID uuid.UU
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockWebhookSecret = `-- name: LockWebhookSecret :one
+SELECT secret, secret_ct, secret_nonce FROM tenant.webhook_subscriptions
+WHERE id = $1 AND tenant_id = $2
+FOR UPDATE
+`
+
+type LockWebhookSecretParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+type LockWebhookSecretRow struct {
+	Secret      string
+	SecretCt    []byte
+	SecretNonce []byte
+}
+
+// LockWebhookSecret reads the subscription's signing secret for a rotation.
+func (q *Queries) LockWebhookSecret(ctx context.Context, arg LockWebhookSecretParams) (LockWebhookSecretRow, error) {
+	row := q.db.QueryRow(ctx, lockWebhookSecret, arg.ID, arg.TenantID)
+	var i LockWebhookSecretRow
+	err := row.Scan(&i.Secret, &i.SecretCt, &i.SecretNonce)
+	return i, err
 }
 
 const markDeliverySucceeded = `-- name: MarkDeliverySucceeded :exec
@@ -286,6 +396,39 @@ func (q *Queries) RetryWebhookDelivery(ctx context.Context, arg RetryWebhookDeli
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const rotateWebhookSecret = `-- name: RotateWebhookSecret :exec
+UPDATE tenant.webhook_subscriptions
+SET secret = '', secret_ct = $1, secret_nonce = $2, encryption_version = 1,
+    previous_secret_ct = $3, previous_secret_nonce = $4,
+    previous_secret_expires_at = $5
+WHERE id = $6 AND tenant_id = $7
+`
+
+type RotateWebhookSecretParams struct {
+	SecretCt          []byte
+	SecretNonce       []byte
+	PreviousCt        []byte
+	PreviousNonce     []byte
+	PreviousExpiresAt pgtype.Timestamptz
+	ID                uuid.UUID
+	TenantID          uuid.UUID
+}
+
+// RotateWebhookSecret makes the new secret current and keeps the old one,
+// signing alongside it, until previous_expires_at.
+func (q *Queries) RotateWebhookSecret(ctx context.Context, arg RotateWebhookSecretParams) error {
+	_, err := q.db.Exec(ctx, rotateWebhookSecret,
+		arg.SecretCt,
+		arg.SecretNonce,
+		arg.PreviousCt,
+		arg.PreviousNonce,
+		arg.PreviousExpiresAt,
+		arg.ID,
+		arg.TenantID,
+	)
+	return err
 }
 
 const scheduleDeliveryRetry = `-- name: ScheduleDeliveryRetry :exec

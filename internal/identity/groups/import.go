@@ -2,12 +2,12 @@ package group
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -34,20 +34,18 @@ type ImportResult struct {
 	Rows    []ImportRowResult `json:"rows"`
 }
 
+// ImportRowResult is the outcome of one imported row. Status is created, skipped
+// or failed.
 type ImportRowResult struct {
 	Name   string `json:"name"`
-	Status string `json:"status"` // created | skipped | failed
+	Status string `json:"status"`
 	Reason string `json:"reason,omitempty"`
 }
 
-// ImportGroups creates groups from a flat list, resolving `parent` by name
-// against both the existing directory and the rows created in this same call.
-//
-// Ordering matters: a child may appear before its parent in the payload, so we
-// make repeated passes, creating whatever became resolvable each time. A pass
-// that creates nothing means the remainder reference parents that don't exist
-// (or form a cycle), and those rows are reported as failed rather than silently
-// dropped.
+// ImportGroups creates groups from a flat list, resolving each parent by name
+// among existing groups and rows created earlier in the call. It makes repeated
+// passes, since a child may come before its parent; rows whose parent never
+// appears (or that form a cycle) are reported as failed.
 func (s *Service) ImportGroups(
 	ctx context.Context, tenantID uuid.UUID, rows []ImportRow, actor audit.Actor,
 ) (*ImportResult, error) {
@@ -62,11 +60,11 @@ func (s *Service) ImportGroups(
 	if err != nil {
 		return nil, err
 	}
-	// Name -> id, for parent resolution. Lowercased: the unique index on group
-	// names is case-insensitive, so matching must be too.
+	// Lowercased name -> id, for parent lookups and clash checks: names match
+	// case-insensitively.
 	byName := make(map[string]uuid.UUID, len(existing)+len(rows))
 	for _, g := range existing {
-		byName[strings.ToLower(g.Name)] = g.ID
+		byName[strings.ToLower(strings.TrimSpace(g.Name))] = g.ID
 	}
 
 	res := &ImportResult{Rows: make([]ImportRowResult, 0, len(rows))}
@@ -115,7 +113,7 @@ func (s *Service) ImportGroups(
 			}, actor)
 			if err != nil {
 				reason := "could not be created"
-				if pgxerr.IsUnique(err) {
+				if errors.Is(err, errs.ErrGroupNameExists) {
 					reason = "a group with this name already exists"
 				}
 				res.Failed++

@@ -13,109 +13,127 @@ import (
 	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
 )
 
-// VerifyResult summarises a chain-verification pass for a single tenant.
+// VerifyResult is the outcome of verifying one chain. When it is broken,
+// ReasonCode is one of the Chain* codes and BrokenReason the same in English.
 type VerifyResult struct {
 	OK             bool       `json:"ok"`
 	RowsChecked    int        `json:"rows_checked"`
 	LastVerifiedID *uuid.UUID `json:"last_verified_id,omitempty"`
 	BrokenAtID     *uuid.UUID `json:"broken_at_id,omitempty"`
 	BrokenReason   string     `json:"broken_reason,omitempty"`
+	ReasonCode     string     `json:"reason_code,omitempty"`
 }
 
+// Why a chain is broken at a row.
+const (
+	ChainPrevHashMismatch = "audit.chain_prev_hash_mismatch" // its prev_hash isn't the preceding row's row_hash
+	ChainRowHashMismatch  = "audit.chain_row_hash_mismatch"  // its row_hash isn't the hash of its contents
+)
+
+// verifyPageSize is how many rows of a chain each verification query reads.
+var verifyPageSize int32 = 5000
+
+// Verifier verifies audit hash chains.
 type Verifier struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 }
 
+// NewVerifier returns a Verifier over pool.
 func NewVerifier(pool *pgxpool.Pool) *Verifier {
 	return &Verifier{pool: pool, q: dbgen.New(pool)}
 }
 
-// Verify walks the per-tenant hash chain in chronological order, recomputing
-// each row's hash and comparing it against what is stored. Returns OK=false
-// with BrokenAtID populated at the first row that fails validation.
-//
-// Pass tenantID=nil to verify the platform-level chain (rows with NULL
-// tenant_id). Pre-migration rows (NULL hash columns) are skipped.
+// Verify recomputes the hash chain of tenantID's audit rows, oldest first, or
+// of the platform chain when tenantID is nil. At the first row that fails it
+// returns OK=false with BrokenAtID set. Rows without a hash are skipped.
 func (v *Verifier) Verify(ctx context.Context, tenantID *uuid.UUID) (VerifyResult, error) {
-	rows, err := v.q.ListAuditEventsForVerify(ctx, pgUUIDNullable(tenantID))
-	if err != nil {
-		return VerifyResult{}, err
-	}
-
 	expectedPrev := chainSeed
 	var (
 		rowsChecked int
 		lastID      *uuid.UUID
 	)
-	for _, row := range rows {
-		tid := toUUIDPtr(row.TenantID)
-		actor := toUUIDPtr(row.ActorUserID)
-		resID := toUUIDPtr(row.ResourceID)
-
-		// ip is COALESCE(host(ip), '') → interface{}; type-assert to string.
-		ip, _ := row.Ip.(string)
-
-		prevHashDB := ""
-		if row.PrevHash != nil {
-			prevHashDB = strings.TrimSpace(*row.PrevHash)
-		}
-		rowHashDB := ""
-		if row.RowHash != nil {
-			rowHashDB = strings.TrimSpace(*row.RowHash)
-		}
-
-		if prevHashDB != expectedPrev {
-			brokenID := row.ID
-			return VerifyResult{
-				OK:             false,
-				RowsChecked:    rowsChecked,
-				LastVerifiedID: lastID,
-				BrokenAtID:     &brokenID,
-				BrokenReason:   "prev_hash does not match preceding row_hash",
-			}, nil
-		}
-
-		metaJSON, err := normaliseMetadata(row.Metadata)
+	// The chain is read a page at a time, so memory doesn't grow with it.
+	page := dbgen.ListAuditEventsForVerifyParams{TenantID: pgUUIDNullable(tenantID), PageSize: verifyPageSize}
+	for {
+		rows, err := v.q.ListAuditEventsForVerify(ctx, page)
 		if err != nil {
 			return VerifyResult{}, err
 		}
-		canonical, err := canonicalize(Event{
-			TenantID:     tid,
-			ActorUserID:  actor,
-			ActorType:    row.ActorType,
-			Action:       row.Action,
-			ResourceType: row.ResourceType,
-			ResourceID:   resID,
-			IP:           ip,
-			UserAgent:    row.UserAgent, // already COALESCE'd to ""
-			RequestID:    row.RequestID, // already COALESCE'd to ""
-		}, row.ID, row.CreatedAt, metaJSON, prevHashDB)
-		if err != nil {
-			return VerifyResult{}, err
-		}
-		expectedRowHash := hashHex(canonical)
-		if expectedRowHash != rowHashDB {
-			brokenID := row.ID
-			return VerifyResult{
-				OK:             false,
-				RowsChecked:    rowsChecked,
-				LastVerifiedID: lastID,
-				BrokenAtID:     &brokenID,
-				BrokenReason:   "row_hash does not match recomputed hash",
-			}, nil
-		}
+		for _, row := range rows {
+			tid := toUUIDPtr(row.TenantID)
+			actor := toUUIDPtr(row.ActorUserID)
+			resID := toUUIDPtr(row.ResourceID)
 
-		expectedPrev = rowHashDB
-		rowsChecked++
-		idCopy := row.ID
-		lastID = &idCopy
+			// ip is COALESCE(host(ip), ''), which sqlc types as interface{}.
+			ip, _ := row.Ip.(string)
+
+			prevHashDB := ""
+			if row.PrevHash != nil {
+				prevHashDB = strings.TrimSpace(*row.PrevHash)
+			}
+			rowHashDB := ""
+			if row.RowHash != nil {
+				rowHashDB = strings.TrimSpace(*row.RowHash)
+			}
+
+			if prevHashDB != expectedPrev {
+				brokenID := row.ID
+				return VerifyResult{
+					OK:             false,
+					RowsChecked:    rowsChecked,
+					LastVerifiedID: lastID,
+					BrokenAtID:     &brokenID,
+					BrokenReason:   "prev_hash does not match preceding row_hash",
+					ReasonCode:     ChainPrevHashMismatch,
+				}, nil
+			}
+
+			metaJSON, err := normaliseMetadata(row.Metadata)
+			if err != nil {
+				return VerifyResult{}, err
+			}
+			canonical, err := canonicalize(Event{
+				TenantID:     tid,
+				ActorUserID:  actor,
+				ActorType:    row.ActorType,
+				Action:       row.Action,
+				ResourceType: row.ResourceType,
+				ResourceID:   resID,
+				IP:           ip,
+				UserAgent:    row.UserAgent, // already COALESCE'd to ""
+				RequestID:    row.RequestID, // already COALESCE'd to ""
+			}, row.ID, row.CreatedAt, metaJSON, prevHashDB)
+			if err != nil {
+				return VerifyResult{}, err
+			}
+			expectedRowHash := hashHex(canonical)
+			if expectedRowHash != rowHashDB {
+				brokenID := row.ID
+				return VerifyResult{
+					OK:             false,
+					RowsChecked:    rowsChecked,
+					LastVerifiedID: lastID,
+					BrokenAtID:     &brokenID,
+					BrokenReason:   "row_hash does not match recomputed hash",
+					ReasonCode:     ChainRowHashMismatch,
+				}, nil
+			}
+
+			expectedPrev = rowHashDB
+			rowsChecked++
+			idCopy := row.ID
+			lastID = &idCopy
+		}
+		if len(rows) < int(page.PageSize) {
+			return VerifyResult{OK: true, RowsChecked: rowsChecked, LastVerifiedID: lastID}, nil
+		}
+		last := rows[len(rows)-1]
+		page.AfterCreatedAt, page.AfterID = last.CreatedAt, last.ID
 	}
-	return VerifyResult{OK: true, RowsChecked: rowsChecked, LastVerifiedID: lastID}, nil
 }
 
-// toUUIDPtr converts a pgtype.UUID (generated by sqlc for nullable uuid
-// columns) to a *uuid.UUID, returning nil for invalid (NULL) values.
+// toUUIDPtr converts a nullable pgtype.UUID to a *uuid.UUID; NULL becomes nil.
 func toUUIDPtr(u pgtype.UUID) *uuid.UUID {
 	if !u.Valid {
 		return nil
@@ -124,9 +142,8 @@ func toUUIDPtr(u pgtype.UUID) *uuid.UUID {
 	return &id
 }
 
-// normaliseMetadata round-trips JSONB bytes through json.Unmarshal +
-// json.Marshal so the canonical bytes match what Record produced at insert
-// time, regardless of how Postgres formatted the JSONB on the way out.
+// normaliseMetadata re-encodes JSONB bytes the way Record encoded them, so the
+// hash matches however Postgres formats the column.
 func normaliseMetadata(raw []byte) ([]byte, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return []byte("{}"), nil
@@ -141,5 +158,5 @@ func normaliseMetadata(raw []byte) ([]byte, error) {
 	return json.Marshal(m)
 }
 
-// Keep the time import alive — no other reference to the package remains.
+// Keeps the time import, which nothing else in this file uses.
 var _ = time.Time{}

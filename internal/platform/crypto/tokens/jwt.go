@@ -1,21 +1,7 @@
-// Package tokens issues and verifies the access & ID JWTs and the opaque
-// refresh tokens. Access/ID tokens are signed with an asymmetric key so that
-// any relying party can verify them against the public JWKS at
-// /.well-known/jwks.json without holding a shared secret — this is what lets
-// Qeet ID act as a real OIDC provider.
-//
-// The default (and currently only) algorithm is ES256 (ECDSA P-256). The
-// issuer is written to be crypto-agile: a key carries its own algorithm, so
-// adding RS256/EdDSA or a post-quantum scheme (ML-DSA) later is "register a
-// new key type", not a rewrite (see LAUNCH_READINESS.md §9).
-//
-// Every JWT carries a `kid` header set to the RFC 7638 JWK thumbprint of the
-// signing key. Verifiers resolve the kid against the active key plus any
-// retired keys; a token with a missing or unknown kid is rejected. Retired
-// keys are verify-only public keys kept during a rotation grace window so
-// tokens minted under the previous key stay valid until they expire — register
-// them through the shared signing-key registry. AddRetiredKeysPEM remains only
-// as a compatibility helper for legacy deployment configuration.
+// Package tokens issues and verifies Qeet ID's access and ID JWTs and its opaque
+// refresh tokens. JWTs are signed ES256 so any relying party can verify them
+// from the public JWKS; each carries a kid (its key's RFC 7638 thumbprint), and
+// a missing or unknown kid is rejected. SigningKeyRegistry stores the keyring.
 package tokens
 
 import (
@@ -30,7 +16,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"math/big"
 	"sync"
 	"time"
 
@@ -42,33 +27,19 @@ import (
 // be left-padded to this length (RFC 7518 §6.2.1.2).
 const p256CoordBytes = 32
 
+// Claims is the payload of a Qeet ID access token.
 type Claims struct {
-	UserID    uuid.UUID `json:"user_id"`
-	TenantID  uuid.UUID `json:"tenant_id"`
-	SessionID uuid.UUID `json:"sid"`
-	Scope     string    `json:"scope,omitempty"`
-	// ActorType distinguishes the principal kind on non-user tokens
-	// ("service", "agent"); empty on ordinary user tokens. AgentID is set on
-	// agent tokens. Both are surfaced by introspection so resource servers
-	// (incl. MCP servers) can authorize agents distinctly.
-	ActorType string `json:"actor_type,omitempty"`
-	AgentID   string `json:"agent_id,omitempty"`
-	// Act is the RFC 8693 actor claim: present on delegated tokens (token
-	// exchange with an actor_token), naming the party acting on the subject's
-	// behalf — e.g. an AI agent exercising a user's authority. Absent otherwise.
-	Act *ActClaim `json:"act,omitempty"`
-	// ClientID names the application a token was issued to through the
-	// authorization server (RFC 9068 client_id): authorization code, refresh,
-	// device, back-channel and token exchange. Empty on the user's own
-	// (first-party) tokens. The management API refuses tokens that carry it.
-	ClientID string `json:"client_id,omitempty"`
-	// ExchangeDepth counts the RFC 8693 token exchanges that produced this
-	// token (absent: none), so a chain of exchanges can be bounded.
-	ExchangeDepth int `json:"exchange_depth,omitempty"`
-	// Custom carries tenant-supplied claims from a post-login Auth Hook
-	// (authhook.Service.Run), namespaced under "claims" rather than merged into
-	// the top level so a hook can never shadow a reserved/registered claim.
-	Custom map[string]any `json:"claims,omitempty"`
+	UserID        uuid.UUID      `json:"user_id"`                  // the subject user
+	TenantID      uuid.UUID      `json:"tenant_id"`                // the user's organisation
+	SessionID     uuid.UUID      `json:"sid"`                      // the session the token belongs to
+	Scope         string         `json:"scope,omitempty"`          // granted scopes
+	ActorType     string         `json:"actor_type,omitempty"`     // "service" or "agent"; empty on user tokens
+	AgentID       string         `json:"agent_id,omitempty"`       // set on agent tokens
+	Act           *ActClaim      `json:"act,omitempty"`            // RFC 8693 actor, on delegated tokens only
+	ClientID      string         `json:"client_id,omitempty"`      // RFC 9068 client; the management API refuses such tokens
+	ExchangeDepth int            `json:"exchange_depth,omitempty"` // RFC 8693 exchanges that produced the token
+	Custom        map[string]any `json:"claims,omitempty"`         // Auth Hook claims, nested so they can't shadow registered ones
+
 	jwt.RegisteredClaims
 }
 
@@ -80,23 +51,25 @@ type ActClaim struct {
 // signingKey couples a key with its JWS algorithm. priv is nil for verify-only
 // (retired) keys; pub is always present and is what we publish in the JWKS.
 type signingKey struct {
-	kid      string
-	alg      string
-	status   string
-	retireAt *time.Time
-	method   jwt.SigningMethod
-	priv     crypto.Signer    // signing — active key only
-	pub      crypto.PublicKey // verification + JWKS
+	kid      string            // key ID
+	alg      string            // signing algorithm
+	status   string            // "candidate", "active" or "retired"
+	retireAt *time.Time        // when a retired key stops verifying
+	method   jwt.SigningMethod // the JWT signing method
+	priv     crypto.Signer     // signing — active key only
+	pub      crypto.PublicKey  // verification + JWKS
 }
 
+// Issuer signs and verifies Qeet ID JWTs. It is safe for concurrent use, and
+// SigningKeyRegistry.Sync can replace its keyring while it is in use.
 type Issuer struct {
-	mu         sync.RWMutex
+	mu         sync.RWMutex           // guards active and verifiers
 	active     *signingKey            // the key new tokens are signed with
 	verifiers  map[string]*signingKey // kid -> key (active + retired)
-	issuer     string
-	audience   string
-	accessTTL  time.Duration
-	refreshTTL time.Duration
+	issuer     string                 // the iss claim
+	audience   string                 // the aud claim
+	accessTTL  time.Duration          // access token lifetime
+	refreshTTL time.Duration          // refresh token lifetime
 }
 
 // NewIssuer builds an ES256 issuer from a PEM-encoded EC P-256 private key
@@ -136,10 +109,17 @@ func newIssuerFromKey(priv *ecdsa.PrivateKey, issuer, audience string, accessTTL
 	}, nil
 }
 
-func (i *Issuer) AccessTTL() time.Duration  { return i.accessTTL }
+// AccessTTL returns how long an access token lasts.
+func (i *Issuer) AccessTTL() time.Duration { return i.accessTTL }
+
+// RefreshTTL returns how long a refresh token lasts.
 func (i *Issuer) RefreshTTL() time.Duration { return i.refreshTTL }
-func (i *Issuer) JWTIssuer() string         { return i.issuer }
-func (i *Issuer) JWTAudience() string       { return i.audience }
+
+// JWTIssuer returns the tokens' iss claim.
+func (i *Issuer) JWTIssuer() string { return i.issuer }
+
+// JWTAudience returns the tokens' aud claim.
+func (i *Issuer) JWTAudience() string { return i.audience }
 
 // KID is the active signing key's id (its RFC 7638 JWK thumbprint).
 func (i *Issuer) KID() string {
@@ -156,12 +136,10 @@ func (i *Issuer) Alg() string {
 	return i.active.alg
 }
 
-// AddRetiredKeysPEM registers verify-only public keys so tokens signed under a
-// previously-active key still verify during the rotation grace window. The
-// argument may contain multiple concatenated PEM blocks ("PUBLIC KEY" SPKI or
-// "CERTIFICATE"). The kid is derived from each key, so the operator only needs
-// to supply the public key. Returns the number of keys registered. Unparseable
-// blocks and duplicates are skipped.
+// AddRetiredKeysPEM registers the P-256 keys in raw (concatenated "PUBLIC KEY"
+// or "CERTIFICATE" PEM blocks) as verify-only, so tokens signed before a
+// rotation still verify. It returns the number added, skipping bad blocks and
+// duplicates.
 func (i *Issuer) AddRetiredKeysPEM(raw string) int {
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -194,10 +172,8 @@ func (i *Issuer) AddRetiredKeysPEM(raw string) int {
 	return n
 }
 
-// LoadRetiredKeysPEM strictly loads deployment-configured verification keys.
-// Unlike the lenient AddRetiredKeysPEM compatibility helper, any malformed or
-// unsupported PEM block is an error so startup cannot silently lose rotation
-// grace on one replica.
+// LoadRetiredKeysPEM is the strict form of AddRetiredKeysPEM: any malformed or
+// non-P-256 block is an error, so a replica can't silently lose rotation grace.
 func (i *Issuer) LoadRetiredKeysPEM(raw string) (int, error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -230,10 +206,8 @@ func (i *Issuer) LoadRetiredKeysPEM(raw string) (int, error) {
 	return count, nil
 }
 
-// Sign returns a compact JWS bearing the given claims, signed with the active
-// key and carrying its kid header. Callers needing custom claims (OIDC ID
-// tokens, service-principal access tokens) use this rather than calling
-// jwt.NewWithClaims directly so the kid is always set.
+// Sign returns a compact JWS of claims signed with the active key, with its kid
+// header set. Use it rather than jwt.NewWithClaims so the kid is never missing.
 func (i *Issuer) Sign(claims jwt.Claims) (string, error) {
 	i.mu.RLock()
 	active := i.active
@@ -312,6 +286,8 @@ func (i *Issuer) replaceKeyring(activePrivatePEM string, verificationKeys []veri
 	return nil
 }
 
+// IssueAccess mints a first-party access token for the platform audience and
+// returns it with its expiry.
 func (i *Issuer) IssueAccess(userID, tenantID, sessionID uuid.UUID, scopes string) (string, time.Time, error) {
 	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, "", nil, "", time.Time{}, 0)
 }
@@ -323,11 +299,9 @@ func (i *Issuer) IssueAccessActor(userID, tenantID, sessionID uuid.UUID, scopes,
 	return i.issueAccess(userID, tenantID, sessionID, scopes, &ActClaim{Subject: actorSubject}, "", nil, "", time.Time{}, 0)
 }
 
-// IssueAccessResource mints an access token whose audience carries an RFC 8707
-// resource indicator. The platform audience is always retained (so the token
-// still verifies on this server's own API via VerifyAccess) and the resource is
-// appended, letting a downstream resource server (e.g. an MCP server) confirm
-// the token was minted for it. An empty resource behaves like IssueAccess.
+// IssueAccessResource mints an access token whose audience is the RFC 8707
+// resource alone, so this server's API and every other service refuse it. An
+// empty resource behaves like IssueAccess.
 func (i *Issuer) IssueAccessResource(userID, tenantID, sessionID uuid.UUID, scopes, resource string) (string, time.Time, error) {
 	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, resource, nil, "", time.Time{}, 0)
 }
@@ -346,10 +320,9 @@ func (i *Issuer) IssueSessionAccess(userID, tenantID, sessionID uuid.UUID, custo
 	return i.issueAccess(userID, tenantID, sessionID, "", nil, "", custom, "", sessionEnd, 0)
 }
 
-// IssueAccessActorResource combines IssueAccessActor and IssueAccessResource:
-// a delegated (RFC 8693 act) token whose audience is also bound to an RFC 8707
-// resource indicator. This is the token-exchange grant's MCP case — an agent
-// token scoped to one specific downstream resource server.
+// IssueAccessActorResource combines IssueAccessActor and IssueAccessResource: a
+// delegated (RFC 8693 act) token whose audience is one RFC 8707 resource, such
+// as an agent's token for a single MCP server.
 func (i *Issuer) IssueAccessActorResource(userID, tenantID, sessionID uuid.UUID, scopes, actorSubject, resource string) (string, time.Time, error) {
 	return i.issueAccess(userID, tenantID, sessionID, scopes, &ActClaim{Subject: actorSubject}, resource, nil, "", time.Time{}, 0)
 }
@@ -357,19 +330,13 @@ func (i *Issuer) IssueAccessActorResource(userID, tenantID, sessionID uuid.UUID,
 // ClientAccess describes an access token issued to an application on a
 // user's behalf (see IssueClientAccess).
 type ClientAccess struct {
-	UserID, TenantID, SessionID uuid.UUID
-	Scopes                      string
-	// ActorSubject, when set, adds an RFC 8693 act claim (delegated token).
-	ActorSubject string
-	// Resource, when set, binds the audience to an RFC 8707 resource.
-	Resource string
-	// ClientID is the application the token is issued to.
-	ClientID string
-	// NotAfter, when set, is the latest the token may expire (an exchanged
-	// token never outlives the token it was exchanged for).
-	NotAfter time.Time
-	// ExchangeDepth is how many token exchanges produced this token (0: none).
-	ExchangeDepth int
+	UserID, TenantID, SessionID uuid.UUID // the token's subject, organisation and session
+	Scopes                      string    // granted scopes
+	ActorSubject                string    // if set, adds an RFC 8693 act claim
+	Resource                    string    // if set, the RFC 8707 resource that is the audience
+	ClientID                    string    // the application the token is issued to
+	NotAfter                    time.Time // if set, the latest expiry; an exchanged token never outlives its source
+	ExchangeDepth               int       // token exchanges that produced this token (0: none)
 }
 
 // IssueClientAccess mints the access token an application receives from the
@@ -423,8 +390,8 @@ func (i *Issuer) issueAccess(userID, tenantID, sessionID uuid.UUID, scopes strin
 	return s, exp, nil
 }
 
-// keyFunc resolves the verification key from the kid header. It is the single
-// point that enforces "no token may verify without a known kid".
+// keyFunc returns the verification key named by the kid header. It rejects a
+// missing or unknown kid and a retired key past its retire_at.
 func (i *Issuer) keyFunc(t *jwt.Token) (any, error) {
 	raw, ok := t.Header["kid"]
 	if !ok {
@@ -451,13 +418,13 @@ func (i *Issuer) keyFunc(t *jwt.Token) (any, error) {
 // a new signing algorithm is added.
 var validMethods = []string{"ES256"}
 
+// VerifyAccess verifies an access token issued for the platform audience.
 func (i *Issuer) VerifyAccess(raw string) (*Claims, error) {
 	return i.verifyAccess(raw, jwt.WithAudience(i.audience))
 }
 
-// VerifyAccessFor verifies an access token issued for audience: a resource a
-// token was issued for (RFC 8707), as the downstream service serving it checks
-// its own name, or the platform's own audience (VerifyAccess).
+// VerifyAccessFor verifies an access token whose audience includes audience,
+// such as a resource server checking a token issued for it (RFC 8707).
 func (i *Issuer) VerifyAccessFor(raw, audience string) (*Claims, error) {
 	return i.verifyAccess(raw, jwt.WithAudience(audience))
 }
@@ -485,12 +452,28 @@ func (i *Issuer) verifyAccess(raw string, opts ...jwt.ParserOption) (*Claims, er
 	return claims, nil
 }
 
-// VerifyVC verifies a JWT-serialized Verifiable Credential this issuer signed:
-// it checks the signature (via the JWKS keys + kid), the issuer, and expiry,
-// but NOT the access-token audience (VCs aren't audience-bound). Returns the
-// full claim map so the caller can read the embedded `vc` object. Use this only
-// for credentials issued by this server (iss == our issuer).
+// ErrNotCredential is a token this issuer signed that is not a verifiable
+// credential, such as an access or ID token.
+var ErrNotCredential = errors.New("not a verifiable credential")
+
+// VerifyVC verifies a JWT Verifiable Credential this issuer signed (signature,
+// kid, issuer and expiry, but no audience) and returns its claims, including the
+// embedded vc object. Any other token this issuer signed is ErrNotCredential.
 func (i *Issuer) VerifyVC(raw string) (jwt.MapClaims, error) {
+	claims, err := i.VerifySigned(raw)
+	if err != nil {
+		return nil, err
+	}
+	if !isCredential(claims) {
+		return nil, ErrNotCredential
+	}
+	return claims, nil
+}
+
+// VerifySigned verifies a token this issuer signed (signature, kid, issuer and
+// lifetime) whatever its audience or kind, and returns its claims. Callers
+// check the claims that identify the kind of token they expect.
+func (i *Issuer) VerifySigned(raw string) (jwt.MapClaims, error) {
 	parser := jwt.NewParser(
 		jwt.WithValidMethods(validMethods),
 		jwt.WithIssuer(i.issuer),
@@ -501,9 +484,30 @@ func (i *Issuer) VerifyVC(raw string) (jwt.MapClaims, error) {
 		return nil, err
 	}
 	if !tok.Valid {
-		return nil, errors.New("invalid credential")
+		return nil, errors.New("invalid token")
 	}
 	return claims, nil
+}
+
+// isCredential reports whether claims hold a vc object whose type includes
+// VerifiableCredential, as a JWT-encoded credential does (VC Data Model 1.1
+// §6.3.1).
+func isCredential(claims jwt.MapClaims) bool {
+	vc, ok := claims["vc"].(map[string]any)
+	if !ok {
+		return false
+	}
+	switch types := vc["type"].(type) {
+	case string:
+		return types == "VerifiableCredential"
+	case []any:
+		for _, t := range types {
+			if t == "VerifiableCredential" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // VerifySignedAnyTime verifies a token this issuer signed (signature and
@@ -530,17 +534,15 @@ func (i *Issuer) VerifySignedAnyTime(raw string) (jwt.MapClaims, error) {
 // It deliberately carries no key material (the public coordinates live in the
 // JWKS); it only reports the key's id, algorithm, use, and rotation status.
 type KeyMeta struct {
-	Kid      string     `json:"kid"`
-	Alg      string     `json:"alg"`
-	Use      string     `json:"use"`
-	Status   string     `json:"status"` // "candidate" | "active" | "retired"
-	RetireAt *time.Time `json:"retire_at,omitempty"`
+	Kid      string     `json:"kid"`                 // key ID
+	Alg      string     `json:"alg"`                 // signing algorithm
+	Use      string     `json:"use"`                 // JWK use: "sig"
+	Status   string     `json:"status"`              // "candidate", "active" or "retired"
+	RetireAt *time.Time `json:"retire_at,omitempty"` // when a retired key stops verifying
 }
 
-// KeyInfo returns metadata for every signing key the issuer knows about: the
-// active key (status "active") plus any retired verify-only keys still inside
-// their rotation grace window (status "retired"). Unlike JWKS it exposes no key
-// material, so it's safe to surface in an admin UI.
+// KeyInfo returns metadata, without key material, for every key that can still
+// verify: the active key, candidates, and retired keys inside their grace window.
 func (i *Issuer) KeyInfo() []KeyMeta {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
@@ -578,9 +580,8 @@ type JWK struct {
 	Kid string `json:"kid"`
 }
 
-// JWKS returns every public key a relying party may need to verify a Qeet ID
-// token: the active signing key plus any retired keys still inside their grace
-// window.
+// JWKS returns the public keys a relying party may need: the active key,
+// candidates, and retired keys still inside their grace window.
 func (i *Issuer) JWKS() []JWK {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
@@ -593,11 +594,15 @@ func (i *Issuer) JWKS() []JWK {
 		if !ok {
 			continue
 		}
+		x, y, err := coords(ec)
+		if err != nil {
+			continue
+		}
 		out = append(out, JWK{
 			Kty: "EC",
 			Crv: "P-256",
-			X:   coord(ec.X),
-			Y:   coord(ec.Y),
+			X:   x,
+			Y:   y,
 			Use: "sig",
 			Alg: k.alg,
 			Kid: k.kid,
@@ -616,14 +621,14 @@ func NewRefreshToken() (string, string, error) {
 	return raw, HashRefresh(raw), nil
 }
 
+// HashRefresh returns the base64url SHA-256 of a raw refresh token, the form
+// that is stored.
 func HashRefresh(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-// GenerateES256KeyPEM mints a fresh ES256 (P-256) private key as a PKCS#8 PEM.
-// Used for dev convenience (ephemeral key when JWT_SIGNING_KEY is unset) and as
-// the building block for the key-rotation runbook.
+// GenerateES256KeyPEM returns a new ES256 (P-256) private key as PKCS#8 PEM.
 func GenerateES256KeyPEM() (string, error) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -634,21 +639,6 @@ func GenerateES256KeyPEM() (string, error) {
 		return "", err
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})), nil
-}
-
-// PublicKeyPEM returns the SPKI ("PUBLIC KEY") PEM for an EC private key. It is
-// useful for offline inspection and legacy JWT_RETIRED_KEYS migration; normal
-// rotations publish public material through the shared key registry.
-func PublicKeyPEM(privateKeyPEM string) (string, error) {
-	priv, err := parseECPrivateKey(privateKeyPEM)
-	if err != nil {
-		return "", err
-	}
-	der, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
-	if err != nil {
-		return "", err
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})), nil
 }
 
 func parseECPrivateKey(pemStr string) (*ecdsa.PrivateKey, error) {
@@ -698,19 +688,25 @@ func thumbprint(pub *ecdsa.PublicKey) (string, error) {
 	}
 	// RFC 7638 §3.2: members in lexicographic order, no whitespace. The values
 	// are base64url and need no JSON escaping, so a literal is safe and exact.
-	canonical := `{"crv":"P-256","kty":"EC","x":"` + coord(pub.X) + `","y":"` + coord(pub.Y) + `"}`
+	x, y, err := coords(pub)
+	if err != nil {
+		return "", err
+	}
+	canonical := `{"crv":"P-256","kty":"EC","x":"` + x + `","y":"` + y + `"}`
 	sum := sha256.Sum256([]byte(canonical))
 	return base64.RawURLEncoding.EncodeToString(sum[:]), nil
 }
 
-// coord encodes a P-256 coordinate as a fixed-length, left-padded base64url
-// string per RFC 7518 §6.2.1.2.
-func coord(c *big.Int) string {
-	b := c.Bytes()
-	if len(b) < p256CoordBytes {
-		padded := make([]byte, p256CoordBytes)
-		copy(padded[p256CoordBytes-len(b):], b)
-		b = padded
+// coords returns the base64url x and y coordinates of a P-256 public key,
+// each fixed-length per RFC 7518 §6.2.1.2.
+func coords(pub *ecdsa.PublicKey) (x, y string, err error) {
+	b, err := pub.Bytes()
+	if err != nil {
+		return "", "", err
 	}
-	return base64.RawURLEncoding.EncodeToString(b)
+	if len(b) != 1+2*p256CoordBytes {
+		return "", "", errors.New("coords: not a P-256 key")
+	}
+	enc := base64.RawURLEncoding
+	return enc.EncodeToString(b[1 : 1+p256CoordBytes]), enc.EncodeToString(b[1+p256CoordBytes:]), nil
 }

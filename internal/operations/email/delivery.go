@@ -14,16 +14,15 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery"
 )
 
-// DeliveryHandler answers whether the organisation's mail arrived, and lets an
-// administrator lift a suppression its mail caused:
-//
-//	GET    /tenants/{tenantID}/email/messages?to=<address>   messages to an address, and its suppression
-//	GET    /tenants/{tenantID}/email/suppressions            addresses suppressed by the organisation's mail
-//	DELETE /tenants/{tenantID}/email/suppressions/{id}       clear one (audited)
+// DeliveryHandler answers whether an organisation's mail arrived, and lets an
+// administrator lift a suppression the organisation's mail caused.
 type DeliveryHandler struct {
 	Store *delivery.Store
 }
 
+// Mount registers, under /tenants/{tenantID}/email: GET messages?to=<address>
+// (messages to an address and its suppression), GET suppressions, and
+// DELETE suppressions/{id}, which is audited.
 func (h *DeliveryHandler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/email/messages", h.messages)
 	r.Get("/tenants/{tenantID}/email/suppressions", h.suppressions)
@@ -60,11 +59,12 @@ func (h *DeliveryHandler) messages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if sup != nil {
-		view := map[string]any{"reason": sup.Reason, "detail": sup.Detail, "created_at": sup.CreatedAt}
-		// Only the organisation whose mail caused a suppression may clear it,
-		// so only it is told which one it is.
+		// Only the organisation whose mail caused a suppression may clear it, so
+		// only it is told which one it is, and why and when. Any other learns
+		// only that its mail to the address isn't sent.
+		view := map[string]any{"own": false}
 		if sup.TenantID != nil && *sup.TenantID == tenantID {
-			view["id"] = sup.ID
+			view = map[string]any{"own": true, "id": sup.ID, "reason": sup.Reason, "detail": sup.Detail, "created_at": sup.CreatedAt}
 		}
 		out["suppression"] = view
 	}

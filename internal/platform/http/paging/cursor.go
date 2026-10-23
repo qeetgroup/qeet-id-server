@@ -1,8 +1,5 @@
-// Package paging holds shared helpers for opaque cursor-based
-// pagination. Right now there's only one shape — (created_at, id) —
-// because every domain table in the repo orders by that pair. If a
-// new table needs a different sort key, add a second helper rather
-// than generalising prematurely.
+// Package paging encodes and decodes the opaque cursors used for keyset
+// pagination over the (created_at, id) sort key.
 package paging
 
 import (
@@ -16,18 +13,16 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// EncodeTimeUUID packs (created_at, id) into a base64url-encoded
-// "RFC3339Nano|uuid" pair. The pair is used as a row's stable
-// pagination key — the database compares it against (created_at, id)
-// with a tuple inequality, so the planner gets an index range scan
-// instead of the previous "id → SELECT created_at" subselect.
+// EncodeTimeUUID returns the cursor for a row at (t, id): base64url of
+// "RFC3339Nano|uuid". Queries compare it to (created_at, id) as a tuple, which
+// an index range scan serves.
 func EncodeTimeUUID(t time.Time, id uuid.UUID) string {
 	raw := t.UTC().Format(time.RFC3339Nano) + "|" + id.String()
 	return base64.RawURLEncoding.EncodeToString([]byte(raw))
 }
 
-// DecodeTimeUUID is the inverse. It returns ErrBadRequest on a
-// malformed cursor so handlers can pass it straight to WriteError.
+// DecodeTimeUUID reverses EncodeTimeUUID. A malformed cursor returns
+// errs.ErrBadRequest; an empty one returns a plain error.
 func DecodeTimeUUID(cursor string) (time.Time, uuid.UUID, error) {
 	if cursor == "" {
 		return time.Time{}, uuid.Nil, errors.New("empty cursor")

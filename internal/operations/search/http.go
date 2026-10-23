@@ -11,27 +11,22 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Handler wires the search Service into the chi router.
+// Handler serves the search endpoint.
 type Handler struct {
 	Service *Service
 }
 
-// Mount registers the search endpoint on the authenticated router group.
-// The route is intentionally absent from the RBAC permissionMap — access to
-// each resource type is gated per-type inside the Service (see typePermission).
+// Mount registers GET /search. The route admits only user principals, and the
+// Service checks a read permission for each resource type.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/search", h.search)
 }
 
-// search handles GET /v1/search
-//
-//	?q=<query>               required; 1+ chars after trimming
-//	&types=<csv>             optional; comma-separated resource types to filter
-//	&cursor=<opaque>         optional; pagination token from a previous response
-//	&limit=<1..50>           optional; defaults to 20, capped at 50
+// search serves GET /v1/search. q is required; types is an optional
+// comma-separated list of resource types; cursor comes from a previous
+// response; limit outside 1..50 becomes 20.
 func (h *Handler) search(w http.ResponseWriter, r *http.Request) {
-	// Tenant is derived from the authenticated principal only — never from
-	// the URL or body (QID-18).
+	// Tenant comes from the authenticated principal, never the URL or body.
 	tenantID, err := httpx.RequireTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -57,9 +52,8 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	cursor := r.URL.Query().Get("cursor")
 
-	// User principals get per-type RBAC checks; API-key and service-principal
-	// callers (p.UserID == nil) skip them — they are already scoped to the
-	// tenant by their credential.
+	// The route admits only user principals, so p.UserID is set and every type
+	// is permission-checked.
 	p := httpx.PrincipalFromCtx(r.Context())
 	userID := p.UserID // *uuid.UUID; nil for non-user principals
 

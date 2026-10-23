@@ -17,11 +17,10 @@ const MaxNameLength = 64
 // from its user agent.
 const fallbackName = "Passkey"
 
-// cleanName makes a user-supplied passkey name safe to store and to show as
-// text. Control characters (NUL, line breaks, tabs, escapes) count as spaces;
-// bidirectional controls are dropped, because they reorder the text shown
-// around them; runs of spaces collapse into one, with none at either end.
-// Markup is kept as typed: a name is text, and every UI shows it as text.
+// cleanName makes a user-supplied passkey name safe to store and show as text:
+// control characters count as spaces, bidirectional controls (which reorder the
+// text around them) are dropped, and runs of spaces collapse into one with none
+// at either end. Markup is kept as typed, since every UI shows names as text.
 func cleanName(name string) string {
 	var b strings.Builder
 	space := false

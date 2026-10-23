@@ -1,5 +1,5 @@
-// Package db owns the single pgx pool shared by every module.
-package db
+// Package postgres owns the single pgx pool shared by every module.
+package postgres
 
 import (
 	"context"
@@ -9,6 +9,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// NewPool opens a pgx pool on url with server-side query timeouts, applying
+// minConns and maxConns when positive, and returns it once a ping succeeds
+// within 5 seconds.
 func NewPool(ctx context.Context, url string, minConns, maxConns int32) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
@@ -27,19 +30,9 @@ func NewPool(ctx context.Context, url string, minConns, maxConns int32) (*pgxpoo
 	cfg.MaxConnIdleTime = 30 * time.Minute
 	cfg.HealthCheckPeriod = 30 * time.Second
 
-	// Server-side safety valves, applied to every connection in the pool.
-	//
-	// HTTP_WRITE_TIMEOUT closes the *client* connection but does not cancel the
-	// query: Postgres keeps executing and the pool slot stays occupied. With
-	// DB_MAX_CONNS defaulting to 10, a handful of pathological queries (a
-	// missing index, a large OFFSET, an unbounded scan) can occupy the entire
-	// pool and take the API down while every statement is individually
-	// "correct". These bound the blast radius in the database itself, where the
-	// work actually happens.
-	//
-	// Set via RuntimeParams so they are sent at connection setup and cannot be
-	// forgotten at a call site. Any value already present in DATABASE_URL wins,
-	// so an operator can still tune per-environment without a code change.
+	// Server-side timeouts on every connection: an HTTP timeout doesn't cancel the
+	// query, so a few runaway statements could otherwise hold the whole pool. They
+	// are sent at connection setup; a value already set in the DB URL wins.
 	if cfg.ConnConfig.RuntimeParams == nil {
 		cfg.ConnConfig.RuntimeParams = map[string]string{}
 	}

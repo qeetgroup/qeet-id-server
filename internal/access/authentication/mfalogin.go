@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,19 +13,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// A sign-in's second factor. When the account holds any confirmed second
-// factor — an authenticator app, an email or SMS code factor, a passkey (while
-// its organisation allows passkeys) or a push device — password sign-in
-// returns a challenge instead of a session, listing exactly the factors the
-// account holds. The challenge is met by:
-//
-//   - a code: an authenticator-app code, a recovery code, or an email/SMS code
-//     sent for it (SendMFACode);
-//   - a passkey assertion from the ceremony started for it (BeginMFAPasskey);
-//   - an approval of the push request sent for it (StartMFAPush).
-//
-// The passkey ceremony and the push request are bound to the challenge, which
-// is deleted once met, so neither can complete any other sign-in.
+// When an account holds a confirmed second factor, password sign-in returns a
+// challenge listing those factors. It is met by a code, a passkey assertion
+// (BeginMFAPasskey) or an approved push (StartMFAPush); both ceremonies are bound
+// to the challenge, so they can't complete another sign-in.
 
 // LoginFactor is one way a person can meet a sign-in's second-factor
 // challenge.
@@ -117,9 +109,12 @@ type pendingMFAChallenge struct {
 	pushChallengeID  *uuid.UUID
 	codesSent        int32
 	// riskEmail: met by a code to the verified email (see risksignin.go);
-	// emailCodeSentAt is when the last one went.
-	riskEmail       bool
-	emailCodeSentAt *time.Time
+	// emailCodeSentAt is when the last one went, and emailCodeHash and
+	// emailCodeExpiresAt are that code's.
+	riskEmail          bool
+	emailCodeSentAt    *time.Time
+	emailCodeHash      *string
+	emailCodeExpiresAt *time.Time
 }
 
 // loadMFAChallenge reads a live challenge under lock: ErrAuthSessionInvalid
@@ -134,10 +129,10 @@ func loadMFAChallenge(ctx context.Context, tx pgx.Tx, mfaToken string) (uuid.UUI
 	var expiresAt time.Time
 	err = tx.QueryRow(ctx, `
 		SELECT user_id, tenant_id, enrollment, expires_at, passkey_session_id, push_challenge_id, codes_sent,
-		       risk_email, email_code_sent_at
+		       risk_email, email_code_sent_at, email_code_hash, email_code_expires_at
 		FROM auth.mfa_login_challenges WHERE id = $1 FOR UPDATE`, id).
 		Scan(&c.userID, &c.tenantID, &c.enrollment, &expiresAt, &c.passkeySessionID, &c.pushChallengeID, &c.codesSent,
-			&c.riskEmail, &c.emailCodeSentAt)
+			&c.riskEmail, &c.emailCodeSentAt, &c.emailCodeHash, &c.emailCodeExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && time.Now().After(expiresAt)) {
 		return uuid.Nil, pendingMFAChallenge{}, errs.ErrAuthMFAChallengeExpired
 	}
@@ -166,9 +161,14 @@ func (s *Service) withMFAChallenge(ctx context.Context, mfaToken string, fn func
 }
 
 // SendMFACode sends a code to one of the challenged person's email or SMS
-// factors, at most maxMFACodesSent times per challenge.
+// factors, at most maxMFACodesSent times per challenge. The code goes once the
+// challenge transaction has committed; one that fails to go is not counted.
 func (s *Service) SendMFACode(ctx context.Context, mfaToken string, factorID uuid.UUID) error {
-	return s.withMFAChallenge(ctx, mfaToken, func(tx pgx.Tx, id uuid.UUID, c pendingMFAChallenge) error {
+	var id uuid.UUID
+	var c pendingMFAChallenge
+	var risk riskEmailCode
+	err := s.withMFAChallenge(ctx, mfaToken, func(tx pgx.Tx, cid uuid.UUID, cc pendingMFAChallenge) error {
+		id, c = cid, cc
 		if c.enrollment {
 			return errNotAFactorChallenge
 		}
@@ -181,52 +181,88 @@ func (s *Service) SendMFACode(ctx context.Context, mfaToken string, factorID uui
 			if factorID != id {
 				return errs.ErrNotFound
 			}
-			return s.sendRiskEmailCode(ctx, tx, id, c)
-		}
-		if _, err := tx.Exec(ctx, `UPDATE auth.mfa_login_challenges SET codes_sent = codes_sent + 1 WHERE id = $1`, id); err != nil {
+			var err error
+			risk, err = s.newRiskEmailCode(ctx, tx, id, c)
 			return err
 		}
-		return s.mfa.SendLoginCode(ctx, c.userID, c.tenantID, factorID)
+		_, err := tx.Exec(ctx, `UPDATE auth.mfa_login_challenges SET codes_sent = codes_sent + 1 WHERE id = $1`, id)
+		return err
 	})
+	switch {
+	case err != nil:
+		return err
+	case c.riskEmail:
+		return s.sendRiskEmailCode(ctx, id, c, risk)
+	}
+	if err := s.mfa.SendLoginCode(ctx, c.userID, c.tenantID, factorID); err != nil {
+		// On a context of its own, so a send that failed as ctx ended is undone too.
+		uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancel()
+		if _, uerr := s.pool.Exec(uctx, `UPDATE auth.mfa_login_challenges SET codes_sent = codes_sent - 1 WHERE id = $1`, id); uerr != nil {
+			slog.Warn("unsent sign-in code still counted", "err", uerr)
+		}
+		return err
+	}
+	return nil
+}
+
+// factorChallenge returns the id and person of the live challenge mfaToken
+// names, refusing one that holds no factor of its own to use.
+func (s *Service) factorChallenge(ctx context.Context, mfaToken string) (id, userID uuid.UUID, err error) {
+	err = s.withMFAChallenge(ctx, mfaToken, func(_ pgx.Tx, cid uuid.UUID, c pendingMFAChallenge) error {
+		if c.enrollment || c.riskEmail {
+			return errNotAFactorChallenge
+		}
+		id, userID = cid, c.userID
+		return nil
+	})
+	return id, userID, err
 }
 
 // BeginMFAPasskey starts the passkey ceremony for the challenge and returns
 // its id and assertion options; only an assertion from it meets the challenge.
+// It begins after the challenge's transaction, as the MFA service uses its
+// own connection, and is then bound to the challenge.
 func (s *Service) BeginMFAPasskey(ctx context.Context, mfaToken string) (uuid.UUID, any, error) {
-	var sessionID uuid.UUID
-	var options any
-	err := s.withMFAChallenge(ctx, mfaToken, func(tx pgx.Tx, id uuid.UUID, c pendingMFAChallenge) error {
-		if c.enrollment || c.riskEmail {
-			return errNotAFactorChallenge
-		}
-		var err error
-		if sessionID, options, err = s.mfa.BeginLoginPasskey(ctx, c.userID); err != nil {
-			return err
-		}
-		_, err = tx.Exec(ctx, `UPDATE auth.mfa_login_challenges SET passkey_session_id = $2 WHERE id = $1`, id, sessionID)
-		return err
-	})
-	return sessionID, options, err
+	id, userID, err := s.factorChallenge(ctx, mfaToken)
+	if err != nil {
+		return uuid.Nil, nil, err
+	}
+	sessionID, options, err := s.mfa.BeginLoginPasskey(ctx, userID)
+	if err != nil {
+		return uuid.Nil, nil, err
+	}
+	tag, err := s.pool.Exec(ctx, `UPDATE auth.mfa_login_challenges SET passkey_session_id = $2 WHERE id = $1`, id, sessionID)
+	if err != nil {
+		return uuid.Nil, nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return uuid.Nil, nil, errs.ErrAuthMFAChallengeExpired
+	}
+	return sessionID, options, nil
 }
 
 // StartMFAPush sends a push approval request for the challenge to the
 // person's devices and returns when it expires; only its approval meets the
-// challenge.
+// challenge. It is sent after the challenge's transaction, as the MFA service
+// uses its own connection, and is then bound to the challenge.
 func (s *Service) StartMFAPush(ctx context.Context, mfaToken, ip, ua string) (time.Time, error) {
-	var expires time.Time
-	err := s.withMFAChallenge(ctx, mfaToken, func(tx pgx.Tx, id uuid.UUID, c pendingMFAChallenge) error {
-		if c.enrollment || c.riskEmail {
-			return errNotAFactorChallenge
-		}
-		pushID, exp, err := s.mfa.StartLoginPush(ctx, c.userID, ip, ua)
-		if err != nil {
-			return err
-		}
-		expires = exp
-		_, err = tx.Exec(ctx, `UPDATE auth.mfa_login_challenges SET push_challenge_id = $2 WHERE id = $1`, id, pushID)
-		return err
-	})
-	return expires, err
+	id, userID, err := s.factorChallenge(ctx, mfaToken)
+	if err != nil {
+		return time.Time{}, err
+	}
+	pushID, expires, err := s.mfa.StartLoginPush(ctx, userID, ip, ua)
+	if err != nil {
+		return time.Time{}, err
+	}
+	tag, err := s.pool.Exec(ctx, `UPDATE auth.mfa_login_challenges SET push_challenge_id = $2 WHERE id = $1`, id, pushID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		return time.Time{}, errs.ErrAuthMFAChallengeExpired
+	}
+	return expires, nil
 }
 
 // verifyMFAProof checks proof against the challenge inside tx and returns the
@@ -238,9 +274,9 @@ func (s *Service) verifyMFAProof(ctx context.Context, tx pgx.Tx, userID uuid.UUI
 		if passkeySession == nil || *passkeySession != proof.Passkey.SessionID {
 			return "", nil
 		}
-		if err := s.mfa.FinishLoginPasskey(ctx, userID, proof.Passkey.SessionID, proof.Passkey.Credential); err != nil {
+		if err := s.mfa.FinishLoginPasskeyTx(ctx, tx, userID, proof.Passkey.SessionID, proof.Passkey.Credential); err != nil {
 			if errs.As(err) != nil {
-				return "", nil
+				return "", nil //nolint:nilerr // a rejected assertion is a wrong proof, counted as a failed attempt
 			}
 			return "", err
 		}

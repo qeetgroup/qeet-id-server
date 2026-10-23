@@ -1,18 +1,9 @@
 package qeetai
 
-// Per-tenant "bring your own key" (BYOK) AI provider configuration.
-//
-// The qeetai's model provider used to be a single deployment-level singleton
-// built from QEETAI_* env at boot. This file adds a per-tenant seam: an
-// organization owner/admin can store their own provider + API key, and the
-// qeetai then streams a turn through THEIR provider. When a tenant hasn't
-// configured a key, we fall back to the deployment-level platform config, so
-// qeetai keeps working out of the box.
-//
-// The tenant API key is encrypted at rest with AES-256-GCM using the SAME data
-// key as the secrets vault (a KeyProvider is injected from the composition
-// root). Plaintext keys are never persisted and never returned to the client —
-// only a last-4 hint is exposed.
+// Per-tenant "bring your own key" (BYOK) provider configuration. A tenant's API
+// key is sealed with the deployment data key, bound to that tenant, and never
+// returned; only a last-4 hint is. A tenant without a key falls back to the
+// deployment's QEETAI_* provider.
 
 import (
 	"bytes"
@@ -39,10 +30,8 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
-// KeyProvider supplies the AES data-encryption key used to encrypt tenant BYOK
-// keys at rest. Structurally identical to the secrets-vault KeyProvider so the
-// composition root can pass the same provider without the qeetai importing the
-// developer/credentials package.
+// KeyProvider supplies the deployment data key that seals tenant provider keys.
+// It matches the secrets vault's KeyProvider, so one implementation serves both.
 type KeyProvider interface {
 	DataKey(ctx context.Context) ([]byte, error)
 }
@@ -51,12 +40,9 @@ type KeyProvider interface {
 type ConfigSource string
 
 const (
-	// SourceNone: neither a tenant key nor a platform key is configured.
-	SourceNone ConfigSource = "none"
-	// SourcePlatform: no tenant key; using the deployment-level QEETAI_* env.
-	SourcePlatform ConfigSource = "platform"
-	// SourceTenant: the tenant has configured (BYOK) their own provider + key.
-	SourceTenant ConfigSource = "tenant"
+	SourceNone     ConfigSource = "none"     // no tenant or platform key
+	SourcePlatform ConfigSource = "platform" // the deployment's QEETAI_* key
+	SourceTenant   ConfigSource = "tenant"   // the tenant's own (BYOK) key
 )
 
 // supportedProviders is the set of provider identifiers accepted on write.
@@ -89,20 +75,35 @@ func (p PlatformProvider) configured() bool {
 	return strings.TrimSpace(p.Provider) != "" && strings.TrimSpace(p.APIKey) != ""
 }
 
-// ProviderConfig resolves and manages per-tenant BYOK provider settings. It
-// satisfies ProviderResolver (consumed by the orchestrator) and backs the
-// admin CRUD endpoints.
+// ProviderConfig resolves and manages per-tenant BYOK provider settings and
+// implements ProviderResolver. A tenant admin chooses base_url, so both HTTP
+// clients are bounded by egress: httpClient, with a whole-request timeout, for
+// the Test probe, and streamClient for model calls.
 type ProviderConfig struct {
-	pool     *pgxpool.Pool
-	q        *dbgen.Queries
-	box      *envelope.Cipher
-	platform PlatformProvider
-	// egress bounds every call to a tenant-supplied base_url. BYOK lets a tenant
-	// admin name the endpoint this server talks to, which is the same
-	// tenant-controlled outbound surface as webhooks and log sinks.
-	egress *egress.Policy
-	// httpClient is used only by Test() for the live key-validation probe.
-	httpClient *http.Client
+	pool         *pgxpool.Pool
+	q            *dbgen.Queries
+	box          *envelope.Cipher
+	platform     PlatformProvider
+	egress       *egress.Policy
+	httpClient   *http.Client
+	streamClient *http.Client
+}
+
+const (
+	probeTimeout        = 15 * time.Second // a Test probe, start to finish
+	streamHeaderTimeout = 30 * time.Second // a model call's response headers
+)
+
+// newStreamClient returns an egress-bounded client for streamed model calls.
+// The response headers must arrive within headerTimeout; the body then streams
+// for as long as the request's context allows, which a whole-request
+// http.Client.Timeout would cut short.
+func newStreamClient(policy *egress.Policy, headerTimeout time.Duration) *http.Client {
+	client := policy.HTTPClient(0)
+	if t, ok := client.Transport.(*http.Transport); ok {
+		t.ResponseHeaderTimeout = headerTimeout
+	}
+	return client
 }
 
 // NewProviderConfig builds the service, deriving its envelope cipher from the
@@ -118,24 +119,22 @@ func NewProviderConfig(ctx context.Context, pool *pgxpool.Pool, kp KeyProvider, 
 	}
 	policy := egress.PublicPolicy(policies...)
 	return &ProviderConfig{
-		pool:       pool,
-		q:          dbgen.New(pool),
-		box:        box,
-		platform:   platform,
-		egress:     policy,
-		httpClient: policy.HTTPClient(15 * time.Second),
+		pool:         pool,
+		q:            dbgen.New(pool),
+		box:          box,
+		platform:     platform,
+		egress:       policy,
+		httpClient:   policy.HTTPClient(probeTimeout),
+		streamClient: newStreamClient(policy, streamHeaderTimeout),
 	}, nil
 }
 
 // PlatformConfigured reports whether a deployment-level fallback key is set.
 func (c *ProviderConfig) PlatformConfigured() bool { return c.platform.configured() }
 
-// qeetaiKeyPurpose / qeetaiKeyResource bind a tenant's provider key to its own
-// encryption context. Before this, every tenant's key was sealed with one
-// process-wide AES-GCM and a nil AAD, so ciphertext copied from one tenant's row
-// into another's decrypted happily into the second tenant's inference path.
-// The tenant id is the part that actually closes that; the resource is constant
-// because there is exactly one provider row per tenant.
+// qeetaiKeyPurpose and qeetaiKeyResource bind a provider key to its tenant, so
+// ciphertext copied into another tenant's row won't decrypt. The resource is
+// constant because each tenant has one provider row.
 const (
 	qeetaiKeyPurpose  = "qeetai-provider"
 	qeetaiKeyResource = "api-key"
@@ -148,10 +147,8 @@ func (c *ProviderConfig) encrypt(tenantID uuid.UUID, plaintext string) (cipherte
 	return c.box.Seal(tenantID, qeetaiKeyPurpose, qeetaiKeyResource, []byte(plaintext))
 }
 
-// decrypt opens a tenant's provider key. Rows written before the envelope
-// switch carry no version prefix and fall back to the legacy nil-AAD path
-// inside envelope.Open — the deployment DEK is the same, so no migration is
-// needed; reseal() then upgrades the row in place on first read.
+// decrypt opens a tenant's provider key. envelope.Open also reads legacy rows
+// sealed without the tenant context; ProviderFor then reseals them.
 func (c *ProviderConfig) decrypt(tenantID uuid.UUID, ciphertext, nonce []byte) (string, error) {
 	if c.box == nil {
 		return "", errs.ErrInternalServer.WithDetail("Qeet AI key encryption is unavailable")
@@ -233,8 +230,8 @@ func (c *ProviderConfig) Resolve(ctx context.Context, tenantID uuid.UUID) (Effec
 }
 
 // ProviderFor builds the ai.Provider a turn should stream through for a tenant.
-// Returns errs.New("qeetai_unconfigured", …) when neither a tenant nor a
-// platform key is available.
+// Returns errs.ErrQeetAIUnconfigured when neither a tenant nor a platform key is
+// available.
 func (c *ProviderConfig) ProviderFor(ctx context.Context, tenantID uuid.UUID) (ai.Provider, error) {
 	row, ok, err := c.tenantRow(ctx, tenantID)
 	if err != nil {
@@ -251,17 +248,14 @@ func (c *ProviderConfig) ProviderFor(ctx context.Context, tenantID uuid.UUID) (a
 	if c.platform.configured() {
 		return c.buildProvider(c.platform.Provider, c.platform.APIKey, c.platform.BaseURL, c.platform.Model, c.platform.MaxTokens), nil
 	}
-	return nil, errs.New("qeetai_unconfigured", "AI qeetai is not configured for this organization")
+	return nil, errs.ErrQeetAIUnconfigured
 }
 
-// buildProvider constructs an ai.Provider for the given provider identifier.
-// "azure" is served by the OpenAI-compatible client (the admin supplies the
-// Azure endpoint via base_url).
-// buildProvider wires the model client to the egress-bounded transport, so a
-// tenant-supplied base_url cannot reach the internal network at inference time
-// any more than it can at configuration time.
+// buildProvider returns the ai.Provider for provider; "azure" uses the
+// OpenAI-compatible client with the admin's base_url. The HTTP client is
+// egress-bounded, so a tenant's base_url can't reach the internal network.
 func (c *ProviderConfig) buildProvider(provider, apiKey, baseURL, model string, maxTokens int) ai.Provider {
-	client := c.httpClient
+	client := c.streamClient
 	switch strings.ToLower(provider) {
 	case "openai", "azure":
 		return openai.New(apiKey, baseURL, model, maxTokens, client)
@@ -327,7 +321,7 @@ func (c *ProviderConfig) Set(ctx context.Context, tenantID uuid.UUID, in SetProv
 		Provider:      in.Provider,
 		Model:         in.Model,
 		BaseUrl:       in.BaseURL,
-		MaxTokens:     int32(in.MaxTokens),
+		MaxTokens:     int32(in.MaxTokens), // #nosec G115 -- clamped to 200000 above
 		KeyCiphertext: ct,
 		KeyNonce:      nonce,
 		KeyLast4:      hint(in.APIKey),
@@ -361,7 +355,7 @@ func (c *ProviderConfig) Test(ctx context.Context, in SetProviderInput) error {
 	if err := in.normalize(c.egress); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 
 	switch in.Provider {
@@ -412,7 +406,7 @@ func (c *ProviderConfig) probeOpenAI(ctx context.Context, in SetProviderInput) e
 func (c *ProviderConfig) evalProbe(req *http.Request, provider string) error {
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return errs.New("qeetai_provider_unreachable", "could not reach the provider endpoint: "+err.Error())
+		return errs.ErrQeetAIProviderUnreachable.WithMessage("could not reach the provider endpoint: " + err.Error())
 	}
 	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
 
@@ -420,14 +414,14 @@ func (c *ProviderConfig) evalProbe(req *http.Request, provider string) error {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		return nil
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return errs.New("qeetai_provider_key_invalid", "the provider rejected the API key")
+		return errs.ErrQeetAIProviderKeyInvalid
 	case provider == "anthropic" && resp.StatusCode == http.StatusBadRequest:
 		// Anthropic authenticates before validating the body; a 400 here means
 		// the key is good but the model/body is off — surface as a model error.
-		return errs.New("qeetai_provider_model_invalid", "the key authenticated but the model was rejected — check the model id")
+		return errs.ErrQeetAIProviderModelInvalid
 	default:
 		snippet := readSnippet(resp.Body)
-		return errs.New("qeetai_provider_error", fmt.Sprintf("provider returned %d: %s", resp.StatusCode, snippet))
+		return errs.ErrQeetAIProviderError.WithMessage(fmt.Sprintf("provider returned %d: %s", resp.StatusCode, snippet))
 	}
 }
 

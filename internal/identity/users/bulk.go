@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
+	"strings"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
@@ -21,22 +23,43 @@ const maxImportBytes = 10 * 1024 * 1024
 // maxImportRows mirrors BulkCreateInput's own batch-size ceiling.
 const maxImportRows = 1000
 
+// Codes a BulkImportError carries besides the errs codes it reuses.
+const (
+	CodeImportFieldMissing = "user.import_field_missing"  // a required field is empty
+	CodeImportFieldInvalid = "user.import_field_invalid"  // a field's value has the wrong format
+	CodeImportFieldTooLong = "user.import_field_too_long" // a field's value is over its length limit
+	CodeImportRowMalformed = "user.import_row_malformed"  // the export line, or with no line the file, can't be parsed
+)
+
+// importErrorCodes is every code a BulkImportError can carry.
+var importErrorCodes = []string{
+	CodeImportFieldMissing, CodeImportFieldInvalid, CodeImportFieldTooLong, CodeImportRowMalformed,
+	errs.CodeUserImportSourceInvalid, errs.CodeAuthEmailExists,
+	errs.CodeAuthPolicyPasswordTooShort, errs.CodeAuthPolicyPasswordNoUppercase,
+	errs.CodeAuthPolicyPasswordNoNumber, errs.CodeAuthPolicyPasswordNoSymbol,
+	errs.CodeAuthPolicyPasswordBreached, errs.CodeAuthPasswordWeak,
+	errs.CodeInternal,
+}
+
 // userCreator creates one user (hashing + persistence). Injected into
 // runBulkImport so the aggregation logic is unit-testable without a DB.
 type userCreator func(ctx context.Context, in CreateInput) (*User, error)
 
-// runBulkImport validates and creates each row, continuing past per-row
-// failures (partial success). `create` writes each user's own audit and outbox
-// evidence, so only the summary comes back here. HTTP/DB specifics are kept
-// out — `create` is injected — so this is pure and testable.
+// runBulkImport validates each row and creates it with create, carrying on past
+// failed rows, and returns the per-row summary. create records each user's own
+// audit and outbox evidence.
 func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUID, rows []BulkUserInput, create userCreator) BulkImportResult {
 	var res BulkImportResult
 	for i, row := range rows {
 		line := i + 1
+		if row.line > 0 {
+			line = row.line
+		}
 		if v != nil {
 			if err := v.Struct(row); err != nil {
 				res.Failed++
-				res.Errors = append(res.Errors, BulkImportError{Line: line, Email: row.Email, Message: "invalid row: " + firstValidationMsg(err)})
+				code, field := validationIssue(err)
+				res.Errors = append(res.Errors, BulkImportError{Line: line, Email: row.Email, Code: code, Field: field, Message: "invalid row: " + firstValidationMsg(err)})
 				continue
 			}
 		}
@@ -49,17 +72,18 @@ func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUI
 		})
 		if err != nil {
 			res.Failed++
-			msg := "could not create user"
+			// Any other failure stays generic: its cause can carry internal detail.
+			rowErr := BulkImportError{Line: line, Email: row.Email, Code: errs.CodeInternal, Message: "could not create user"}
 			// errs.*.WithDetail returns a copy (no Unwrap/Is), so match on the
 			// stable code rather than identity.
 			if e := errs.As(err); e != nil && e.Code == errs.ErrAuthEmailExists.Code {
-				msg = "a user with this email already exists"
+				rowErr.Code, rowErr.Field, rowErr.Message = e.Code, "email", "a user with this email already exists"
 			} else if e != nil && isPasswordRefusal(e.Code) {
 				// Name the rule the row's password broke, so the operator can
 				// fix that row and resubmit it alone.
-				msg = e.Message
+				rowErr.Code, rowErr.Field, rowErr.Message = e.Code, "password", e.Message
 			}
-			res.Errors = append(res.Errors, BulkImportError{Line: line, Email: row.Email, Message: msg})
+			res.Errors = append(res.Errors, rowErr)
 			continue
 		}
 		res.Succeeded++
@@ -88,9 +112,29 @@ func firstValidationMsg(err error) string {
 	return "validation failed"
 }
 
-// bulkCreate handles POST /v1/users/bulk. Admin-gated on user.write (see
-// permissionMap). Each row is attempted independently — a bad or duplicate row
-// is reported in the response rather than failing the whole batch.
+// validationIssue returns the code for the first rule err reports broken, and
+// the JSON name of the BulkUserInput field that broke it.
+func validationIssue(err error) (code, field string) {
+	var ve validator.ValidationErrors
+	if !errors.As(err, &ve) || len(ve) == 0 {
+		return CodeImportFieldInvalid, ""
+	}
+	switch ve[0].Tag() {
+	case "required":
+		code = CodeImportFieldMissing
+	case "max":
+		code = CodeImportFieldTooLong
+	default:
+		code = CodeImportFieldInvalid
+	}
+	if f, ok := reflect.TypeFor[BulkUserInput]().FieldByName(ve[0].StructField()); ok {
+		field, _, _ = strings.Cut(f.Tag.Get("json"), ",")
+	}
+	return code, field
+}
+
+// bulkCreate handles POST /v1/users/bulk. Each row is attempted on its own: a
+// bad or duplicate row is reported in the response rather than failing the batch.
 func (h *Handler) bulkCreate(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := httpx.RequireTenant(r)
 	if err != nil {
@@ -137,12 +181,9 @@ func (h *Handler) bulkCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 // bulkImportFromVendor handles POST /v1/users/bulk/import?source=auth0|cognito|azure_b2c.
-// The request body is that vendor's own raw user-export file (NDJSON/CSV/JSON
-// per source — see import_adapters.go); it's converted to the same
-// BulkUserInput shape bulkCreate accepts and run through the identical
-// per-row partial-success pipeline. No vendor exports a portable password
-// hash, so every imported row lands with no password credential (passkey,
-// magic link, OTP, or an admin-triggered reset are how they first sign in).
+// The body is the vendor's own export file, parsed by ParseVendorExport and
+// imported like bulkCreate. Vendors don't export password hashes, so imported
+// users have no password.
 func (h *Handler) bulkImportFromVendor(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := httpx.RequireTenant(r)
 	if err != nil {

@@ -254,18 +254,6 @@ func (q *Queries) CompletePurgeRequest(ctx context.Context, id uuid.UUID) error 
 	return err
 }
 
-const countEvidenceRuns = `-- name: CountEvidenceRuns :one
-SELECT count(*) FROM tenant.compliance_evidence_runs WHERE tenant_id = $1
-`
-
-// Count total evidence runs for a tenant (used in tests to verify persistence).
-func (q *Queries) CountEvidenceRuns(ctx context.Context, tenantID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countEvidenceRuns, tenantID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const countUsersWithoutSecondFactor = `-- name: CountUsersWithoutSecondFactor :one
 SELECT count(*)::int
 FROM "user".users u

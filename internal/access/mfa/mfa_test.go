@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -56,32 +56,31 @@ func TestMaskDestination_EmailHidesLocalLength(t *testing.T) {
 	}
 }
 
-// TestRecoveryCodeCount documents the batch size minted on enrollment.
+// TestRecoveryCodeCount checks that a batch holds 10 recovery codes.
 func TestRecoveryCodeCount(t *testing.T) {
 	if recoveryCodeCount != 10 {
 		t.Errorf("recoveryCodeCount = %d, want 10", recoveryCodeCount)
 	}
 }
 
-// TestDefaultStepUpWindow documents the step-up window used where no
-// organisation's own is known; the migration's column default matches it.
+// TestDefaultStepUpWindow checks that the step-up window used when no
+// organisation is known is 5 minutes, the migration's column default.
 func TestDefaultStepUpWindow(t *testing.T) {
 	if defaultStepUpWindow != 5*time.Minute {
 		t.Errorf("defaultStepUpWindow = %v, want 5m", defaultStepUpWindow)
 	}
 }
 
-// TestStepUpRequiredError pins the stable code the gate uses so clients can
-// branch on it. (The 403 mapping now lives in the HTTP transport layer.)
+// TestStepUpRequiredError checks that the gate's error carries the stable
+// step_up_required code clients branch on.
 func TestStepUpRequiredError(t *testing.T) {
 	if errs.ErrStepUpRequired.Code != errs.CodeStepUpRequired {
 		t.Errorf("code = %q, want step_up_required", errs.ErrStepUpRequired.Code)
 	}
 }
 
-// TestRequireRecentMFAUnauthenticated proves the gate rejects a request with no
-// principal before it ever touches the database (so a nil-pool Service is safe
-// here): an anonymous caller can't satisfy step-up.
+// TestRequireRecentMFAUnauthenticated checks that the gate refuses a request
+// with no principal with 401, before touching the database.
 func TestRequireRecentMFAUnauthenticated(t *testing.T) {
 	called := false
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })
@@ -100,9 +99,8 @@ func TestRequireRecentMFAUnauthenticated(t *testing.T) {
 	}
 }
 
-// TestRequireRecentMFAWithoutSession proves a principal that holds no session
-// (an API key, an agent, a hosted-login cookie) can never pass the gate: a
-// step-up belongs to a session, so there is nothing to have stepped up.
+// TestRequireRecentMFAWithoutSession checks that a principal with no session
+// (such as an API key) never passes the gate: a step-up belongs to a session.
 func TestRequireRecentMFAWithoutSession(t *testing.T) {
 	called := false
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })
@@ -122,9 +120,8 @@ func TestRequireRecentMFAWithoutSession(t *testing.T) {
 	}
 }
 
-// TestTOTPStatusUnauthenticated proves the read-only TOTP status endpoint
-// rejects an anonymous caller before any DB access (so a nil-pool Service is
-// safe here): the principal check short-circuits ahead of Service.TOTPStatus.
+// TestTOTPStatusUnauthenticated checks that the TOTP status endpoint refuses
+// an anonymous caller with 401, before touching the database.
 func TestTOTPStatusUnauthenticated(t *testing.T) {
 	h := &Handler{Service: &Service{}}
 	rr := httptest.NewRecorder()
@@ -135,11 +132,9 @@ func TestTOTPStatusUnauthenticated(t *testing.T) {
 	}
 }
 
-// TestRecoveryCodeHashing exercises the security contract the recovery-code
-// store relies on: codes are stored as one-way hashes (never plaintext),
-// the right code verifies, a wrong one does not, and two equal plaintexts
-// still produce distinct (salted) hashes — so the DB column can't be matched
-// by a rainbow table.
+// TestRecoveryCodeHashing checks that recovery codes are stored as salted
+// one-way hashes: the right code verifies, a wrong one doesn't, and equal
+// codes hash differently.
 func TestRecoveryCodeHashing(t *testing.T) {
 	const code = "0123456789"
 	h1, err := password.Hash(code)

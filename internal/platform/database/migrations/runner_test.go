@@ -24,8 +24,8 @@ func TestLatestIsTheNewestEmbeddedMigration(t *testing.T) {
 	}
 }
 
-// TestCheckStatus: this build runs on a database at or behind its latest
-// migration, and refuses a newer or dirty one with the recovery step named.
+// TestCheckStatus checks that this build runs on a database at or behind its
+// latest migration and refuses a newer or dirty one, naming the recovery step.
 func TestCheckStatus(t *testing.T) {
 	for _, st := range []Status{{Database: 0, Latest: 147}, {Database: 120, Latest: 147}, {Database: 147, Latest: 147}} {
 		if err := checkStatus(st); err != nil {

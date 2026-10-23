@@ -6,7 +6,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// SIEM / log-sink (operations/siem) code→status mappings, registered from init().
+// init registers the HTTP statuses of the SIEM log-sink error codes.
 func init() {
 	registerStatuses(map[string]int{
 		errs.CodeSIEMSinkTypeInvalid: http.StatusUnprocessableEntity,

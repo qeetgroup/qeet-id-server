@@ -2,6 +2,7 @@ package email
 
 import (
 	"context"
+	"errors"
 	"html"
 	"io"
 	"net/http"
@@ -24,6 +25,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
+// LocalizedContent is a template's content in one locale.
 type LocalizedContent struct {
 	Subject   string `json:"subject"`
 	Body      string `json:"body"`
@@ -31,6 +33,8 @@ type LocalizedContent struct {
 	HTML      string `json:"body_html,omitempty"`
 }
 
+// EditorOptions are a template's editor settings: HTML body, preheader,
+// translations by locale, and header layout.
 type EditorOptions struct {
 	Preheader     string                      `json:"preheader,omitempty"`
 	HTML          string                      `json:"body_html,omitempty"`
@@ -40,12 +44,15 @@ type EditorOptions struct {
 	Alignment     string                      `json:"alignment,omitempty"`
 }
 
+// EditorInput is a template as the editor saves it.
 type EditorInput struct {
 	Subject string        `json:"subject"`
 	Body    string        `json:"body"`
 	Options EditorOptions `json:"options"`
 }
 
+// EmailAppearanceSource returns a tenant's email branding: display name, logo
+// URL and primary colour.
 type EmailAppearanceSource interface {
 	EmailAppearance(context.Context, uuid.UUID) (name, logo, primary string, err error)
 }
@@ -54,12 +61,17 @@ type templateSource interface {
 	Get(context.Context, uuid.UUID, string) (*Resolved, error)
 }
 
+// TemplateSender is a notifier.Sender that applies a tenant's customised invite
+// or magic-link template before passing the message to Next.
 type TemplateSender struct {
 	Templates  templateSource
 	Appearance EmailAppearanceSource
 	Next       notifier.Sender
 }
 
+// Send renders the tenant's customised template into message and sends it
+// through Next. Other messages, uncustomised templates and render failures are
+// sent unchanged.
 func (sender TemplateSender) Send(ctx context.Context, message notifier.Message) error {
 	if (message.Channel != "" && message.Channel != "email") || (message.TemplateKey != "invite" && message.TemplateKey != "magic_link") {
 		return sender.Next.Send(ctx, message)
@@ -95,6 +107,8 @@ type editorPreview struct {
 var emailHTMLPolicy = bluemonday.UGCPolicy()
 var emailColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
+// sanitizeTemplateHTML strips unsafe markup with bluemonday's UGC policy, while
+// keeping {{variable}} placeholders intact.
 func sanitizeTemplateHTML(markup string) string {
 	prefix := "https://template.invalid/" + uuid.NewString() + "/"
 	replacements := []string{}
@@ -106,12 +120,15 @@ func sanitizeTemplateHTML(markup string) string {
 	return strings.NewReplacer(replacements...).Replace(emailHTMLPolicy.Sanitize(protected))
 }
 
+// validateTemplateURLs allows a variable in href or src only as the whole href
+// of a *_url variable, so one-time links cannot leak through images or other
+// URLs.
 func validateTemplateURLs(markup string) error {
 	tokenizer := htmlparser.NewTokenizer(strings.NewReader(markup))
 	for {
 		switch tokenizer.Next() {
 		case htmlparser.ErrorToken:
-			if tokenizer.Err() == io.EOF {
+			if errors.Is(tokenizer.Err(), io.EOF) {
 				return nil
 			}
 			return errs.ErrBadRequest.WithDetail("invalid email markup")
@@ -302,6 +319,8 @@ func renderEditor(key string, input EditorInput, variables map[string]string, lo
 	return result, nil
 }
 
+// testEmailLimits allows each key one test email a minute. It is safe for
+// concurrent use.
 type testEmailLimits struct {
 	mutex   sync.Mutex
 	entries map[string]time.Time
@@ -325,6 +344,9 @@ func (limit *testEmailLimits) allow(key string, now time.Time) bool {
 	return true
 }
 
+// testEmail sends a rendered draft to the caller's own verified address, once a
+// minute at most. It is forbidden unless TestEmailEnabled is set and a Sender
+// is configured.
 func (h *Handler) testEmail(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := requirePathTenant(r)
 	if err != nil {

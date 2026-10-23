@@ -18,6 +18,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
+// SuspendedUser is a suspended account, as listed for review.
 type SuspendedUser struct {
 	ID          uuid.UUID  `json:"id"`
 	Email       string     `json:"email"`
@@ -33,6 +34,7 @@ type SuspendedUser struct {
 	CanManage   bool       `json:"can_manage"`
 }
 
+// SuspensionFilters narrow the suspended-accounts list.
 type SuspensionFilters struct {
 	Search string
 	Reason string
@@ -44,6 +46,7 @@ type SuspensionFilters struct {
 	Offset int
 }
 
+// SuspensionSummary counts the suspended accounts on the filter.
 type SuspensionSummary struct {
 	Total    int `json:"total"`
 	HighRisk int `json:"high_risk"`
@@ -52,10 +55,13 @@ type SuspensionSummary struct {
 	Pending  int `json:"pending"`
 }
 
+// SuspensionBreakdown is how many suspensions share a key, such as a reason.
 type SuspensionBreakdown struct {
 	Key   string `json:"key"`
 	Count int    `json:"count"`
 }
+
+// SuspendedPage is one page of suspended accounts with their summary.
 type SuspendedPage struct {
 	Items   []SuspendedUser       `json:"items"`
 	Total   int                   `json:"total"`
@@ -129,6 +135,7 @@ func scanSuspended(row pgx.Row) (SuspendedUser, error) {
 	return user, err
 }
 
+// ListSuspended returns one page of the tenant's suspended accounts.
 func (repository *Repository) ListSuspended(ctx context.Context, tenantID uuid.UUID, filter SuspensionFilters) (SuspendedPage, error) {
 	page := SuspendedPage{Items: []SuspendedUser{}, Reasons: []SuspensionBreakdown{}, Risks: []SuspensionBreakdown{}, Queue: []SuspendedUser{}, Teams: []string{}, Limit: filter.Limit, Offset: filter.Offset}
 	if tenantID == uuid.Nil {

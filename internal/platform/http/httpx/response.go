@@ -30,6 +30,7 @@ type errorBody struct {
 	} `json:"error"`
 }
 
+// WriteJSON writes body as JSON with status; a nil body sends only the status.
 func WriteJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -41,6 +42,9 @@ func WriteJSON(w http.ResponseWriter, status int, body any) {
 	}
 }
 
+// WriteError writes err as the JSON error envelope with its code's HTTP status.
+// An error that is not an *errs.Error is logged and sent as ErrInternalServer,
+// except the database's last-owner guard, which becomes ErrTenantLastOwner.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	e := errs.As(err)
 	if e == nil {
@@ -71,16 +75,13 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 			e = errs.ErrInternalServer
 		}
 	}
-	// A domain error that carries a wrapped cause attached one deliberately for
-	// diagnosis (errs.Wrap) — the cause is never serialized to the client, so log
-	// it here or it's lost. This is how e.g. passkey.attestation_invalid surfaces
-	// the underlying go-webauthn reason (origin/RPID/challenge mismatch) that the
-	// generic client message hides.
+	// errs.Wrap attaches a cause for diagnosis that is never sent to the client, so
+	// log it here: it is the detail the client message hides (such as why a passkey
+	// attestation failed).
 	if cause := e.Unwrap(); cause != nil {
 		slog.Warn("request error",
-			// "error_code", not "code": the redacting log handler treats "code"
-			// as a secret (OTPs, OAuth codes), which blanked this field and made
-			// the line useless for the correlation it exists to provide.
+			// "error_code", not "code": the redacting log handler blanks
+			// "code", which usually holds a secret (an OTP or OAuth code).
 			"error_code", e.Code,
 			"cause", cause,
 			"route", safeRequestRoute(r),
@@ -100,11 +101,10 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	WriteJSON(w, statusForCode(e.Code), body)
 }
 
-// ValidationError converts a go-playground/validator error into a clean,
-// client-friendly 422 with a per-field message map (keyed by the JSON field
-// name when the validator is configured with RegisterTagNameFunc). Non-
-// validation errors fall back to a generic unprocessable error so callers can
-// use it unconditionally after Validate.Struct.
+// ValidationError turns validator.ValidationErrors into a 422 validation_failed
+// error with one FieldError per field (named as RegisterTagNameFunc reports);
+// any other error becomes ErrUnprocessable, so it can take whatever
+// Validate.Struct returns.
 func ValidationError(err error) error {
 	var ve validator.ValidationErrors
 	if errors.As(err, &ve) && len(ve) > 0 {
@@ -176,21 +176,21 @@ func validationMessage(fe validator.FieldError) string {
 	}
 }
 
+// Default request body size limits.
 const (
 	MaxJSONBodyBytes = int64(1 << 20)
 	MaxFormBodyBytes = int64(64 << 10)
 	MaxSAMLBodyBytes = int64(1 << 20)
 )
 
+// DecodeJSON is DecodeJSONLimit with the MaxJSONBodyBytes limit.
 func DecodeJSON(r *http.Request, out any) error {
 	return DecodeJSONLimit(r, out, MaxJSONBodyBytes)
 }
 
-// DecodeStrictJSON is DecodeJSON for the routes that sign a browser in: a body
-// not declared as JSON is refused as an unsupported media type. A page on
-// another site can make a browser post a text/plain or form body without asking
-// first, but not an application/json one, so those routes can't be reached by
-// a cross-site form.
+// DecodeStrictJSON is DecodeJSON for routes that sign a browser in: it refuses,
+// with 415, a body not declared as application/json or application/*+json. A
+// cross-site form can't send those without a CORS preflight.
 func DecodeStrictJSON(r *http.Request, out any) error {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || (mediaType != "application/json" &&
@@ -200,6 +200,9 @@ func DecodeStrictJSON(r *http.Request, out any) error {
 	return DecodeJSON(r, out)
 }
 
+// DecodeJSONLimit decodes exactly one JSON value from the body into out,
+// refusing unknown fields. A body over maxBytes (MaxJSONBodyBytes if <= 0)
+// returns ErrRequestBodyTooLarge; anything else malformed returns ErrBadRequest.
 func DecodeJSONLimit(r *http.Request, out any, maxBytes int64) error {
 	if maxBytes <= 0 {
 		maxBytes = MaxJSONBodyBytes
@@ -229,6 +232,8 @@ func DecodeJSONLimit(r *http.Request, out any, maxBytes int64) error {
 	return nil
 }
 
+// ParseForm parses r's form with the body limited to maxBytes (MaxFormBodyBytes
+// if <= 0), returning ErrRequestBodyTooLarge or ErrBadRequest on failure.
 func ParseForm(r *http.Request, maxBytes int64) error {
 	if maxBytes <= 0 {
 		maxBytes = MaxFormBodyBytes

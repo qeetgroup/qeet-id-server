@@ -1,10 +1,6 @@
 package errs
 
-// API-key error codes — stable, namespaced machine identifiers for the
-// internal/developer/api-keys domain. Clients branch and localize on these
-// (never on the message text). Once shipped, a code MUST NOT change. Every
-// identifier is prefixed with the `apikey` domain so it never collides with
-// another bounded context.
+// API key error codes.
 const (
 	CodeAPIKeyNotFound     = "apikey.not_found"
 	CodeAPIKeyInvalid      = "apikey.invalid"
@@ -23,8 +19,5 @@ var (
 	ErrAPIKeyExpired      = New(CodeAPIKeyExpired, "This API key has expired.")
 	ErrAPIKeyNameRequired = New(CodeAPIKeyNameRequired, "Enter a name for the API key.")
 	ErrAPIKeyInvalidID    = New(CodeAPIKeyInvalidID, "That identifier isn't valid.")
-	// ErrAPIKeyUserNotSelf: a key may act for the person creating it, or for
-	// no one; naming anyone else (a colleague, or someone in another
-	// organization) would let the key act as them.
-	ErrAPIKeyUserNotSelf = New(CodeAPIKeyUserNotSelf, "An API key can act only for the person who creates it.")
+	ErrAPIKeyUserNotSelf  = New(CodeAPIKeyUserNotSelf, "An API key can act only for the person who creates it.")
 )

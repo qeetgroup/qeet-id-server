@@ -37,9 +37,8 @@ func TestValidDomain(t *testing.T) {
 	}
 }
 
-// The console renders three states, and the difference between "pending" and
-// "attention" is whether a check has actually run and failed — not merely that
-// the domain is unverified.
+// TestDeriveStatus checks that a domain whose last check failed needs
+// attention, while one never checked is only pending.
 func TestDeriveStatus(t *testing.T) {
 	now := time.Now()
 	cases := []struct {
@@ -63,8 +62,8 @@ func TestDeriveStatus(t *testing.T) {
 	}
 }
 
-// The DNS instructions must be stable for a tenant: an operator who has already
-// created the CNAME shouldn't find it invalidated on the next page load.
+// TestLoginRecordsAreDeterministic checks that a tenant's DNS instructions are
+// the same on every call, so records an operator created stay valid.
 func TestLoginRecordsAreDeterministic(t *testing.T) {
 	id := uuid.MustParse("fa139717-1577-496e-823a-6a335738898a")
 	a := loginRecords(id, "auth.acme.com")

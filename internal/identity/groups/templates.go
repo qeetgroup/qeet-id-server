@@ -3,6 +3,8 @@ package group
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -16,9 +18,8 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// maxTemplateDepth bounds how deep a template tree may nest. A template is
-// applied recursively, so an unbounded tree is an unbounded write; 6 is deeper
-// than any real org chart we've seen and keeps one apply to a sane size.
+// maxTemplateDepth bounds how deep a template tree may nest, since applying a
+// template writes every node.
 const maxTemplateDepth = 6
 
 // maxTemplateNodes bounds the total groups one apply can create.
@@ -31,6 +32,7 @@ type TemplateNode struct {
 	Children    []TemplateNode `json:"children,omitempty"`
 }
 
+// GroupTemplate is a stored tree of groups the tenant can apply.
 type GroupTemplate struct {
 	ID          uuid.UUID      `json:"id"`
 	TenantID    uuid.UUID      `json:"tenant_id"`
@@ -43,6 +45,7 @@ type GroupTemplate struct {
 	GroupCount int `json:"group_count"`
 }
 
+// TemplateInput is what CreateTemplate takes.
 type TemplateInput struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
@@ -69,6 +72,26 @@ func countNodes(nodes []TemplateNode, depth int) (int, error) {
 	return total, nil
 }
 
+// duplicateNodeName returns a name that more than one node of the tree uses,
+// ignoring case and surrounding space, or "" if there is none. seen holds the
+// names met so far.
+func duplicateNodeName(nodes []TemplateNode, seen map[string]bool) string {
+	for _, n := range nodes {
+		name := strings.TrimSpace(n.Name)
+		if seen[strings.ToLower(name)] {
+			return name
+		}
+		seen[strings.ToLower(name)] = true
+		if dup := duplicateNodeName(n.Children, seen); dup != "" {
+			return dup
+		}
+	}
+	return ""
+}
+
+// validateTemplate checks a template's name and tree and returns how many
+// groups applying it creates. Group names are unique in an organization, so a
+// tree that uses one twice could never be applied.
 func validateTemplate(in TemplateInput) (int, error) {
 	if strings.TrimSpace(in.Name) == "" {
 		return 0, errs.ErrGroupTemplateUnnamed
@@ -83,12 +106,18 @@ func validateTemplate(in TemplateInput) (int, error) {
 	if count > maxTemplateNodes {
 		return 0, errs.ErrGroupTemplateTooLarge
 	}
+	if dup := duplicateNodeName(in.Nodes, map[string]bool{}); dup != "" {
+		return 0, errs.ErrValidationFailed.WithFields([]errs.FieldError{{
+			Field: "nodes", Code: "duplicate_name",
+			Message: fmt.Sprintf("%q is used more than once; each group in a template needs its own name.", dup),
+		}})
+	}
 	return count, nil
 }
 
-// Raw SQL throughout this file: sqlc isn't wired into the build here. Fold these
-// into queries.sql at the next `sqlc generate`.
+// The template queries below are hand-written SQL, not sqlc.
 
+// ListTemplates returns the tenant's group templates.
 func (s *Service) ListTemplates(ctx context.Context, tenantID uuid.UUID) ([]GroupTemplate, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, tenant_id, name, description, nodes, created_at, updated_at
@@ -118,6 +147,7 @@ func (s *Service) ListTemplates(ctx context.Context, tenantID uuid.UUID) ([]Grou
 	return out, rows.Err()
 }
 
+// CreateTemplate stores a group template for the tenant.
 func (s *Service) CreateTemplate(
 	ctx context.Context, tenantID uuid.UUID, in TemplateInput, actor audit.Actor,
 ) (*GroupTemplate, error) {
@@ -161,6 +191,7 @@ func (s *Service) CreateTemplate(
 	return &t, nil
 }
 
+// DeleteTemplate removes one of the tenant's group templates.
 func (s *Service) DeleteTemplate(
 	ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor,
 ) error {
@@ -175,7 +206,7 @@ func (s *Service) DeleteTemplate(
 		`DELETE FROM tenant.group_templates WHERE id = $1 AND tenant_id = $2 RETURNING name`,
 		id, tenantID).Scan(&name)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return errs.ErrNotFound
 		}
 		return err
@@ -187,9 +218,8 @@ func (s *Service) DeleteTemplate(
 	return tx.Commit(ctx)
 }
 
-// ApplyTemplate materialises a template's tree as real groups under an optional
-// parent. The whole tree is one transaction: a half-applied org chart is worse
-// than none, because the operator can't tell which half ran.
+// ApplyTemplate creates a template's tree as groups under an optional parent, in
+// one transaction: a half-applied tree is worse than none.
 func (s *Service) ApplyTemplate(
 	ctx context.Context, id, tenantID uuid.UUID, parentID *uuid.UUID, actor audit.Actor,
 ) ([]Group, error) {
@@ -199,7 +229,7 @@ func (s *Service) ApplyTemplate(
 		`SELECT name, nodes FROM tenant.group_templates WHERE id = $1 AND tenant_id = $2`,
 		id, tenantID).Scan(&tmplName, &raw)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrNotFound
 		}
 		return nil, err
@@ -209,9 +239,8 @@ func (s *Service) ApplyTemplate(
 		return nil, err
 	}
 
-	// The parent is caller-supplied. tenant.groups.parent_id only has a foreign
-	// key to groups(id) — not a tenant-scoped one — so without this check a
-	// caller could graft their template under another tenant's group.
+	// The parent is caller-supplied and must be one of this tenant's groups;
+	// checking first gives ErrGroupNotFound rather than a foreign-key error.
 	if parentID != nil {
 		ok, err := s.q.GroupExists(ctx, dbgen.GroupExistsParams{ID: *parentID, TenantID: tenantID})
 		if err != nil {
@@ -239,7 +268,7 @@ func (s *Service) ApplyTemplate(
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{
 		AggregateID: id, Topic: "group.events", EventType: "group_template.applied",
-		Payload: map[string]any{"template_id": id, "groups": created},
+		Payload: map[string]any{"template_id": id, "tenant_id": tenantID, "groups": created},
 	}); err != nil {
 		return nil, err
 	}
@@ -267,7 +296,8 @@ func insertTree(
 			Scan(&g.ID, &g.TenantID, &g.Name, &g.Description, &g.CreatedAt)
 		if err != nil {
 			if pgxerr.IsUnique(err) {
-				return nil, errs.ErrGroupNameExists.WithDetail(n.Name)
+				return nil, errs.ErrGroupNameExists.WithDetail(
+					fmt.Sprintf("group %q already exists in this organization", strings.TrimSpace(n.Name)))
 			}
 			return nil, err
 		}

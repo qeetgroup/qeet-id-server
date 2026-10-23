@@ -6336,17 +6336,18 @@
               "type": "noauth"
             },
             "url": {
-              "raw": "{{baseUrl}}/saml/idp/metadata",
+              "raw": "{{baseUrl}}/saml/idp/{{tenantId}}/metadata",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "saml",
                 "idp",
+                "{{tenantId}}",
                 "metadata"
               ]
             },
-            "description": "Qeet-as-IdP metadata XML (public)."
+            "description": "Qeet-as-IdP metadata XML for the tenant (public)."
           }
         },
         {
@@ -6358,13 +6359,14 @@
               "type": "noauth"
             },
             "url": {
-              "raw": "{{baseUrl}}/saml/idp/sso?SAMLRequest=<deflated-base64>&RelayState=",
+              "raw": "{{baseUrl}}/saml/idp/{{tenantId}}/sso?SAMLRequest=<deflated-base64>&RelayState=",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "saml",
                 "idp",
+                "{{tenantId}}",
                 "sso"
               ],
               "query": [
@@ -6409,13 +6411,14 @@
               ]
             },
             "url": {
-              "raw": "{{baseUrl}}/saml/idp/sso",
+              "raw": "{{baseUrl}}/saml/idp/{{tenantId}}/sso",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "saml",
                 "idp",
+                "{{tenantId}}",
                 "sso"
               ]
             }
@@ -7880,7 +7883,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"url\": \"https://example.com/webhook/{{$timestamp}}\",\n  \"events\": [\"user.created\", \"user.updated\", \"tenant.created\"]\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"url\": \"https://example.com/webhook/{{$timestamp}}\",\n  \"events\": [\"user.created\", \"user.updated\", \"session.revoked\"]\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/v1/webhooks",
@@ -8037,6 +8040,68 @@
                 "deliveries",
                 "{{deliveryId}}",
                 "retry"
+              ]
+            }
+          }
+        },
+        {
+          "name": "08 List webhook events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/webhooks/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "webhooks",
+                "events"
+              ]
+            }
+          }
+        },
+        {
+          "name": "09 Enable webhook",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/webhooks/{{webhookId}}/enable",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "webhooks",
+                "{{webhookId}}",
+                "enable"
+              ]
+            }
+          }
+        },
+        {
+          "name": "10 Rotate webhook secret",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/webhooks/{{webhookId}}/rotate-secret",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "webhooks",
+                "{{webhookId}}",
+                "rotate-secret"
               ]
             }
           }
@@ -11349,37 +11414,6 @@
               }
             }
           ]
-        }
-      ]
-    },
-    {
-      "name": "54 Admin / Outbox",
-      "item": [
-        {
-          "name": "01 List DLQ events",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/v1/admin/outbox/dlq?limit=50",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "admin",
-                "outbox",
-                "dlq"
-              ],
-              "query": [
-                {
-                  "key": "limit",
-                  "value": "50"
-                }
-              ]
-            },
-            "description": "Inspects dead-lettered outbox events for ops triage. Requires platform-admin gating in the deployment."
-          }
         }
       ]
     }

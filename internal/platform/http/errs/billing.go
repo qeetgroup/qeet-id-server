@@ -1,9 +1,6 @@
 package errs
 
-// Billing / subscription / checkout error codes — stable, namespaced machine
-// identifiers for the operations/billing context (plans, subscriptions, hosted
-// checkout, provider webhooks). Clients branch and localize on these codes,
-// never on the message text.
+// Billing error codes: plans, subscriptions, checkout and provider webhooks.
 const (
 	CodeBillingPlanNotFound              = "billing.plan_not_found"
 	CodeBillingNoActiveSubscription      = "billing.no_active_subscription"
@@ -36,10 +33,7 @@ var (
 	ErrBillingWebhookVerificationFailed = New(CodeBillingWebhookVerificationFailed, "We couldn't verify this webhook request.")
 	ErrBillingTenantInvalid             = New(CodeBillingTenantInvalid, "That tenant reference is invalid.")
 	ErrBillingTenantMismatch            = New(CodeBillingTenantMismatch, "You can't access another tenant's billing.")
-	// ErrBillingCheckoutRequired: a paid plan can't be self-provisioned free via
-	// POST /v1/tenants — it must go through the signup checkout so payment is
-	// captured before the org exists.
-	ErrBillingCheckoutRequired = New(CodeBillingCheckoutRequired, "This plan requires checkout. Start the paid signup flow to create this organization.")
-	ErrBillingTaxIDInvalid     = New(CodeBillingTaxIDInvalid, "That tax ID isn't valid.")
-	ErrBillingTrialNotEligible = New(CodeBillingTrialNotEligible, "This organization isn't eligible for a trial.")
+	ErrBillingCheckoutRequired          = New(CodeBillingCheckoutRequired, "This plan requires checkout. Start the paid signup flow to create this organization.")
+	ErrBillingTaxIDInvalid              = New(CodeBillingTaxIDInvalid, "That tax ID isn't valid.")
+	ErrBillingTrialNotEligible          = New(CodeBillingTrialNotEligible, "This organization isn't eligible for a trial.")
 )

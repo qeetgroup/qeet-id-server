@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // The authorization request directives the endpoint honours, as discovery
@@ -79,10 +81,10 @@ func signedInForRequest(q url.Values, signedInAt time.Time) bool {
 
 // reauthReturnTo is the authorize URL to come back to after a forced sign-in:
 // the same request, marked so the fresh sign-in ends the round trip.
-func reauthReturnTo(r *http.Request, now time.Time) string {
+func (h *Handler) reauthReturnTo(r *http.Request, now time.Time) string {
 	u := *r.URL
 	q := u.Query()
 	q.Set(loginAfterParam, strconv.FormatInt(now.Unix(), 10))
 	u.RawQuery = q.Encode()
-	return externalScheme(r) + "://" + r.Host + u.RequestURI()
+	return httpx.PublicOrigin(r, h.PublicBaseURL) + u.RequestURI()
 }

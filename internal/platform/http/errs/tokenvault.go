@@ -23,13 +23,9 @@ var (
 	ErrTokenVaultProviderAuthorizeInvalid = New(CodeTokenVaultProviderAuthorizeInvalid, "This provider is misconfigured and can't be used to connect.")
 	ErrTokenVaultConnectStateInvalid      = New(CodeTokenVaultConnectStateInvalid, "This connection link is invalid or has already been used. Please start again.")
 	ErrTokenVaultConnectExpired           = New(CodeTokenVaultConnectExpired, "This connection request has expired. Please start again.")
-	// A retry could plausibly succeed — a transient provider/network hiccup.
-	ErrTokenVaultTokenExchangeFailed = New(CodeTokenVaultTokenExchangeFailed, "We couldn't complete the connection with the provider. Please try again.").AsRetryable()
-	ErrTokenVaultGrantNotFound       = New(CodeTokenVaultGrantNotFound, "No connected account was found for this provider.")
-	ErrTokenVaultTokenExpired        = New(CodeTokenVaultTokenExpired, "Your connection to this provider has expired. Please reconnect your account.")
-	ErrTokenVaultScopeRequired       = New(CodeTokenVaultScopeRequired, "You don't have permission to access this connected account.")
-	// ErrTokenVaultPeopleOnly: a connected account's raw token is handed only to
-	// the person who connected it, signed in themselves; never to an API key,
-	// service principal, agent or application token.
-	ErrTokenVaultPeopleOnly = New(CodeTokenVaultPeopleOnly, "Only the person who connected this account can read its token, while signed in.")
+	ErrTokenVaultTokenExchangeFailed      = New(CodeTokenVaultTokenExchangeFailed, "We couldn't complete the connection with the provider. Please try again.").AsRetryable()
+	ErrTokenVaultGrantNotFound            = New(CodeTokenVaultGrantNotFound, "No connected account was found for this provider.")
+	ErrTokenVaultTokenExpired             = New(CodeTokenVaultTokenExpired, "Your connection to this provider has expired. Please reconnect your account.")
+	ErrTokenVaultScopeRequired            = New(CodeTokenVaultScopeRequired, "You don't have permission to access this connected account.")
+	ErrTokenVaultPeopleOnly               = New(CodeTokenVaultPeopleOnly, "Only the person who connected this account can read its token, while signed in.")
 )

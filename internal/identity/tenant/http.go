@@ -19,29 +19,28 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// tokenIssuer is the slice of auth.Service this handler needs (mockable).
+// tokenIssuer is the part of auth.Service this handler needs.
 type tokenIssuer interface {
 	IssuePair(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, method string) (*auth.TokenPair, error)
 }
 
+// Handler serves the /tenants routes and /me/organizations. AuthService, if
+// set, issues a token pair for a newly created tenant so the client can switch
+// in; a nil Signals announces no ended sessions.
 type Handler struct {
-	Repo     *Repository
-	Validate *validator.Validate
-	// Mints a tenant-scoped token after create so the client switches in.
+	Repo        *Repository
+	Validate    *validator.Validate
 	AuthService tokenIssuer
-	// Signals announces the sessions suspending or deleting an organisation
-	// ends (nil = announces nothing).
-	Signals *sessionsignal.Signaller
+	Signals     *sessionsignal.Signaller
 }
 
+// Mount registers the organisation routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants", h.list)
 	r.Get("/me/organizations", h.eligibleOrganizations)
 	r.Post("/tenants", h.create)
-	// Use {tenantID} (not {id}) so the router-level EnforceTenantScope guard
-	// fires: it rejects any path tenant that isn't the caller's own, closing the
-	// cross-tenant read/modify/delete hole (rbac.Enforce only checks the caller's
-	// active tenant, never the path tenant).
+	// {tenantID}, not {id}, so EnforceTenantScope rejects any path tenant other
+	// than the caller's; rbac.Enforce checks only the caller's active tenant.
 	r.Get("/tenants/{tenantID}", h.get)
 	r.Patch("/tenants/{tenantID}", h.update)
 	r.Delete("/tenants/{tenantID}", h.delete)
@@ -80,10 +79,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	// Only the free plan may be self-provisioned here. Paid plans (starter/pro)
-	// must go through signup checkout so payment is captured before the org
-	// exists; enterprise is contact-sales. This closes the gap where a direct
-	// POST /v1/tenants could mint a paid org without ever paying.
+	// Only the free plan may be self-provisioned here: paid plans go through
+	// signup checkout so payment is captured first, and enterprise is sales-led.
 	if in.Plan != "" && in.Plan != "free" {
 		httpx.WriteError(w, r, errs.ErrBillingCheckoutRequired)
 		return
@@ -205,14 +202,10 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// lifecycle is what an organisation's status change sets off, in its
-// transaction. Suspending or deleting it ends every session in it — a member
-// already signed in loses access at once, and refresh refuses its tokens —
-// and reactivating it lets its members sign in again (the ended sessions stay
-// ended). Each change is audited (tenant.suspended, tenant.reactivated,
-// tenant.deleted, with the status it had) and queued as an event. An access
-// token already issued lasts out its short lifetime, as for a suspended
-// account.
+// lifecycle returns the StatusChange run when an organisation's status changes.
+// Suspending or deleting it ends and announces every session in it;
+// reactivating restores none, and the ended sessions' access tokens are refused
+// from then on. Each change is audited and queued as an event.
 func (h *Handler) lifecycle(r *http.Request) StatusChange {
 	return func(ctx context.Context, tx pgx.Tx, from, to string) error {
 		var action, reason string

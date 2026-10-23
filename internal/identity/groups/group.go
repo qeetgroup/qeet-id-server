@@ -1,7 +1,6 @@
-// Package group provides org/team hierarchy inside a tenant. Group-level
-// permission grants are out of scope for now (RBAC stays user-level); the model
-// just captures the shape ahead of need. Mutating methods own their transaction
-// and write the audit row in the same tx, so the trail commits atomically.
+// Package group manages a tenant's group hierarchy, its members, group
+// templates and bulk import. Roles granted to groups belong to the rbac
+// package. Each mutation commits its audit row in the same transaction.
 package group
 
 import (
@@ -9,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -19,11 +19,14 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/groups/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
+// Group is a tenant group.
 type Group struct {
 	ID          uuid.UUID  `json:"id"`
 	TenantID    uuid.UUID  `json:"tenant_id"`
@@ -31,21 +34,22 @@ type Group struct {
 	Name        string     `json:"name"`
 	Description string     `json:"description"`
 	CreatedAt   time.Time  `json:"created_at"`
-	// MemberCount is populated by List only. Create/Update return a group that
-	// has just been written, where the count is either zero or unchanged, so
-	// they leave it at zero rather than paying for a second query.
+	// MemberCount is set by List only; Create and Update leave it zero.
 	MemberCount int `json:"member_count"`
 }
 
+// Service manages the groups.
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 }
 
+// NewService returns the group service.
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool)}
 }
 
+// CreateInput is what Create takes.
 type CreateInput struct {
 	TenantID    uuid.UUID  `json:"tenant_id"`
 	ParentID    *uuid.UUID `json:"parent_id"`
@@ -68,6 +72,7 @@ type OptionalUUID struct {
 	ID  *uuid.UUID
 }
 
+// UnmarshalJSON implements json.Unmarshaler.
 func (o *OptionalUUID) UnmarshalJSON(b []byte) error {
 	o.Set = true
 	if string(b) == "null" {
@@ -121,18 +126,18 @@ func groupFromUpdateRow(row dbgen.UpdateGroupRow) Group {
 	}
 }
 
-func groupFromListRow(row dbgen.ListGroupsRow) Group {
-	return Group{
-		ID:          row.ID,
-		TenantID:    row.TenantID,
-		ParentID:    pgtypeToUUIDPtr(row.ParentID),
-		Name:        row.Name,
-		Description: row.Description,
-		CreatedAt:   row.CreatedAt,
-	}
-}
+// errGroupUnnamed refuses a group name that is empty once trimmed.
+var errGroupUnnamed = errs.ErrValidationFailed.WithFields([]errs.FieldError{{
+	Field: "name", Code: "required", Message: "Give the group a name.",
+}})
 
+// Create adds a group to the tenant. Its name is trimmed and must be unique in
+// the tenant, ignoring case; a taken one returns errs.ErrGroupNameExists.
 func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor) (*Group, error) {
+	in.Name = strings.TrimSpace(in.Name)
+	if in.Name == "" {
+		return nil, errGroupUnnamed
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -155,6 +160,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor)
 		Name:        in.Name,
 		Description: in.Description,
 	})
+	if pgxerr.IsUnique(err) {
+		return nil, errs.ErrGroupNameExists
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -172,14 +180,8 @@ func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor)
 	return &g, nil
 }
 
-// List returns every group in the tenant with its member count.
-//
-// The count is a LEFT JOIN aggregate rather than a per-group query: the console
-// shows "members assigned" across the whole directory, and one round trip per
-// group would make that O(groups) requests for a single number.
-//
-// Raw SQL because sqlc isn't wired into the build here; fold this into
-// queries.sql (replacing ListGroups) at the next `sqlc generate`.
+// List returns every group in the tenant with its member count, counted in one
+// LEFT JOIN rather than a query per group.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Group, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT g.id, g.tenant_id, g.parent_id, g.name, g.description, g.created_at,
@@ -209,6 +211,8 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Group, error)
 	return out, rows.Err()
 }
 
+// Delete removes one of the tenant's groups and its subgroups, recorded as
+// actor's.
 func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -233,7 +237,16 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audi
 	return tx.Commit(ctx)
 }
 
+// Update changes the fields in sets. A new name is trimmed and must be unique in
+// the tenant, ignoring case; a taken one returns errs.ErrGroupNameExists.
 func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateInput, actor audit.Actor) (*Group, error) {
+	if in.Name != nil {
+		name := strings.TrimSpace(*in.Name)
+		if name == "" {
+			return nil, errGroupUnnamed
+		}
+		in.Name = &name
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -273,6 +286,9 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrGroupNotFound
 	}
+	if pgxerr.IsUnique(err) {
+		return nil, errs.ErrGroupNameExists
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -287,6 +303,7 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 	return &g, tx.Commit(ctx)
 }
 
+// AddMember adds a user to one of the tenant's groups, recorded as actor's.
 func (s *Service) AddMember(ctx context.Context, groupID, userID, tenantID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -322,6 +339,8 @@ func (s *Service) AddMember(ctx context.Context, groupID, userID, tenantID uuid.
 	return tx.Commit(ctx)
 }
 
+// RemoveMember removes a user from one of the tenant's groups, recorded as
+// actor's.
 func (s *Service) RemoveMember(ctx context.Context, groupID, userID, tenantID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -349,15 +368,14 @@ func (s *Service) RemoveMember(ctx context.Context, groupID, userID, tenantID uu
 	return tx.Commit(ctx)
 }
 
-// Member is a group_members row enriched with the user's email +
-// display_name so the admin UI can render meaningful rows without a
-// per-member follow-up call.
+// Member is a group member with the user's email and display name.
 type Member struct {
 	UserID      uuid.UUID `json:"user_id"`
 	Email       string    `json:"email"`
 	DisplayName *string   `json:"display_name"`
 }
 
+// ListMembers returns the members of one of the tenant's groups.
 func (s *Service) ListMembers(ctx context.Context, groupID, tenantID uuid.UUID) ([]Member, error) {
 	rows, err := s.q.ListGroupMembers(ctx, dbgen.ListGroupMembersParams{GroupID: groupID, TenantID: tenantID})
 	if err != nil {
@@ -374,10 +392,12 @@ func (s *Service) ListMembers(ctx context.Context, groupID, tenantID uuid.UUID) 
 	return out, nil
 }
 
+// Handler serves the group HTTP API.
 type Handler struct {
 	Service *Service
 }
 
+// Mount registers the group routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/groups", h.create)
 	r.Get("/tenants/{tenantID}/groups", h.list)
@@ -386,18 +406,6 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/groups/{id}/members/{userID}", h.addMember)
 	r.Delete("/groups/{id}/members/{userID}", h.removeMember)
 	r.Get("/groups/{id}/members", h.listMembers)
-}
-
-// actorOf captures the request's audit provenance from the principal + headers.
-func actorOf(r *http.Request) audit.Actor {
-	a := audit.Actor{Type: "user", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
-		a.UserID = p.UserID
-		if p.ActorType != "" {
-			a.Type = p.ActorType
-		}
-	}
-	return a
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
@@ -412,7 +420,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.TenantID = tenantID // scope from principal, never the body
-	g, err := h.Service.Create(r.Context(), in, actorOf(r))
+	g, err := h.Service.Create(r.Context(), in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -454,7 +462,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.Delete(r.Context(), id, tenantID, actorOf(r)); err != nil {
+	if err := h.Service.Delete(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -477,7 +485,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	g, err := h.Service.Update(r.Context(), id, tenantID, in, actorOf(r))
+	g, err := h.Service.Update(r.Context(), id, tenantID, in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -501,7 +509,7 @@ func (h *Handler) addMember(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.AddMember(r.Context(), id, uid, tenantID, actorOf(r)); err != nil {
+	if err := h.Service.AddMember(r.Context(), id, uid, tenantID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -524,7 +532,7 @@ func (h *Handler) removeMember(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.RemoveMember(r.Context(), id, uid, tenantID, actorOf(r)); err != nil {
+	if err := h.Service.RemoveMember(r.Context(), id, uid, tenantID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -547,5 +555,5 @@ func (h *Handler) listMembers(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }

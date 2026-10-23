@@ -180,7 +180,8 @@ func (q *Queries) GetUserEmailByID(ctx context.Context, userID uuid.UUID) (strin
 
 const grantUserRole = `-- name: GrantUserRole :exec
 INSERT INTO rbac.user_roles (user_id, tenant_id, role_id)
-VALUES ($1, $2, $3)
+SELECT $1, $2, $3
+WHERE EXISTS (SELECT 1 FROM rbac.roles ro WHERE ro.id = $3 AND ro.tenant_id = $2)
 ON CONFLICT (user_id, tenant_id, role_id) DO NOTHING
 `
 
@@ -191,7 +192,8 @@ type GrantUserRoleParams struct {
 }
 
 // GrantUserRole attaches a tenant membership idempotently: re-accepting or a
-// duplicate role grant is a no-op rather than a PK violation.
+// duplicate role grant is a no-op rather than a PK violation. It writes only a
+// role of @tenant_id.
 func (q *Queries) GrantUserRole(ctx context.Context, arg GrantUserRoleParams) error {
 	_, err := q.db.Exec(ctx, grantUserRole, arg.UserID, arg.TenantID, arg.RoleID)
 	return err
@@ -200,7 +202,9 @@ func (q *Queries) GrantUserRole(ctx context.Context, arg GrantUserRoleParams) er
 const insertInvite = `-- name: InsertInvite :one
 
 INSERT INTO tenant.invites (tenant_id, email, role_id, invited_by, token_hash, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6)
+SELECT $1, $2, $3, $4, $5, $6
+WHERE $3::uuid IS NULL
+   OR EXISTS (SELECT 1 FROM rbac.roles ro WHERE ro.id = $3 AND ro.tenant_id = $1)
 RETURNING id, tenant_id, email, role_id, status, expires_at, accepted_at, created_at
 `
 
@@ -228,6 +232,9 @@ type InsertInviteRow struct {
 // Static queries against tenant.invites live here and are compiled by sqlc into ./dbgen.
 // The cross-context writes inside Accept (user.users, auth.password_credentials,
 // rbac.user_roles) also go through sqlc — run on the same pgx.Tx via q.WithTx(tx).
+// InsertInvite creates an invitation. One that carries a role is created only
+// when the role is the tenant's: pgx.ErrNoRows otherwise, for a missing and a
+// foreign role alike.
 func (q *Queries) InsertInvite(ctx context.Context, arg InsertInviteParams) (InsertInviteRow, error) {
 	row := q.db.QueryRow(ctx, insertInvite,
 		arg.TenantID,

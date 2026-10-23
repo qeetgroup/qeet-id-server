@@ -1,0 +1,13 @@
+{
+  "global": {
+    "nosec-require-rules": "enabled",
+    "nosec-require-justification": "enabled"
+  },
+  "exclude-rules": [
+    {
+      "path": "/internal/platform/http/errs/[^/]+\\.go$",
+      "rules": ["G101"],
+      "reason": "Every constant here is a public API error code such as \"oidc.refresh_token_invalid\"; G101 matches words like token, secret and cred in their names. No credentials live in this package."
+    }
+  ]
+}

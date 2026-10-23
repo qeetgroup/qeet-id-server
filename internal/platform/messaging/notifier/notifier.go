@@ -1,6 +1,6 @@
-// Package notifier delivers user-facing notifications (email, SMS).
-// Production wires in a real provider (SendGrid, Twilio); the LogSender
-// just emits a structured log line so flows are testable without a vendor.
+// Package notifier sends user-facing email and SMS through SES, SMTP or Twilio.
+// A channel with no provider falls back to LogSender, which prints the message
+// only in development.
 package notifier
 
 import (
@@ -10,48 +10,35 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
+// Message is one notification to send.
 type Message struct {
-	TemplateKey       string
-	TemplateVariables map[string]string
-	TenantID          string
-	FromName          string
-	ReplyTo           string
-	To                string
-	Channel           string // "email" or "sms"
-	Subject           string
-	Body              string // plain-text body (always set; the fallback for HTML mail)
-	// HTML, when set on an email, is sent as the rich alternative alongside Body.
-	// Ignored for SMS.
-	HTML string
-	Tags map[string]string
+	TemplateKey       string            // the template to render
+	TemplateVariables map[string]string // values for the template
+	TenantID          string            // the message's organisation ("" for none)
+	FromName          string            // the sender's display name
+	ReplyTo           string            // the Reply-To address
+	To                string            // the recipient's address or phone number
+	Channel           string            // "email" or "sms"
+	Subject           string            // the email subject
+	Body              string            // plain-text body (always set; the fallback for HTML mail)
+	HTML              string            // optional HTML alternative for email; ignored for SMS
+	Tags              map[string]string // free-form labels; the built-in senders ignore them
 }
 
+// Sender sends a Message.
 type Sender interface {
 	Send(ctx context.Context, m Message) error
 }
 
-// LogSender is the fallback used when a channel has no real provider. It is a
-// *credential sink*: the bodies routed through it carry sign-in OTPs,
-// password-reset tokens, magic links and invitation tokens.
-//
-// Reveal therefore gates the body. In development it is true, because reading
-// the code out of the console is the point of the fallback. Outside
-// development it must stay false: a deployment whose SMS provider is
-// unconfigured (or whose email provider failed to initialise) silently routes
-// live credentials here, and slog's redacting handler does NOT cover the "body"
-// key — it matches attribute keys, and a reset link is just a string.
-//
-// The zero value is safe: Reveal defaults to false, so a LogSender constructed
-// without going through notifier.New never prints a credential.
-//
-// Outside development it also reports the send as failed
-// (errs.ErrEmailProviderUnavailable): the message reached nobody, and calling
-// that a success let a verification code be stored that could never arrive.
+// LogSender logs messages for channels with no provider. They carry OTPs and
+// reset or magic links, so the body is logged only when Reveal is set, which
+// must be development only. Without Reveal the message reaches nobody and Send
+// returns errs.ErrEmailProviderUnavailable. The zero value reveals nothing.
 type LogSender struct {
-	// Reveal logs the message body. Development only — see the type comment.
-	Reveal bool
+	Reveal bool // log the message body; development only
 }
 
+// Send implements notifier.Sender.
 func (l LogSender) Send(_ context.Context, m Message) error {
 	attrs := []any{
 		"channel", m.Channel,

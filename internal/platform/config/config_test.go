@@ -20,6 +20,7 @@ func prodOK() *Config {
 		SecretsKey:                   "c2VjcmV0cy1rZXktMzItYnl0ZXMtYmFzZTY0LXh4eHg=",
 		AllowedOriginsRaw:            "https://app.acme.com",
 		AppBaseURL:                   "https://app.acme.com",
+		PublicBaseURL:                "https://api.acme.com",
 	}
 }
 
@@ -53,6 +54,13 @@ func TestValidate_ProdRejectsInsecure(t *testing.T) {
 		"kit zone base url":        func(c *Config) { c.AppBaseURL = "https://console.test.id.qeet.in" },
 		"unknown env":              func(c *Config) { c.ServiceEnv = "production" },
 		"profile outside local":    func(c *Config) { c.ServiceProfile = "test" },
+		"missing public base url":  func(c *Config) { c.PublicBaseURL = "" },
+		"http public base url":     func(c *Config) { c.PublicBaseURL = "http://api.acme.com" },
+		"public base url path":     func(c *Config) { c.PublicBaseURL = "https://api.acme.com/v1" },
+		"public base url userinfo": func(c *Config) { c.PublicBaseURL = "https://user@api.acme.com" },
+		"public base url query":    func(c *Config) { c.PublicBaseURL = "https://api.acme.com?" },
+		"public base url fragment": func(c *Config) { c.PublicBaseURL = "https://api.acme.com#" },
+		"public base url no host":  func(c *Config) { c.PublicBaseURL = "https://:443" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -79,8 +87,9 @@ func TestWebAuthnRPDefaults(t *testing.T) {
 	}
 }
 
-// The hosted login runs passkey sign-in, sign-up and enrolment ceremonies from
-// its own origin, so the default origins include it beside the app's.
+// TestWebAuthnRPDefaultOriginsIncludeHostedLogin checks that the default origins
+// include LoginBaseURL beside AppBaseURL, once if they are the same origin, since
+// the hosted login runs passkey ceremonies from its own origin.
 func TestWebAuthnRPDefaultOriginsIncludeHostedLogin(t *testing.T) {
 	c := &Config{ServiceName: "qeet-id", AppBaseURL: "http://localhost:3002", LoginBaseURL: "http://localhost:3003"}
 	_, _, origins := c.WebAuthnRP()
@@ -138,8 +147,8 @@ func TestValidate_LocalHappyPath(t *testing.T) {
 	}
 }
 
-// The kit can also serve an environment on its own public zone
-// (<profile>.id.qeet.in, which public DNS points at 127.0.0.1) over https.
+// TestValidate_LocalAcceptsItsKitZoneOverHTTPS checks that a local runtime may
+// use https hosts on its own profile's kit zone (<profile>.id.qeet.in).
 func TestValidate_LocalAcceptsItsKitZoneOverHTTPS(t *testing.T) {
 	for _, profile := range []string{"dev", "test", "staging"} {
 		c := localOK()
@@ -153,7 +162,9 @@ func TestValidate_LocalAcceptsItsKitZoneOverHTTPS(t *testing.T) {
 	}
 }
 
-// Local keeps every production gate; it only differs in requiring loopback hosts.
+// TestValidate_LocalRejectsInsecureAndPublicHosts checks that local keeps every
+// production gate and refuses public hosts, its kit zone over http, another
+// profile's zone, lookalike hosts and unknown profiles.
 func TestValidate_LocalRejectsInsecureAndPublicHosts(t *testing.T) {
 	cases := map[string]func(*Config){
 		"csrf disabled":          func(c *Config) { c.CSRFDisabled = true },
@@ -201,9 +212,8 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("SERVICE_ENV", EnvDev)
 }
 
-// A process started without SERVICE_ENV doesn't fall back to dev, where the
-// production gates are off and a signing key is made up: it refuses to start,
-// naming the setting.
+// TestLoad_RequiresServiceEnv checks that Load fails without SERVICE_ENV,
+// naming it, rather than defaulting to dev with its gates off.
 func TestLoad_RequiresServiceEnv(t *testing.T) {
 	setRequiredEnv(t)
 	if err := os.Unsetenv("SERVICE_ENV"); err != nil {
@@ -286,6 +296,9 @@ func TestLoad_SessionLifetimeDefaults(t *testing.T) {
 	if c.SessionMaxAge != 720*time.Hour || c.SessionIdleTimeout != 24*time.Hour {
 		t.Errorf("session defaults = %v / %v, want 720h / 24h", c.SessionMaxAge, c.SessionIdleTimeout)
 	}
+	if c.RefreshTokenReuseGrace != 30*time.Second {
+		t.Errorf("refresh reuse grace default = %v, want 30s", c.RefreshTokenReuseGrace)
+	}
 }
 
 func TestLoad_RejectsUnusableSessionLifetime(t *testing.T) {
@@ -295,6 +308,9 @@ func TestLoad_RejectsUnusableSessionLifetime(t *testing.T) {
 		"idle timeout under 15 minutes":       {"SESSION_IDLE_TIMEOUT", "10m"},
 		"idle timeout over the maximum age":   {"SESSION_IDLE_TIMEOUT", "721h"},
 		"access tokens outliving idle bounds": {"ACCESS_TOKEN_TTL", "15m"},
+		"a refresh reuse grace over a minute": {"REFRESH_TOKEN_REUSE_GRACE", "61s"},
+		"a negative refresh reuse grace":      {"REFRESH_TOKEN_REUSE_GRACE", "-1s"},
+		"a drain delay over 30 seconds":       {"SHUTDOWN_DRAIN_DELAY", "31s"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			setRequiredEnv(t)

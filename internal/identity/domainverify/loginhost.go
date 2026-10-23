@@ -23,18 +23,18 @@ const loginHostSuffix = "tenants.id.qeet.in"
 const loginVerifyHost = "_qeetid-verify"
 
 // LoginDomainStatus is the provisioning state of a tenant's custom hosted-login
-// hostname, as shown on Settings → Domains → Custom login domain.
+// hostname. Status is not_configured, pending or active; TLSState is
+// not_started, pending or issued; EndpointState is not_available or live.
 type LoginDomainStatus struct {
 	LoginDomain string `json:"login_domain"`
-	// Overall: not_configured | pending | active
-	Status string `json:"status"`
+	Status      string `json:"status"`
 
 	DNSVerified   bool       `json:"dns_verified"`
 	DNSCheckedAt  *time.Time `json:"dns_checked_at,omitempty"`
 	DNSDetail     string     `json:"dns_detail"`
-	TLSState      string     `json:"tls_state"` // not_started | pending | issued
+	TLSState      string     `json:"tls_state"`
 	TLSDetail     string     `json:"tls_detail"`
-	EndpointState string     `json:"endpoint_state"` // not_available | live
+	EndpointState string     `json:"endpoint_state"`
 	EndpointURL   string     `json:"endpoint_url,omitempty"`
 
 	Records []DNSRecord `json:"records"`
@@ -64,12 +64,9 @@ func loginRecords(tenantID uuid.UUID, host string) []DNSRecord {
 	}
 }
 
-// LoginDomain reports where a tenant's custom login hostname has got to.
-//
-// DNS is checked live. TLS and the endpoint are reported as not-yet-started
-// rather than guessed: certificate issuance is a separate pipeline, and
-// claiming "issued" from a DNS result alone would tell an operator their login
-// page is ready when it isn't.
+// LoginDomain reports the provisioning state of the tenant's custom login
+// hostname. DNS is checked live; TLS and the endpoint are never reported ready,
+// because no certificate pipeline confirms them yet.
 func (s *Service) LoginDomain(ctx context.Context, tenantID uuid.UUID) (*LoginDomainStatus, error) {
 	var host string
 	if err := s.pool.QueryRow(ctx,
@@ -126,7 +123,7 @@ func (s *Service) LoginDomain(ctx context.Context, tenantID uuid.UUID) (*LoginDo
 }
 
 func (h *Handler) loginDomain(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

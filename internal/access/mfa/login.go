@@ -16,19 +16,27 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// The second factor of a sign-in (auth.MFAEnroller): every factor a person has
-// confirmed can be challenged — an authenticator app (with its recovery codes),
-// email and SMS code factors, passkeys while their organisation allows them,
-// and push devices — not only the authenticator app.
+// Sign-in second factors (auth.MFAEnroller). Any confirmed factor can be
+// challenged: an authenticator app with its recovery codes, email and SMS
+// codes, passkeys where the organisation allows them, and push devices.
 
-// SetWebAuthn wires passkey assertions as a sign-in second factor (nil:
-// passkeys are not offered as one). Called from internal/bootstrap.
+// SetWebAuthn sets the passkey verifier for sign-in second factors (nil:
+// passkeys are not offered as one).
 func (s *Service) SetWebAuthn(v WebAuthnVerifier) { s.webauthn = v }
 
 // LoginFactors lists the second factors userID can meet a sign-in challenge
 // with, in a stable order.
 func (s *Service) LoginFactors(ctx context.Context, userID uuid.UUID) ([]auth.LoginFactor, error) {
-	counts, err := s.q.LoginFactorCounts(ctx, userID)
+	return s.loginFactors(ctx, s.q, userID)
+}
+
+// LoginFactorsTx is LoginFactors read through tx.
+func (s *Service) LoginFactorsTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]auth.LoginFactor, error) {
+	return s.loginFactors(ctx, s.q.WithTx(tx), userID)
+}
+
+func (s *Service) loginFactors(ctx context.Context, q *dbgen.Queries, userID uuid.UUID) ([]auth.LoginFactor, error) {
+	counts, err := q.LoginFactorCounts(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -39,7 +47,7 @@ func (s *Service) LoginFactors(ctx context.Context, userID uuid.UUID) ([]auth.Lo
 	if counts.RecoveryCodes > 0 {
 		out = append(out, auth.LoginFactor{Type: "recovery_code"})
 	}
-	factors, err := s.q.ListOTPFactors(ctx, userID)
+	factors, err := q.ListOTPFactors(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -97,13 +105,13 @@ func (s *Service) BeginLoginPasskey(ctx context.Context, userID uuid.UUID) (uuid
 	return id, options.Response, nil
 }
 
-// FinishLoginPasskey verifies an assertion for the ceremony begun by
-// BeginLoginPasskey.
-func (s *Service) FinishLoginPasskey(ctx context.Context, userID, sessionID uuid.UUID, credential json.RawMessage) error {
+// FinishLoginPasskeyTx verifies an assertion for the ceremony begun by
+// BeginLoginPasskey, inside the challenge transaction tx.
+func (s *Service) FinishLoginPasskeyTx(ctx context.Context, tx pgx.Tx, userID, sessionID uuid.UUID, credential json.RawMessage) error {
 	if s.webauthn == nil {
 		return errs.ErrMFAWebAuthnUnavailable
 	}
-	return s.webauthn.FinishMFA(ctx, userID, sessionID, credential)
+	return s.webauthn.FinishMFATx(ctx, tx, userID, sessionID, credential)
 }
 
 // StartLoginPush sends a sign-in approval request to every push device of the

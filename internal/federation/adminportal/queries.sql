@@ -8,9 +8,11 @@ VALUES (@tenant_id, @token_hash, @capabilities, @created_by, @expires_at)
 RETURNING id, tenant_id, capabilities, created_by, expires_at, revoked_at, last_used_at, created_at;
 
 -- name: ListAdminPortalLinksByTenant :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, tenant_id, capabilities, created_by, expires_at, revoked_at, last_used_at, created_at
 FROM tenant.admin_portal_links
-WHERE tenant_id = @tenant_id ORDER BY created_at DESC;
+WHERE tenant_id = @tenant_id ORDER BY created_at DESC
+LIMIT 1001;
 
 -- name: RevokeAdminPortalLink :execrows
 UPDATE tenant.admin_portal_links SET revoked_at = NOW()

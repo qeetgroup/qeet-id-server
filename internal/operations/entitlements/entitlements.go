@@ -1,13 +1,7 @@
-// Package entitlements turns a tenant's subscription plan into a machine-readable
-// capability set: boolean feature flags (SSO, SCIM, webhooks, …) and numeric
-// resource limits (seats, apps, api keys, …). It is the single source of truth
-// both the backend enforcement points and the console read, so the UI and the
-// server never disagree about what a plan includes.
-//
-// The catalog below encodes the published plan tiers. Only the FREE tier is
-// enforced today; paid tiers are all-unlocked/unlimited enough that enforcement
-// is a no-op for them (values still track the marketing so the console can gate
-// higher tiers later without more code). Tune a tier by editing one map entry.
+// Package entitlements maps a tenant's plan to its capabilities: boolean
+// features such as SSO, SCIM and webhooks, and numeric limits such as seats,
+// apps and API keys. Backend enforcement points and the console both read it,
+// so they agree on what a plan includes. Catalog defines the tiers.
 package entitlements
 
 import (
@@ -17,7 +11,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// Boolean feature keys.
+// Boolean feature keys. FeatureSSO covers sign-in through an external SAML or
+// OIDC identity provider.
 const (
 	FeaturePasskeys       = "passkeys"
 	FeaturePassword       = "password"
@@ -29,7 +24,7 @@ const (
 	FeatureSMSMFA         = "sms_mfa"
 	FeatureCustomBranding = "custom_branding"
 	FeatureCustomDomain   = "custom_domain"
-	FeatureSSO            = "sso" // SAML / OIDC federation-in (external IdP login)
+	FeatureSSO            = "sso"
 	FeatureSCIM           = "scim"
 	FeatureLDAP           = "ldap"
 	FeatureWebhooks       = "webhooks"
@@ -40,14 +35,14 @@ const (
 
 // Numeric limit keys. Unlimited (-1) = no cap; 0 = none allowed.
 const (
-	LimitSeats              = "seats" // active members + pending invites
-	LimitApps               = "apps"  // OIDC relying parties
-	LimitAPIKeys            = "api_keys"
-	LimitCustomRoles        = "custom_roles"
-	LimitWebhooks           = "webhooks"
-	LimitOrgs               = "orgs"
-	LimitMAU                = "mau"
-	LimitAuditRetentionDays = "audit_retention_days"
+	LimitSeats              = "seats"                // active members plus pending invites
+	LimitApps               = "apps"                 // OIDC relying parties
+	LimitAPIKeys            = "api_keys"             // API keys
+	LimitCustomRoles        = "custom_roles"         // roles beyond the built-in ones
+	LimitWebhooks           = "webhooks"             // webhook endpoints
+	LimitOrgs               = "orgs"                 // organizations
+	LimitMAU                = "mau"                  // monthly active users
+	LimitAuditRetentionDays = "audit_retention_days" // days of audit history kept
 )
 
 // Unlimited marks a numeric limit as uncapped.
@@ -72,9 +67,8 @@ func (e Entitlements) clone() Entitlements {
 	return Entitlements{Plan: e.Plan, Features: f, Limits: l}
 }
 
-// features builds a full feature map: everything false, then the passed keys true.
-// Keeping every key present in every tier makes lookups deterministic (a missing
-// key can't be mistaken for "off").
+// features returns a map of every feature key, true for the keys in on. Every
+// key is present in every tier, so a missing key is never mistaken for "off".
 func features(on ...string) map[string]bool {
 	all := []string{
 		FeaturePasskeys, FeaturePassword, FeatureMagicLinks, FeatureSocial,
@@ -92,13 +86,13 @@ func features(on ...string) map[string]bool {
 	return m
 }
 
-// coreLogin are the auth primitives every plan (including free) includes.
+// coreLogin lists the sign-in features every plan includes, free too.
 var coreLogin = []string{
 	FeaturePasskeys, FeaturePassword, FeatureMagicLinks, FeatureSocial,
 	FeatureTOTP, FeatureEmailOTP, FeatureHostedLogin,
 }
 
-// Catalog maps a normalized plan code to its entitlements. Edit numbers/flags here.
+// Catalog maps a normalized plan code to its entitlements.
 var Catalog = map[string]Entitlements{
 	"free": {
 		Plan:     "free",
@@ -164,8 +158,8 @@ var Catalog = map[string]Entitlements{
 	},
 }
 
-// NormalizePlan folds a raw plan code to a catalog key: lowercased, "_year"
-// suffix stripped, and any unknown / empty / "none" value fails closed to "free".
+// NormalizePlan returns the catalog key of a plan code: lowercased, without the
+// "_year" suffix. An unknown, empty or "none" code fails closed to "free".
 func NormalizePlan(code string) string {
 	code = strings.ToLower(strings.TrimSpace(code))
 	code = strings.TrimSuffix(code, "_year")
@@ -177,48 +171,42 @@ func NormalizePlan(code string) string {
 	}
 }
 
-// For returns a defensive copy of the entitlements for a (raw) plan code.
+// For returns a copy of the entitlements of a plan code.
 func For(code string) Entitlements {
 	return Catalog[NormalizePlan(code)].clone()
 }
 
-// LimitReached reports whether one more of a resource would exceed the cap.
-// A negative (Unlimited) limit is never reached.
-func LimitReached(limit, current int) bool {
-	return limit >= 0 && current >= limit
-}
-
-// PlanResolver returns a tenant's effective (raw) plan code. Implemented by the
-// composition root, which reads the authoritative source (billing subscription
-// with a fallback to the tenant plan label). Injected so this package doesn't
-// import the billing/tenant contexts.
+// PlanResolver returns a tenant's effective plan code, from its billing
+// subscription or else its plan label. It keeps this package from importing
+// billing and tenant.
 type PlanResolver interface {
 	EffectivePlan(ctx context.Context, tenantID uuid.UUID) (string, error)
 }
 
-// UsageResolver returns a tenant's current consumption keyed by the same
-// resource names as Limits (seats, apps, api_keys, custom_roles, …). Implemented
-// by the composition root (which can reach every context's count query), so this
-// package stays decoupled. Optional — used only for the billing usage display.
+// UsageResolver returns a tenant's current consumption, keyed like Limits
+// (seats, apps, api_keys, …). It is optional and only feeds the billing usage
+// display.
 type UsageResolver interface {
 	Usage(ctx context.Context, tenantID uuid.UUID) (map[string]int, error)
 }
 
-// Service resolves and answers entitlement questions for a tenant. It is the
-// concrete type injected (as a small local interface) into every enforcement point.
+// Service answers entitlement questions for a tenant. Enforcement points use
+// it through their own small interfaces.
 type Service struct {
 	resolver PlanResolver
 	usage    UsageResolver
 }
 
+// NewService returns a Service that resolves plans with r. A nil r puts every
+// tenant on the free tier.
 func NewService(r PlanResolver) *Service { return &Service{resolver: r} }
 
-// SetUsageResolver wires the (optional) current-usage provider used by the
-// billing usage endpoint. nil = usage reported as empty.
+// SetUsageResolver sets the optional usage provider. Without one, Usage reports
+// nothing.
 func (s *Service) SetUsageResolver(u UsageResolver) { s.usage = u }
 
-// Usage returns the tenant's current consumption per resource (empty when no
-// resolver is wired).
+// Usage returns the tenant's current consumption per resource, or an empty map
+// without a usage provider.
 func (s *Service) Usage(ctx context.Context, tenantID uuid.UUID) (map[string]int, error) {
 	if s.usage == nil {
 		return map[string]int{}, nil
@@ -226,8 +214,8 @@ func (s *Service) Usage(ctx context.Context, tenantID uuid.UUID) (map[string]int
 	return s.usage.Usage(ctx, tenantID)
 }
 
-// Resolve returns the tenant's full entitlement set. A nil resolver (or a
-// resolver returning an unknown plan) yields the free tier.
+// Resolve returns the tenant's entitlements. With a nil PlanResolver, or an
+// unknown plan, that is the free tier.
 func (s *Service) Resolve(ctx context.Context, tenantID uuid.UUID) (Entitlements, error) {
 	code := "free"
 	if s.resolver != nil {
@@ -240,7 +228,7 @@ func (s *Service) Resolve(ctx context.Context, tenantID uuid.UUID) (Entitlements
 	return For(code), nil
 }
 
-// FeatureAllowed reports whether a boolean feature is included in the tenant's plan.
+// FeatureAllowed reports whether the tenant's plan includes feature.
 func (s *Service) FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error) {
 	ent, err := s.Resolve(ctx, tenantID)
 	if err != nil {
@@ -249,9 +237,9 @@ func (s *Service) FeatureAllowed(ctx context.Context, tenantID uuid.UUID, featur
 	return ent.Features[feature], nil
 }
 
-// Limit returns the numeric cap for a resource (Unlimited when the plan doesn't
-// cap it, or when the resource isn't modelled — fail-open, since limits only
-// exist for resources we deliberately gate).
+// Limit returns the tenant's cap on resource. A resource the plan does not cap,
+// or that is not modelled, is Unlimited: only deliberately gated resources have
+// limits.
 func (s *Service) Limit(ctx context.Context, tenantID uuid.UUID, resource string) (int, error) {
 	ent, err := s.Resolve(ctx, tenantID)
 	if err != nil {

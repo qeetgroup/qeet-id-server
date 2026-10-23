@@ -30,6 +30,7 @@ func (q *Queries) DeleteHook(ctx context.Context, arg DeleteHookParams) (int64, 
 }
 
 const listHooks = `-- name: ListHooks :many
+
 SELECT id, trigger, url, enabled, fail_open, created_at
 FROM tenant.auth_hooks WHERE tenant_id = $1 ORDER BY created_at DESC
 `
@@ -43,6 +44,8 @@ type ListHooksRow struct {
 	CreatedAt time.Time
 }
 
+// Queries for the auth-hooks domain.
+// All queries are static; no dynamic SQL in this domain.
 func (q *Queries) ListHooks(ctx context.Context, tenantID uuid.UUID) ([]ListHooksRow, error) {
 	rows, err := q.db.Query(ctx, listHooks, tenantID)
 	if err != nil {

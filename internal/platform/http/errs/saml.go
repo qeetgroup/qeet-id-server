@@ -1,9 +1,6 @@
 package errs
 
-// SAML federation error codes — stable, namespaced machine identifiers for both
-// the SP side (Qeet consuming an external IdP) and the IdP side (Qeet as an SSO
-// source for downstream Service Providers). Clients branch/localize on the code,
-// never the message. Once shipped, a code MUST NOT change.
+// SAML error codes, for both the service provider and identity provider sides.
 const (
 	CodeSAMLTenantIDInvalid          = "saml.tenant_id_invalid"
 	CodeSAMLTenantMismatch           = "saml.tenant_mismatch"
@@ -14,6 +11,7 @@ const (
 	CodeSAMLLoginCodeExpired         = "saml.login_code_expired"
 	CodeSAMLConnectionFieldsRequired = "saml.connection_fields_required"
 	CodeSAMLCertificateInvalid       = "saml.certificate_invalid"
+	CodeSAMLSSOURLInvalid            = "saml.sso_url_invalid"
 	CodeSAMLStatusInvalid            = "saml.status_invalid"
 	CodeSAMLConnectionDisabled       = "saml.connection_disabled"
 	CodeSAMLConnectionMisconfigured  = "saml.connection_misconfigured"
@@ -29,6 +27,7 @@ const (
 	CodeSAMLRequestParamMissing      = "saml.request_param_missing"
 	CodeSAMLServiceProviderDisabled  = "saml.service_provider_disabled"
 	CodeSAMLACSMismatch              = "saml.acs_url_mismatch"
+	CodeSAMLACSURLInvalid            = "saml.acs_url_invalid"
 	CodeSAMLSPFieldsRequired         = "saml.sp_fields_required"
 	CodeSAMLUserTenantMismatch       = "saml.user_tenant_mismatch"
 )
@@ -45,6 +44,7 @@ var (
 	ErrSAMLLoginCodeExpired         = New(CodeSAMLLoginCodeExpired, "That sign-in code has expired. Please sign in again.")
 	ErrSAMLConnectionFieldsRequired = New(CodeSAMLConnectionFieldsRequired, "Name, IdP entity ID, SSO URL and signing certificate are all required.")
 	ErrSAMLCertificateInvalid       = New(CodeSAMLCertificateInvalid, "The signing certificate isn't a valid X.509 certificate.")
+	ErrSAMLSSOURLInvalid            = New(CodeSAMLSSOURLInvalid, "The IdP SSO URL must be an absolute https:// URL without a user name or password.")
 	ErrSAMLStatusInvalid            = New(CodeSAMLStatusInvalid, "Status must be draft, active or disabled.")
 	ErrSAMLConnectionDisabled       = New(CodeSAMLConnectionDisabled, "This SAML connection is disabled.")
 	ErrSAMLConnectionMisconfigured  = New(CodeSAMLConnectionMisconfigured, "This SAML connection isn't configured correctly. Contact your administrator.")
@@ -60,6 +60,7 @@ var (
 	ErrSAMLRequestParamMissing      = New(CodeSAMLRequestParamMissing, "A SAMLRequest or sp parameter is required.")
 	ErrSAMLServiceProviderDisabled  = New(CodeSAMLServiceProviderDisabled, "This service provider is disabled.")
 	ErrSAMLACSMismatch              = New(CodeSAMLACSMismatch, "The assertion consumer service URL doesn't match the registered value.")
+	ErrSAMLACSURLInvalid            = New(CodeSAMLACSURLInvalid, "The ACS URL must be an absolute https:// URL without a user name or password (http only on localhost).")
 	ErrSAMLSPFieldsRequired         = New(CodeSAMLSPFieldsRequired, "Name, entity ID and ACS URL are all required.")
 	ErrSAMLUserTenantMismatch       = New(CodeSAMLUserTenantMismatch, "You aren't a member of this service provider's tenant.")
 )

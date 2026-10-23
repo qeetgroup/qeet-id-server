@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// fixed values so the test is deterministic.
+// Fixed inputs, so the tests are deterministic.
 var (
 	fixedID        = uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	fixedTenantID  = uuid.MustParse("22222222-2222-4222-8222-222222222222")

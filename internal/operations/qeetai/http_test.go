@@ -78,15 +78,8 @@ func newHandlerRequest(tenantID, userID, convID uuid.UUID, body string) *http.Re
 	return req
 }
 
-// TestStreamMessages_IDOROwnershipCheck is the critical IDOR security test.
-//
-// Invariant: when user A calls POST .../conversations/{convID}/messages and
-// convID belongs to user B (GetConversation returns ErrNotFound), the handler
-// MUST return 404 and MUST NOT call AppendMessage — no row is written into B's
-// conversation.
-//
-// This test directly exercises the ownership gate added to streamMessages,
-// which verifies ownership BEFORE any write or SSE header is emitted.
+// TestStreamMessages_IDOROwnershipCheck checks that posting to another user's
+// conversation returns 404 and writes no message.
 func TestStreamMessages_IDOROwnershipCheck(t *testing.T) {
 	tenantID := uuid.New()
 	userA := uuid.New()

@@ -62,6 +62,13 @@ ON CONFLICT (tenant_id) DO UPDATE SET
     cancel_at_period_end = FALSE,
     updated_at           = NOW();
 
+-- name: SwitchSubscriptionPlan :exec
+-- Move the tenant's subscription to another plan within the period it has paid
+-- for: the period and currency stay, and no invoice is issued.
+UPDATE tenant.subscriptions
+SET plan_id = @plan_id, cancel_at_period_end = FALSE, updated_at = NOW()
+WHERE tenant_id = @tenant_id;
+
 -- name: InsertInvoice :exec
 -- Issue an invoice for one billing period (zero-amount plans still get a record).
 -- amount_minor is the total charged (taxable + tax).

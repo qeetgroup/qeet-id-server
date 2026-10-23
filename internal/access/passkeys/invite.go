@@ -17,24 +17,17 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Accepting an invitation with a passkey. An invited person without an account
-// founds one on a passkey instead of a password: the ceremony is a passkey
-// sign-up whose email and organisation are copied from the invitation when it
-// begins, and which, when it finishes, creates the account, stores the passkey
-// and accepts the invitation (the invited role, the invitation marked
-// accepted) in one transaction, then signs the person in as the password path
-// does. A ceremony that fails, expires or is abandoned leaves the invitation
-// pending; each ceremony can be finished once.
+// Accepting an invitation with a passkey: an invited person without an account
+// founds one on a passkey. The ceremony takes its email and organisation from
+// the invitation; finishing it creates the account, stores the passkey and
+// accepts the invitation in one transaction. A failed one leaves it pending.
 
-// InvitationAcceptor is the slice of the invitation service this needs.
-// Satisfied by identity/invitations.Service; an interface so this package does
-// not import it. Wired in internal/bootstrap/dependencies.go.
+// InvitationAcceptor is the slice of the invitation service this needs. It is
+// satisfied by identity/invitations.Service without this package importing it.
 type InvitationAcceptor interface {
 	// InvitationForNewAccount returns the id, organisation and email of the
-	// invitation token names when a new account may accept it now, and
-	// otherwise the refusal the password path gives: the link is invalid,
-	// the invitation is no longer pending or has expired, or an account
-	// already holds the email.
+	// invitation token names if a new account may accept it now, or the password
+	// path's refusal (invalid link, not pending, expired, or the email is taken).
 	InvitationForNewAccount(ctx context.Context, token string) (id, tenantID uuid.UUID, email string, err error)
 	// AcceptForNewAccountTx accepts invitation id for userID, the account
 	// just created in tx for email in tenantID: the invitation, read under
@@ -47,10 +40,8 @@ type InvitationAcceptor interface {
 func (s *Service) SetInvitations(a InvitationAcceptor) { s.invitations = a }
 
 // BeginInviteSignup starts the ceremony for the invitation token names. It is
-// refused as the password path would refuse the invitation, and when the
-// inviting organisation has passkeys switched off. Starting again replaces an
-// earlier ceremony for the same invitation, so an abandoned one never blocks
-// it.
+// refused as the password path would be, or when the organisation has passkeys
+// off. Starting again replaces an earlier ceremony for the same invitation.
 func (s *Service) BeginInviteSignup(ctx context.Context, token, displayName string) (uuid.UUID, *protocol.CredentialCreation, error) {
 	if s.invitations == nil {
 		return uuid.Nil, nil, errs.ErrNotImplemented

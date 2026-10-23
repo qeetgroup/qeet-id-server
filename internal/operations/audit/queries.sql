@@ -33,7 +33,8 @@ INSERT INTO audit.events (
 );
 
 -- name: ListAuditEventsForVerify :many
--- Walk the chain in chronological insert order for hash-chain verification.
+-- Walk the chain in chronological insert order for hash-chain verification,
+-- one page after (after_created_at, after_id) at a time.
 -- Only rows with non-NULL hashes (post-hash-chain migration) are returned.
 -- COALESCE on optional fields ensures the canonical bytes match what Record
 -- wrote at insert time regardless of how Postgres stored the values.
@@ -48,7 +49,9 @@ SELECT id, tenant_id, actor_user_id, actor_type, action,
 FROM audit.events
 WHERE tenant_id IS NOT DISTINCT FROM @tenant_id
   AND row_hash IS NOT NULL
-ORDER BY created_at ASC, id ASC;
+  AND (created_at, id) > (@after_created_at::timestamptz, @after_id::uuid)
+ORDER BY created_at ASC, id ASC
+LIMIT @page_size;
 
 -- name: ListAuditChainTenants :many
 -- Every organisation with a hash chain, for the scheduled verification of all

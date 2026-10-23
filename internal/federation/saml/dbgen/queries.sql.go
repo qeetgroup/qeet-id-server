@@ -104,9 +104,24 @@ type GetSamlConnectionParams struct {
 	TenantID uuid.UUID
 }
 
-func (q *Queries) GetSamlConnection(ctx context.Context, arg GetSamlConnectionParams) (TenantSamlConnection, error) {
+type GetSamlConnectionRow struct {
+	ID             uuid.UUID
+	TenantID       uuid.UUID
+	Name           string
+	IdpEntityID    string
+	IdpSsoUrl      string
+	IdpCertificate string
+	EmailAttribute string
+	NameAttribute  string
+	Status         string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	LastLoginAt    pgtype.Timestamptz
+}
+
+func (q *Queries) GetSamlConnection(ctx context.Context, arg GetSamlConnectionParams) (GetSamlConnectionRow, error) {
 	row := q.db.QueryRow(ctx, getSamlConnection, arg.ID, arg.TenantID)
-	var i TenantSamlConnection
+	var i GetSamlConnectionRow
 	err := row.Scan(
 		&i.ID,
 		&i.TenantID,
@@ -130,9 +145,24 @@ SELECT id, tenant_id, name, idp_entity_id, idp_sso_url, idp_certificate,
 FROM tenant.saml_connections WHERE id = $1
 `
 
-func (q *Queries) GetSamlConnectionByID(ctx context.Context, id uuid.UUID) (TenantSamlConnection, error) {
+type GetSamlConnectionByIDRow struct {
+	ID             uuid.UUID
+	TenantID       uuid.UUID
+	Name           string
+	IdpEntityID    string
+	IdpSsoUrl      string
+	IdpCertificate string
+	EmailAttribute string
+	NameAttribute  string
+	Status         string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	LastLoginAt    pgtype.Timestamptz
+}
+
+func (q *Queries) GetSamlConnectionByID(ctx context.Context, id uuid.UUID) (GetSamlConnectionByIDRow, error) {
 	row := q.db.QueryRow(ctx, getSamlConnectionByID, id)
-	var i TenantSamlConnection
+	var i GetSamlConnectionByIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.TenantID,
@@ -185,37 +215,16 @@ const getSamlSPByEntityID = `-- name: GetSamlSPByEntityID :one
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at
 FROM tenant.saml_service_providers
-WHERE entity_id = $1 AND status <> 'disabled' ORDER BY created_at LIMIT 1
+WHERE tenant_id = $1 AND entity_id = $2 AND status <> 'disabled'
 `
 
-func (q *Queries) GetSamlSPByEntityID(ctx context.Context, entityID string) (TenantSamlServiceProvider, error) {
-	row := q.db.QueryRow(ctx, getSamlSPByEntityID, entityID)
-	var i TenantSamlServiceProvider
-	err := row.Scan(
-		&i.ID,
-		&i.TenantID,
-		&i.Name,
-		&i.EntityID,
-		&i.AcsUrl,
-		&i.NameIDFormat,
-		&i.NameIDAttribute,
-		&i.Certificate,
-		&i.Status,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.LastLoginAt,
-	)
-	return i, err
+type GetSamlSPByEntityIDParams struct {
+	TenantID uuid.UUID
+	EntityID string
 }
 
-const getSamlSPByUUID = `-- name: GetSamlSPByUUID :one
-SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
-       name_id_attribute, certificate, status, created_at, updated_at, last_login_at
-FROM tenant.saml_service_providers WHERE id = $1
-`
-
-func (q *Queries) GetSamlSPByUUID(ctx context.Context, id uuid.UUID) (TenantSamlServiceProvider, error) {
-	row := q.db.QueryRow(ctx, getSamlSPByUUID, id)
+func (q *Queries) GetSamlSPByEntityID(ctx context.Context, arg GetSamlSPByEntityIDParams) (TenantSamlServiceProvider, error) {
+	row := q.db.QueryRow(ctx, getSamlSPByEntityID, arg.TenantID, arg.EntityID)
 	var i TenantSamlServiceProvider
 	err := row.Scan(
 		&i.ID,
@@ -283,13 +292,28 @@ type InsertSamlConnectionParams struct {
 	Status         string
 }
 
+type InsertSamlConnectionRow struct {
+	ID             uuid.UUID
+	TenantID       uuid.UUID
+	Name           string
+	IdpEntityID    string
+	IdpSsoUrl      string
+	IdpCertificate string
+	EmailAttribute string
+	NameAttribute  string
+	Status         string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	LastLoginAt    pgtype.Timestamptz
+}
+
 // Queries for the saml domain.
 // Covers both saml.go (SP-side Service) and idp.go (IdP-side IdP struct).
 // All queries are STATIC.
 // ==========================================================================
 // SP-side: external IdP connections (saml.go)
 // ==========================================================================
-func (q *Queries) InsertSamlConnection(ctx context.Context, arg InsertSamlConnectionParams) (TenantSamlConnection, error) {
+func (q *Queries) InsertSamlConnection(ctx context.Context, arg InsertSamlConnectionParams) (InsertSamlConnectionRow, error) {
 	row := q.db.QueryRow(ctx, insertSamlConnection,
 		arg.TenantID,
 		arg.Name,
@@ -300,7 +324,7 @@ func (q *Queries) InsertSamlConnection(ctx context.Context, arg InsertSamlConnec
 		arg.NameAttribute,
 		arg.Status,
 	)
-	var i TenantSamlConnection
+	var i InsertSamlConnectionRow
 	err := row.Scan(
 		&i.ID,
 		&i.TenantID,
@@ -415,6 +439,19 @@ func (q *Queries) InsertUserWithEmail(ctx context.Context, arg InsertUserWithEma
 	return id, err
 }
 
+const isTenantActive = `-- name: IsTenantActive :one
+SELECT EXISTS (
+    SELECT 1 FROM tenant.tenants WHERE id = $1 AND status = 'active' AND deleted_at IS NULL
+)
+`
+
+func (q *Queries) IsTenantActive(ctx context.Context, id uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, isTenantActive, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const linkExternalIdentity = `-- name: LinkExternalIdentity :exec
 INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email)
 VALUES ($1, $2, $3, $4, $5)
@@ -446,15 +483,30 @@ SELECT id, tenant_id, name, idp_entity_id, idp_sso_url, idp_certificate,
 FROM tenant.saml_connections WHERE tenant_id = $1 ORDER BY created_at DESC
 `
 
-func (q *Queries) ListSamlConnections(ctx context.Context, tenantID uuid.UUID) ([]TenantSamlConnection, error) {
+type ListSamlConnectionsRow struct {
+	ID             uuid.UUID
+	TenantID       uuid.UUID
+	Name           string
+	IdpEntityID    string
+	IdpSsoUrl      string
+	IdpCertificate string
+	EmailAttribute string
+	NameAttribute  string
+	Status         string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	LastLoginAt    pgtype.Timestamptz
+}
+
+func (q *Queries) ListSamlConnections(ctx context.Context, tenantID uuid.UUID) ([]ListSamlConnectionsRow, error) {
 	rows, err := q.db.Query(ctx, listSamlConnections, tenantID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []TenantSamlConnection{}
+	items := []ListSamlConnectionsRow{}
 	for rows.Next() {
-		var i TenantSamlConnection
+		var i ListSamlConnectionsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.TenantID,
@@ -572,7 +624,22 @@ type UpdateSamlConnectionParams struct {
 	TenantID       uuid.UUID
 }
 
-func (q *Queries) UpdateSamlConnection(ctx context.Context, arg UpdateSamlConnectionParams) (TenantSamlConnection, error) {
+type UpdateSamlConnectionRow struct {
+	ID             uuid.UUID
+	TenantID       uuid.UUID
+	Name           string
+	IdpEntityID    string
+	IdpSsoUrl      string
+	IdpCertificate string
+	EmailAttribute string
+	NameAttribute  string
+	Status         string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	LastLoginAt    pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateSamlConnection(ctx context.Context, arg UpdateSamlConnectionParams) (UpdateSamlConnectionRow, error) {
 	row := q.db.QueryRow(ctx, updateSamlConnection,
 		arg.Name,
 		arg.IdpEntityID,
@@ -584,7 +651,7 @@ func (q *Queries) UpdateSamlConnection(ctx context.Context, arg UpdateSamlConnec
 		arg.ID,
 		arg.TenantID,
 	)
-	var i TenantSamlConnection
+	var i UpdateSamlConnectionRow
 	err := row.Scan(
 		&i.ID,
 		&i.TenantID,

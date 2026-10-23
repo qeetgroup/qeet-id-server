@@ -38,7 +38,7 @@ SELECT
     COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '48 hours'
                       AND created_at <  NOW() - INTERVAL '24 hours') AS failed_prev
 FROM audit.events
-WHERE tenant_id = $1 AND action = 'auth.login_failed'
+WHERE tenant_id = $1 AND action = 'auth.sign_in_failed'
 `
 
 type CountFailedLogins24hWindowsRow struct {
@@ -193,7 +193,7 @@ grouped AS (
     SELECT date_trunc('hour', created_at) AS hour, COUNT(*) AS n
     FROM audit.events
     WHERE tenant_id = $1
-      AND action = 'auth.login_failed'
+      AND action = 'auth.sign_in_failed'
       AND created_at >= NOW() - INTERVAL '24 hours'
     GROUP BY 1
 )
@@ -238,11 +238,12 @@ WITH days AS (
 ),
 grouped AS (
     SELECT date_trunc('day', created_at)::date AS day,
-           COALESCE(metadata->>'method', 'password') AS method,
+           regexp_replace(COALESCE(metadata->>'method', 'password'), '_(mfa|email_confirmed)$', '') AS method,
            COUNT(*) AS n
     FROM audit.events
     WHERE tenant_id = $1
       AND action = 'auth.login_succeeded'
+      AND COALESCE(metadata->>'method', '') NOT IN ('tenant_switch', 'tenant_create', 'invite_accept')
       AND created_at >= NOW() - INTERVAL '14 days'
     GROUP BY 1, 2
 )
@@ -252,21 +253,29 @@ SELECT
     COALESCE(SUM(n) FILTER (WHERE method = 'passkey'),      0)::bigint AS passkey,
     COALESCE(SUM(n) FILTER (WHERE method = 'social'),       0)::bigint AS social,
     COALESCE(SUM(n) FILTER (WHERE method = 'saml'),         0)::bigint AS saml,
-    COALESCE(SUM(n) FILTER (WHERE method = 'oidc'),         0)::bigint AS oidc
+    COALESCE(SUM(n) FILTER (WHERE method = 'oidc'),         0)::bigint AS oidc,
+    COALESCE(SUM(n) FILTER (WHERE method = 'magic_link'),   0)::bigint AS magic_link,
+    COALESCE(SUM(n) FILTER (WHERE method = 'ldap'),         0)::bigint AS ldap
 FROM days LEFT JOIN grouped ON grouped.day = days.day
 GROUP BY days.day
 ORDER BY days.day ASC
 `
 
 type GetLoginActivity14dRow struct {
-	Day      string
-	Password int64
-	Passkey  int64
-	Social   int64
-	Saml     int64
-	Oidc     int64
+	Day       string
+	Password  int64
+	Passkey   int64
+	Social    int64
+	Saml      int64
+	Oidc      int64
+	MagicLink int64
+	Ldap      int64
 }
 
+// Sign-ins per day by first factor. The method's _mfa or _email_confirmed
+// suffix (a second step) is dropped, and sessions opened by switching or
+// creating an organisation or accepting an invitation are not counted: they
+// record no factor of their own.
 func (q *Queries) GetLoginActivity14d(ctx context.Context, tid pgtype.UUID) ([]GetLoginActivity14dRow, error) {
 	rows, err := q.db.Query(ctx, getLoginActivity14d, tid)
 	if err != nil {
@@ -283,6 +292,8 @@ func (q *Queries) GetLoginActivity14d(ctx context.Context, tid pgtype.UUID) ([]G
 			&i.Social,
 			&i.Saml,
 			&i.Oidc,
+			&i.MagicLink,
+			&i.Ldap,
 		); err != nil {
 			return nil, err
 		}

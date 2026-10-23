@@ -17,6 +17,7 @@ import (
 	"time"
 )
 
+// Resolver looks up a host's IP addresses; *net.Resolver satisfies it.
 type Resolver interface {
 	LookupIP(ctx context.Context, network, host string) ([]net.IP, error)
 }
@@ -25,6 +26,9 @@ type dialer interface {
 	DialContext(ctx context.Context, network, address string) (net.Conn, error)
 }
 
+// Options configures NewPolicy. AllowedPrivate lists non-public prefixes that
+// are still reachable, AllowInsecure permits http and ldap, and AllowAllPrivate
+// skips the address check. A nil Resolver or Dialer uses the net defaults.
 type Options struct {
 	Resolver        Resolver
 	AllowedPrivate  []netip.Prefix
@@ -38,6 +42,8 @@ type Options struct {
 	ProxyURL *url.URL
 }
 
+// Policy decides which outbound destinations are allowed, and builds HTTP
+// clients and dialers that enforce it.
 type Policy struct {
 	resolver        Resolver
 	allowedPrivate  []netip.Prefix
@@ -47,6 +53,7 @@ type Policy struct {
 	proxyURL        *url.URL
 }
 
+// NewPolicy returns a Policy configured by options.
 func NewPolicy(options Options) *Policy {
 	resolver := options.Resolver
 	if resolver == nil {
@@ -66,6 +73,8 @@ func NewPolicy(options Options) *Policy {
 	}
 }
 
+// PublicPolicy returns optional[0] if given and non-nil, else the default
+// policy: https and ldaps to public addresses only.
 func PublicPolicy(optional ...*Policy) *Policy {
 	if len(optional) > 0 && optional[0] != nil {
 		return optional[0]
@@ -73,14 +82,20 @@ func PublicPolicy(optional ...*Policy) *Policy {
 	return NewPolicy(Options{})
 }
 
+// DevelopmentPolicy also allows http, ldap and non-public addresses, for local
+// development.
 func DevelopmentPolicy() *Policy {
 	return NewPolicy(Options{AllowInsecure: true, AllowAllPrivate: true})
 }
 
+// ValidateHTTPURL parses raw and checks it is an allowed http(s) destination:
+// absolute, without userinfo or a fragment, not a local or ambiguous numeric
+// host, and not a disallowed IP literal. Host names are not resolved here.
 func (p *Policy) ValidateHTTPURL(raw string) (*url.URL, error) {
 	return p.validateURL(raw, map[string]struct{}{"https": {}, "http": {}})
 }
 
+// ValidateLDAPURL is ValidateHTTPURL for ldap and ldaps URLs.
 func (p *Policy) ValidateLDAPURL(raw string) (*url.URL, error) {
 	return p.validateURL(raw, map[string]struct{}{"ldaps": {}, "ldap": {}})
 }
@@ -142,19 +157,99 @@ func (p *Policy) validateIP(ip net.IP) error {
 		return errors.New("outbound destination resolved to an invalid address")
 	}
 	addr = addr.Unmap()
+	embedded, hasEmbedded := embeddedIPv4(addr)
 	for _, prefix := range p.allowedPrivate {
-		if prefix.Contains(addr) {
+		if prefix.Contains(addr) || (hasEmbedded && prefix.Contains(embedded)) {
 			return nil
 		}
 	}
 	if p.allowAllPrivate {
 		return nil
 	}
-	if addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() ||
-		addr.IsLinkLocalMulticast() || addr.IsMulticast() || addr.IsUnspecified() {
+	if !isPublic(addr) || (hasEmbedded && !isPublic(embedded)) {
 		return fmt.Errorf("outbound destination address %s is not public", addr)
 	}
 	return nil
+}
+
+// nonPublicIPv4 lists IPv4 ranges that are not publicly routable and that the
+// netip predicates used by isPublic do not cover.
+var nonPublicIPv4 = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),     // "this network"
+	netip.MustParsePrefix("100.64.0.0/10"), // shared address space
+	netip.MustParsePrefix("192.0.0.0/24"),  // IETF protocol assignments
+	netip.MustParsePrefix("198.18.0.0/15"), // benchmarking
+	netip.MustParsePrefix("240.0.0.0/4"),   // reserved, including broadcast
+}
+
+// IPv6 prefixes whose addresses carry an IPv4 destination.
+var (
+	nat64WellKnown = netip.MustParsePrefix("64:ff9b::/96")
+	sixToFour      = netip.MustParsePrefix("2002::/16")
+)
+
+// globalUnicast is the only IPv6 range treated as public, less nonPublicIPv6.
+var globalUnicast = netip.MustParsePrefix("2000::/3")
+
+// nonPublicIPv6 lists the parts of globalUnicast that are not publicly routable.
+var nonPublicIPv6 = []netip.Prefix{
+	netip.MustParsePrefix("2001::/23"),     // IETF protocol assignments, including Teredo
+	netip.MustParsePrefix("2001:db8::/32"), // documentation
+	netip.MustParsePrefix("3fff::/20"),     // documentation
+}
+
+// isPublic reports whether addr is publicly routable. For a NAT64 or 6to4
+// address it judges only the IPv6 prefix; validateIP checks the IPv4 address
+// the prefix carries.
+func isPublic(addr netip.Addr) bool {
+	if addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() ||
+		addr.IsLinkLocalMulticast() || addr.IsMulticast() || addr.IsUnspecified() {
+		return false
+	}
+	if addr.Is6() {
+		return isPublicIPv6(addr)
+	}
+	for _, prefix := range nonPublicIPv4 {
+		if prefix.Contains(addr) {
+			return false
+		}
+	}
+	return true
+}
+
+// isPublicIPv6 reports whether addr is global unicast outside nonPublicIPv6.
+// The well-known NAT64 prefix lies outside global unicast but is allowed, so a
+// host on an IPv6-only network with DNS64 can still reach public IPv4 targets.
+func isPublicIPv6(addr netip.Addr) bool {
+	if nat64WellKnown.Contains(addr) {
+		return true
+	}
+	if !globalUnicast.Contains(addr) {
+		return false
+	}
+	for _, prefix := range nonPublicIPv6 {
+		if prefix.Contains(addr) {
+			return false
+		}
+	}
+	return true
+}
+
+// embeddedIPv4 returns the IPv4 address carried by a well-known-prefix NAT64 or
+// a 6to4 address, so the IPv4 rules apply to it. NAT64 addresses use the /96
+// layout, with the IPv4 address in the last four bytes.
+func embeddedIPv4(addr netip.Addr) (netip.Addr, bool) {
+	if !addr.Is6() {
+		return netip.Addr{}, false
+	}
+	b := addr.As16()
+	switch {
+	case nat64WellKnown.Contains(addr):
+		return netip.AddrFrom4([4]byte(b[12:16])), true
+	case sixToFour.Contains(addr):
+		return netip.AddrFrom4([4]byte(b[2:6])), true
+	}
+	return netip.Addr{}, false
 }
 
 func (p *Policy) resolveAllowed(ctx context.Context, host string) ([]net.IP, error) {
@@ -179,11 +274,15 @@ func (p *Policy) resolveAllowed(ctx context.Context, host string) ([]net.IP, err
 	return ips, nil
 }
 
+// ValidateHost resolves host and returns an error unless every address it
+// resolves to is allowed.
 func (p *Policy) ValidateHost(ctx context.Context, host string) error {
 	_, err := p.resolveAllowed(ctx, host)
 	return err
 }
 
+// DialContext resolves address, refuses it unless every resolved IP is allowed,
+// then dials those IPs in turn, so the checked address is the one connected to.
 func (p *Policy) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
@@ -204,6 +303,8 @@ func (p *Policy) DialContext(ctx context.Context, network, address string) (net.
 	return nil, lastErr
 }
 
+// CheckRedirect is an http.Client CheckRedirect that stops after 5 redirects
+// and validates each target, resolving its host unless a proxy is configured.
 func (p *Policy) CheckRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= 5 {
 		return errors.New("too many outbound redirects")
@@ -219,14 +320,15 @@ func (p *Policy) CheckRedirect(req *http.Request, via []*http.Request) error {
 	return err
 }
 
+// HTTPClient returns a client with timeout that dials only allowed addresses,
+// or sends everything through Options.ProxyURL when set; ambient proxy
+// variables are ignored.
 func (p *Policy) HTTPClient(timeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if p.proxyURL != nil {
-		// The proxy opens the destination connection, so pinning here would
-		// only re-validate the proxy's own address — and reject it whenever the
-		// proxy sits on a private network, which is the usual deployment. URL
-		// validation still runs on every request and redirect; enforcing the
-		// address policy becomes the proxy's job.
+		// The proxy opens the destination connection, so pinning here would only
+		// check the proxy's own, usually private, address. URLs are still validated;
+		// the proxy enforces the address policy.
 		transport.Proxy = http.ProxyURL(p.proxyURL)
 	} else {
 		transport.Proxy = nil

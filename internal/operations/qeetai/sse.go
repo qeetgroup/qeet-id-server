@@ -21,15 +21,10 @@ const (
 	EventTypeDone       StreamEventType = "done"
 )
 
-// sseWriter writes SSE frames to an http.ResponseWriter and flushes after
-// each frame. The response must have Content-Type: text/event-stream set
-// before the first write.
-//
-// Writes are serialized. An http.ResponseWriter is not safe for concurrent
-// use, and SSE always has two writers: the orchestrator goroutine streaming
-// model output, and the keep-alive goroutine pinging on a ticker. Left
-// unsynchronized they interleave (a ": ping" inside a "data:" line breaks the
-// client parser) and race on net/http's chunked-writer state.
+// sseWriter writes SSE frames to an http.ResponseWriter, flushing after each.
+// Writes are serialized because the orchestrator and the keep-alive goroutine
+// both write: unsynchronized, a ping could land inside a data line and the two
+// would race on net/http's writer state.
 type sseWriter struct {
 	mu      sync.Mutex
 	w       http.ResponseWriter
@@ -69,8 +64,8 @@ func (s *sseWriter) send(eventType StreamEventType, data any) {
 	s.write(fmt.Sprintf("event: %s\ndata: %s\n\n", eventType, raw))
 }
 
-// keepAlive sends a comment ping (":\n\n") to prevent proxy timeouts.
-// Call it periodically from a ticker goroutine.
+// keepAlive writes an SSE comment (": ping") so proxies don't drop an idle
+// stream.
 func (s *sseWriter) keepAlive() {
 	s.write(": ping\n\n")
 }
@@ -103,7 +98,7 @@ func (s *sseWriter) stopKeepAlive() {
 	}
 }
 
-// SSE data payload shapes — must match the frontend StreamEvent union in §A.4.
+// SSE data payload shapes; these must match the frontend StreamEvent union.
 
 type thinkingData struct {
 	Text string `json:"text,omitempty"`
@@ -117,13 +112,6 @@ type toolCallData struct {
 	ID    string          `json:"id"`
 	Name  string          `json:"name"`
 	Input json.RawMessage `json:"input"`
-}
-
-type toolResultData struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Status  string `json:"status"`
-	Summary string `json:"summary"`
 }
 
 type errorData struct {

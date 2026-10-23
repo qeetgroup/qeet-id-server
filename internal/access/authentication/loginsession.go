@@ -30,11 +30,9 @@ const LoginSessionCookie = "qe_ls"
 // tightly; see loginSessionLifetime.
 const loginSessionTTL = 30 * time.Minute
 
-// loginSessionLifetime is how long a hosted SSO session opened now for userID
-// lasts: loginSessionTTL, or the idle timeout or maximum age of the sessions
-// of the user's organisation (the platform's for a user with none) when
-// either is shorter, so signing in through the hosted page never outlasts
-// what the organisation allows any session.
+// loginSessionLifetime returns how long a hosted SSO session for userID lasts:
+// loginSessionTTL, capped by the organisation's session idle timeout and
+// maximum age.
 func (s *Service) loginSessionLifetime(ctx context.Context, userID uuid.UUID) (time.Duration, error) {
 	maxAge, idle := s.sessionDefaults()
 	var orgMax, orgIdle *int64
@@ -55,10 +53,14 @@ func (s *Service) loginSessionLifetime(ctx context.Context, userID uuid.UUID) (t
 	return min(loginSessionTTL, maxAge, idle), nil
 }
 
-// CreateLoginSession mints a hosted SSO session for a user whose sign-in met
-// no second factor and returns the raw cookie value. Only the hash is
-// persisted (like refresh tokens).
+// CreateLoginSession mints a hosted SSO session, once the login hook of the
+// user's own organisation allows it, for a sign-in that met no second factor,
+// and returns the raw cookie value. Only the hash is persisted (like refresh
+// tokens).
 func (s *Service) CreateLoginSession(ctx context.Context, userID uuid.UUID, ip, ua string) (string, error) {
+	if _, err := s.signInHook(ctx, userID, uuid.Nil); err != nil {
+		return "", err
+	}
 	return s.createLoginSession(ctx, userID, ip, ua, "")
 }
 
@@ -66,6 +68,9 @@ func (s *Service) CreateLoginSession(ctx context.Context, userID uuid.UUID, ip, 
 // passkey is its second factor, so an organisation that requires one is
 // satisfied (see tenantFactorShortfall).
 func (s *Service) CreatePasskeyLoginSession(ctx context.Context, userID uuid.UUID, ip, ua string) (string, error) {
+	if _, err := s.signInHook(ctx, userID, uuid.Nil); err != nil {
+		return "", err
+	}
 	return s.createLoginSession(ctx, userID, ip, ua, secondFactorPasskey)
 }
 
@@ -97,11 +102,9 @@ func (s *Service) createLoginSession(ctx context.Context, userID uuid.UUID, ip, 
 	return raw, nil
 }
 
-// LoginSessionFactorShortfall is what stops a code or token being issued for
-// tenantID through the user's hosted-login session: nil when nothing does, or
-// ErrStepUpRequired / ErrMFAEnrollmentRequired while the organisation requires
-// a second factor the session's sign-in didn't meet (see
-// tenantFactorShortfall). An unknown or expired session is ErrUnauthorized.
+// LoginSessionFactorShortfall reports what stops a code or token being issued
+// for tenantID through the user's hosted-login session: nil, ErrStepUpRequired
+// or ErrMFAEnrollmentRequired. An unknown or expired session is ErrUnauthorized.
 func (s *Service) LoginSessionFactorShortfall(ctx context.Context, loginSessionID, userID, tenantID uuid.UUID) error {
 	factor, err := s.q.LoginSessionSecondFactor(ctx, dbgen.LoginSessionSecondFactorParams{ID: loginSessionID, UserID: userID})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -183,26 +186,10 @@ func (s *Service) resolveLoginSession(ctx context.Context, raw string) (userID, 
 	return row.UserID, tenantID, row.CreatedAt, nil
 }
 
-// LoginSessionAuth lets the hosted login's own pages call a short list of
-// signed-in routes with the browser's SSO session (the qe_ls cookie) instead of
-// a bearer token, which the hosted login never holds. Mount it on the
-// authenticated route group, ahead of httpx.RequireAuth.
-//
-// routes are "METHOD /path" entries in chi pattern syntax ("{id}" matches one
-// path segment). The cookie is read only for a listed route, and only when the
-// request carries no Authorization header and nothing earlier authenticated it;
-// every other request passes through untouched for RequireAuth to decide. So
-// the session reaches no other route, and a request presenting a token is
-// judged on that token alone.
-//
-// Cross-site requests: the router's CSRF middleware runs first and skips only
-// requests carrying "Authorization: Bearer", so a cookie-authenticated mutation
-// here has already passed its Origin and qe_csrf double-submit checks.
-//
-// The principal is the session's user in their own organization, both read
-// from the database, never from the request. An unknown, expired or ended
-// session, or a user or organization that is no longer active, is refused
-// with 401.
+// LoginSessionAuth lets the hosted login's pages call the listed routes
+// ("METHOD /path", chi syntax) with the SSO session cookie instead of a bearer
+// token; mount it ahead of httpx.RequireAuth. Other requests pass through
+// untouched, and an inactive session, user or organisation gets 401.
 func (s *Service) LoginSessionAuth(routes []string) func(http.Handler) http.Handler {
 	listed := chi.NewRouter()
 	for _, route := range routes {
@@ -250,11 +237,8 @@ func (s *Service) RevokeLoginSession(ctx context.Context, raw string) error {
 
 // Who asked for a sign-out, as recorded.
 const (
-	// SignOutByHostedLogin: the hosted login signed itself out.
-	SignOutByHostedLogin = "hosted_login"
-	// SignOutByApplication: an application's sign-out request (OIDC
-	// RP-initiated logout).
-	SignOutByApplication = "application"
+	SignOutByHostedLogin = "hosted_login" // the hosted login signed itself out
+	SignOutByApplication = "application"  // OIDC RP-initiated logout
 )
 
 // EndLoginSessionInput describes a sign-out. Cookie is the browser's
@@ -285,26 +269,18 @@ type LoginSessionEnded struct {
 
 // SignOutNotifier tells the applications in an ended hosted-login session
 // (back-channel notices) and returns their front-channel sign-out pages.
-// Satisfied by *oidc.Service; an interface so auth doesn't import it. Wired
-// via SetSignOutNotifier.
+// Satisfied by *oidc.Service; an interface so auth doesn't import it.
 type SignOutNotifier interface {
 	NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID, initiatedBy string) ([]string, error)
 }
 
-// SetSignOutNotifier wires the sign-out notices. Called from
-// internal/bootstrap/dependencies.go.
+// SetSignOutNotifier wires the sign-out notices.
 func (s *Service) SetSignOutNotifier(n SignOutNotifier) { s.signOutNotifier = n }
 
-// EndLoginSession signs a browser out of the hosted login. In one transaction
-// it deletes the session behind the cookie, spends the authorization codes
-// minted through it that no application has redeemed, revokes the application
-// grants it started (renewals included), and records the sign-out. Other
-// browsers, API sessions and grants started elsewhere are untouched — signing
-// out everywhere is a separate action.
-//
-// Only the cookie identifies the session: with no cookie, or one that names no
-// session, nothing is ended and nothing is recorded. A session that has
-// expired is still ended, with what it started, because its grants outlive it.
+// EndLoginSession signs a browser out of the hosted login. In one transaction it
+// deletes the session named by the cookie, spends its unredeemed authorization
+// codes, revokes the application grants it started and records the sign-out.
+// Without a matching cookie nothing happens; an expired session is still ended.
 func (s *Service) EndLoginSession(ctx context.Context, in EndLoginSessionInput) (LoginSessionEnded, error) {
 	if in.Cookie == "" {
 		return LoginSessionEnded{}, nil
@@ -382,7 +358,7 @@ func (s *Service) EndLoginSession(ctx context.Context, in EndLoginSessionInput) 
 // outside dev so it is only sent over HTTPS. SameSite=Lax so it survives the
 // top-level GET redirects of the OAuth authorize flow.
 func SetLoginSessionCookie(w http.ResponseWriter, raw string, secure bool) {
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is off only in dev
 		Name:     LoginSessionCookie,
 		Value:    raw,
 		Path:     "/",
@@ -395,7 +371,7 @@ func SetLoginSessionCookie(w http.ResponseWriter, raw string, secure bool) {
 
 // ClearLoginSessionCookie expires the SSO cookie.
 func ClearLoginSessionCookie(w http.ResponseWriter, secure bool) {
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is off only in dev
 		Name:     LoginSessionCookie,
 		Value:    "",
 		Path:     "/",

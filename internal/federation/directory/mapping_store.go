@@ -28,6 +28,7 @@ func scanMapping(row pgx.Row) (Mapping, error) {
 	return mapping, err
 }
 
+// Mappings returns a connection's mappings.
 func (service *Service) Mappings(ctx context.Context, tenantID uuid.UUID, connectionID string) ([]Mapping, error) {
 	if tenantID == uuid.Nil || !validConnectionID(tenantID, connectionID) {
 		return nil, errs.ErrBadRequest
@@ -48,6 +49,7 @@ func (service *Service) Mappings(ctx context.Context, tenantID uuid.UUID, connec
 	return result, rows.Err()
 }
 
+// MapProfile applies a connection's mappings to source.
 func (service *Service) MapProfile(ctx context.Context, tenantID uuid.UUID, connectionID string, source map[string]any, partial bool) (map[string]any, error) {
 	mappings, err := service.Mappings(ctx, tenantID, connectionID)
 	if err != nil {
@@ -70,6 +72,8 @@ func (service *Service) MapProfile(ctx context.Context, tenantID uuid.UUID, conn
 	return preview.Profile, nil
 }
 
+// SourceAttributes returns the LDAP attributes the connection's enabled
+// mappings read.
 func (service *Service) SourceAttributes(ctx context.Context, tenantID uuid.UUID, connectionID string) ([]string, error) {
 	mappings, err := service.Mappings(ctx, tenantID, connectionID)
 	if err != nil {
@@ -84,6 +88,7 @@ func (service *Service) SourceAttributes(ctx context.Context, tenantID uuid.UUID
 	return attributes, nil
 }
 
+// StoreProfile stores a mapped profile on the user.
 func (service *Service) StoreProfile(ctx context.Context, tx pgx.Tx, tenantID, userID uuid.UUID, connectionID string, profile map[string]any) error {
 	if tenantID == uuid.Nil || userID == uuid.Nil || !validConnectionID(tenantID, connectionID) {
 		return errs.ErrBadRequest
@@ -183,11 +188,11 @@ func (handler *Handler) saveMapping(response http.ResponseWriter, request *http.
 		return
 	}
 	if err := ValidateMapping(mapping); err != nil {
-		httpx.WriteError(response, request, errs.ErrBadRequest)
+		httpx.WriteError(response, request, err)
 		return
 	}
 	if !strings.HasPrefix(connectionID, "scim:") && !ldapAttributePattern.MatchString(mapping.Source) {
-		httpx.WriteError(response, request, errs.ErrBadRequest)
+		httpx.WriteError(response, request, invalid("source_attribute", CodeMappingSourceInvalid, "source attribute must be an LDAP attribute name").validationError())
 		return
 	}
 	ctx := request.Context()

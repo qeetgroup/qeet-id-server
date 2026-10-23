@@ -1,18 +1,19 @@
-// IdP migration adapters: feed a vendor's own user-export file (Auth0, AWS
-// Cognito, Azure AD B2C) straight into the bulk-import pipeline (runBulkImport)
-// instead of hand-converting to BulkUserInput. No vendor exports a portable
-// password, so every imported row lands with no credential — imported users
-// authenticate via passkey, magic link, OTP, or an admin-triggered reset.
 package user
+
+// Adapters that turn a vendor's own user-export file (Auth0, AWS Cognito, Azure
+// AD B2C) into BulkUserInput rows for runBulkImport.
 
 import (
 	"bufio"
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // ImportSource names a supported vendor export format.
@@ -38,11 +39,9 @@ func ParseImportSource(s string) (ImportSource, bool) {
 	}
 }
 
-// normalizePhone strips common export formatting (spaces, dashes,
-// parentheses) so a number that's otherwise valid E.164 isn't rejected by
-// BulkUserInput's e164 validation on formatting alone. It does not invent a
-// country code — a number missing one still fails validation downstream,
-// same as it would from the existing CSV/NDJSON console importer.
+// normalizePhone keeps only the digits and a leading '+', so export formatting
+// doesn't fail BulkUserInput's E.164 check. It doesn't add a missing country
+// code.
 func normalizePhone(raw string) string {
 	raw = strings.TrimSpace(raw)
 	var b strings.Builder
@@ -57,11 +56,9 @@ func normalizePhone(raw string) string {
 	return b.String()
 }
 
-// ParseVendorExport dispatches to the adapter for source, parsing raw into
-// the same []BulkUserInput shape the generic bulk-import endpoint accepts.
-// Row-level problems (a line that can't be parsed, a record missing an
-// email) are returned as BulkImportError so the caller can report them
-// exactly like a failed create — parsing never aborts the whole batch.
+// ParseVendorExport parses raw, an export file from source, into import rows
+// that remember their line in the file. A row that can't be parsed or has no
+// email is returned as a BulkImportError rather than aborting the batch.
 func ParseVendorExport(source ImportSource, raw []byte) ([]BulkUserInput, []BulkImportError) {
 	switch source {
 	case SourceAuth0:
@@ -71,15 +68,12 @@ func ParseVendorExport(source ImportSource, raw []byte) ([]BulkUserInput, []Bulk
 	case SourceAzureB2C:
 		return parseAzureB2CExport(raw)
 	default:
-		return nil, []BulkImportError{{Message: "unknown import source"}}
+		return nil, []BulkImportError{{Code: errs.CodeUserImportSourceInvalid, Message: "unknown import source"}}
 	}
 }
 
-// --- Auth0 ---
-//
-// Auth0's "Create user export job" produces NDJSON (one JSON object per
-// line), with the field set determined by what the export job requested.
-// The common, default-ish set: user_id, email, name, nickname, phone_number.
+// auth0Record is one line of Auth0's NDJSON user export. Which fields are
+// present depends on the export job.
 type auth0Record struct {
 	Email       string `json:"email"`
 	Name        string `json:"name"`
@@ -101,11 +95,11 @@ func parseAuth0Export(raw []byte) ([]BulkUserInput, []BulkImportError) {
 		}
 		var rec auth0Record
 		if err := json.Unmarshal([]byte(text), &rec); err != nil {
-			errs = append(errs, BulkImportError{Line: line, Message: "invalid JSON: " + err.Error()})
+			errs = append(errs, BulkImportError{Line: line, Code: CodeImportRowMalformed, Message: "invalid JSON"})
 			continue
 		}
 		if rec.Email == "" {
-			errs = append(errs, BulkImportError{Line: line, Message: "missing email"})
+			errs = append(errs, BulkImportError{Line: line, Code: CodeImportFieldMissing, Field: "email", Message: "missing email"})
 			continue
 		}
 		displayName := rec.Name
@@ -116,22 +110,17 @@ func parseAuth0Export(raw []byte) ([]BulkUserInput, []BulkImportError) {
 			Email:       rec.Email,
 			DisplayName: displayName,
 			Phone:       normalizePhone(rec.PhoneNumber),
+			line:        line,
 		})
 	}
-	if err := sc.Err(); err != nil {
-		errs = append(errs, BulkImportError{Message: "read error: " + err.Error()})
+	if sc.Err() != nil {
+		errs = append(errs, BulkImportError{Line: line + 1, Code: CodeImportRowMalformed, Message: "could not read the export file"})
 	}
 	return rows, errs
 }
 
-// --- AWS Cognito ---
-//
-// Cognito's User Import Job CSV template is a fixed header row (order
-// doesn't matter to this parser — columns are looked up by name):
-// cognito:username,name,given_name,family_name,middle_name,nickname,
-// preferred_username,profile,picture,website,email,email_verified,gender,
-// birthdate,zoneinfo,locale,phone_number,phone_number_verified,address,
-// updated_at,cognito:mfa_enabled
+// parseCognitoExport parses an AWS Cognito user-import CSV. Columns are looked up
+// by header name, so their order doesn't matter.
 func parseCognitoExport(raw []byte) ([]BulkUserInput, []BulkImportError) {
 	r := csv.NewReader(bytes.NewReader(raw))
 	r.FieldsPerRecord = -1 // tolerate ragged rows rather than aborting the batch
@@ -140,7 +129,7 @@ func parseCognitoExport(raw []byte) ([]BulkUserInput, []BulkImportError) {
 		if err == io.EOF {
 			return nil, nil
 		}
-		return nil, []BulkImportError{{Message: "read header: " + err.Error()}}
+		return nil, []BulkImportError{{Code: CodeImportRowMalformed, Message: "could not read the header row"}}
 	}
 	col := make(map[string]int, len(header))
 	for i, h := range header {
@@ -156,20 +145,26 @@ func parseCognitoExport(raw []byte) ([]BulkUserInput, []BulkImportError) {
 
 	var rows []BulkUserInput
 	var errs []BulkImportError
-	line := 1 // header was line 1
 	for {
-		line++
 		rec, err := r.Read()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			errs = append(errs, BulkImportError{Line: line, Message: "invalid row: " + err.Error()})
+			var parseErr *csv.ParseError
+			line := 0
+			if errors.As(err, &parseErr) {
+				line = parseErr.StartLine
+			}
+			errs = append(errs, BulkImportError{Line: line, Code: CodeImportRowMalformed, Message: "invalid row"})
 			continue
 		}
+		// The record's own line in the file, past skipped blank lines and
+		// quoted line breaks.
+		line, _ := r.FieldPos(0)
 		email := get(rec, "email")
 		if email == "" {
-			errs = append(errs, BulkImportError{Line: line, Message: "missing email"})
+			errs = append(errs, BulkImportError{Line: line, Code: CodeImportFieldMissing, Field: "email", Message: "missing email"})
 			continue
 		}
 		displayName := get(rec, "name")
@@ -181,19 +176,15 @@ func parseCognitoExport(raw []byte) ([]BulkUserInput, []BulkImportError) {
 			Email:       email,
 			DisplayName: displayName,
 			Phone:       normalizePhone(get(rec, "phone_number")),
+			line:        line,
 		})
 	}
 	return rows, errs
 }
 
-// --- Azure AD B2C ---
-//
-// A Microsoft Graph /users (or /b2cIdentityUserFlows) list response:
-// {"value": [{"displayName":..., "mail":..., "userPrincipalName":...,
-// "mobilePhone":..., "identities": [{"signInType":"emailAddress",
-// "issuerAssignedId": "..."}]}]}. B2C local accounts are commonly
-// email-identity-only with `mail` unset, so an emailAddress identity (when
-// present) takes priority over `mail`/`userPrincipalName`.
+// azureB2CIdentity is a sign-in identity in a Microsoft Graph /users list
+// response, the Azure AD B2C export format. B2C local accounts often have no
+// mail, so resolveEmail prefers an emailAddress identity.
 type azureB2CIdentity struct {
 	SignInType       string `json:"signInType"`
 	IssuerAssignedID string `json:"issuerAssignedId"`
@@ -226,7 +217,7 @@ func (rec azureB2CRecord) resolveEmail() string {
 func parseAzureB2CExport(raw []byte) ([]BulkUserInput, []BulkImportError) {
 	var doc azureB2CExport
 	if err := json.Unmarshal(raw, &doc); err != nil {
-		return nil, []BulkImportError{{Message: "invalid JSON: " + err.Error()}}
+		return nil, []BulkImportError{{Code: CodeImportRowMalformed, Message: "invalid JSON"}}
 	}
 	var rows []BulkUserInput
 	var errs []BulkImportError
@@ -234,19 +225,20 @@ func parseAzureB2CExport(raw []byte) ([]BulkUserInput, []BulkImportError) {
 		line := i + 1
 		email := rec.resolveEmail()
 		if email == "" {
-			errs = append(errs, BulkImportError{Line: line, Message: "missing email (no mail, userPrincipalName, or emailAddress identity)"})
+			errs = append(errs, BulkImportError{Line: line, Code: CodeImportFieldMissing, Field: "email", Message: "missing email (no mail, userPrincipalName, or emailAddress identity)"})
 			continue
 		}
 		rows = append(rows, BulkUserInput{
 			Email:       email,
 			DisplayName: rec.DisplayName,
 			Phone:       normalizePhone(rec.MobilePhone),
+			line:        line,
 		})
 	}
 	return rows, errs
 }
 
-// importSourceHint is used only in error messages when detection fails.
+// importSourceHint lists the supported sources, for the unknown-source error.
 func importSourceHint() string {
 	return fmt.Sprintf("supported: %s, %s, %s", SourceAuth0, SourceCognito, SourceAzureB2C)
 }

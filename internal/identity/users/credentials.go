@@ -12,14 +12,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
-// Who controls an account's credentials. A person has one account across the
-// platform: the password and second factors an organisation's administrator
-// could set or reset are the ones the person uses in every organisation they
-// belong to, including ones they own. So the organisation an account belongs
-// to sets its password and resets its factors only while that is the only
-// organisation it belongs to. Once it also belongs to another, only the
-// person changes them — the password reset link reaches only their address —
-// and each of those organisations can still suspend it or remove it.
+// A person has one account, with one password and set of second factors, in
+// every organisation they belong to. So an organisation may set the password or
+// reset the factors only while the account belongs to it alone; after that only
+// the person can, though each organisation can still suspend or remove it.
 
 // refuseSharedCredentials refuses, with ErrUserCredentialsShared, an
 // organisation's credential change for an account that also belongs to
@@ -40,7 +36,7 @@ func (h *Handler) refuseSharedCredentials(ctx context.Context, userID, tenantID 
 	return nil
 }
 
-// A credential change an administrator made, as the person is told of it.
+// credentialChange is the kind of credential change an administrator made.
 type credentialChange int
 
 const (

@@ -7,12 +7,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// tokenBucket is an atomic token-bucket refill+consume in Lua, so a limit is
-// enforced consistently across replicas in a single round-trip.
+// tokenBucket refills and consumes a bucket atomically in one round-trip.
 //
-//	KEYS[1] = bucket key
-//	ARGV    = rate (tokens/sec), capacity, now (unix ms)
-//	returns = { allowed (0|1), retryAfterSeconds }
+//	KEYS[1] = bucket key; ARGV = rate (tokens/sec), capacity, now (unix ms)
+//	returns { allowed (0|1), retryAfterSeconds }
 var tokenBucket = redis.NewScript(`
 local key = KEYS[1]
 local rate = tonumber(ARGV[1])

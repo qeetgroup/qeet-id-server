@@ -1,6 +1,6 @@
-// Package recovery handles forgot-password and magic-link login.
-// Both are stateless tokens: the user clicks a link, we look up the
-// hash, and either reset their password or issue a session.
+// Package recovery handles forgot-password and magic-link sign-in. Each emails
+// a single-use link whose token is stored only as a hash; following it resets
+// the password or starts a sign-in.
 package recovery
 
 import (
@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,10 +18,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
-	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -28,52 +30,38 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
-// AuditCtx carries the per-request client context recovery handlers
-// thread into the service so the audit row can attribute the action.
-// These flows have no authenticated principal (they're token-based)
-// so the actor for the audit row is the user being acted upon.
+// AuditCtx is the client context of a recovery request, for its audit rows.
+// These flows have no signed-in principal.
 type AuditCtx struct {
 	IP        string
 	UserAgent string
 	RequestID string
 }
 
+// Service runs password resets and magic links. Email links go to baseAppURL
+// (the console), or to loginBaseURL for a request made from hosted login.
+// Until SetPasswordRules is called resets are refused rather than set an
+// unchecked password; the other Set* dependencies are optional.
 type Service struct {
-	pool   *pgxpool.Pool
-	q      *dbgen.Queries
-	sender notifier.Sender
-	ttl    time.Duration
-	// baseAppURL is the console origin: the default target of email links
-	// (password reset, magic link), completed in the console itself.
-	baseAppURL string
-	// loginBaseURL is the hosted login origin (LOGIN_BASE_URL). A reset
-	// requested from hosted login links to its own reset page. Empty = off
-	// (every reset link uses the console). Set via SetHostedLogin.
-	loginBaseURL string
-	// rules checks a new password on ConfirmPasswordReset (nil = resets are
-	// refused rather than set an unchecked password). Set via SetPasswordRules.
-	rules PasswordRules
-	// magicLinks decides whether an organisation allows magic links and how
-	// long they live (nil = allowed, the default lifetime). Set via
-	// SetMagicLinkPolicy.
-	magicLinks MagicLinkPolicy
-	// magicPerAddress and magicPerCaller bound magic-link requests (nil =
-	// unbounded). Set via SetMagicLinkLimits; see magiclink.go.
+	pool            *pgxpool.Pool
+	q               *dbgen.Queries
+	sender          notifier.Sender
+	ttl             time.Duration
+	baseAppURL      string
+	loginBaseURL    string
+	rules           PasswordRules
+	magicLinks      MagicLinkPolicy
 	magicPerAddress Limiter
 	magicPerCaller  Limiter
-	// signals announces ended sessions (nil = announces nothing). Set via
-	// SetSessionSignals.
-	signals *sessionsignal.Signaller
-	// requestRecords bounds the record of recovery requests per account; see
-	// recordRequest.
-	requestRecords Limiter
+	signals         *sessionsignal.Signaller
+	requestRecords  Limiter
+	// deliveries tracks the work requests leave running; see afterAnswer.
+	deliveries sync.WaitGroup
 }
 
-// PasswordRules is the one password check every path that sets a password
-// runs: the rules of the organisation the account belongs to (uuid.Nil = none:
-// the platform baseline), the offline strength baseline and, when enabled,
-// the breach check. Satisfied by *authpolicy.Service; an interface so recovery
-// doesn't import it.
+// PasswordRules checks a new password against the rules of the account's
+// organisation (uuid.Nil: the platform baseline), the offline strength check
+// and, when enabled, the breach check. Satisfied by *authpolicy.Service.
 type PasswordRules interface {
 	ValidateForTenant(ctx context.Context, tenantID uuid.UUID, email, pw string) error
 }
@@ -85,12 +73,11 @@ type MagicLinkPolicy interface {
 	MagicLinkPolicy(ctx context.Context, tenantID uuid.UUID) (enabled bool, ttl time.Duration, err error)
 }
 
-// SetSessionSignals wires the announcement of ended sessions. Called from
-// internal/bootstrap/dependencies.go.
+// SetSessionSignals sets how ended sessions are announced.
 func (s *Service) SetSessionSignals(sig *sessionsignal.Signaller) { s.signals = sig }
 
-// SetMagicLinkPolicy wires the magic-link policy. Called from
-// internal/bootstrap/dependencies.go.
+// SetMagicLinkPolicy sets the policy that decides whether an organisation
+// allows magic links and how long they live.
 func (s *Service) SetMagicLinkPolicy(p MagicLinkPolicy) { s.magicLinks = p }
 
 // magicLinkTTL is how long a magic link for tenantID lives, or
@@ -115,6 +102,7 @@ func (s *Service) magicLinkTTL(ctx context.Context, tenantID uuid.UUID) (time.Du
 	return ttl, nil
 }
 
+// NewService returns the password reset and magic link service.
 func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, baseAppURL string) *Service {
 	if ttl <= 0 {
 		ttl = time.Hour
@@ -124,12 +112,11 @@ func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, b
 		requestRecords: ratelimit.New(1.0/60, 10)}
 }
 
-// SetPasswordRules wires the password check run on reset. Called from
-// internal/bootstrap/dependencies.go.
+// SetPasswordRules sets the password check run on reset.
 func (s *Service) SetPasswordRules(r PasswordRules) { s.rules = r }
 
-// SetHostedLogin wires the hosted login origin, so a reset requested there
-// links back to its own reset page. Called from internal/bootstrap/dependencies.go.
+// SetHostedLogin sets the hosted login origin, so a reset requested there links
+// back to its own reset page.
 func (s *Service) SetHostedLogin(loginBaseURL string) { s.loginBaseURL = loginBaseURL }
 
 // AppHostedLogin marks a reset requested from the hosted login (ResetOrigin.App).
@@ -138,14 +125,9 @@ const AppHostedLogin = "hosted_login"
 // ResetOrigin says where a password reset was requested from, which decides
 // where its emailed link lands.
 type ResetOrigin struct {
-	// App is AppHostedLogin for the hosted login. Anything else, or empty,
-	// means the console — the documented default.
-	App string
-	// ReturnTo (hosted login only) is where to continue after the reset. The
-	// caller must already have validated it; it is passed through as given.
-	ReturnTo string
-	// Audit is the request, for the record of it.
-	Audit AuditCtx
+	App      string   // AppHostedLogin for hosted login; anything else means the console
+	ReturnTo string   // hosted login only: where to continue, already validated by the caller
+	Audit    AuditCtx // the request, for its audit record
 }
 
 // resetLink builds the emailed reset link: hosted login's own reset page for a
@@ -166,20 +148,12 @@ func (s *Service) resetLink(raw string, from ResetOrigin) string {
 	return fmt.Sprintf("%s/forgot-password?token=%s", s.baseAppURL, raw)
 }
 
-// StartPasswordReset issues a reset token for the account with this email, if
-// one exists. It always succeeds from the caller's perspective so it never
-// leaks whether an email is registered. Look-up is by email *globally* — email
-// is unique platform-wide and sign-in is tenant-less (migration 0022), so a
-// tenant-scoped lookup would never match a request from the tenant-less sign-in
-// page. Returns the raw token so a dev-mode handler can surface the reset link
-// in local development; the token is empty when no account matched (or on error).
-func (s *Service) StartPasswordReset(ctx context.Context, email string) (string, error) {
-	return s.StartPasswordResetFrom(ctx, email, ResetOrigin{})
-}
-
-// StartPasswordResetFrom is StartPasswordReset for a reset requested from a
-// given application: the emailed link lands back there (see resetLink).
-func (s *Service) StartPasswordResetFrom(ctx context.Context, email string, from ResetOrigin) (string, error) {
+// StartPasswordReset emails a reset link to the account with this email, if
+// any (email is globally unique), landing back on the application from names
+// (see resetLink). It answers alike either way, storing and sending the link
+// after it returns (see afterAnswer), and returns the raw token for dev-mode
+// handlers, empty when no account matched.
+func (s *Service) StartPasswordReset(ctx context.Context, email string, from ResetOrigin) (string, error) {
 	var userID uuid.UUID
 	var tenantID *uuid.UUID
 	err := s.pool.QueryRow(ctx,
@@ -195,31 +169,58 @@ func (s *Service) StartPasswordResetFrom(ctx context.Context, email string, from
 	if err != nil {
 		return "", err
 	}
-	if err := s.q.InsertPasswordReset(ctx, dbgen.InsertPasswordResetParams{
-		UserID:    userID,
-		TokenHash: hash,
-		ExpiresAt: time.Now().UTC().Add(s.ttl),
-	}); err != nil {
-		return "", err
-	}
 	resetURL := s.resetLink(raw, from)
-	if err := s.sender.Send(ctx, notifier.Message{
-		Channel: "email",
-		To:      email,
-		Subject: "Reset your password",
-		Body:    fmt.Sprintf("Reset your Qeet ID password: %s", resetURL),
-		HTML: emailtmpl.Action(
-			"Reset your password",
-			"We received a request to reset the password for your Qeet ID account. Click the button below to choose a new one.",
-			"Reset password", resetURL,
-			"If you didn't request a password reset, you can safely ignore this email — your password won't change.",
-		),
-	}); err != nil {
-		return "", err
-	}
-	s.recordRequest(ctx, "auth.password_reset_requested", userID, tenantID, from.Audit, map[string]any{"app": from.App})
+	s.afterAnswer(ctx, "send a password reset link", func(ctx context.Context) error {
+		if err := s.q.InsertPasswordReset(ctx, dbgen.InsertPasswordResetParams{
+			UserID:    userID,
+			TokenHash: hash,
+			ExpiresAt: time.Now().UTC().Add(s.ttl),
+		}); err != nil {
+			return err
+		}
+		if err := s.sender.Send(ctx, notifier.Message{
+			Channel: "email",
+			To:      email,
+			Subject: "Reset your password",
+			Body:    fmt.Sprintf("Reset your Qeet ID password: %s", resetURL),
+			HTML: emailtmpl.Action(
+				"Reset your password",
+				"We received a request to reset the password for your Qeet ID account. Click the button below to choose a new one.",
+				"Reset password", resetURL,
+				"If you didn't request a password reset, you can safely ignore this email — your password won't change.",
+			),
+		}); err != nil {
+			return err
+		}
+		s.recordRequest(ctx, "auth.password_reset_requested", userID, tenantID, from.Audit, map[string]any{"app": from.App})
+		return nil
+	})
 	return raw, nil
 }
+
+// deliveryTimeout bounds what a recovery request leaves running once answered.
+const deliveryTimeout = 30 * time.Second
+
+// afterAnswer runs work, such as storing and emailing a link, without the
+// request waiting for it, so neither its duration nor its failure shows in an
+// answer that must be the same for an address with no account. A failure is
+// logged.
+func (s *Service) afterAnswer(ctx context.Context, what string, work func(ctx context.Context) error) {
+	ctx = context.WithoutCancel(ctx)
+	s.deliveries.Add(1)
+	go func() {
+		defer s.deliveries.Done()
+		ctx, cancel := context.WithTimeout(ctx, deliveryTimeout)
+		defer cancel()
+		if err := work(ctx); err != nil {
+			slog.Warn("recovery: "+what, "err", err)
+		}
+	}()
+}
+
+// Wait blocks until the work answered requests left running is done, so a
+// shutdown doesn't drop a link a request already said was sent.
+func (s *Service) Wait() { s.deliveries.Wait() }
 
 // unrecordedRequests counts recovery requests left out of the audit trail by
 // recordRequest's bound.
@@ -235,11 +236,10 @@ func init() {
 	}
 }
 
-// recordRequest records a recovery request for an account in the audit trail
-// of its organisation (tenantID nil: none), and so its log stream. Whoever
-// asked isn't known to be the account, so the record names it as the subject,
-// not the actor. Bounded per account so a flood of requests can't flood the
-// trail. Best effort: a record that can't be written is logged.
+// recordRequest records a recovery request in the audit trail of the account's
+// organisation (tenantID nil: none), naming the account as the subject, not the
+// actor, since whoever asked may not own it. It is bounded per account and best
+// effort: a record that can't be written is logged.
 func (s *Service) recordRequest(ctx context.Context, action string, userID uuid.UUID, tenantID *uuid.UUID, ac AuditCtx, meta map[string]any) {
 	if s.requestRecords != nil {
 		if ok, _ := s.requestRecords.Take(ctx, action+":"+userID.String()); !ok {
@@ -269,37 +269,23 @@ func (s *Service) recordRequest(ctx context.Context, action string, userID uuid.
 	}
 }
 
-// ConfirmPasswordReset sets a new password with a reset link. The password is
-// checked against the rules of the organisation the account belongs to (or
-// the platform baseline for a tenant-less account) once the link is known to
-// be good — the account, and so its rules, comes from the link. A refused
-// password leaves the credential and the link untouched.
+// ConfirmPasswordReset sets a new password with a reset link, checked against
+// the rules of the account's organisation once the link is known to be good. A
+// refused password leaves the credential and link untouched. On success the
+// address counts as verified and every sign-in ends (see auth.EndSignIns).
 func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPassword string, ac AuditCtx) error {
 	if s.rules == nil {
 		return errs.ErrNotImplemented
 	}
 	hash := codes.Hash(rawToken)
-	tx, err := s.pool.Begin(ctx)
+	// The password is checked before the transaction, as the check reads the
+	// organisation's rules and may call the breach service; the link is
+	// checked again under lock inside it.
+	row, err := resetLink(ctx, s.q, hash)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
-
-	qtx := s.q.WithTx(tx)
-	row, err := qtx.GetPasswordResetByToken(ctx, hash)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errs.ErrResetLinkInvalid
-		}
-		return err
-	}
-	if row.UsedAt.Valid {
-		return errs.ErrRecoveryLinkUsed
-	}
-	if time.Now().After(row.ExpiresAt) {
-		return errs.ErrRecoveryLinkExpired
-	}
-	account, err := qtx.GetResetAccount(ctx, row.UserID)
+	account, err := s.q.GetResetAccount(ctx, row.UserID)
 	if err != nil {
 		return err
 	}
@@ -314,6 +300,16 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 	}
 	pwHash, err := password.Hash(newPassword)
 	if err != nil {
+		return err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	qtx := s.q.WithTx(tx)
+	if row, err = resetLink(ctx, qtx, hash); err != nil {
 		return err
 	}
 	if err := qtx.UpsertPasswordCredential(ctx, dbgen.UpsertPasswordCredentialParams{
@@ -350,13 +346,10 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 			return err
 		}
 	}
-	// Invalidate all existing sessions on password reset, and announce them.
-	ended, err := sessionsignal.EndUserSessions(ctx, tx, row.UserID)
-	if err != nil {
-		return err
-	}
-	s.signals.Revoked(ctx, tx, sessionsignal.ReasonPasswordReset, ended...)
-	hosted, err := sessionsignal.EndLoginSessions(ctx, tx, row.UserID)
+	// End every sign-in the old password could have opened, and announce the
+	// ended sessions: sessions, hosted sessions, remembered devices,
+	// application grants and pending authorisations.
+	ended, err := auth.EndSignIns(ctx, tx, s.signals, row.UserID, sessionsignal.ReasonPasswordReset)
 	if err != nil {
 		return err
 	}
@@ -372,9 +365,32 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 		IP:           ac.IP,
 		UserAgent:    ac.UserAgent,
 		RequestID:    ac.RequestID,
-		Metadata:     map[string]any{"sessions_revoked": true, "revoked_sessions": len(ended), "revoked_login_sessions": hosted},
+		Metadata: map[string]any{
+			"sessions_revoked": true, "revoked_sessions": ended.Sessions, "revoked_login_sessions": ended.LoginSessions,
+			"revoked_app_grants": ended.AppGrants, "revoked_trusted_devices": ended.TrustedDevices,
+			"ended_pending_authorizations": ended.PendingAuthorizations,
+		},
 	}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// resetLink reads the reset link hash names through q, refusing one that is
+// unknown, used or expired.
+func resetLink(ctx context.Context, q *dbgen.Queries, hash string) (dbgen.GetPasswordResetByTokenRow, error) {
+	row, err := q.GetPasswordResetByToken(ctx, hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return row, errs.ErrResetLinkInvalid
+	}
+	if err != nil {
+		return row, err
+	}
+	if row.UsedAt.Valid {
+		return row, errs.ErrRecoveryLinkUsed
+	}
+	if time.Now().After(row.ExpiresAt) {
+		return row, errs.ErrRecoveryLinkExpired
+	}
+	return row, nil
 }

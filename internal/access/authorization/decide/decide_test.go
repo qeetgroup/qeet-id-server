@@ -3,6 +3,7 @@ package decide
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -13,7 +14,7 @@ import (
 )
 
 type fakeRoles struct {
-	grants map[string]bool // permission → granted
+	grants map[string]bool
 	err    error
 	calls  int
 }
@@ -58,11 +59,14 @@ func (f *fakeAttributes) Evaluate(_ context.Context, _ uuid.UUID, in abac.Evalua
 	id := uuid.New()
 	switch {
 	case f.deny[key]:
-		return &abac.Decision{Effect: "deny", MatchedPolicyID: &id, Reason: `explicitly denied by policy "block"`}, nil
+		return &abac.Decision{Effect: "deny", MatchedPolicyID: &id, Reason: `explicitly denied by policy "block"`,
+			ReasonCode: abac.ReasonDeniedByPolicy, ReasonParams: map[string]any{"policy_name": "block"}}, nil
 	case f.allow[key]:
-		return &abac.Decision{Allow: true, Effect: "allow", MatchedPolicyID: &id, Reason: `allowed by policy "open"`}, nil
+		return &abac.Decision{Allow: true, Effect: "allow", MatchedPolicyID: &id, Reason: `allowed by policy "open"`,
+			ReasonCode: abac.ReasonAllowedByPolicy, ReasonParams: map[string]any{"policy_name": "open"}}, nil
 	}
-	return &abac.Decision{Effect: "deny", Reason: "no matching allow policy", Trace: []string{"no matching allow policy found → default deny"}}, nil
+	return &abac.Decision{Effect: "deny", Reason: "no matching allow policy", ReasonCode: abac.ReasonNoMatchingAllow,
+		Trace: []string{"no matching allow policy found → default deny"}}, nil
 }
 
 var (
@@ -71,9 +75,9 @@ var (
 	ctx    = context.Background()
 )
 
-// TestDenyRefusesAtEveryQuestion: one ABAC deny for doc/write refuses the
-// permission check, the relationship check and the route guard, although a
-// role and a tuple both allow, and the decision names ABAC and the policy.
+// TestDenyRefusesAtEveryQuestion checks that one ABAC deny refuses the
+// permission check, the relationship check and the route guard even though a
+// role and a tuple allow, and that the decision names ABAC and the policy.
 func TestDenyRefusesAtEveryQuestion(t *testing.T) {
 	roles := &fakeRoles{grants: map[string]bool{"doc:write": true}}
 	rels := &fakeRelations{allow: true}
@@ -95,8 +99,8 @@ func TestDenyRefusesAtEveryQuestion(t *testing.T) {
 	}
 }
 
-// TestRoleGrantCountsAtTheRelationshipCheck: roles and relationships are a
-// union, so a role granting doc:write allows doc:42#write with no tuple.
+// TestRoleGrantCountsAtTheRelationshipCheck checks that a role granting
+// doc:write allows doc:42#write with no tuple.
 func TestRoleGrantCountsAtTheRelationshipCheck(t *testing.T) {
 	d := New(&fakeRoles{grants: map[string]bool{"doc:write": true}}, &fakeRelations{}, &fakeAttributes{})
 	dec, err := d.Relation(ctx, tenant, uma.String(), "doc:42", "write")
@@ -110,8 +114,8 @@ func TestRoleGrantCountsAtTheRelationshipCheck(t *testing.T) {
 	}
 }
 
-// TestAnyAllowPermitsWithoutDeny: with no deny anywhere, any one engine
-// allowing is enough, and the decision names which.
+// TestAnyAllowPermitsWithoutDeny checks that with no deny, any one engine
+// allowing is enough and the decision names which.
 func TestAnyAllowPermitsWithoutDeny(t *testing.T) {
 	d := New(&fakeRoles{}, &fakeRelations{allow: true}, &fakeAttributes{})
 	if dec, _ := d.Relation(ctx, tenant, uma.String(), "doc:42", "write"); !dec.Allow || dec.Model != ModelReBAC || dec.Rule != "write on doc:42" {
@@ -127,8 +131,8 @@ func TestAnyAllowPermitsWithoutDeny(t *testing.T) {
 	}
 }
 
-// TestRouteGuardIgnoresAttributeAllow: on Qeet ID's own management API an
-// ABAC allow narrows nothing and widens nothing; only a role allows.
+// TestRouteGuardIgnoresAttributeAllow checks that an ABAC allow does not widen
+// the route guard: only a role allows.
 func TestRouteGuardIgnoresAttributeAllow(t *testing.T) {
 	attrs := &fakeAttributes{allow: map[string]bool{"user/write": true}}
 	d := New(&fakeRoles{}, &fakeRelations{}, attrs)
@@ -140,8 +144,8 @@ func TestRouteGuardIgnoresAttributeAllow(t *testing.T) {
 	}
 }
 
-// TestNoPoliciesSkipsABAC keeps the hot path: a tenant with no ABAC policy is
-// decided by its roles with no policy evaluation.
+// TestNoPoliciesSkipsABAC checks that a tenant with no ABAC policy is decided
+// by its roles without any policy evaluation.
 func TestNoPoliciesSkipsABAC(t *testing.T) {
 	attrs := &fakeAttributes{}
 	d := New(&fakeRoles{grants: map[string]bool{"user.read": true}}, &fakeRelations{}, attrs)
@@ -156,8 +160,8 @@ func TestNoPoliciesSkipsABAC(t *testing.T) {
 	}
 }
 
-// TestNoTenantRefusesBeforeAnyEngine: a question with no organisation is
-// refused before any engine is consulted.
+// TestNoTenantRefusesBeforeAnyEngine checks that a question with no
+// organisation is refused before any engine is consulted.
 func TestNoTenantRefusesBeforeAnyEngine(t *testing.T) {
 	roles, rels, attrs := &fakeRoles{grants: map[string]bool{"doc:write": true}}, &fakeRelations{allow: true}, &fakeAttributes{}
 	d := New(roles, rels, attrs)
@@ -170,8 +174,8 @@ func TestNoTenantRefusesBeforeAnyEngine(t *testing.T) {
 	}
 }
 
-// TestEngineErrorRefuses: an error from any engine refuses, and the error is
-// returned with the refusal, never an allow.
+// TestEngineErrorRefuses checks that an error from any engine refuses and is
+// returned with the refusal, never with an allow.
 func TestEngineErrorRefuses(t *testing.T) {
 	boom := errors.New("boom")
 	for name, d := range map[string]*Decider{
@@ -192,8 +196,8 @@ func TestEngineErrorRefuses(t *testing.T) {
 	}
 }
 
-// TestTraceNamesEachModel: the trace walks tenant, abac, rbac, rebac in order
-// and names the step that decided.
+// TestTraceNamesEachModel checks that the trace walks tenant, abac, rbac and
+// rebac in order and names the step that decided.
 func TestTraceNamesEachModel(t *testing.T) {
 	d := New(&fakeRoles{}, &fakeRelations{allow: true}, &fakeAttributes{allow: map[string]bool{"x/y": true}})
 	dec, _ := d.Relation(ctx, tenant, uma.String(), "doc:42", "write")
@@ -208,8 +212,8 @@ func TestTraceNamesEachModel(t *testing.T) {
 	}
 }
 
-// TestSubjectIsWhoTheServerKnows: ABAC is told who the subject is by the
-// platform (its id and organisation), so a deny on subject.id binds.
+// TestSubjectIsWhoTheServerKnows checks that ABAC gets the subject's id and
+// organisation from the platform, so a deny on subject.id binds.
 func TestSubjectIsWhoTheServerKnows(t *testing.T) {
 	attrs := &fakeAttributes{deny: map[string]bool{"doc/write": true}}
 	d := New(&fakeRoles{}, &fakeRelations{}, attrs)
@@ -233,16 +237,16 @@ func TestSplitPermission(t *testing.T) {
 	}
 }
 
-// TestForViewerHidesPolicies: who may not read policies learns that an
-// attribute policy decided, not which one or what the policies said.
+// TestForViewerHidesPolicies checks that a caller who may not read policies
+// learns that an attribute policy decided, not which one or what it said.
 func TestForViewerHidesPolicies(t *testing.T) {
 	d := New(&fakeRoles{}, &fakeRelations{}, &fakeAttributes{deny: map[string]bool{"doc/write": true}})
 	dec, _ := d.Permission(ctx, tenant, uma, "doc:write")
 
 	reader := &httpx.Principal{UserID: &uma, ActorType: "user"}
 	hidden := d.ForViewer(ctx, reader, tenant, dec)
-	if hidden.Rule != "an attribute policy" || hidden.PolicyID != nil {
-		t.Fatalf("hidden decision = %+v", hidden)
+	if hidden.Rule != "an attribute policy" || hidden.PolicyID != nil || hidden.ReasonParams != nil || hidden.ReasonCode != abac.ReasonDeniedByPolicy {
+		t.Fatalf("hidden decision = %+v; want why it was refused, not which policy", hidden)
 	}
 	for _, step := range hidden.Trace {
 		if strings.Contains(step, "block") {
@@ -257,5 +261,41 @@ func TestForViewerHidesPolicies(t *testing.T) {
 	key := &httpx.Principal{ActorType: "api_key", Scopes: []string{"policy.read"}}
 	if shown := d.ForViewer(ctx, key, tenant, dec); shown.PolicyID == nil {
 		t.Fatalf("an api key with policy.read sees %+v, want the policy", shown)
+	}
+}
+
+// TestDecisionsCarryReasonCodes checks that each kind of decision carries its
+// stable reason code, with what it names.
+func TestDecisionsCarryReasonCodes(t *testing.T) {
+	permission := func(d *Decider, tenantID uuid.UUID) Decision {
+		dec, _ := d.Permission(ctx, tenantID, uma, "doc:write")
+		return dec
+	}
+	for _, tc := range []struct {
+		name   string
+		dec    Decision
+		code   string
+		params map[string]any
+	}{
+		{"no organisation", permission(New(&fakeRoles{}, &fakeRelations{}, &fakeAttributes{}), uuid.Nil), ReasonNoTenant, nil},
+		{"a role grants it", permission(New(&fakeRoles{grants: map[string]bool{"doc:write": true}}, &fakeRelations{}, &fakeAttributes{}), tenant),
+			ReasonRoleGrant, map[string]any{"permission": "doc:write"}},
+		{"an attribute policy refuses it", permission(New(&fakeRoles{}, &fakeRelations{}, &fakeAttributes{deny: map[string]bool{"doc/write": true}}), tenant),
+			abac.ReasonDeniedByPolicy, map[string]any{"policy_name": "block"}},
+		{"an attribute policy allows it", permission(New(&fakeRoles{}, &fakeRelations{}, &fakeAttributes{allow: map[string]bool{"doc/write": true}}), tenant),
+			abac.ReasonAllowedByPolicy, map[string]any{"policy_name": "open"}},
+		{"nothing allows it", permission(New(&fakeRoles{}, &fakeRelations{}, &fakeAttributes{}), tenant), ReasonNothingAllows, nil},
+	} {
+		if tc.dec.ReasonCode != tc.code || fmt.Sprint(tc.dec.ReasonParams) != fmt.Sprint(tc.params) {
+			t.Errorf("%s: %s %v; want %s %v", tc.name, tc.dec.ReasonCode, tc.dec.ReasonParams, tc.code, tc.params)
+		}
+	}
+	d := New(&fakeRoles{}, &fakeRelations{allow: true}, &fakeAttributes{})
+	dec, _ := d.Relation(ctx, tenant, uma.String(), "doc:42", "write")
+	if want := map[string]any{"relation": "write", "object": "doc:42"}; dec.ReasonCode != ReasonRelationGrant || fmt.Sprint(dec.ReasonParams) != fmt.Sprint(want) {
+		t.Errorf("a tuple grants it: %s %v; want %s %v", dec.ReasonCode, dec.ReasonParams, ReasonRelationGrant, want)
+	}
+	if by := dec.DecidedBy(); by["reason_code"] != ReasonRelationGrant || by["reason_params"] == nil {
+		t.Errorf("decided_by %v; want the reason code and its parameters", by)
 	}
 }

@@ -6,7 +6,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// Email-template (operations/email) code→status mappings, registered from init().
+// init registers the HTTP statuses of the email-template error codes.
 func init() {
 	registerStatuses(map[string]int{
 		errs.CodeEmailTemplateNotFound:        http.StatusNotFound,

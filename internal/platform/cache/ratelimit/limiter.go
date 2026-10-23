@@ -1,10 +1,6 @@
-// Package ratelimit ships a token-bucket limiter keyed by string, used for
-// in-process protection of unauth endpoints (login, magic link) and per-tenant
-// / per-user / per-api-key throttling on authenticated endpoints.
-//
-// The bucket math lives behind a Store: the default in-memory store is
-// per-process; a Redis store (redis.go) shares limits across replicas so a
-// horizontally-scaled deployment enforces one global limit.
+// Package ratelimit provides string-keyed token-bucket limiters: per IP before
+// sign-in, and per tenant, user or API key after. The default Store is in
+// process; NewRedisStore shares buckets across replicas.
 package ratelimit
 
 import (
@@ -73,6 +69,8 @@ func retryAfterSecs(tokens, rate float64) int {
 	return int(secs + 0.999)
 }
 
+// Limiter is a token-bucket rate limiter over a Store. It is safe for
+// concurrent use.
 type Limiter struct {
 	store    Store
 	rate     float64
@@ -121,10 +119,8 @@ func (l *Limiter) MiddlewareBy(scopeName string, extract KeyFunc) func(http.Hand
 			allowed, retry := l.Take(r.Context(), scopeName+":"+id)
 			if !allowed {
 				w.Header().Set("Retry-After", strconv.Itoa(retry))
-				// Write the standard error envelope, not a bare status. Every
-				// other response in the API carries {"error":{"code":...}}, and
-				// a body-less 429 left clients with no code to branch on — the
-				// console could only fall back to "Something went wrong".
+				// Write the standard error envelope, not a bare status, so clients get a
+				// code to branch on.
 				httpx.WriteError(w, r, errs.ErrTooManyRequests.WithMetadata(
 					map[string]any{"retry_after": retry}))
 				return
@@ -134,7 +130,8 @@ func (l *Limiter) MiddlewareBy(scopeName string, extract KeyFunc) func(http.Hand
 	}
 }
 
-// Middleware applies the limiter using client IP as the bucket key.
+// Middleware applies the limiter per client IP under the scope "ip". Limiters
+// sharing a Store need scopes of their own: use MiddlewareBy.
 func (l *Limiter) Middleware(next http.Handler) http.Handler {
 	return l.MiddlewareBy("ip", PerIP)(next)
 }

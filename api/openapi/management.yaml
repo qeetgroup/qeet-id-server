@@ -15,7 +15,9 @@ info:
 
     ## Authentication
 
-    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /v1/ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it.
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it.
+
+    The responses of tenant creation and invitation acceptance, including accepting with an existing account (sign-in tokens), are sent with `Cache-Control: no-store` and `Pragma: no-cache`.
 
     ## Related APIs
 
@@ -178,7 +180,7 @@ paths:
   /v1/tenants/{tenantID}:
     delete:
       operationId: delete_v1_tenants_ByTenantID
-      description: 'Soft-deletes the tenant. This is a destructive, owner-only action: members lose access and tenant-scoped calls stop resolving once it completes. Users who belonged only to this tenant are left without one and must create or join another. In the same transaction every session in the tenant ends (session.revoked with reason tenant_deleted) and the deletion is audited (tenant.deleted, naming who) and queued as an event; refresh and every sign-in refuse the tenant from then on (403 auth.tenant_inactive). An access token already issued lasts out its short lifetime.'
+      description: 'Soft-deletes the tenant. This is a destructive, owner-only action: members lose access and tenant-scoped calls stop resolving once it completes. Users who belonged only to this tenant are left without one and must create or join another. In the same transaction every session in the tenant ends (session.revoked with reason tenant_deleted) and the deletion is audited (tenant.deleted, naming who) and queued as an event; refresh and every sign-in refuse the tenant from then on (403 auth.tenant_inactive). The sessions'' access tokens stop working on this API at once; a service that verifies tokens offline accepts one until it expires.'
       summary: Delete tenant
       tags:
         - Tenants
@@ -230,7 +232,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_tenants_ByTenantID
-      description: 'Updates mutable tenant attributes such as name and slug. Requires an administrative role within the tenant. Only the fields supplied in the request body are changed. Setting status to suspended ends every session in the tenant in the same transaction (session.revoked with reason tenant_suspended), and refresh and every sign-in refuse it until it is active again (403 auth.tenant_inactive); an access token already issued lasts out its short lifetime. Suspending and reactivating are audited (tenant.suspended, tenant.reactivated, naming who and the status it had) and queued as events.'
+      description: 'Updates mutable tenant attributes such as name and slug. Requires an administrative role within the tenant. Only the fields supplied in the request body are changed. Setting status to suspended ends every session in the tenant in the same transaction (session.revoked with reason tenant_suspended), and refresh and every sign-in refuse it until it is active again (403 auth.tenant_inactive); the sessions'' access tokens stop working on this API at once, and one a service verifies offline lasts out its short lifetime. Suspending and reactivating are audited (tenant.suspended, tenant.reactivated, naming who and the status it had) and queued as events.'
       summary: Update tenant
       tags:
         - Tenants
@@ -291,8 +293,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/LoginDomainStatus'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -330,8 +331,7 @@ paths:
                   items:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/Domain'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -368,8 +368,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Domain'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -405,8 +404,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Domain'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -456,8 +454,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Domain'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -560,7 +557,10 @@ paths:
       responses:
         '200':
           description: User reactivated
-          content: {application/json: {schema: {type: object, additionalProperties: true}}}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserUser'
         '401': {description: Authentication required}
         '403': {description: Missing user.write}
         '404': {description: Account not owned by this tenant}
@@ -665,7 +665,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
     post:
       operationId: post_v1_users
-      description: 'Creates a user within the caller''s tenant. An initial password may be supplied, otherwise the account is created without a password credential and the user signs in via passkey, magic link, or an admin-triggered reset. The password must meet the organisation''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). A refused password writes nothing. Requires an existing tenant.'
+      description: 'Creates a user within the caller''s tenant. An initial password may be supplied, otherwise the account is created without a password credential and the user signs in via passkey, magic link, or an admin-triggered reset. The password must meet the organisation''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). A refused password writes nothing. Requires an existing tenant. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress.'
       summary: Create user
       tags:
         - Users
@@ -678,6 +678,8 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/UserCreate'
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '201':
           description: Created
@@ -934,7 +936,7 @@ paths:
   /v1/users/{id}/password:
     post:
       operationId: post_v1_users_ById_password
-      description: 'Administratively sets or replaces a user''s password. The password must meet the organisation''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). All of that user''s active sessions are revoked as a side effect, since an admin password reset is treated as incident response. The user must authenticate again after this call. Every hosted sign-in (browser) session of the person ends too, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey; the audit record counts them (revoked_login_sessions). Refused with 403 user.credentials_shared, and nothing changes, when the account also belongs to another organization: its password and second factors are the person''s credentials there too, so only they change them (the password reset link reaches only their address). Otherwise the person is emailed that an administrator of this organization made the change.'
+      description: 'Administratively sets or replaces a user''s password. The password must meet the organisation''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). Every way the user is signed in ends in the same step, as with the revoke-all-sessions call, since an admin password reset is treated as incident response: their sessions, their hosted sign-in (browser) sessions, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey, the refresh grants their applications hold, the devices remembered to skip the second factor, and pending authorisations (unredeemed codes and device or back-channel sign-in requests). The user must authenticate again after this call. The audit record counts each (revoked_sessions, revoked_login_sessions, revoked_app_grants, revoked_trusted_devices, ended_pending_authorizations). Answers 501 not_implemented when this server is not configured to end sign-ins. Refused with 403 user.credentials_shared, and nothing changes, when the account also belongs to another organization: its password and second factors are the person''s credentials there too, so only they change them (the password reset link reaches only their address). Otherwise the person is emailed that an administrator of this organization made the change.'
       summary: Set password
       tags:
         - Users
@@ -973,6 +975,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '501':
+          description: Not configured on this server (`not_implemented`); nothing changes.
   /v1/users/{id}/mfa:
     delete:
       operationId: delete_v1_users_ById_mfa
@@ -1244,7 +1248,11 @@ paths:
       description: >-
         Aggregated authentication posture for a user (User 360): MFA factors
         (TOTP / email-SMS OTP / push), passkeys, recovery codes, password state,
-        and the active-session / device count. Requires `user.read`.
+        and the active-session / device count. The sessions counted are those the
+        list-sessions call returns: only the user's sessions in the caller's
+        organization, plus their account-level sessions (in no organization) when
+        the caller's organization is the user's home organization. Requires
+        `user.read`.
       tags:
         - Users
       parameters:
@@ -1286,7 +1294,7 @@ paths:
     get:
       operationId: get_v1_users_ById_sessions
       summary: List a user's live sessions
-      description: Admin view of a user's active (non-revoked) sessions. Requires `user.read`.
+      description: 'Admin view of a user''s active (non-revoked) sessions, most recently seen first: only their sessions in the caller''s organization, plus their account-level sessions (in no organization) when the caller''s organization is the user''s home organization. Sessions the user holds in other organizations are not listed. Requires `user.read`.'
       tags:
         - Users
       parameters:
@@ -1330,8 +1338,10 @@ paths:
         Admin force sign-out — ends every way the user is signed in, in one
         all-or-nothing step: every live session, every hosted-login (browser)
         session and every refresh grant held by applications, and records it as
-        an administrative force sign-out. Access tokens already issued stay
-        valid until they expire (minutes). Requires `user.write`.
+        an administrative force sign-out. The access tokens of the user's
+        sessions stop working on this API at once; applications' access tokens,
+        and any a service verifies offline, last until they expire (minutes).
+        Requires `user.write`.
       tags:
         - Users
       parameters:
@@ -1570,14 +1580,6 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
       responses:
         '200':
           description: Restored
@@ -1691,7 +1693,7 @@ paths:
     post:
       operationId: post_v1_me_email_change_start
       summary: Start changing my email
-      description: Sends a verification code to a new email address. Pre-checks the address isn't already in use by another account (`verification.email_taken`).
+      description: 'Sends a verification code to the address the caller wants to move to, to prove they control it; confirm it with the confirm-email-change call. The answer is the same whether or not the address is already in use by another account. An address in use is sent a notice that it already has an account instead of a code, and is never assigned to the caller.'
       tags:
         - Verification
       security:
@@ -1716,11 +1718,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [message]
+                properties:
+                  message:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '409':
-          $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -1753,7 +1756,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [email, message]
+                properties:
+                  email:
+                    type: string
+                  message:
+                    type: string
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -1918,24 +1926,25 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: 'Creates a group in the caller''s tenant. A parent_id must name one of the tenant''s own groups; otherwise the call answers 404 group.parent_not_found, the same for a missing id as for another tenant''s group.'
+              $ref: '#/components/schemas/GroupCreateInput'
+      description: 'Creates a group in the caller''s tenant. A parent_id must name one of the tenant''s own groups; otherwise the call answers 404 group.parent_not_found, the same for a missing id as for another tenant''s group. The name is stored trimmed, and a blank one answers 422 validation_failed. A name another of the organization''s groups already uses, ignoring case and surrounding spaces, answers 409 group.name_exists; groups an identity provider provisions over SCIM with an externalId don''t count. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress.'
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '201':
           description: Created
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Group'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -1960,18 +1969,15 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: 'Changes only the fields sent: an omitted name, description or parent_id keeps its value, and "parent_id": null makes the group top-level. A new parent must be one of the tenant''s own groups (404 group.parent_not_found otherwise) and not the group itself or one of its subgroups (400 group.cycle).'
+              $ref: '#/components/schemas/GroupUpdateInput'
+      description: 'Changes only the fields sent: an omitted name, description or parent_id keeps its value, and "parent_id": null makes the group top-level. A new parent must be one of the tenant''s own groups (404 group.parent_not_found otherwise) and not the group itself or one of its subgroups (400 group.cycle). Renaming to a name another of the organization''s groups uses, ignoring case, answers 409 group.name_exists.'
       responses:
         '200':
           description: Updated
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Group'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -1980,6 +1986,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -1998,7 +2006,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Deletes one of the organisation''s groups and its subgroups; members keep their accounts. Requires group.write.'
       responses:
         '204':
           description: No Content
@@ -2029,7 +2037,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GroupTemplate'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2045,7 +2058,7 @@ paths:
       summary: Create a group template
       tags:
         - Groups
-      description: Stores a named tree of groups. Up to 6 levels deep and 200 groups.
+      description: Stores a named tree of groups. Up to 6 levels deep and 200 groups. A template that uses one group name twice, ignoring case and surrounding spaces, answers 422 validation_failed (field nodes, code duplicate_name).
       requestBody:
         required: true
         content:
@@ -2071,8 +2084,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/GroupTemplate'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2100,13 +2112,8 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
+        '204':
+          description: 'OK'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2132,6 +2139,11 @@ paths:
       description: >-
         Creates every group in the template in one transaction, optionally under
         an existing parent. The parent must belong to the caller's tenant.
+        A template applies once per organization. Group names are unique in an
+        organization, ignoring case, so applying a template whose groups already
+        exist, including applying it a second time, answers 409
+        group.name_exists with the first colliding name in the error detail, and
+        creates nothing.
       requestBody:
         required: false
         content:
@@ -2152,13 +2164,20 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Group'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -2204,8 +2223,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/ImportResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2231,7 +2249,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists a group''s members. Requires group.read.'
       responses:
         '200':
           description: OK
@@ -2239,7 +2257,15 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Member'
+                  truncated:
+                    type: boolean
+                    description: 'Present, true, when the list was cut at its limit.'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2270,7 +2296,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Removes a user from a group. Requires group.write.'
       responses:
         '204':
           description: No Content
@@ -2303,14 +2329,6 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
       description: 'Adds a user to one of the caller''s groups. The user must be a live member of the caller''s tenant, or have it as their home tenant; otherwise the call answers 404 group.user_not_found, the same for a missing id as for another tenant''s user. Adding someone already in the group is a no-op.'
       responses:
         '204':
@@ -2340,7 +2358,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the organisation''s groups. Requires group.read.'
       responses:
         '200':
           description: OK
@@ -2348,7 +2366,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Group'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2373,11 +2396,12 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: 'Request body summarized; see the handler for exact fields. An invitation that carries a role follows the same rule as assigning it: The caller must hold every permission the role carries in this organization (403 rbac.grant_exceeds_caller, naming one it lacks), and only an owner gives the owner role (403 rbac.owner_only); an owner may give any role.'
-      description: 'Creates an invitation and emails its accept link. The response carries the invitation, its raw token (so the link can be shared by hand) and invite.delivery: status sent when a provider accepted the email, or not_sent with code and message when it did not (email.suppressed: the address bounced or reported spam before; email.provider_unavailable: no provider is configured). The invitation is created either way.'
+              $ref: '#/components/schemas/InviteCreateInput'
+      description: 'Creates an invitation and emails its accept link. The accept link goes only to the invited address; the response carries the invitation and invite.delivery: status sent when a provider accepted the email, or not_sent with code and message when it did not (email.suppressed: the address bounced or reported spam before; email.provider_unavailable: no provider is configured). The invitation is created either way. A role_id that is not a role of the caller''s organization is refused with 404 not_found, the same answer whether the role does not exist or belongs to another organization, and no invitation is created. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress.'
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       responses:
+        '409': {description: 'A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly.'}
         '201':
           description: Created
           content:
@@ -2392,8 +2416,6 @@ paths:
                     properties:
                       delivery:
                         $ref: '#/components/schemas/InviteDelivery'
-                  token:
-                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2416,18 +2438,17 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: 'Creates the invited account and signs it in. Its address is not verified by this: the invitation link is also returned to the inviter to share, so the account proves the address later with a code or link sent to it (its invitations inbox stays closed until then). The response is a token pair, or, where the organisation requires a second factor, the sign-in''s challenge instead (mfa_required, mfa_token and, for an account with no factor yet, enrollment_required), met as at sign-in. Where the inviting organisation has password sign-in switched off, accepting with a password is refused with 403 auth.method_disabled and nothing is created.'
+              $ref: '#/components/schemas/AcceptInput'
+      description: 'Creates the invited account and signs it in. Its address is not verified by this: the account proves it later with a code or link sent to it (its invitations inbox stays closed until then). The response is a token pair, or, where the organisation requires a second factor, the sign-in''s challenge instead (mfa_required, mfa_token and, for an account with no factor yet, enrollment_required), met as at sign-in. Where the inviting organisation has password sign-in switched off, accepting with a password is refused with 403 auth.method_disabled and nothing is created.'
       responses:
-        '201':
-          description: Created
+        '200':
+          description: A token pair, or the second-factor challenge to complete first.
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                oneOf:
+                  - $ref: '#/components/schemas/TokenPair'
+                  - $ref: '#/components/schemas/MFAChallenge'
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
@@ -2441,8 +2462,8 @@ paths:
       description: >-
         Previews the invitation an emailed link names, so the acceptance screen
         can show the organisation and address and offer the ways of accepting
-        it. A password is always offered; a passkey where the organisation
-        allows passkeys. account_exists means an account already holds the
+        it. A password is offered where the organisation allows password
+        sign-in, and a passkey where it allows passkeys. account_exists means an account already holds the
         address, so the invitee signs in and accepts as themselves. Refused like
         acceptance: invite.link_invalid, invite.invalid (no longer pending),
         invite.expired. Read-only. The token travels in the body so it stays out
@@ -2534,7 +2555,13 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [publicKey, session_id]
+                properties:
+                  publicKey:
+                    $ref: '#/components/schemas/PublicKeyCredentialCreationOptions'
+                  session_id:
+                    type: string
+                    format: uuid
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -2586,8 +2613,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/TokenPair'
         '400':
           $ref: '#/components/responses/BadRequest'
         '403':
@@ -2615,7 +2641,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReceivedInvite'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2649,8 +2680,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/TokenPair'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -2684,8 +2714,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/TokenPair'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -2718,7 +2747,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [message]
+                properties:
+                  message:
+                    type: string
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -2742,7 +2774,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Withdraws a pending invitation; its link stops working. Requires user.write.'
       responses:
         '204':
           description: No Content
@@ -2759,7 +2791,7 @@ paths:
   /v1/invites/{id}/resend:
     post:
       operationId: post_v1_invites_ById_resend
-      description: 'Rotates the invitation token, extends its expiry, and re-sends the invitation email. Only pending or expired invites belonging to the caller''s tenant qualify; already-accepted or revoked invites are rejected. The recipient completes the flow through the accept-invite call, as with the original invitation. invite.delivery says whether the email went out (as on create): a suppressed address reports not_sent with email.suppressed rather than success.'
+      description: 'Rotates the invitation token, extends its expiry, and re-sends the invitation email; the new link goes only to the invited address. The response carries the invitation. Only pending or expired invites belonging to the caller''s tenant qualify; already-accepted or revoked invites are rejected. The recipient completes the flow through the accept-invite call, as with the original invitation. invite.delivery says whether the email went out (as on create): a suppressed address reports not_sent with email.suppressed rather than success.'
       summary: Resend an invitation
       tags: [Invites]
       parameters:
@@ -2777,7 +2809,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [invite]
+                properties:
+                  invite:
+                    $ref: '#/components/schemas/Invite'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2799,7 +2834,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the organisation''s invitations, without their tokens. Requires user.read.'
       responses:
         '200':
           description: OK
@@ -2807,7 +2842,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Invite'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2919,6 +2959,12 @@ components:
       name: qe_ls
       description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session and consumed by the OAuth authorize/consent flow.
   parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: 'A key of the client''s choosing, 1 to 255 printable characters, that makes retrying the request safe. Kept for 24 hours.'
+      schema: {type: string, minLength: 1, maxLength: 255}
     Limit:
       name: limit
       in: query
@@ -3266,15 +3312,38 @@ components:
           items:
             type: object
             required:
+              - code
               - message
             properties:
               line:
                 type: integer
-                description: 1-based index of the row within the submitted array.
+                description: 'POST /v1/users/bulk: the 1-based index in the users array. POST /v1/users/bulk/import: the line of the export file (azure_b2c: the 1-based position in value). Absent when the whole file failed.'
               email:
                 type: string
+              code:
+                type: string
+                description: Stable reason the row failed; word the error from this. Password and duplicate refusals reuse the API error codes.
+                enum:
+                  - user.import_field_missing
+                  - user.import_field_invalid
+                  - user.import_field_too_long
+                  - user.import_row_malformed
+                  - user.import_source_invalid
+                  - auth.email_exists
+                  - authpolicy.password_too_short
+                  - authpolicy.password_no_uppercase
+                  - authpolicy.password_no_number
+                  - authpolicy.password_no_symbol
+                  - authpolicy.password_breached
+                  - auth.password_weak
+                  - internal
+              field:
+                type: string
+                description: The row's field the error concerns; absent when none.
+                enum: [email, password, display_name, phone]
               message:
                 type: string
+                description: English text kept for compatibility; it may change. Show wording keyed on code.
     UserUpdate:
       type: object
       properties:
@@ -3435,3 +3504,501 @@ components:
         next_cursor:
           type: string
           nullable: true
+    AcceptInput:
+      type: object
+      required: [display_name, password, token]
+      properties:
+        display_name:
+          type: string
+        password:
+          type: string
+        token:
+          type: string
+    TokenPair:
+      type: object
+      required: [access_token, expires_at, idle_expires_at, refresh_token, session_expires_at, session_id, token_type, user_id]
+      properties:
+        access_token:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        idle_expires_at:
+          type: string
+          format: date-time
+        refresh_token:
+          type: string
+        session_expires_at:
+          type: string
+          format: date-time
+        session_id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        token_type:
+          type: string
+        user_id:
+          type: string
+          format: uuid
+    AuthenticatorSelection:
+      type: object
+      properties:
+        authenticatorAttachment:
+          type: string
+        requireResidentKey:
+          type: boolean
+        residentKey:
+          type: string
+        userVerification:
+          type: string
+    CredentialDescriptor:
+      type: object
+      required: [id, type]
+      properties:
+        id: {}
+        transports:
+          type: array
+          items:
+            type: string
+        type:
+          type: string
+    CredentialParameter:
+      type: object
+      required: [alg, type]
+      properties:
+        alg:
+          type: integer
+        type:
+          type: string
+    DNSRecord:
+      type: object
+      required: [name, type, value]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        value:
+          type: string
+    Delivery:
+      type: object
+      required: [status]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        status:
+          type: string
+    Domain:
+      type: object
+      required: [created_at, dns_record_name, dns_record_type, dns_record_value, domain, id, is_default, jit_enabled, sso_enabled, status, verification_token]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        dns_record_name:
+          type: string
+        dns_record_type:
+          type: string
+        dns_record_value:
+          type: string
+        domain:
+          type: string
+        id:
+          type: string
+          format: uuid
+        is_default:
+          type: boolean
+        jit_enabled:
+          type: boolean
+        last_checked_at:
+          type: string
+          format: date-time
+        last_error:
+          type: string
+        sso_enabled:
+          type: boolean
+        status:
+          type: string
+        verification_token:
+          type: string
+        verified_at:
+          type: string
+          format: date-time
+    Group:
+      type: object
+      required: [created_at, description, id, member_count, name, parent_id, tenant_id]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        description:
+          type: string
+        id:
+          type: string
+          format: uuid
+        member_count:
+          type: integer
+        name:
+          type: string
+        parent_id:
+          type: [string, 'null']
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+    GroupCreateInput:
+      type: object
+      required: [description, name, parent_id, tenant_id]
+      properties:
+        description:
+          type: string
+        name:
+          type: string
+        parent_id:
+          type: [string, 'null']
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+    GroupTemplate:
+      type: object
+      required: [created_at, description, group_count, id, name, nodes, tenant_id, updated_at]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        description:
+          type: string
+        group_count:
+          type: integer
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateNode'
+        tenant_id:
+          type: string
+          format: uuid
+        updated_at:
+          type: string
+          format: date-time
+    GroupUpdateInput:
+      type: object
+      required: [description, name, parent_id]
+      properties:
+        description:
+          type: [string, 'null']
+        name:
+          type: [string, 'null']
+        parent_id:
+          $ref: '#/components/schemas/OptionalUUID'
+    ImportResult:
+      type: object
+      required: [created, failed, rows, skipped]
+      properties:
+        created:
+          type: integer
+        failed:
+          type: integer
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportRowResult'
+        skipped:
+          type: integer
+    ImportRowResult:
+      type: object
+      required: [name, status]
+      properties:
+        name:
+          type: string
+        reason:
+          type: string
+        status:
+          type: string
+    Invite:
+      type: object
+      required: [accepted_at, created_at, email, expires_at, id, role_id, status, tenant_id]
+      properties:
+        accepted_at:
+          type: [string, 'null']
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        delivery:
+          $ref: '#/components/schemas/Delivery'
+        email:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        role_id:
+          type: [string, 'null']
+          format: uuid
+        status:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+    InviteCreateInput:
+      type: object
+      required: [email, role_id, tenant_id]
+      properties:
+        email:
+          type: string
+        role_id:
+          type: [string, 'null']
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+    LoginDomainStatus:
+      type: object
+      required: [dns_detail, dns_verified, endpoint_state, login_domain, records, status, tls_detail, tls_state]
+      properties:
+        dns_checked_at:
+          type: string
+          format: date-time
+        dns_detail:
+          type: string
+        dns_verified:
+          type: boolean
+        endpoint_state:
+          type: string
+        endpoint_url:
+          type: string
+        login_domain:
+          type: string
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/DNSRecord'
+        status:
+          type: string
+        tls_detail:
+          type: string
+        tls_state:
+          type: string
+    Member:
+      type: object
+      required: [display_name, email, user_id]
+      properties:
+        display_name:
+          type: [string, 'null']
+        email:
+          type: string
+        user_id:
+          type: string
+          format: uuid
+    OptionalUUID:
+      type: object
+      required: [ID, Set]
+      properties:
+        ID:
+          type: [string, 'null']
+          format: uuid
+        Set:
+          type: boolean
+    PublicKeyCredentialCreationOptions:
+      type: object
+      required: [challenge, rp, user]
+      properties:
+        attestation:
+          type: string
+        attestationFormats:
+          type: array
+          items:
+            type: string
+        authenticatorSelection:
+          $ref: '#/components/schemas/AuthenticatorSelection'
+        challenge: {}
+        excludeCredentials:
+          type: array
+          items:
+            $ref: '#/components/schemas/CredentialDescriptor'
+        extensions: {}
+        hints:
+          type: array
+          items:
+            type: string
+        pubKeyCredParams:
+          type: array
+          items:
+            $ref: '#/components/schemas/CredentialParameter'
+        rp:
+          $ref: '#/components/schemas/RelyingPartyEntity'
+        timeout:
+          type: integer
+        user:
+          $ref: '#/components/schemas/UserEntity'
+    ReceivedInvite:
+      type: object
+      required: [created_at, email, expires_at, id, role_id, tenant_id, tenant_name, tenant_slug]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        email:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        role_id:
+          type: [string, 'null']
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        tenant_name:
+          type: string
+        tenant_slug:
+          type: string
+    RelyingPartyEntity:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+    TemplateNode:
+      type: object
+      required: [description, name]
+      properties:
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateNode'
+        description:
+          type: string
+        name:
+          type: string
+    UserEntity:
+      type: object
+      required: [displayName, id, name]
+      properties:
+        displayName:
+          type: string
+        id: {}
+        name:
+          type: string
+    UserUser:
+      type: object
+      required: [avatar_url, created_at, display_name, email, email_verified_at, id, metadata, phone, phone_verified_at, status, tenant_id, updated_at]
+      properties:
+        avatar_url:
+          type: [string, 'null']
+        created_at:
+          type: string
+          format: date-time
+        display_name:
+          type: [string, 'null']
+        email:
+          type: string
+        email_verified_at:
+          type: [string, 'null']
+          format: date-time
+        groups_count:
+          type: integer
+        id:
+          type: string
+          format: uuid
+        last_seen_at:
+          type: string
+          format: date-time
+        last_seen_ip:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        mfa_enabled:
+          type: boolean
+        phone:
+          type: [string, 'null']
+        phone_verified_at:
+          type: [string, 'null']
+          format: date-time
+        roles:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+        updated_at:
+          type: string
+          format: date-time
+    MFAChallenge:
+      type: object
+      description: >-
+        A sign-in stopped before its session: the account holds a second factor,
+        or must have one — its organisation requires MFA (of everyone, or of
+        administrators) or it is marked as requiring it. Complete it at POST
+        /v1/auth/mfa (token sign-in) or /v1/auth/session/mfa (hosted login).
+        Each challenge is audited as auth.mfa_challenged with its reason
+        (enrolled, tenant_required, admin_required or user_required) and how
+        the first factor was proven (password, magic_link, social or ldap); meeting it as
+        auth.mfa_verified.
+      properties:
+        mfa_required:
+          type: boolean
+        mfa_token:
+          type: string
+        methods:
+          type: array
+          description: The distinct factor types of factors (["totp"] for an enrolment challenge).
+          items:
+            type: string
+            enum: [totp, recovery_code, email, sms, passkey, push]
+        factors:
+          type: array
+          description: >-
+            Exactly the second factors this person can complete the challenge
+            with — an authenticator app, recovery codes, each confirmed email or
+            SMS factor (with its id and masked destination, for
+            POST /v1/auth/mfa/send), passkeys while the organisation allows them,
+            and push devices. Empty for an enrolment challenge.
+          items:
+            $ref: '#/components/schemas/LoginFactor'
+        enrollment_required:
+          type: boolean
+          description: >-
+            The account must have a second factor and holds none: set up an
+            authenticator app (POST /v1/auth/mfa/enroll) and complete the
+            challenge with a code from it.
+        enrollment_due_at:
+          type: string
+          format: date-time
+          description: >-
+            On an enrolment challenge in the organisation's grace period: when
+            it ends. Until then the setup may be put off (skip: true).
+    LoginFactor:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [totp, recovery_code, email, sms, passkey, push]
+        id:
+          type: string
+          format: uuid
+          description: An email or SMS factor's id.
+        destination:
+          type: string
+          description: An email or SMS factor's masked address or number.

@@ -44,15 +44,18 @@ func parseUserMetadata(raw []byte, userID uuid.UUID) map[string]any {
 	return m
 }
 
+// Repository reads and writes users.
 type Repository struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 }
 
+// NewRepository returns a Repository over pool.
 func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool, q: dbgen.New(pool)}
 }
 
+// Pool returns the connection pool, for handlers that run their own transaction.
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
 // pgtypeToUUIDPtr converts a pgtype.UUID returned by generated code to *uuid.UUID.
@@ -157,13 +160,11 @@ func userFromEmailRow(
 	return u
 }
 
-// userCols is the column list used by the hand-written Update RETURNING clause.
-// The ordering matches exactly what Update scans via scanUser.
+// userCols is the column list Update returns, in scanUser's order.
 const userCols = `id, tenant_id, email, email_verified_at, phone, phone_verified_at,
                   display_name, status, metadata, created_at, updated_at`
 
-// scanUser scans an 11-column user row (userCols, no avatar_url) into a User.
-// Used only by the hand-written Update path.
+// scanUser scans a userCols row (no avatar_url) into a User.
 func scanUser(row pgx.Row) (*User, error) {
 	var u User
 	var meta []byte
@@ -255,11 +256,19 @@ func (r *Repository) CreateWithCredentialTx(ctx context.Context, tx pgx.Tx, in C
 	return u, nil
 }
 
-// Get fetches a single user. Unlike the list/lookup paths it also selects
-// avatar_url (the profile + header read it via this path); keeping it out of
-// the shared userCols means the paginated users list never carries avatars.
+// Get returns the user with id, including avatar_url, which the list queries
+// leave out. ErrNotFound if it is missing or soft-deleted.
 func (r *Repository) Get(ctx context.Context, id uuid.UUID) (*User, error) {
-	row, err := r.q.GetUserByID(ctx, id)
+	return getUser(ctx, r.q, id)
+}
+
+// GetTx is Get read through tx.
+func (r *Repository) GetTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*User, error) {
+	return getUser(ctx, r.q.WithTx(tx), id)
+}
+
+func getUser(ctx context.Context, q *dbgen.Queries, id uuid.UUID) (*User, error) {
+	row, err := q.GetUserByID(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
@@ -305,6 +314,7 @@ func (r *Repository) RemoveFromTenantTx(ctx context.Context, tx pgx.Tx, userID, 
 	return roles, nil
 }
 
+// GetByEmail returns the tenant's user with this email.
 func (r *Repository) GetByEmail(ctx context.Context, tenantID uuid.UUID, email string) (*User, error) {
 	row, err := r.q.GetUserByEmail(ctx, dbgen.GetUserByEmailParams{
 		TenantID: uuidToPgtype(tenantID),
@@ -320,9 +330,8 @@ func (r *Repository) GetByEmail(ctx context.Context, tenantID uuid.UUID, email s
 		row.PhoneVerifiedAt, row.DisplayName, row.Status, row.Metadata, row.CreatedAt, row.UpdatedAt), nil
 }
 
-// GetByEmailGlobal looks up a user by email across all tenants.
-// Email is enforced globally unique by migration 0022, so this returns
-// at most one row. Used by the tenant-less sign-in flow.
+// GetByEmailGlobal looks up a user by email across all tenants. Email is
+// globally unique (migration 0022), so there is at most one match.
 func (r *Repository) GetByEmailGlobal(ctx context.Context, email string) (*User, error) {
 	row, err := r.q.GetUserByEmailGlobal(ctx, email)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -335,9 +344,9 @@ func (r *Repository) GetByEmailGlobal(ctx context.Context, email string) (*User,
 		row.PhoneVerifiedAt, row.DisplayName, row.Status, row.Metadata, row.CreatedAt, row.UpdatedAt), nil
 }
 
-// ListByTenant returns a tenant's members, defined by rbac.user_roles membership (not users.tenant_id).
-// The roles subquery returns text[] which sqlc infers as interface{}; these two variants
-// remain hand-written so we can scan into the correct []string target type.
+// ListByTenant returns a page of a tenant's members (by rbac.user_roles, not
+// users.tenant_id) and the next cursor. offset > 0 pages by offset, otherwise
+// by cursor. Hand-written because sqlc types the text[] roles column as any.
 func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit int, cursor string, offset int) ([]User, string, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -489,15 +498,8 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 	return out, next, nil
 }
 
-// Update applies a partial update. The SET clause is built dynamically from the
-// non-nil fields, so it intentionally stays hand-written (sqlc has no good story
-// for optional-column updates); it shares the domain's error/RETURNING conventions.
-// rowQuerier is satisfied by both *pgxpool.Pool and pgx.Tx, so the update body
-// is written once and reused by the transactional variant.
-type rowQuerier interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}
-
+// Update applies the non-nil fields of in to user id and returns the result.
+// The SET clause is built at run time, so this is hand-written rather than sqlc.
 func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*User, error) {
 	return r.update(ctx, r.pool, id, in)
 }
@@ -508,7 +510,8 @@ func (r *Repository) UpdateTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, in U
 	return r.update(ctx, tx, id, in)
 }
 
-// SoftDeleteTx is SoftDelete inside the caller's transaction.
+// SoftDeleteTx soft-deletes user id in tx. ErrNotFound if the user is missing
+// or already deleted.
 func (r *Repository) SoftDeleteTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
 	n, err := r.q.WithTx(tx).SoftDeleteUser(ctx, id)
 	if err != nil {
@@ -520,7 +523,9 @@ func (r *Repository) SoftDeleteTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) 
 	return nil
 }
 
-func (r *Repository) update(ctx context.Context, db rowQuerier, id uuid.UUID, in UpdateInput) (*User, error) {
+// update applies in through db, a *pgxpool.Pool or a pgx.Tx; an empty update
+// reads the user through db too.
+func (r *Repository) update(ctx context.Context, db dbgen.DBTX, id uuid.UUID, in UpdateInput) (*User, error) {
 	ub := dbutil.NewUpdate()
 	if in.DisplayName != nil {
 		ub.Set("display_name", *in.DisplayName)
@@ -542,7 +547,7 @@ func (r *Repository) update(ctx context.Context, db rowQuerier, id uuid.UUID, in
 		ub.Set("metadata", meta)
 	}
 	if ub.Empty() {
-		return r.Get(ctx, id)
+		return getUser(ctx, dbgen.New(db), id)
 	}
 	ub.SetRaw("updated_at = NOW()")
 	idAt := ub.NextPlaceholder()
@@ -626,12 +631,13 @@ func (r *Repository) Purge(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// MarkEmailVerified records that the user has verified their email address.
 func (r *Repository) MarkEmailVerified(ctx context.Context, id uuid.UUID) error {
 	return r.q.MarkEmailVerified(ctx, id)
 }
 
-// PasswordHash returns the bcrypt hash for the user, or "" if no password
-// credential exists.
+// PasswordHash returns the user's stored password hash, or "" if they have no
+// password.
 func (r *Repository) PasswordHash(ctx context.Context, id uuid.UUID) (string, error) {
 	h, err := r.q.GetPasswordHash(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -640,6 +646,7 @@ func (r *Repository) PasswordHash(ctx context.Context, id uuid.UUID) (string, er
 	return h, err
 }
 
+// SetPassword stores the user's password hash.
 func (r *Repository) SetPassword(ctx context.Context, id uuid.UUID, hash string) error {
 	return r.q.SetPassword(ctx, dbgen.SetPasswordParams{UserID: id, PasswordHash: hash})
 }

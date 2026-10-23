@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -387,6 +388,49 @@ func TestVerifyVC_RoundTripAndRejection(t *testing.T) {
 	// A credential claiming a different issuer must be rejected.
 	if _, err := i.VerifyVC(make("evil-issuer")); err == nil {
 		t.Error("VerifyVC must reject a foreign issuer")
+	}
+}
+
+// TestVerifyVC_AcceptsOnlyCredentials checks that the issuer's other tokens,
+// which verify as signed, are not taken for verifiable credentials.
+func TestVerifyVC_AcceptsOnlyCredentials(t *testing.T) {
+	i, _ := testIssuer(t)
+	user, tenant, session := uuid.New(), uuid.New(), uuid.New()
+	exp := time.Now().Add(time.Hour).Unix()
+	sign := func(claims jwt.MapClaims) string {
+		s, err := i.Sign(claims)
+		if err != nil {
+			t.Fatalf("sign: %v", err)
+		}
+		return s
+	}
+	access, _, err := i.IssueAccess(user, tenant, session, "openid")
+	if err != nil {
+		t.Fatalf("access: %v", err)
+	}
+	clientAccess, _, err := i.IssueClientAccess(ClientAccess{UserID: user, TenantID: tenant, SessionID: session, ClientID: "qci_app"})
+	if err != nil {
+		t.Fatalf("client access: %v", err)
+	}
+	others := map[string]string{
+		"access token":            access,
+		"client access token":     clientAccess,
+		"ID token":                sign(jwt.MapClaims{"iss": "qeet-test", "sub": user.String(), "aud": "qci_app", "exp": exp}),
+		"sign-out ticket":         sign(jwt.MapClaims{"iss": "qeet-test", "typ": "logout_confirmation", "sid": session.String(), "exp": exp}),
+		"vc without its type":     sign(jwt.MapClaims{"iss": "qeet-test", "vc": map[string]any{"type": []string{"Other"}}, "exp": exp}),
+		"vc that isn't an object": sign(jwt.MapClaims{"iss": "qeet-test", "vc": "VerifiableCredential", "exp": exp}),
+	}
+	for name, raw := range others {
+		if _, err := i.VerifySigned(raw); err != nil {
+			t.Errorf("%s: VerifySigned: %v", name, err)
+		}
+		if _, err := i.VerifyVC(raw); !errors.Is(err, ErrNotCredential) {
+			t.Errorf("%s: VerifyVC = %v, want %v", name, err, ErrNotCredential)
+		}
+	}
+	single := sign(jwt.MapClaims{"iss": "qeet-test", "vc": map[string]any{"type": "VerifiableCredential"}, "exp": exp})
+	if _, err := i.VerifyVC(single); err != nil {
+		t.Errorf("a credential with a single type: %v", err)
 	}
 }
 

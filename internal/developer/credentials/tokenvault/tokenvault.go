@@ -1,8 +1,7 @@
-// Package tokenvault is a per-tenant encrypted store for third-party OAuth tokens
-// (Slack, GitHub, Google, or any registered OAuth2 provider). A user connects once
-// via an authorization-code ceremony; callers then fetch a live access token via
-// GetAccessToken and never see the refresh token. Encryption reuses the secrets
-// vault's KeyProvider (KMS or static key).
+// Package tokenvault stores each tenant's third-party OAuth tokens (Slack,
+// GitHub, Google, or any registered OAuth2 provider), encrypted. A user connects
+// once through an authorization-code flow; GetAccessToken then returns a live
+// access token, never the refresh token.
 package tokenvault
 
 import (
@@ -62,6 +61,8 @@ type GrantMeta struct {
 	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
+// Service stores each tenant's OAuth provider settings and its users'
+// third-party tokens, encrypted at rest.
 type Service struct {
 	pool   *pgxpool.Pool
 	q      *dbgen.Queries
@@ -84,14 +85,6 @@ func NewService(ctx context.Context, pool *pgxpool.Pool, kp secret.KeyProvider, 
 	}
 	policy := egress.PublicPolicy(policies...)
 	return &Service{pool: pool, q: dbgen.New(pool), box: box, http: policy.HTTPClient(10 * time.Second), egress: policy}, nil
-}
-
-// pgtTS converts a *time.Time to pgtype.Timestamptz (null when nil).
-func pgtTS(t *time.Time) pgtype.Timestamptz {
-	if t == nil {
-		return pgtype.Timestamptz{}
-	}
-	return pgtype.Timestamptz{Time: *t, Valid: true}
 }
 
 // tsPtr converts a pgtype.Timestamptz to *time.Time (nil when not valid).
@@ -119,6 +112,7 @@ func (s *Service) decrypt(tenantID, userID uuid.UUID, provider, purpose string, 
 
 // --- provider registration (admin) ---
 
+// RegisterProviderInput is what RegisterProvider takes.
 type RegisterProviderInput struct {
 	Provider     string `json:"provider" validate:"required"`
 	ClientID     string `json:"client_id" validate:"required"`
@@ -128,6 +122,7 @@ type RegisterProviderInput struct {
 	Scopes       string `json:"scopes"`
 }
 
+// RegisterProvider stores the tenant's settings for an OAuth provider.
 func (s *Service) RegisterProvider(ctx context.Context, tenantID uuid.UUID, in RegisterProviderInput) (*Provider, error) {
 	if _, err := s.egress.ValidateHTTPURL(in.AuthorizeURL); err != nil {
 		return nil, errs.ErrTokenVaultProviderAuthorizeInvalid
@@ -163,6 +158,7 @@ func (s *Service) RegisterProvider(ctx context.Context, tenantID uuid.UUID, in R
 	return &provider, err
 }
 
+// ListProviders returns the tenant's OAuth providers.
 func (s *Service) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]Provider, error) {
 	rows, err := s.q.ListProviders(ctx, tenantID)
 	if err != nil {
@@ -179,6 +175,7 @@ func (s *Service) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]Prov
 	return out, nil
 }
 
+// DeleteProvider removes the tenant's settings for an OAuth provider.
 func (s *Service) DeleteProvider(ctx context.Context, tenantID uuid.UUID, provider string) error {
 	n, err := s.q.DeleteProvider(ctx, dbgen.DeleteProviderParams{TenantID: tenantID, Provider: provider})
 	if err != nil {
@@ -269,15 +266,14 @@ func (s *Service) BeginConnect(ctx context.Context, tenantID, userID uuid.UUID, 
 	return u.String(), nil
 }
 
-// oauthTokenResponse is the standard OAuth2 token-endpoint JSON shape (RFC
-// 6749 §5.1), which Slack/GitHub (with Accept: application/json)/Google/most
-// custom providers all return.
+// oauthTokenResponse is the standard OAuth 2.0 token response (RFC 6749 §5.1).
+// ExpiresIn is any because some providers send it as a numeric string.
 type oauthTokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	TokenType    string `json:"token_type"`
 	Scope        string `json:"scope"`
-	ExpiresIn    any    `json:"expires_in"` // some providers send this as a numeric string
+	ExpiresIn    any    `json:"expires_in"`
 }
 
 func (r oauthTokenResponse) expiresInSeconds() int64 {
@@ -367,13 +363,13 @@ func (s *Service) storeGrant(ctx context.Context, tenantID, userID uuid.UUID, pr
 // exchange POSTs a form-encoded OAuth2 token request and parses the response.
 // Shared by the initial code exchange and refresh.
 func (s *Service) exchange(ctx context.Context, tokenURL string, form url.Values) (*oauthTokenResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode())) // #nosec G704 -- token URL checked by the egress policy on save
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	resp, err := s.http.Do(req)
+	resp, err := s.http.Do(req) // #nosec G704 -- egress-guarded client
 	if err != nil {
 		return nil, errs.ErrTokenVaultTokenExchangeFailed.Wrap(err)
 	}
@@ -445,6 +441,8 @@ func (s *Service) GetAccessToken(ctx context.Context, tenantID, userID uuid.UUID
 	return tok.AccessToken, nil
 }
 
+// ListGrants returns the providers the user has connected, without their
+// tokens.
 func (s *Service) ListGrants(ctx context.Context, tenantID, userID uuid.UUID) ([]GrantMeta, error) {
 	rows, err := s.q.ListGrants(ctx, dbgen.ListGrantsParams{TenantID: tenantID, UserID: userID})
 	if err != nil {
@@ -464,6 +462,7 @@ func (s *Service) ListGrants(ctx context.Context, tenantID, userID uuid.UUID) ([
 	return out, nil
 }
 
+// Disconnect deletes the user's stored tokens for a provider.
 func (s *Service) Disconnect(ctx context.Context, tenantID, userID uuid.UUID, provider string) error {
 	n, err := s.q.DeleteGrant(ctx, dbgen.DeleteGrantParams{TenantID: tenantID, UserID: userID, Provider: provider})
 	if err != nil {
@@ -483,33 +482,16 @@ func randomState() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// externalScheme mirrors domains/federation/oidc's helper of the same name:
-// the request's public scheme, honoring X-Forwarded-Proto from a
-// TLS-terminating proxy, so the callback URL registered with a third-party
-// provider stays https in production.
-func externalScheme(r *http.Request) string {
-	if p := r.Header.Get("X-Forwarded-Proto"); p == "https" || p == "http" {
-		return p
-	}
-	if r.TLS != nil {
-		return "https"
-	}
-	if h := r.Host; strings.HasPrefix(h, "localhost") || strings.HasPrefix(h, "127.0.0.1") {
-		return "http"
-	}
-	return "https"
-}
-
-func externalBase(r *http.Request) string {
-	return externalScheme(r) + "://" + r.Host
-}
-
 // --- HTTP ---
 
+// Handler serves the token vault. PublicBaseURL is this API's public origin,
+// or "" to build OAuth callback URLs from the request's Host.
 type Handler struct {
-	Service *Service
+	Service       *Service
+	PublicBaseURL string
 }
 
+// Mount registers the token vault routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/tenants/{tenantID}/vault/tokens/providers", h.registerProvider)
 	r.Get("/tenants/{tenantID}/vault/tokens/providers", h.listProviders)
@@ -527,23 +509,8 @@ func (h *Handler) MountPublic(r chi.Router) {
 	r.Get("/vault/tokens/callback", h.callback)
 }
 
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
-	}
-	return scope, nil
-}
-
 func (h *Handler) registerProvider(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -562,7 +529,7 @@ func (h *Handler) registerProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listProviders(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -576,7 +543,7 @@ func (h *Handler) listProviders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteProvider(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -599,7 +566,7 @@ func (h *Handler) beginConnect(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	authorizeURL, err := h.Service.BeginConnect(r.Context(), tenantID, userID, chi.URLParam(r, "provider"), externalBase(r))
+	authorizeURL, err := h.Service.BeginConnect(r.Context(), tenantID, userID, chi.URLParam(r, "provider"), httpx.PublicOrigin(r, h.PublicBaseURL))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -621,7 +588,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		writeCallbackPage(w, false, "missing state or code")
 		return
 	}
-	if err := h.Service.FinishConnect(r.Context(), state, code, externalBase(r)); err != nil {
+	if err := h.Service.FinishConnect(r.Context(), state, code, httpx.PublicOrigin(r, h.PublicBaseURL)); err != nil {
 		msg := "connection failed"
 		if e := errs.As(err); e != nil {
 			msg = e.Message
@@ -643,7 +610,7 @@ func writeCallbackPage(w http.ResponseWriter, ok bool, errMsg string) {
 		return
 	}
 	w.WriteHeader(http.StatusBadRequest)
-	_, _ = w.Write([]byte(`<!doctype html><html><body><p>Connection failed: ` + htmlEscape(errMsg) + `</p></body></html>`))
+	_, _ = w.Write([]byte(`<!doctype html><html><body><p>Connection failed: ` + htmlEscape(errMsg) + `</p></body></html>`)) // #nosec G705 -- errMsg is HTML-escaped
 }
 
 func htmlEscape(s string) string {
@@ -672,11 +639,10 @@ func (h *Handler) listGrants(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
-// getAccessToken is the "agent-safe" fetch: it hands back a live access
-// token, transparently refreshed if needed, and gated the same way the
-// generic secrets vault gates vault:<name> access — a scoped principal
-// (e.g. an AI agent) needs vault:<provider> or vault:read, and every access
-// is audited since a live third-party credential is sensitive.
+// getAccessToken returns a live access token, refreshed if needed, only to the
+// person who connected the account, signed in themselves (any other credential
+// is refused and recorded) and holding vault:<provider> or vault:read. Each
+// read is audited.
 func (h *Handler) getAccessToken(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil {

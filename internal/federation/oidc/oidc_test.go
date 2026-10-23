@@ -1,17 +1,20 @@
 package oidc
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
@@ -32,11 +35,8 @@ func testIssuer(t *testing.T) *tokens.Issuer {
 	return i
 }
 
-// TestPKCE_S256ChallengeDerivation pins the exact relationship the
-// authorization-code exchange relies on: the stored code_challenge equals
-// BASE64URL(SHA256(verifier)) with no padding — i.e. codes.Hash(verifier).
-// ExchangeCode accepts a presented verifier iff codes.Hash(verifier) matches
-// the stored challenge, so this is the heart of PKCE S256 verification.
+// TestPKCE_S256ChallengeDerivation checks that the stored code_challenge is
+// BASE64URL(SHA256(verifier)) without padding, which ExchangeCode relies on.
 func TestPKCE_S256ChallengeDerivation(t *testing.T) {
 	verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk" // RFC 7636 §A.1 verifier
 	challenge := codes.Hash(verifier)
@@ -93,10 +93,12 @@ func TestDiscovery_AdvertisesAlgIssuerS256(t *testing.T) {
 	if len(pkce) != 1 || pkce[0] != "S256" {
 		t.Errorf("code_challenge_methods = %v, want [S256]", pkce)
 	}
-	// Only the authorization-code/refresh/client-credentials grants are advertised.
+	// Only the grants its token_endpoint serves; client_credentials is served
+	// at /v1/oauth/token, which discovery doesn't name.
 	grants, _ := disc["grant_types_supported"].([]any)
-	if len(grants) == 0 {
-		t.Error("discovery must advertise grant_types_supported")
+	want := []any{"authorization_code", "refresh_token", grantTypeDeviceCode, grantTypeTokenExchange, grantTypeCIBA}
+	if !slices.Equal(grants, want) {
+		t.Errorf("grant_types_supported = %v, want %v", grants, want)
 	}
 	actorTypes, _ := disc["actor_types_supported"].([]any)
 	if len(actorTypes) != 3 || actorTypes[2] != "agent" {
@@ -195,8 +197,12 @@ func TestAppendQuery(t *testing.T) {
 func TestCurrentURL(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/oauth/authorize?client_id=rp&scope=openid", nil)
 	req.Host = "id.test"
-	if got := currentURL(req); got != "https://id.test/v1/oauth/authorize?client_id=rp&scope=openid" {
+	if got := (&Handler{}).currentURL(req); got != "https://id.test/v1/oauth/authorize?client_id=rp&scope=openid" {
 		t.Errorf("currentURL = %q", got)
+	}
+	configured := &Handler{PublicBaseURL: "https://api.id.qeet.in"}
+	if got := configured.currentURL(req); got != "https://api.id.qeet.in/v1/oauth/authorize?client_id=rp&scope=openid" {
+		t.Errorf("currentURL with PublicBaseURL = %q", got)
 	}
 }
 
@@ -276,8 +282,8 @@ func TestValidateRegisteredRedirectURI(t *testing.T) {
 	}
 }
 
-// A public client authenticates with a client_id alone, which is in every
-// sign-in link, so it can't hold the flows that rely on client authentication.
+// TestPublicClientsCantHoldConfidentialFlows checks that a public client, which
+// authenticates with a client_id alone, can't hold flows that need client auth.
 func TestPublicClientsCantHoldConfidentialFlows(t *testing.T) {
 	base := CreateClientInput{Type: "public", RedirectURIs: []string{"https://spa.example/cb"}}
 	for _, grant := range []string{"token_exchange", grantTypeTokenExchange, grantTypeCIBA} {
@@ -293,8 +299,8 @@ func TestPublicClientsCantHoldConfidentialFlows(t *testing.T) {
 	}
 }
 
-// Discovery states which client authentication each endpoint accepts: a secret
-// (Basic or form) everywhere, and none only where a public client may call.
+// TestDiscovery_AdvertisesClientAuthMethods checks that discovery lists the
+// client authentication each endpoint accepts.
 func TestDiscovery_AdvertisesClientAuthMethods(t *testing.T) {
 	h := &Handler{Service: NewService(nil, testIssuer(t))}
 	r := chi.NewRouter()
@@ -320,6 +326,175 @@ func TestDiscovery_AdvertisesClientAuthMethods(t *testing.T) {
 			if got[i] != methods[i] {
 				t.Errorf("%s = %v, want %v", key, got, methods)
 			}
+		}
+	}
+}
+
+// TestLogoutTicketsVerify checks that the sign-out tickets this server signs
+// verify for what they name, and only for it.
+func TestLogoutTicketsVerify(t *testing.T) {
+	svc := NewService(nil, testIssuer(t))
+	session := uuid.New()
+	confirm, err := svc.logoutConfirmation(session)
+	if err != nil {
+		t.Fatalf("confirmation: %v", err)
+	}
+	if !svc.confirmedFor(confirm, session) {
+		t.Error("a confirmation ticket did not confirm its own session")
+	}
+	if svc.confirmedFor(confirm, uuid.New()) {
+		t.Error("a confirmation ticket confirmed another session")
+	}
+	next, err := svc.logoutContinuation("https://app.example.test/signed-out")
+	if err != nil {
+		t.Fatalf("continuation: %v", err)
+	}
+	if target, ok := svc.continuationTarget(next); !ok || target != "https://app.example.test/signed-out" {
+		t.Errorf("continuation target = %q, %t", target, ok)
+	}
+	if _, ok := svc.continuationTarget(confirm); ok {
+		t.Error("a confirmation ticket was taken as a continuation")
+	}
+}
+
+// decodeTokenError decodes an RFC 6749 §5.2 error body, failing on any other
+// shape.
+func decodeTokenError(t *testing.T, rec *httptest.ResponseRecorder) (code, description string) {
+	t.Helper()
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode %d response: %v (%s)", rec.Code, err, rec.Body.String())
+	}
+	code, ok := body["error"].(string)
+	if !ok || code == "" {
+		t.Fatalf("response %s has no string error", rec.Body.String())
+	}
+	for key := range body {
+		if key != "error" && key != "error_description" {
+			t.Errorf("response %s has member %q", rec.Body.String(), key)
+		}
+	}
+	description, _ = body["error_description"].(string)
+	return code, description
+}
+
+// TestTokenEndpointRefusesMalformedRequestsInOAuthShape checks the token
+// endpoint's answers to requests refused before any grant runs.
+func TestTokenEndpointRefusesMalformedRequestsInOAuthShape(t *testing.T) {
+	router := chi.NewRouter()
+	(&Handler{}).MountToken(router)
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		{"no grant_type", "code=abc", "invalid_request"},
+		{"an unknown grant_type", "grant_type=password", "unsupported_grant_type"},
+		{"a client_credentials grant", "grant_type=client_credentials", "unsupported_grant_type"},
+		{"a malformed resource", "grant_type=authorization_code&resource=relative/path", "invalid_target"},
+		{"a resource on device polling", "grant_type=" + grantTypeDeviceCode + "&resource=https://api.example.com", "invalid_target"},
+		{"an oversized form", "grant_type=refresh_token&refresh_token=" + strings.Repeat("x", int(httpx.MaxFormBodyBytes)), "invalid_request"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/oauth/token-code", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("status %d, want 400", rec.Code)
+			}
+			if code, _ := decodeTokenError(t, rec); code != tc.want {
+				t.Errorf("error %q, want %q", code, tc.want)
+			}
+		})
+	}
+}
+
+// TestWriteTokenError checks how the grants' errors are answered: in the RFC
+// 6749 §5.2 shape, invalid_client as 401 with a Basic challenge for a Basic
+// client, and an internal error as the generic 500.
+func TestWriteTokenError(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		err       error
+		basic     bool
+		status    int
+		code      string
+		challenge string
+	}{
+		{"bad Basic credentials", errs.ErrOIDCClientAuthFailed, true, http.StatusUnauthorized, "invalid_client", `Basic realm="qeet"`},
+		{"bad form credentials", errs.ErrOIDCClientAuthFailed, false, http.StatusUnauthorized, "invalid_client", ""},
+		{"an expired code", errs.ErrOIDCAuthCodeExpired, true, http.StatusBadRequest, "invalid_grant", ""},
+		{"a wrong code_verifier", errs.ErrOIDCCodeVerifierInvalid, false, http.StatusBadRequest, "invalid_grant", ""},
+		{"an invalid refresh token", errs.ErrOIDCRefreshTokenInvalid, false, http.StatusBadRequest, "invalid_grant", ""},
+		{"a suspended account", errs.ErrAuthAccountSuspended, false, http.StatusBadRequest, "invalid_grant", ""},
+		{"a grant the client may not use", errs.ErrOIDCGrantTypeNotAllowed, false, http.StatusBadRequest, "unauthorized_client", ""},
+		{"a scope beyond the subject's", errs.ErrOIDCScopeExceedsSubject, false, http.StatusBadRequest, "invalid_scope", ""},
+		{"an invalid subject token", errs.ErrOIDCSubjectTokenInvalid, false, http.StatusBadRequest, "invalid_request", ""},
+		{"an unregistered resource", oauthErr("invalid_target", "resource is not registered"), false, http.StatusBadRequest, "invalid_target", ""},
+		{"a poll too soon", oauthErr("slow_down", "polling too frequently"), false, http.StatusBadRequest, "slow_down", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/oauth/token-code", nil)
+			if tc.basic {
+				req.SetBasicAuth("qci_client", "secret")
+			}
+			rec := httptest.NewRecorder()
+			writeTokenError(rec, req, tc.err)
+			if rec.Code != tc.status {
+				t.Errorf("status %d, want %d", rec.Code, tc.status)
+			}
+			code, description := decodeTokenError(t, rec)
+			if code != tc.code || description == "" {
+				t.Errorf("error %q (%q), want %q with a description", code, description, tc.code)
+			}
+			if got := rec.Header().Get("WWW-Authenticate"); got != tc.challenge {
+				t.Errorf("WWW-Authenticate %q, want %q", got, tc.challenge)
+			}
+		})
+	}
+
+	rec := httptest.NewRecorder()
+	writeTokenError(rec, httptest.NewRequest(http.MethodPost, "/oauth/token-code", nil), errors.New("connection refused"))
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusInternalServerError || body.Error.Code != errs.CodeInternal {
+		t.Errorf("internal error = %d %s, want the generic 500", rec.Code, rec.Body.String())
+	}
+}
+
+// TestTokenSessionLive checks that only a user's own access token is checked
+// against its session, and that an ended session or a failed lookup makes it
+// not live.
+func TestTokenSessionLive(t *testing.T) {
+	liveSession, failingSession, lookupErr := uuid.New(), uuid.New(), errors.New("lookup failed")
+	s := &Service{sessionLive: func(_ context.Context, sessionID, _ uuid.UUID) (bool, error) {
+		switch sessionID {
+		case liveSession:
+			return true, nil
+		case failingSession:
+			return false, lookupErr
+		}
+		return false, nil
+	}}
+	user := uuid.New()
+	cases := map[string]struct {
+		claims  tokens.Claims
+		want    bool
+		wantErr error
+	}{
+		"own token, live session":  {tokens.Claims{UserID: user, SessionID: liveSession}, true, nil},
+		"own token, ended session": {tokens.Claims{UserID: user, SessionID: uuid.New()}, false, nil},
+		"own token, failed lookup": {tokens.Claims{UserID: user, SessionID: failingSession}, false, lookupErr},
+		"an application's token":   {tokens.Claims{UserID: user, SessionID: uuid.New(), ClientID: "app"}, true, nil},
+		"an agent's token":         {tokens.Claims{UserID: user, SessionID: uuid.New(), ActorType: "agent"}, true, nil},
+		"a token with no session":  {tokens.Claims{UserID: user}, true, nil},
+	}
+	for name, tc := range cases {
+		live, err := s.tokenSessionLive(context.Background(), &tc.claims)
+		if live != tc.want || !errors.Is(err, tc.wantErr) {
+			t.Errorf("%s: live %v, %v; want %v, %v", name, live, err, tc.want, tc.wantErr)
 		}
 	}
 }

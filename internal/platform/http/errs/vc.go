@@ -1,7 +1,6 @@
 package errs
 
-// Verifiable-credential (JWT-VC) error codes — stable, namespaced machine
-// identifiers. Clients branch and localize on these, never on the message text.
+// Verifiable credential (JWT-VC) error codes.
 const (
 	CodeVCSubjectTypeRequired = "vc.subject_type_required"
 	CodeVCClaimsInvalid       = "vc.claims_invalid"

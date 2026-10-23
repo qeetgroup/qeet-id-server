@@ -7,10 +7,6 @@ INSERT INTO tenant.groups (tenant_id, parent_id, name, description)
 VALUES ($1, $2, $3, $4)
 RETURNING id, tenant_id, parent_id, name, description, created_at;
 
--- name: ListGroups :many
-SELECT id, tenant_id, parent_id, name, description, created_at
-FROM tenant.groups WHERE tenant_id = $1 ORDER BY name;
-
 -- name: DeleteGroup :one
 DELETE FROM tenant.groups WHERE id = $1 AND tenant_id = $2 RETURNING name;
 
@@ -82,6 +78,7 @@ WHERE group_id = $1 AND user_id = $2 AND tenant_id = $3;
 -- the same rule as InsertGroupMember, so a row written for someone outside it
 -- never shows their email or name.
 -- name: ListGroupMembers :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT gm.user_id, u.email, u.display_name
 FROM tenant.group_members gm
 JOIN "user".users u ON u.id = gm.user_id
@@ -95,4 +92,5 @@ WHERE gm.group_id = $1 AND gm.tenant_id = $2 AND u.deleted_at IS NULL
           WHERE membership.user_id = gm.user_id AND membership.tenant_id = gm.tenant_id
       )
   )
-ORDER BY u.email;
+ORDER BY u.email
+LIMIT 1001;

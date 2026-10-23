@@ -26,12 +26,9 @@ type SessionsPurged struct {
 	TrustedDevices int64
 }
 
-// PurgeEndedSessions deletes the sessions that are past retention (see
-// SessionRetention) as of now. Live sessions — not revoked, with a refresh
-// token still usable inside the window — and sessions ended inside the window
-// are kept. A run with nothing to delete succeeds with zero counts. Sessions
-// that were never ended (every refresh token expired) are announced to
-// subscribers as expired, in the same transaction (signals may be nil).
+// PurgeEndedSessions deletes sessions past retention, keeping live sessions and
+// those ended inside the window. Sessions that simply expired are announced to
+// subscribers as expired in the same transaction; signals may be nil.
 func PurgeEndedSessions(ctx context.Context, pool *pgxpool.Pool, retention time.Duration, signals *sessionsignal.Signaller) (SessionsPurged, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {

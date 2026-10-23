@@ -1,10 +1,6 @@
 package tokenvault
 
-import (
-	"net/http"
-	"net/http/httptest"
-	"testing"
-)
+import "testing"
 
 func TestExpiresInSeconds(t *testing.T) {
 	cases := []struct {
@@ -64,20 +60,6 @@ func TestHTMLEscape(t *testing.T) {
 	want := `&lt;script&gt;alert("x")&lt;/script&gt; &amp; more`
 	if got != want {
 		t.Errorf("htmlEscape = %q, want %q", got, want)
-	}
-}
-
-func TestExternalScheme(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "http://id.example.com/x", nil)
-	r.Header.Set("X-Forwarded-Proto", "https")
-	if got := externalScheme(r); got != "https" {
-		t.Errorf("externalScheme with X-Forwarded-Proto=https = %q, want https", got)
-	}
-
-	local := httptest.NewRequest(http.MethodGet, "http://localhost:4001/x", nil)
-	local.Host = "localhost:4001"
-	if got := externalScheme(local); got != "http" {
-		t.Errorf("externalScheme for localhost = %q, want http", got)
 	}
 }
 

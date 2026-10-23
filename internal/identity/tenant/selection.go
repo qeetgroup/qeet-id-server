@@ -13,6 +13,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
+// EligibleOrganization is an organisation a person may switch to.
 type EligibleOrganization struct {
 	ID         uuid.UUID  `json:"id"`
 	Name       string     `json:"name"`
@@ -25,11 +26,14 @@ type EligibleOrganization struct {
 	LastUsedAt *time.Time `json:"last_used_at"`
 }
 
+// OrganizationSelectionPage is one page of eligible organisations.
 type OrganizationSelectionPage struct {
 	Items      []EligibleOrganization `json:"items"`
 	NextCursor string                 `json:"next_cursor"`
 }
 
+// EligibleOrganizations returns one page of the organisations the user may
+// switch to from the current session.
 func (r *Repository) EligibleOrganizations(ctx context.Context, userID, currentSessionID uuid.UUID, limit int, cursor string) (OrganizationSelectionPage, error) {
 	page := OrganizationSelectionPage{Items: []EligibleOrganization{}}
 	if limit < 1 || limit > 200 {

@@ -1,7 +1,7 @@
-// Package outbox is the shared transactional outbox helper.
-// Modules call Enqueue inside their own pgx.Tx; the Dispatcher polls
-// committed rows and hands them to a Publisher. For the monolith we ship
-// a logging publisher; swap in Kafka when first integrator needs it.
+// Package outbox is the transactional outbox. Modules call Enqueue inside their
+// own pgx.Tx; a Dispatcher polls committed rows and hands them to a Publisher
+// (NATS, or a log-only default), retrying with backoff and dead-lettering rows
+// that keep failing.
 package outbox
 
 import (
@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// Event is one message to publish once the enqueuing transaction commits.
 type Event struct {
 	ID          uuid.UUID
 	AggregateID uuid.UUID
@@ -40,17 +41,59 @@ func Enqueue(ctx context.Context, tx pgx.Tx, e Event) error {
 	return err
 }
 
-type Publisher interface {
-	Publish(ctx context.Context, eventID uuid.UUID, topic, eventType string, payload []byte) error
+// PublishedRetention is how long a published event is kept, to look into a
+// delivery. Its payload can hold personal data, so it doesn't stay for good.
+const PublishedRetention = 7 * 24 * time.Hour
+
+// purgeBatch bounds each purge statement, so a long backlog is deleted in
+// short statements rather than one that outlasts the statement timeout.
+var purgeBatch = 5000
+
+// PurgePublished deletes events published more than retention ago and returns
+// how many. Unpublished and dead-lettered events are left alone.
+func PurgePublished(ctx context.Context, pool *pgxpool.Pool, retention time.Duration) (int64, error) {
+	cutoff := time.Now().UTC().Add(-retention)
+	var total int64
+	for {
+		tag, err := pool.Exec(ctx, `
+			DELETE FROM platform.outbox
+			WHERE id IN (SELECT id FROM platform.outbox WHERE published_at < $1 LIMIT $2)
+		`, cutoff, purgeBatch)
+		if err != nil {
+			return total, err
+		}
+		total += tag.RowsAffected()
+		if tag.RowsAffected() < int64(purgeBatch) {
+			return total, nil
+		}
+	}
 }
 
+// Message is a committed event as a Publisher receives it.
+type Message struct {
+	ID         uuid.UUID
+	Topic      string
+	EventType  string
+	Payload    []byte    // the event's JSON payload
+	OccurredAt time.Time // when the enqueuing transaction wrote it
+}
+
+// Publisher delivers an event. A nil error marks the row published; an error
+// makes the Dispatcher retry it, so a Publisher may see an event again.
+type Publisher interface {
+	Publish(ctx context.Context, m Message) error
+}
+
+// LogPublisher logs each event instead of delivering it. It never fails.
 type LogPublisher struct{}
 
-func (LogPublisher) Publish(_ context.Context, eventID uuid.UUID, topic, eventType string, payload []byte) error {
-	slog.Info("outbox publish", "event_id", eventID, "topic", topic, "event", eventType, "payload_bytes", len(payload))
+func (LogPublisher) Publish(_ context.Context, m Message) error {
+	slog.Info("outbox publish", "event_id", m.ID, "topic", m.Topic, "event", m.EventType, "payload_bytes", len(m.Payload))
 	return nil
 }
 
+// Dispatcher leases due outbox rows in batches and publishes them. Leases make
+// concurrent dispatchers safe.
 type Dispatcher struct {
 	pool        *pgxpool.Pool
 	pub         Publisher
@@ -61,13 +104,13 @@ type Dispatcher struct {
 	lease       time.Duration
 }
 
-// DefaultMaxAttempts caps how many times the dispatcher retries before
-// moving the row to the dead-letter table. 10 gives ~17 minutes of
-// exponential backoff (capped at 5 min per step) which is more than
-// enough to ride out a transient publisher outage but stops infinite
-// log spam from a permanently malformed payload.
+// DefaultMaxAttempts is how many publishes are tried before a row moves to the
+// dead-letter table: about 14 minutes of backoff, enough to ride out a
+// publisher outage without retrying a malformed payload forever.
 const DefaultMaxAttempts = 10
 
+// NewDispatcher returns a Dispatcher polling every interval (default 2s) in
+// batches of batchSize (default 50).
 func NewDispatcher(pool *pgxpool.Pool, pub Publisher, interval time.Duration, batchSize int) *Dispatcher {
 	if interval <= 0 {
 		interval = 2 * time.Second
@@ -97,15 +140,9 @@ func (d *Dispatcher) Run(ctx context.Context) {
 	}
 }
 
-// Sweep claims and processes one due batch. It is exposed for operational
-// triggers and concurrency tests; leases make concurrent callers safe.
-func (d *Dispatcher) Sweep(ctx context.Context) error { return d.tick(ctx) }
-
 func (d *Dispatcher) tick(ctx context.Context) error {
-	// Pick rows that are either fresh (last_attempt_at IS NULL) or
-	// whose backoff window has elapsed. We deliberately compute the
-	// minimum gap in Go (via backoff()) rather than in SQL so the
-	// retry curve can change without a migration.
+	// Lease unleased rows that are new or whose backoff (2^attempts seconds,
+	// capped at 300) has elapsed.
 	rows, err := d.pool.Query(ctx, `
 		WITH candidates AS (
 			SELECT id
@@ -122,22 +159,19 @@ func (d *Dispatcher) tick(ctx context.Context) error {
 		SET lease_owner = $2, lease_until = $3
 		FROM candidates
 		WHERE event.id = candidates.id
-		RETURNING event.id, event.topic, event.event_type, event.payload, event.attempts
+		RETURNING event.id, event.topic, event.event_type, event.payload, event.created_at, event.attempts
 	`, d.batchSize, d.workerID, time.Now().UTC().Add(d.lease))
 	if err != nil {
 		return err
 	}
 	type row struct {
-		ID        uuid.UUID
-		Topic     string
-		EventType string
-		Payload   []byte
-		Attempts  int
+		Message
+		Attempts int
 	}
 	var batch []row
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.ID, &r.Topic, &r.EventType, &r.Payload, &r.Attempts); err != nil {
+		if err := rows.Scan(&r.ID, &r.Topic, &r.EventType, &r.Payload, &r.OccurredAt, &r.Attempts); err != nil {
 			rows.Close()
 			return err
 		}
@@ -155,7 +189,7 @@ func (d *Dispatcher) tick(ctx context.Context) error {
 		return nil
 	}
 	for _, r := range batch {
-		if err := d.pub.Publish(ctx, r.ID, r.Topic, r.EventType, r.Payload); err != nil {
+		if err := d.pub.Publish(ctx, r.Message); err != nil {
 			d.recordFailure(ctx, r.ID, r.Attempts+1, err)
 			continue
 		}

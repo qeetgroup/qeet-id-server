@@ -1,9 +1,7 @@
 package errs
 
-// SCIM provisioning error codes — stable, namespaced machine identifiers for the
-// tenant-scoped SCIM admin surface. Clients branch/localize on the code, never
-// the message. Once shipped, a code MUST NOT change. (The SCIM 2.0 protocol
-// surface itself emits the RFC 7644 error envelope, not these catalog errors.)
+// SCIM provisioning admin error codes. The SCIM 2.0 protocol endpoints use the
+// RFC 7644 error envelope instead.
 const (
 	CodeSCIMTenantIDInvalid = "scim.tenant_id_invalid"
 	CodeSCIMTenantMismatch  = "scim.tenant_mismatch"

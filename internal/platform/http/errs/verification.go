@@ -2,11 +2,9 @@ package errs
 
 // Email / phone verification error codes.
 const (
-	CodeVerifyCodeInvalid = "verification.code_invalid"
-	CodeVerifyCodeUsed    = "verification.code_used"
-	CodeVerifyCodeExpired = "verification.code_expired"
-	// Guess budget for a single code exhausted; the code is retired and the
-	// caller must request a new one.
+	CodeVerifyCodeInvalid      = "verification.code_invalid"
+	CodeVerifyCodeUsed         = "verification.code_used"
+	CodeVerifyCodeExpired      = "verification.code_expired"
 	CodeVerifyAttemptsExceeded = "verification.attempts_exceeded"
 
 	// Preconditions of the send-a-code flow (start email/phone verification).

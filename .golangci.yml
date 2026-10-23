@@ -6,30 +6,81 @@ run:
 linters:
   default: none
   enable:
-    - errcheck     # unchecked error returns — the most common silent failure in Go
-    - govet        # go vet: printf mismatches, unreachable code, shadow, etc.
-    - staticcheck  # comprehensive static analysis (replaces megacheck/gosimple/unused)
-    - misspell     # typos in comments and string literals
+    - errcheck
+    - govet
+    - staticcheck
+    - misspell
+    - unused
+    - ineffassign
+    - errorlint
+    - nilerr
+    - bodyclose
+    - sqlclosecheck
+    - rowserrcheck
+    - nolintlint
+    - forbidigo
+    - depguard
   settings:
     errcheck:
-      # These error returns are idiomatic to ignore:
-      #   - Close() on read paths (nothing actionable on failure)
-      #   - tx.Rollback() deferred after a Commit (a no-op once committed; the
-      #     real error is the one Commit/the operation returns)
+      # Close on read paths and Rollback after Commit have nothing actionable to report.
       exclude-functions:
         - (io.Closer).Close
         - (*os.File).Close
         - (github.com/jackc/pgx/v5.Tx).Rollback
+        - (*github.com/go-ldap/ldap/v3.Conn).Close
+        - (*net/smtp.Client).Close
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: ^http\.(DefaultClient|Get|Post|Head)$
+          pkg: ^net/http$
+          msg: outbound calls must use an egress-guarded client
+    depguard:
+      rules:
+        # R1: the platform layer must not depend on a bounded context or the wiring.
+        platform:
+          files:
+            - "**/internal/platform/**"
+          deny:
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/access
+              desc: platform must not import a bounded context (R1)
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/identity
+              desc: platform must not import a bounded context (R1)
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/federation
+              desc: platform must not import a bounded context (R1)
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/developer
+              desc: platform must not import a bounded context (R1)
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/operations
+              desc: platform must not import a bounded context (R1)
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/bootstrap
+              desc: wiring belongs in internal/bootstrap (R1)
+            - pkg: github.com/qeetgroup/qeet-id-server/cmd
+              desc: platform must not import a binary (R1)
+        # R2: bounded contexts must not depend on the wiring or a binary.
+        contexts:
+          files:
+            - "**/internal/access/**"
+            - "**/internal/identity/**"
+            - "**/internal/federation/**"
+            - "**/internal/developer/**"
+            - "**/internal/operations/**"
+          deny:
+            - pkg: github.com/qeetgroup/qeet-id-server/internal/bootstrap
+              desc: wiring belongs in internal/bootstrap (R2)
+            - pkg: github.com/qeetgroup/qeet-id-server/cmd
+              desc: a bounded context must not import a binary (R2)
   exclusions:
-    # Generated sqlc code (dbgen packages) is not hand-authored.
+    # Generated sqlc code.
     paths:
       - internal/.*/dbgen
     rules:
-      # Test helpers routinely discard errors intentionally.
       - path: _test\.go
-        linters: [errcheck]
+        linters: [errcheck, forbidigo]
 
 formatters:
   enable:
-    - gofmt      # enforces gofmt formatting
-    - goimports  # flags unused/ungrouped imports (standard std-vs-third-party grouping)
+    - gofmt
+    - goimports
