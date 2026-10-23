@@ -348,7 +348,8 @@ of platform
 **L4 pointers**
 
 ```text
-dependencies.go   645 lines — constructs every service and repository
+dependencies.go   505 lines — constructs every service and repository
+keys.go · mail.go · infra.go · sso.go · adapters.go — its building blocks (keys, message chain, limits, SSO identity, adapters)
 router.go         347 lines — middleware chain, route tree, all mounts
 permissions.go    216 lines — "METHOD /chi/route/pattern" → required permission
 app.go            131 lines — assembly

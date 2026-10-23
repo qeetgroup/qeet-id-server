@@ -204,8 +204,8 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 
 // lifecycle returns the StatusChange run when an organisation's status changes.
 // Suspending or deleting it ends and announces every session in it;
-// reactivating restores none. Each change is audited and queued as an event.
-// Access tokens already issued last out their short lifetime.
+// reactivating restores none, and the ended sessions' access tokens are refused
+// from then on. Each change is audited and queued as an event.
 func (h *Handler) lifecycle(r *http.Request) StatusChange {
 	return func(ctx context.Context, tx pgx.Tx, from, to string) error {
 		var action, reason string

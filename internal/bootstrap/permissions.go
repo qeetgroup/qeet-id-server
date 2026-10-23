@@ -186,14 +186,16 @@ func userPermissionMap() map[string]string {
 		"DELETE /v1/social/identities/{id}":                                                       "user.write",
 
 		// Webhooks.
-		"GET /v1/tenants/{tenantID}/webhooks":                  "webhook.read",
-		"GET /v1/tenants/{tenantID}/webhooks/events":           "webhook.read",
-		"GET /v1/webhooks/{id}":                                "webhook.read",
-		"GET /v1/webhooks/{id}/deliveries":                     "webhook.read",
-		"POST /v1/webhooks":                                    "webhook.write",
-		"DELETE /v1/webhooks/{id}":                             "webhook.write",
-		"POST /v1/webhooks/{id}/test":                          "webhook.write",
-		"POST /v1/webhooks/{id}/deliveries/{deliveryID}/retry": "webhook.write",
+		"GET /v1/tenants/{tenantID}/webhooks":                     "webhook.read",
+		"GET /v1/tenants/{tenantID}/webhooks/events":              "webhook.read",
+		"POST /v1/tenants/{tenantID}/webhooks/{id}/enable":        "webhook.write",
+		"POST /v1/tenants/{tenantID}/webhooks/{id}/rotate-secret": "webhook.write",
+		"GET /v1/webhooks/{id}":                                   "webhook.read",
+		"GET /v1/webhooks/{id}/deliveries":                        "webhook.read",
+		"POST /v1/webhooks":                                       "webhook.write",
+		"DELETE /v1/webhooks/{id}":                                "webhook.write",
+		"POST /v1/webhooks/{id}/test":                             "webhook.write",
+		"POST /v1/webhooks/{id}/deliveries/{deliveryID}/retry":    "webhook.write",
 
 		// Secrets vault.
 		"GET /v1/tenants/{tenantID}/secrets":              "secret.read",

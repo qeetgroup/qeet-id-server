@@ -234,6 +234,7 @@ uses `pgxpool` directly rather than the `database` helpers · **`access` does no
 |---|---|
 | `app.go` | Application assembly |
 | `dependencies.go` | Constructs every service and repository |
+| `keys.go` · `mail.go` · `infra.go` · `sso.go` · `adapters.go` | Its building blocks: vault and signing keys; the message chain; outbound policy, NATS, rate limits and the validator; SAML and platform social sign-in; cross-context adapters |
 | `router.go` | Builds the chi router, registers middleware, mounts every route |
 | `permissions.go` | Route → required-permission map consumed by `rbac.Enforce` |
 | `server.go` | HTTP server |

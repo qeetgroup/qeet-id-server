@@ -33,7 +33,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | | |
 |---|---|
 | Application lifecycle | `internal/bootstrap/app.go` |
-| Dependency construction | `internal/bootstrap/dependencies.go` |
+| Dependency construction | `internal/bootstrap/dependencies.go` (building blocks in `keys.go`, `mail.go`, `infra.go`, `sso.go`, `adapters.go`) |
 | **Router + middleware** | `internal/bootstrap/router.go` |
 | Route → permission map | `internal/bootstrap/permissions.go` |
 | HTTP server | `internal/bootstrap/server.go` |
