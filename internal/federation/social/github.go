@@ -17,7 +17,7 @@ import (
 
 const (
 	githubAuthorizeURL = "https://github.com/login/oauth/authorize"
-	githubTokenURL     = "https://github.com/login/oauth/access_token"
+	githubTokenURL     = "https://github.com/login/oauth/access_token" // #nosec G101 -- public endpoint URL
 	githubUserURL      = "https://api.github.com/user"
 	githubEmailsURL    = "https://api.github.com/user/emails"
 	githubScopes       = "read:user user:email"

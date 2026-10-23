@@ -87,6 +87,11 @@ type Config struct {
 	// the session.revoked and token.claims_change signals report revocation at once.
 	AccessTokenTTL  time.Duration `envconfig:"ACCESS_TOKEN_TTL" default:"10m"`
 	RefreshTokenTTL time.Duration `envconfig:"REFRESH_TOKEN_TTL" default:"720h"`
+	// RefreshTokenReuseGrace is how long after a refresh token's rotation the
+	// same token gets the rotation's pair again, for a client that raced itself
+	// or lost the answer, rather than ending the session as theft. 0 turns it
+	// off; at most RefreshTokenReuseGraceMax.
+	RefreshTokenReuseGrace time.Duration `envconfig:"REFRESH_TOKEN_REUSE_GRACE" default:"30s"`
 	// SessionMaxAge and SessionIdleTimeout bound API and console sessions when the
 	// organisation's policy sets none (or there is no organisation): a session ends
 	// SessionMaxAge after sign-in, or after SessionIdleTimeout without renewal.
@@ -162,6 +167,12 @@ type Config struct {
 	// LoginBaseURL is the origin of the hosted login app (qeetid-login) that
 	// the OAuth authorize flow redirects to for sign-in and consent.
 	LoginBaseURL string `envconfig:"LOGIN_BASE_URL" default:"http://localhost:3003"`
+
+	// PublicBaseURL is this API's own public origin (e.g. https://api.id.qeet.in).
+	// Every absolute URL the API returns is built on it: SAML entity IDs, OIDC
+	// discovery, SCIM locations and OAuth callbacks. Required in prod; empty
+	// elsewhere derives the origin from the request.
+	PublicBaseURL string `envconfig:"PUBLIC_BASE_URL" default:""`
 
 	// SalesEmail receives in-app "Contact sales" lead notifications (Enterprise).
 	SalesEmail string `envconfig:"SALES_EMAIL" default:"sales@qeet.in"`
@@ -373,6 +384,10 @@ const (
 	SessionIdleTimeoutMin = 15 * time.Minute
 )
 
+// RefreshTokenReuseGraceMax bounds the refresh reuse grace: a token used again
+// later than this is treated as stolen.
+const RefreshTokenReuseGraceMax = time.Minute
+
 // checkSessionLifetime rejects session bounds outside the limits above, an
 // idle timeout longer than the maximum age, and access tokens that outlive the
 // shortest idle timeout an organisation may set.
@@ -386,6 +401,9 @@ func (c *Config) checkSessionLifetime() error {
 	}
 	if c.AccessTokenTTL <= 0 || c.AccessTokenTTL >= SessionIdleTimeoutMin {
 		problems = append(problems, "ACCESS_TOKEN_TTL must be positive and shorter than 15m, the shortest session idle timeout")
+	}
+	if c.RefreshTokenReuseGrace < 0 || c.RefreshTokenReuseGrace > RefreshTokenReuseGraceMax {
+		problems = append(problems, "REFRESH_TOKEN_REUSE_GRACE must lie within 0..1m")
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("invalid session lifetime configuration:\n  - %s", strings.Join(problems, "\n  - "))
@@ -526,10 +544,16 @@ func (c *Config) Validate() error {
 	if o := strings.TrimSpace(c.AllowedOriginsRaw); o == "" || o == "*" {
 		problems = append(problems, "ALLOWED_ORIGINS must list explicit origins (a wildcard is unsafe with credentialed CORS)")
 	}
+	if c.PublicBaseURL != "" && !isOrigin(c.PublicBaseURL, c.ServiceEnv == EnvProd) {
+		problems = append(problems, "PUBLIC_BASE_URL must be an origin such as https://api.example.com (https in prod)")
+	}
 	switch c.ServiceEnv {
 	case EnvProd:
 		if u, err := url.Parse(c.AppBaseURL); err != nil || u.Hostname() == "" || isLocalHost(u.Hostname()) || isAnyKitZoneHost(u.Hostname()) {
 			problems = append(problems, "APP_BASE_URL must be a real public origin, not localhost or a kit zone")
+		}
+		if c.PublicBaseURL == "" {
+			problems = append(problems, "PUBLIC_BASE_URL is required in prod, so no absolute URL is built from a request's Host")
 		}
 	case EnvLocal:
 		// A local runtime is reachable only on this machine: its browser-facing
@@ -575,6 +599,18 @@ func isWeakSecret(s string) bool {
 		}
 	}
 	return false
+}
+
+// isOrigin reports whether raw is a bare http(s) origin: a scheme and host name
+// with no user, path, query or fragment, not even an empty one. With
+// httpsOnly, the scheme must be https.
+func isOrigin(raw string, httpsOnly bool) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" || u.User != nil || (u.Path != "" && u.Path != "/") ||
+		u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") {
+		return false
+	}
+	return u.Scheme == "https" || (u.Scheme == "http" && !httpsOnly)
 }
 
 func isLocalHost(h string) bool {

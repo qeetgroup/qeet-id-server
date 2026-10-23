@@ -196,9 +196,11 @@ type unscoredEvent struct {
 	CreatedAt   time.Time
 }
 
-func (s *Service) settingsFor(ctx context.Context, tenantID uuid.UUID) (Settings, error) {
+// settingsFor returns the tenant's settings, or the defaults if none are saved,
+// read through q.
+func settingsFor(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID) (Settings, error) {
 	st := Settings{TenantID: tenantID, Enabled: true, ScoreThreshold: defaultScoreThreshold, MinBaselineEvents: defaultMinBaselineEvents}
-	row, err := s.q.GetAnomalySettings(ctx, tenantID)
+	row, err := q.GetAnomalySettings(ctx, tenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return st, nil
 	}
@@ -275,7 +277,7 @@ func (s *Service) scoreOne(ctx context.Context, e unscoredEvent) error {
 		return tx.Commit(ctx)
 	}
 
-	settings, err := s.settingsFor(ctx, *e.TenantID)
+	settings, err := settingsFor(ctx, qTx, *e.TenantID)
 	if err != nil {
 		return err
 	}
@@ -469,7 +471,7 @@ func (s *Service) Resolve(ctx context.Context, tenantID, id, resolvedBy uuid.UUI
 
 // GetSettings returns the tenant's settings, or the defaults if none are saved.
 func (s *Service) GetSettings(ctx context.Context, tenantID uuid.UUID) (*Settings, error) {
-	st, err := s.settingsFor(ctx, tenantID)
+	st, err := settingsFor(ctx, s.q, tenantID)
 	return &st, err
 }
 
@@ -485,7 +487,7 @@ func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Set
 		TenantID:          tenantID,
 		Enabled:           in.Enabled,
 		ScoreThreshold:    in.ScoreThreshold,
-		MinBaselineEvents: int32(in.MinBaselineEvents),
+		MinBaselineEvents: int32(in.MinBaselineEvents), // #nosec G115 -- tenant's own threshold; truncation grants nothing
 	}); err != nil {
 		return nil, err
 	}

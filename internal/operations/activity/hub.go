@@ -104,13 +104,13 @@ func (h *Hub) dispatch(msg *nats.Msg) {
 
 // fanOut delivers ev to every subscriber of tenantID without blocking. A full
 // channel loses its oldest event to make room; if it is still full, ev is
-// dropped and logged.
+// dropped and logged. It holds the read lock throughout, because unsubscribe
+// rewrites the slice it iterates.
 func (h *Hub) fanOut(tenantID uuid.UUID, ev ActivityEvent) {
 	h.mu.RLock()
-	subs := h.subs[tenantID]
-	h.mu.RUnlock()
+	defer h.mu.RUnlock()
 
-	for _, s := range subs {
+	for _, s := range h.subs[tenantID] {
 		select {
 		case s.ch <- ev:
 			// Fast path: channel had room.

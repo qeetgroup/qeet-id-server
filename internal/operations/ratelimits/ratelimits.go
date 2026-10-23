@@ -6,6 +6,7 @@ package ratelimits
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -83,6 +84,24 @@ type LimitConfig struct {
 	Capacity *int     `json:"capacity"`
 }
 
+// MinRate is the lowest override rate, one request every 100 seconds; a bucket
+// that refills slower would outlive any store's expiry.
+const MinRate = 0.01
+
+// check refuses an override outside [MinRate, rate] requests a second or
+// [1, capacity] burst: an organisation may tighten its limits, never lift them
+// above the platform's, which protect every organisation sharing it.
+func (c LimitConfig) check(key string, rate float64, capacity int) error {
+	if c.Rate == nil || c.Capacity == nil {
+		return nil
+	}
+	if *c.Rate < MinRate || *c.Rate > rate || *c.Capacity < 1 || *c.Capacity > capacity {
+		return errs.ErrUnprocessable.WithDetail(fmt.Sprintf(
+			"%s: rate must be between %g and %g, capacity between 1 and %d", key, MinRate, rate, capacity))
+	}
+	return nil
+}
+
 type TenantLimits struct {
 	Tenant LimitConfig `json:"tenant"`
 	User   LimitConfig `json:"user"`
@@ -142,6 +161,17 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
+	}
+	d := h.Defaults
+	for _, err := range []error{
+		in.Tenant.check("tenant", d.TenantRate, d.TenantCapacity),
+		in.User.check("user", d.UserRate, d.UserCapacity),
+		in.APIKey.check("api_key", d.APIKeyRate, d.APIKeyCapacity),
+	} {
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
 	}
 	ctx := r.Context()
 	tx, err := h.Pool.Begin(ctx)

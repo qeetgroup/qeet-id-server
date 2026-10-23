@@ -98,7 +98,9 @@ func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string) *S
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 // toConnection maps a sqlc-generated row to the API-facing Connection type.
-func toConnection(r dbgen.TenantSamlConnection) *Connection {
+// The other connection queries return rows with the same fields, which
+// convert to dbgen.GetSamlConnectionRow.
+func toConnection(r dbgen.GetSamlConnectionRow) *Connection {
 	var lastLogin *time.Time
 	if r.LastLoginAt.Valid {
 		v := r.LastLoginAt.Time
@@ -130,7 +132,25 @@ type CreateInput struct {
 	Status         string `json:"status"`
 }
 
+// check trims the IdP SSO URL, then requires it to pass validIdPSSOURL and the
+// certificate to parse.
+func (in *CreateInput) check() error {
+	in.IdpSSOURL = strings.TrimSpace(in.IdpSSOURL)
+	if !validIdPSSOURL(in.IdpSSOURL) {
+		return errs.ErrSAMLSSOURLInvalid
+	}
+	if _, err := parseCertificate(in.IdpCertificate); err != nil {
+		return errs.ErrSAMLCertificateInvalid
+	}
+	return nil
+}
+
+// Create stores a connection in tenantID within tx, refusing input that fails
+// check whichever API sent it.
 func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in CreateInput) (*Connection, error) {
+	if err := in.check(); err != nil {
+		return nil, err
+	}
 	status := in.Status
 	if status == "" {
 		status = "draft"
@@ -148,7 +168,7 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 	if err != nil {
 		return nil, err
 	}
-	return toConnection(row), nil
+	return toConnection(dbgen.GetSamlConnectionRow(row)), nil
 }
 
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, error) {
@@ -158,7 +178,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, e
 	}
 	out := make([]Connection, len(rows))
 	for i, r := range rows {
-		out[i] = *toConnection(r)
+		out[i] = *toConnection(dbgen.GetSamlConnectionRow(r))
 	}
 	flags, err := s.idpInitiatedFlags(ctx, tenantID)
 	if err != nil {
@@ -218,7 +238,7 @@ func (s *Service) getByID(ctx context.Context, id uuid.UUID) (*Connection, error
 	if err != nil {
 		return nil, err
 	}
-	return toConnection(r), nil
+	return toConnection(dbgen.GetSamlConnectionRow(r)), nil
 }
 
 // UpdateInput changes a connection; a nil field is kept. AllowIdPInitiated opts
@@ -234,7 +254,29 @@ type UpdateInput struct {
 	AllowIdPInitiated *bool   `json:"allow_idp_initiated"`
 }
 
+// check applies CreateInput's checks to the fields being changed.
+func (in *UpdateInput) check() error {
+	if in.IdpSSOURL != nil {
+		sso := strings.TrimSpace(*in.IdpSSOURL)
+		if !validIdPSSOURL(sso) {
+			return errs.ErrSAMLSSOURLInvalid
+		}
+		in.IdpSSOURL = &sso
+	}
+	if in.IdpCertificate != nil {
+		if _, err := parseCertificate(*in.IdpCertificate); err != nil {
+			return errs.ErrSAMLCertificateInvalid
+		}
+	}
+	return nil
+}
+
+// Update changes the given fields of a connection in tenantID within tx,
+// refusing input that fails check whichever API sent it.
 func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, in UpdateInput) (*Connection, error) {
+	if err := in.check(); err != nil {
+		return nil, err
+	}
 	r, err := s.q.WithTx(tx).UpdateSamlConnection(ctx, dbgen.UpdateSamlConnectionParams{
 		ID:             id,
 		TenantID:       tenantID,
@@ -262,11 +304,13 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 			return nil, err
 		}
 	}
-	out := toConnection(r)
+	out := toConnection(dbgen.GetSamlConnectionRow(r))
 	if in.AllowIdPInitiated != nil {
 		out.AllowIdPInitiated = *in.AllowIdPInitiated
-	} else {
-		out.AllowIdPInitiated, _ = s.AllowsIdPInitiated(ctx, id)
+	} else if err := tx.QueryRow(ctx, `
+		SELECT allow_idp_initiated FROM tenant.saml_connections WHERE id = $1 AND tenant_id = $2
+	`, id, tenantID).Scan(&out.AllowIdPInitiated); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -330,10 +374,7 @@ func (s *Service) TestConnection(ctx context.Context, id, tenantID uuid.UUID) (*
 	}
 
 	add("IdP entity ID", strings.TrimSpace(c.IdpEntityID) != "", "The IdP's entity ID (issuer) must be set.")
-
-	u, perr := url.Parse(strings.TrimSpace(c.IdpSSOURL))
-	ssoOK := perr == nil && u.Scheme == "https" && u.Host != ""
-	add("IdP SSO URL", ssoOK, "Must be an absolute https:// URL.")
+	add("IdP SSO URL", validIdPSSOURL(strings.TrimSpace(c.IdpSSOURL)), "Must be an absolute https:// URL.")
 
 	cert, cerr := parseCertificate(c.IdpCertificate)
 	add("Signing certificate", cerr == nil, "Must be a valid PEM block or base64-encoded DER certificate.")
@@ -372,20 +413,24 @@ func parseCertificate(raw string) (*x509.Certificate, error) {
 	return x509.ParseCertificate(der)
 }
 
-func publicBase(r *http.Request) string {
-	scheme := "https"
-	if r.TLS == nil && (strings.HasPrefix(r.Host, "localhost") || strings.HasPrefix(r.Host, "127.0.0.1")) {
-		scheme = "http"
-	}
-	return scheme + "://" + r.Host
+// validIdPSSOURL reports whether raw is an absolute https URL with a host and
+// no userinfo, as the IdP SSO endpoint a browser is sent to must be.
+func validIdPSSOURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.Hostname() != "" && u.User == nil
 }
 
-func spEntityID(r *http.Request, id uuid.UUID) string {
-	return publicBase(r) + "/saml/metadata/" + id.String()
+// publicBase returns the origin SAML entity IDs and endpoint URLs are built on.
+func (h *Handler) publicBase(r *http.Request) string {
+	return httpx.PublicOrigin(r, h.PublicBaseURL)
 }
-func acsURL(r *http.Request, id uuid.UUID) string { return publicBase(r) + "/saml/acs/" + id.String() }
 
-func (s *Service) buildSP(r *http.Request, conn *Connection) (*saml2.SAMLServiceProvider, error) {
+func spEntityID(base string, id uuid.UUID) string { return base + "/saml/metadata/" + id.String() }
+func acsURL(base string, id uuid.UUID) string     { return base + "/saml/acs/" + id.String() }
+
+// buildSP returns the gosaml2 service provider for conn, with its entity ID,
+// audience and ACS URL built on base.
+func (s *Service) buildSP(base string, conn *Connection) (*saml2.SAMLServiceProvider, error) {
 	cert, err := parseCertificate(conn.IdpCertificate)
 	if err != nil {
 		return nil, err
@@ -393,9 +438,9 @@ func (s *Service) buildSP(r *http.Request, conn *Connection) (*saml2.SAMLService
 	return &saml2.SAMLServiceProvider{
 		IdentityProviderSSOURL:      conn.IdpSSOURL,
 		IdentityProviderIssuer:      conn.IdpEntityID,
-		ServiceProviderIssuer:       spEntityID(r, conn.ID),
-		AssertionConsumerServiceURL: acsURL(r, conn.ID),
-		AudienceURI:                 spEntityID(r, conn.ID),
+		ServiceProviderIssuer:       spEntityID(base, conn.ID),
+		AssertionConsumerServiceURL: acsURL(base, conn.ID),
+		AudienceURI:                 spEntityID(base, conn.ID),
 		SignAuthnRequests:           false,
 		IDPCertificateStore: &dsig.MemoryX509CertificateStore{
 			Roots: []*x509.Certificate{cert},
@@ -604,11 +649,12 @@ func (s *Service) touchLastLogin(ctx context.Context, connID uuid.UUID) {
 
 // Handler serves both SAML sides. IdP is optional: when nil, the /saml/idp/*
 // endpoints fail with ErrSAMLIdPNotConfigured and the SP-registry admin routes
-// aren't mounted. CookieSecure is currently unused: no handler here sets a cookie.
+// aren't mounted. PublicBaseURL is this API's public origin, or "" to build SAML
+// URLs from the request's Host.
 type Handler struct {
-	Service      *Service
-	IdP          *IdP
-	CookieSecure bool
+	Service       *Service
+	IdP           *IdP
+	PublicBaseURL string
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -638,10 +684,11 @@ func (h *Handler) MountPublic(r chi.Router) {
 	r.Post("/saml/acs/{id}", h.acs) // CSRF-exempt (see router.go); validated by signature
 	r.Post("/saml/exchange", h.exchange)
 
-	// IdP side (Qeet as IdP): metadata + SingleSignOnService (redirect + POST).
-	r.Get("/saml/idp/metadata", h.idpMetadata)
-	r.Get("/saml/idp/sso", h.idpSSO)
-	r.Post("/saml/idp/sso", h.idpSSO) // CSRF-exempt (see router.go); SP-initiated cross-origin POST
+	// IdP side (Qeet as IdP), per organisation: metadata + SingleSignOnService
+	// (redirect + POST).
+	r.Get("/saml/idp/{tenantID}/metadata", h.idpMetadata)
+	r.Get("/saml/idp/{tenantID}/sso", h.idpSSO)
+	r.Post("/saml/idp/{tenantID}/sso", h.idpSSO) // CSRF-exempt (see router.go); SP-initiated cross-origin POST
 }
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
@@ -723,8 +770,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSAMLConnectionFieldsRequired)
 		return
 	}
-	if _, err := parseCertificate(in.IdpCertificate); err != nil {
-		httpx.WriteError(w, r, errs.ErrSAMLCertificateInvalid)
+	if err := in.check(); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	ctx := r.Context()
@@ -810,11 +857,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSAMLStatusInvalid)
 		return
 	}
-	if in.IdpCertificate != nil {
-		if _, err := parseCertificate(*in.IdpCertificate); err != nil {
-			httpx.WriteError(w, r, errs.ErrSAMLCertificateInvalid)
-			return
-		}
+	if err := in.check(); err != nil {
+		httpx.WriteError(w, r, err)
+		return
 	}
 	ctx := r.Context()
 	tx, err := h.Service.Pool().Begin(ctx)
@@ -887,16 +932,17 @@ func (h *Handler) metadata(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	base := h.publicBase(r)
 	xml := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="%s">
   <SPSSODescriptor AuthnRequestsSigned="false" WantAssertionsSigned="true" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
     <NameIDFormat>urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress</NameIDFormat>
     <AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="%s" index="1" isDefault="true"/>
   </SPSSODescriptor>
-</EntityDescriptor>`, spEntityID(r, id), acsURL(r, id))
+</EntityDescriptor>`, spEntityID(base, id), acsURL(base, id))
 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
 	w.Header().Set("Content-Disposition", `attachment; filename="sp-metadata.xml"`)
-	_, _ = w.Write([]byte(xml))
+	_, _ = w.Write([]byte(xml)) // #nosec G705 -- XML download, not rendered as HTML
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
@@ -914,7 +960,12 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSAMLConnectionDisabled)
 		return
 	}
-	sp, err := h.Service.buildSP(r, conn)
+	if !validIdPSSOURL(conn.IdpSSOURL) {
+		slog.Error("saml login: IdP SSO URL is not an absolute https URL", "connection", conn.ID)
+		httpx.WriteError(w, r, errs.ErrSAMLConnectionMisconfigured)
+		return
+	}
+	sp, err := h.Service.buildSP(h.publicBase(r), conn)
 	if err != nil {
 		slog.Error("saml login: build SP", "err", err, "connection", conn.ID)
 		httpx.WriteError(w, r, errs.ErrSAMLConnectionMisconfigured)
@@ -943,7 +994,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrInternalServer)
 		return
 	}
-	http.Redirect(w, r, authURL, http.StatusFound)
+	http.Redirect(w, r, authURL, http.StatusFound) // #nosec G710 -- IdP SSO URL checked by validIdPSSOURL on save and above
 }
 
 func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
@@ -970,7 +1021,7 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSAMLResponseMissing)
 		return
 	}
-	sp, err := h.Service.buildSP(r, conn)
+	sp, err := h.Service.buildSP(h.publicBase(r), conn)
 	if err != nil {
 		slog.Error("saml acs: build SP", "err", err, "connection", conn.ID)
 		httpx.WriteError(w, r, errs.ErrSAMLConnectionMisconfigured)

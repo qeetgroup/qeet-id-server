@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -40,6 +41,8 @@ func AccessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		slot := &principalSlot{}
+		r = r.WithContext(context.WithValue(r.Context(), ctxKeyPrincipalSlot, slot))
 		next.ServeHTTP(ww, r)
 
 		status := ww.Status()
@@ -77,8 +80,8 @@ func AccessLog(next http.Handler) http.Handler {
 			)
 		}
 
-		// Identity fields — present after auth middleware has run.
-		if p := PrincipalFromCtx(r.Context()); p != nil {
+		// Identity fields, from the authentication below, if any.
+		if p := slot.p.Load(); p != nil {
 			if p.TenantID != nil {
 				attrs = append(attrs, slog.String("tenant_id", p.TenantID.String()))
 			}

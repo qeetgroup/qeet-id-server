@@ -7,10 +7,6 @@ INSERT INTO tenant.groups (tenant_id, parent_id, name, description)
 VALUES ($1, $2, $3, $4)
 RETURNING id, tenant_id, parent_id, name, description, created_at;
 
--- name: ListGroups :many
-SELECT id, tenant_id, parent_id, name, description, created_at
-FROM tenant.groups WHERE tenant_id = $1 ORDER BY name;
-
 -- name: DeleteGroup :one
 DELETE FROM tenant.groups WHERE id = $1 AND tenant_id = $2 RETURNING name;
 

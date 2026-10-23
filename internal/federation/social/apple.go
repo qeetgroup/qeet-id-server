@@ -30,7 +30,7 @@ import (
 
 const (
 	appleAuthorizeURL = "https://appleid.apple.com/auth/authorize"
-	appleTokenURL     = "https://appleid.apple.com/auth/token"
+	appleTokenURL     = "https://appleid.apple.com/auth/token" // #nosec G101 -- public endpoint URL
 	appleJWKSURL      = "https://appleid.apple.com/auth/keys"
 	appleAudience     = "https://appleid.apple.com"
 	appleScopes       = "name email"

@@ -5,6 +5,7 @@ package activity
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -144,44 +145,20 @@ var severityCriticalInfix = []string{
 	"malicious",
 }
 
-// severityErrorSuffixes are action suffixes for a failure or denial, which the
-// console shows as "Failed".
-var severityErrorSuffixes = []string{
-	".failed",
-	".locked",
-	".blocked",
-	".denied",
-	".rejected",
+// severityErrorWords mark a failure or denial, which the console shows as
+// "Failed".
+var severityErrorWords = []string{"failed", "locked", "blocked", "throttled", "denied", "rejected", "refused"}
+
+// severityWarningWords mark destructive but expected operations, which the
+// console shows as "Warning".
+var severityWarningWords = []string{
+	"deleted", "purged", "revoked", "rotated", "disabled", "suspended", "canceled", "reset", "decommissioned",
 }
 
-// severityWarningSuffixes are action suffixes for destructive but expected
-// operations, which the console shows as "Warning".
-var severityWarningSuffixes = []string{
-	".deleted",
-	".purged",
-	".revoked",
-	".rotated",
-	".disabled",
-	".suspended",
-	".canceled",
-	".reset",
-	".decommissioned",
-}
-
-// severitySuccessSuffixes are action suffixes that indicate a positive
-// transition.
-var severitySuccessSuffixes = []string{
-	".created",
-	".updated",
-	".enabled",
-	".activated",
-	".verified",
-	".accepted",
-	".login",
-	".refreshed",
-	".registered",
-	".enrolled",
-	".restored",
+// severitySuccessWords mark a positive transition.
+var severitySuccessWords = []string{
+	"created", "updated", "enabled", "activated", "verified", "accepted", "confirmed", "login", "succeeded",
+	"refreshed", "registered", "enrolled", "restored",
 }
 
 // categoryOf returns the category of an audit action: the first matching entry
@@ -196,8 +173,9 @@ func categoryOf(action string) string {
 }
 
 // severityOf returns the severity of an audit action. threat.* actions and
-// critical substrings come first, then the error, warning and success suffixes,
-// in that order; anything else is info.
+// critical substrings come first, then the error, warning and success words,
+// in that order, matched against every word of the action, split at "." and
+// "_": "auth.sign_in_failed" is an error. Anything else is info.
 func severityOf(action string) string {
 	// All threat.* actions represent detected security events.
 	if strings.HasPrefix(action, "threat.") {
@@ -208,20 +186,17 @@ func severityOf(action string) string {
 			return SeverityCritical
 		}
 	}
-	for _, s := range severityErrorSuffixes {
-		if strings.HasSuffix(action, s) {
-			return SeverityError
-		}
+	words := strings.FieldsFunc(action, func(r rune) bool { return r == '.' || r == '_' })
+	hasWord := func(set []string) bool {
+		return slices.ContainsFunc(words, func(w string) bool { return slices.Contains(set, w) })
 	}
-	for _, s := range severityWarningSuffixes {
-		if strings.HasSuffix(action, s) {
-			return SeverityWarning
-		}
-	}
-	for _, s := range severitySuccessSuffixes {
-		if strings.HasSuffix(action, s) {
-			return SeveritySuccess
-		}
+	switch {
+	case hasWord(severityErrorWords):
+		return SeverityError
+	case hasWord(severityWarningWords):
+		return SeverityWarning
+	case hasWord(severitySuccessWords):
+		return SeveritySuccess
 	}
 	return SeverityInfo
 }

@@ -5,7 +5,7 @@ package totp
 import (
 	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 -- HMAC-SHA1 is required by RFC 6238
 	"encoding/base32"
 	"encoding/binary"
 	"fmt"
@@ -45,7 +45,7 @@ func Code(secret string, t time.Time) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	counter := uint64(t.Unix() / period)
+	counter := uint64(t.Unix() / period) // #nosec G115 -- current time, never before 1970
 	var b [8]byte
 	binary.BigEndian.PutUint64(b[:], counter)
 	mac := hmac.New(sha1.New, key)

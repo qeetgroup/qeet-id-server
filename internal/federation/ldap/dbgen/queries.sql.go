@@ -157,6 +157,7 @@ func (q *Queries) LinkExternalIdentity(ctx context.Context, arg LinkExternalIden
 }
 
 const listLdapConnections = `-- name: ListLdapConnections :many
+
 SELECT id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
        base_dn, user_filter, email_attribute, name_attribute, status,
        created_at, updated_at, last_login_at
@@ -181,6 +182,9 @@ type ListLdapConnectionsRow struct {
 	LastLoginAt    pgtype.Timestamptz
 }
 
+// Queries for the ldap domain.
+// All queries below are STATIC and compiled by sqlc into ./dbgen.
+// getFull (conditional WHERE tenant_id) stays hand-written in ldap.go.
 func (q *Queries) ListLdapConnections(ctx context.Context, tenantID uuid.UUID) ([]ListLdapConnectionsRow, error) {
 	rows, err := q.db.Query(ctx, listLdapConnections, tenantID)
 	if err != nil {
@@ -233,11 +237,11 @@ UPDATE tenant.ldap_connections SET
     start_tls       = COALESCE($3, start_tls),
     skip_tls_verify = COALESCE($4, skip_tls_verify),
     bind_dn         = COALESCE($5, bind_dn),
-	base_dn         = COALESCE($6, base_dn),
-	user_filter     = COALESCE($7, user_filter),
-	email_attribute = COALESCE($8, email_attribute),
-	name_attribute  = COALESCE($9, name_attribute),
-	status          = COALESCE($10, status),
+    base_dn         = COALESCE($6, base_dn),
+    user_filter     = COALESCE($7, user_filter),
+    email_attribute = COALESCE($8, email_attribute),
+    name_attribute  = COALESCE($9, name_attribute),
+    status          = COALESCE($10, status),
     updated_at      = NOW()
 WHERE id = $11 AND tenant_id = $12
 RETURNING id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,

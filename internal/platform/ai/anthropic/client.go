@@ -42,7 +42,7 @@ func New(apiKey, baseURL, model string, maxTokens int, httpClient *http.Client) 
 		maxTokens = 4096
 	}
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = http.DefaultClient //nolint:forbidigo // documented nil default; qeetai always passes an egress-bounded client
 	}
 	return &Client{
 		APIKey:     apiKey,

@@ -44,12 +44,19 @@ func gracefulShutdown(
 	if err := srv.Shutdown(httpCtx); err != nil {
 		slog.Error("http shutdown", "err", err)
 	}
+	for _, hook := range deps.shutdownHooks {
+		hook()
+	}
 
 	workerCtx, cancelWorkers := context.WithTimeout(context.Background(), workerDrainTimeout)
 	defer cancelWorkers()
 	workerDone := make(chan struct{})
 	go func() {
 		waitWorkers()
+		// Links already answered as sent finish storing and sending.
+		if deps.Recovery != nil {
+			deps.Recovery.Service.Wait()
+		}
 		close(workerDone)
 	}()
 	select {

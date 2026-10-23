@@ -165,6 +165,33 @@ func TestNoAuthenticatedRouteIsCSRFExempt(t *testing.T) {
 
 var routeParamPattern = regexp.MustCompile(`\{[^}]+\}`)
 
+// TestEveryCSRFExemptionMatchesARoute checks that each CSRF exemption matches at
+// least one mounted mutation route, so a mistyped path can't exempt nothing
+// while the route it meant stays blocked.
+func TestEveryCSRFExemptionMatchesARoute(t *testing.T) {
+	var paths []string
+	for key := range productionRouteInventory(t) {
+		method, path, _ := strings.Cut(key, " ")
+		switch method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			continue // read-only methods never reach the CSRF check
+		}
+		paths = append(paths, routeParamPattern.ReplaceAllString(path, "00000000-0000-0000-0000-000000000000"))
+	}
+	for _, pattern := range csrfExemptPaths() {
+		matched := false
+		for _, p := range paths {
+			if httpx.MatchExemptPathForTest(pattern, p) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			t.Errorf("CSRF exemption %q matches no mounted mutation route: fix the path or remove it", pattern)
+		}
+	}
+}
+
 // TestLoginSessionRoutesStayNarrow guards the routes that accept the hosted
 // login's session cookie in place of a bearer token: exactly the passkey list,
 // rename and enrolment routes, each mounted in the authenticated tree, open to
@@ -377,7 +404,7 @@ func TestServerCallersPassTheCSRFCheck(t *testing.T) {
 	}{
 		{name: "an API-key write", path: "/v1/users", authorization: "ApiKey qk_test", want: true},
 		{name: "the service-principal token exchange", path: "/v1/oauth/token", contentType: "application/x-www-form-urlencoded", want: true},
-		{name: "a directory sign-in", path: "/v1/ldap/" + uuid.NewString() + "/authenticate", want: true},
+		{name: "a directory sign-in", path: "/ldap/" + uuid.NewString() + "/authenticate", want: true},
 		{name: "a cookie change without the token", path: "/v1/passkeys/register/begin", cookie: "qe_ls=session", origin: "https://console.example"},
 		{name: "a cross-site form post", path: "/v1/auth/session", origin: "https://attacker.example", contentType: "text/plain"},
 		{name: "Basic credentials from another site", path: "/v1/users", authorization: "Basic dXNlcjpwYXNz", origin: "https://attacker.example"},

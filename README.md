@@ -113,7 +113,7 @@ tests/        architecture · integration · performance · security · fixtures
 docs/llm/     architecture documentation for coding agents
 ```
 
-Two boundary rules (not enforced by a test):
+Two boundary rules, enforced by lint (`depguard`):
 `internal/platform/*` must not import a bounded context, `cmd/*` or `internal/bootstrap`; and a
 bounded context must not import `cmd/*` or `internal/bootstrap`.
 
@@ -209,7 +209,9 @@ Every target in the [Makefile](./Makefile) — there are no others.
 | `make dev-secrets` | Generate the local JWT and SAML key material only |
 | `make build` | Compile the API to `bin/qeet-id` |
 | `make test` | Run the unit tests |
-| `make lint` | Run `go vet ./...` |
+| `make test-db` | Run the database tests against PostgreSQL; Docker required |
+| `make lint` | Run `go vet` and `golangci-lint` as CI does |
+| `make sqlc` / `sqlc-check` | Regenerate `dbgen/` from `queries.sql`, or check it is up to date |
 | `make db-up` / `db-down` | Start or stop PostgreSQL, NATS and Mailpit |
 | `make db-reset` | Recreate the local database volume |
 | `make migrate-up` / `migrate-down` | Apply or roll back one migration; needs the `migrate` CLI |
@@ -224,12 +226,8 @@ Before opening a pull request:
 go build ./... && go test -race ./... && make lint
 ```
 
-CI adds race detection, `golangci-lint` on changed code, integration tests, `govulncheck`, and
-an advisory `gosec` scan.
-
-> [!NOTE]
-> **`make lint` is `go vet` only.** CI additionally runs `golangci-lint` v2.14.0 against new and
-> changed code. A clean local lint does not guarantee a green CI lint.
+CI also runs the database tests, checks that generated SQL is up to date, and runs `govulncheck`
+and a `gosec` scan.
 
 ## 📚 API & Documentation
 

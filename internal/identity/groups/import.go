@@ -2,12 +2,12 @@ package group
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -64,7 +64,7 @@ func (s *Service) ImportGroups(
 	// case-insensitively.
 	byName := make(map[string]uuid.UUID, len(existing)+len(rows))
 	for _, g := range existing {
-		byName[strings.ToLower(g.Name)] = g.ID
+		byName[strings.ToLower(strings.TrimSpace(g.Name))] = g.ID
 	}
 
 	res := &ImportResult{Rows: make([]ImportRowResult, 0, len(rows))}
@@ -113,7 +113,7 @@ func (s *Service) ImportGroups(
 			}, actor)
 			if err != nil {
 				reason := "could not be created"
-				if pgxerr.IsUnique(err) {
+				if errors.Is(err, errs.ErrGroupNameExists) {
 					reason = "a group with this name already exists"
 				}
 				res.Failed++

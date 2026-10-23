@@ -6,6 +6,7 @@ package risk
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -99,10 +100,10 @@ type Service struct {
 
 func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool, q: dbgen.New(pool)} }
 
-// Assess returns the risk Level of a sign-in and records its device and country
-// for later assessments. country comes from the caller; "" disables the
-// impossible-travel check. Database errors fail open (Low, or the signal is
-// skipped), so a broken risk table never blocks sign-in.
+// Assess returns the risk Level of a sign-in against earlier completed ones,
+// which RecordSignIn adds. country "" disables the impossible-travel check.
+// Database errors fail open (Low, or the signal is skipped), so a broken risk
+// table never blocks sign-in.
 func (s *Service) Assess(ctx context.Context, tenantID, userID uuid.UUID, ip, ua, country string) Level {
 	settings, err := s.GetSettings(ctx, tenantID)
 	if err != nil {
@@ -129,9 +130,14 @@ func (s *Service) Assess(ctx context.Context, tenantID, userID uuid.UUID, ip, ua
 		}
 	}
 
-	s.recordLogin(ctx, tenantID, userID, dk, country)
-
 	return computeLevel(settings, bot.Score(ua), impossibleTravel, newDevice)
+}
+
+// RecordSignIn records a completed sign-in's device and country for later
+// assessments. A sign-in still to meet a challenge, or refused, is not
+// recorded, so asking again is assessed the same.
+func (s *Service) RecordSignIn(ctx context.Context, tenantID, userID uuid.UUID, ua, country string) {
+	s.recordLogin(ctx, tenantID, userID, deviceKey(ua), country)
 }
 
 // ForceMFA reports whether the risk level should force MFA regardless of
@@ -149,8 +155,9 @@ func (s *Service) ForceMFA(ctx context.Context, tenantID uuid.UUID, level Level)
 	}
 }
 
-// ShouldForceMFA satisfies auth.RiskAssessor: it assesses the request and
-// reports whether its level reaches the tenant's force-MFA level.
+// ShouldForceMFA satisfies auth.RiskAssessor: it assesses the request, without
+// recording it, and reports whether its level reaches the tenant's force-MFA
+// level.
 func (s *Service) ShouldForceMFA(ctx context.Context, tenantID, userID uuid.UUID, ip, ua, country string) bool {
 	level := s.Assess(ctx, tenantID, userID, ip, ua, country)
 	return s.ForceMFA(ctx, tenantID, level)
@@ -158,7 +165,7 @@ func (s *Service) ShouldForceMFA(ctx context.Context, tenantID, userID uuid.UUID
 
 func (s *Service) GetSettings(ctx context.Context, tenantID uuid.UUID) (Settings, error) {
 	row, err := s.q.GetRiskSettings(ctx, tenantID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return defaultSettings(), nil
 	}
 	if err != nil {

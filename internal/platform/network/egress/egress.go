@@ -157,19 +157,99 @@ func (p *Policy) validateIP(ip net.IP) error {
 		return errors.New("outbound destination resolved to an invalid address")
 	}
 	addr = addr.Unmap()
+	embedded, hasEmbedded := embeddedIPv4(addr)
 	for _, prefix := range p.allowedPrivate {
-		if prefix.Contains(addr) {
+		if prefix.Contains(addr) || (hasEmbedded && prefix.Contains(embedded)) {
 			return nil
 		}
 	}
 	if p.allowAllPrivate {
 		return nil
 	}
-	if addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() ||
-		addr.IsLinkLocalMulticast() || addr.IsMulticast() || addr.IsUnspecified() {
+	if !isPublic(addr) || (hasEmbedded && !isPublic(embedded)) {
 		return fmt.Errorf("outbound destination address %s is not public", addr)
 	}
 	return nil
+}
+
+// nonPublicIPv4 lists IPv4 ranges that are not publicly routable and that the
+// netip predicates used by isPublic do not cover.
+var nonPublicIPv4 = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),     // "this network"
+	netip.MustParsePrefix("100.64.0.0/10"), // shared address space
+	netip.MustParsePrefix("192.0.0.0/24"),  // IETF protocol assignments
+	netip.MustParsePrefix("198.18.0.0/15"), // benchmarking
+	netip.MustParsePrefix("240.0.0.0/4"),   // reserved, including broadcast
+}
+
+// IPv6 prefixes whose addresses carry an IPv4 destination.
+var (
+	nat64WellKnown = netip.MustParsePrefix("64:ff9b::/96")
+	sixToFour      = netip.MustParsePrefix("2002::/16")
+)
+
+// globalUnicast is the only IPv6 range treated as public, less nonPublicIPv6.
+var globalUnicast = netip.MustParsePrefix("2000::/3")
+
+// nonPublicIPv6 lists the parts of globalUnicast that are not publicly routable.
+var nonPublicIPv6 = []netip.Prefix{
+	netip.MustParsePrefix("2001::/23"),     // IETF protocol assignments, including Teredo
+	netip.MustParsePrefix("2001:db8::/32"), // documentation
+	netip.MustParsePrefix("3fff::/20"),     // documentation
+}
+
+// isPublic reports whether addr is publicly routable. For a NAT64 or 6to4
+// address it judges only the IPv6 prefix; validateIP checks the IPv4 address
+// the prefix carries.
+func isPublic(addr netip.Addr) bool {
+	if addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() ||
+		addr.IsLinkLocalMulticast() || addr.IsMulticast() || addr.IsUnspecified() {
+		return false
+	}
+	if addr.Is6() {
+		return isPublicIPv6(addr)
+	}
+	for _, prefix := range nonPublicIPv4 {
+		if prefix.Contains(addr) {
+			return false
+		}
+	}
+	return true
+}
+
+// isPublicIPv6 reports whether addr is global unicast outside nonPublicIPv6.
+// The well-known NAT64 prefix lies outside global unicast but is allowed, so a
+// host on an IPv6-only network with DNS64 can still reach public IPv4 targets.
+func isPublicIPv6(addr netip.Addr) bool {
+	if nat64WellKnown.Contains(addr) {
+		return true
+	}
+	if !globalUnicast.Contains(addr) {
+		return false
+	}
+	for _, prefix := range nonPublicIPv6 {
+		if prefix.Contains(addr) {
+			return false
+		}
+	}
+	return true
+}
+
+// embeddedIPv4 returns the IPv4 address carried by a well-known-prefix NAT64 or
+// a 6to4 address, so the IPv4 rules apply to it. NAT64 addresses use the /96
+// layout, with the IPv4 address in the last four bytes.
+func embeddedIPv4(addr netip.Addr) (netip.Addr, bool) {
+	if !addr.Is6() {
+		return netip.Addr{}, false
+	}
+	b := addr.As16()
+	switch {
+	case nat64WellKnown.Contains(addr):
+		return netip.AddrFrom4([4]byte(b[12:16])), true
+	case sixToFour.Contains(addr):
+		return netip.AddrFrom4([4]byte(b[2:6])), true
+	}
+	return netip.Addr{}, false
 }
 
 func (p *Policy) resolveAllowed(ctx context.Context, host string) ([]net.IP, error) {

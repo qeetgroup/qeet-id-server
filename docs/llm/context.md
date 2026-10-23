@@ -187,7 +187,7 @@ Every leaf package additionally carries `queries.sql` + `sqlc.yaml` + a generate
 
 ## Dependency rules
 
-**Status:** documented rule — no test enforces it
+**Status:** enforced by `depguard` in `.golangci.yml` (lint fails on a violation)
 
 ```text
 cmd/*  →  internal/bootstrap  →  internal/<context>  →  internal/platform
@@ -467,11 +467,12 @@ dead-letter
 
 Workers run **embedded in `cmd/api` by default**; set `EMBEDDED_WORKERS=false` when `cmd/worker`
 runs them standalone. Webhook, outbox, and GDPR queues use durable PostgreSQL leases with
-owner-conditional finalization; retries retain stable event/delivery IDs. Registered workers:
-webhooks, audit anomaly, GDPR, retention, SIEM, outbox dispatch.
+owner-conditional finalization; retries retain stable event/delivery IDs. Registered workers, one
+list in `bootstrap/dependencies.go` that both binaries run: signing-key refresh, outbox dispatch,
+OIDC back-channel logout, webhooks, GDPR, retention, SIEM, audit anomaly, scheduler.
 
 Scheduled maintenance (audit-chain verification of every organisation, session, MFA, sign-in
-history and dead-letter cleanup) is `bootstrap.MaintenanceJobs`, run by `worker.RunScheduled`: the
+history, published-outbox and dead-letter cleanup) is `bootstrap.MaintenanceJobs`, run by `worker.RunScheduled`: the
 API runs it as its embedded `scheduler` worker, and `cmd/scheduler` or `cmd/worker` can run it
 standalone. Each job is claimed in `platform.scheduled_job_runs` before it runs, so it runs once per
 interval however many instances run it; each verification is stored in
@@ -534,16 +535,16 @@ documents, including API-auth security classification.
 | Job | What it runs |
 |---|---|
 | `test` | `go build ./...` · `go vet ./...` · `go test -race -count=1 ./...` |
-| `lint` | `golangci-lint` v2.14.0 — new code only |
+| `database` | `go test -tags integration ./...` against PostgreSQL (testcontainers) |
+| `lint` | `golangci-lint` v2.14.0 on the whole tree · `sqlc diff` in every package |
 | `vuln` | `govulncheck ./cmd/... ./internal/...` blocking · advisory full-tree scan |
-| `sast` | `gosec` — advisory |
+| `sast` | `gosec` — blocking; `#nosec` needs a rule and a reason |
 | `deploy` | On push to `main`: build, deploy to AWS via GitHub OIDC, then tag |
 
-`.golangci.yml` enables `errcheck`, `govet`, `staticcheck`, `misspell` plus `gofmt`/`goimports`;
-`dbgen` packages are excluded.
-
-**`make lint` runs `go vet` only** — it is not the CI lint. Passing it locally does not mean CI
-lint passes.
+`.golangci.yml` enables `errcheck`, `govet`, `staticcheck`, `misspell`, `unused`, `ineffassign`,
+`errorlint`, `nilerr`, `bodyclose`, `sqlclosecheck`, `rowserrcheck`, `nolintlint`, `forbidigo` and
+`depguard` (R1/R2), plus `gofmt`/`goimports`; `dbgen` packages are excluded. `make lint` runs the
+same lint as CI.
 
 ## Deployment
 

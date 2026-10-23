@@ -234,47 +234,6 @@ func (q *Queries) ListGroupMembers(ctx context.Context, arg ListGroupMembersPara
 	return items, nil
 }
 
-const listGroups = `-- name: ListGroups :many
-SELECT id, tenant_id, parent_id, name, description, created_at
-FROM tenant.groups WHERE tenant_id = $1 ORDER BY name
-`
-
-type ListGroupsRow struct {
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-	ParentID    pgtype.UUID
-	Name        string
-	Description string
-	CreatedAt   time.Time
-}
-
-func (q *Queries) ListGroups(ctx context.Context, tenantID uuid.UUID) ([]ListGroupsRow, error) {
-	rows, err := q.db.Query(ctx, listGroups, tenantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListGroupsRow{}
-	for rows.Next() {
-		var i ListGroupsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.TenantID,
-			&i.ParentID,
-			&i.Name,
-			&i.Description,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const updateGroup = `-- name: UpdateGroup :one
 UPDATE tenant.groups
 SET name        = COALESCE($1, name),

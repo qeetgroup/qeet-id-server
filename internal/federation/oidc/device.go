@@ -33,10 +33,13 @@ const (
 	userCodeGroups     = 2                      // groups per user code
 )
 
+// grantTypeDeviceCode is the RFC 8628 grant_type.
+const grantTypeDeviceCode = "urn:ietf:params:oauth:grant-type:device_code"
+
 // oauthError is an RFC 6749 §5.2 / RFC 8628 §3.5 token-endpoint error. Unlike
 // the canonical errs.Error envelope, the OAuth token endpoint must answer with
 // the flat {"error", "error_description"} JSON shape that OAuth clients parse,
-// so the device-grant token branch returns this and writeOAuthError renders it.
+// so the grants return this and writeOAuthError renders it.
 type oauthError struct {
 	Code        string
 	Description string
@@ -51,15 +54,19 @@ func (e *oauthError) Error() string {
 
 func oauthErr(code, desc string) *oauthError { return &oauthError{Code: code, Description: desc} }
 
-// writeOAuthError renders an RFC 6749 §5.2 error body. All device-grant
-// polling errors (authorization_pending, slow_down, access_denied,
-// expired_token, invalid_grant, invalid_request) use HTTP 400 per the RFC.
+// writeOAuthError renders an RFC 6749 §5.2 error body: 401 for invalid_client,
+// 400 for every other code, the device grant's polling errors
+// (authorization_pending, slow_down, access_denied, expired_token) included.
 func writeOAuthError(w http.ResponseWriter, e *oauthError) {
 	body := map[string]string{"error": e.Code}
 	if e.Description != "" {
 		body["error_description"] = e.Description
 	}
-	httpx.WriteJSON(w, http.StatusBadRequest, body)
+	status := http.StatusBadRequest
+	if e.Code == "invalid_client" {
+		status = http.StatusUnauthorized
+	}
+	httpx.WriteJSON(w, status, body)
 }
 
 // DeviceAuthResponse is the RFC 8628 §3.2 device-authorization response.
@@ -226,15 +233,21 @@ func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode s
 	}
 	// CheckUserInDeviceTenant doesn't check that the user and tenant are still
 	// active, so refuse suspended users here, as the authorization-code path does.
-	live, err := s.activeTenantPrincipal(ctx, userID, row.TenantID)
+	live, err := s.activeTenantPrincipal(ctx, tx, userID, row.TenantID)
 	if err != nil {
 		return err
 	}
 	if !live {
 		return errs.ErrOIDCUserTenantMismatch
 	}
-	// Approving is the person's sign-in to the application.
-	if err := s.checkAddress(ctx, row.TenantID, userID, ip, "device_approval"); err != nil {
+	// Approving is the person's sign-in to the application. Nothing else is
+	// written yet, so committing keeps only the refusal's record.
+	if err := s.checkAddressTx(ctx, tx, row.TenantID, userID, ip, "device_approval"); err != nil {
+		if errors.Is(err, errs.ErrAuthAddressNotAllowed) {
+			if cerr := tx.Commit(ctx); cerr != nil {
+				return cerr
+			}
+		}
 		return err
 	}
 
@@ -254,11 +267,14 @@ func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode s
 	return tx.Commit(ctx)
 }
 
-// DeviceToken implements the RFC 8628 §3.5 polling exchange. It enforces the
-// poll interval (slow_down) and, on approval, consumes the device_code and
-// issues the same tokens as the authorization-code flow. ip is the device's
-// address, which the organisation's address rules must also allow.
-func (s *Service) DeviceToken(ctx context.Context, clientID, rawDeviceCode, ip string) (*TokenResponse, error) {
+// DeviceToken implements the RFC 8628 §3.5 polling exchange: it enforces the
+// poll interval (slow_down) and, on approval, issues the authorization-code
+// flow's tokens. A confidential client authenticates as at the other grants;
+// ip is the device's address, which the organisation's rules must allow.
+func (s *Service) DeviceToken(ctx context.Context, clientID, clientSecret, rawDeviceCode, ip string) (*TokenResponse, error) {
+	if _, err := s.authenticateClient(ctx, clientID, clientSecret); err != nil {
+		return nil, err
+	}
 	if rawDeviceCode == "" {
 		return nil, oauthErr("invalid_request", "device_code required")
 	}
@@ -355,8 +371,9 @@ func (s *Service) DeviceToken(ctx context.Context, clientID, rawDeviceCode, ip s
 		return nil, oauthErr("invalid_grant", "account_suspended")
 	}
 	// A device on an address the organisation doesn't allow gets nothing; the
-	// code is spent, so the flow starts again from an allowed one.
-	if err := s.checkAddress(ctx, dc.TenantID, *userID, ip, "device"); err != nil {
+	// code is spent, so the flow starts again from an allowed one. The refusal
+	// is recorded in tx and commits with the spent code.
+	if err := s.checkAddressTx(ctx, tx, dc.TenantID, *userID, ip, "device"); err != nil {
 		if !errors.Is(err, errs.ErrAuthAddressNotAllowed) {
 			return nil, err
 		}

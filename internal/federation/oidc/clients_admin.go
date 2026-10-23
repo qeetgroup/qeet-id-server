@@ -254,6 +254,10 @@ func (h *Handler) createTenantClient(w http.ResponseWriter, r *http.Request) {
 	}
 	in.TenantID = tenantID // path/JWT tenant wins over the body
 	ctx := r.Context()
+	if err := h.Service.checkClientLimit(ctx, tenantID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	tx, err := h.Service.Pool().Begin(ctx)
 	if err != nil {
 		httpx.WriteError(w, r, err)

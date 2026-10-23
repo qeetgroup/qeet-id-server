@@ -32,6 +32,16 @@ type AcceptMethods interface {
 // by Accept and Lookup. Without it every invitation offers a password only.
 func (s *Service) SetAcceptMethods(m AcceptMethods) { s.methods = m }
 
+// acceptMethods reports whether a new account may accept an invitation to
+// tenantID with a password, and with a passkey.
+func (s *Service) acceptMethods(ctx context.Context, tenantID uuid.UUID) (passwordOn, passkeyOn bool, err error) {
+	if s.methods == nil {
+		return true, false, nil
+	}
+	passwordOn, passkeyOn, _, err = s.methods.AllowedSignInMethods(ctx, tenantID)
+	return passwordOn, passkeyOn, err
+}
+
 // InvitationForNewAccount returns the id, organisation and email of the
 // invitation token names when a new account may accept it now; otherwise the
 // refusal Accept gives. An invitation found expired is marked so.
@@ -120,8 +130,8 @@ type InvitationPreview struct {
 }
 
 // Lookup previews the invitation token names, refusing it as Accept would when
-// it isn't pending or has expired. Methods.Password is always true, even where
-// Accept refuses a password; Methods.Passkey follows the organisation.
+// it isn't pending or has expired. Methods are the ways the organisation lets
+// a new account accept it, as Accept and the passkey ceremony decide.
 func (s *Service) Lookup(ctx context.Context, token string) (*InvitationPreview, error) {
 	row, err := s.q.LookupInvite(ctx, codes.Hash(token))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -138,13 +148,8 @@ func (s *Service) Lookup(ctx context.Context, token string) (*InvitationPreview,
 	}
 	out := &InvitationPreview{Email: row.Email, ExpiresAt: row.ExpiresAt, AccountExists: row.AccountExists}
 	out.Organization.Name, out.Organization.Slug = row.TenantName, row.TenantSlug
-	out.Methods.Password = true
-	if s.methods != nil {
-		_, passkey, _, err := s.methods.AllowedSignInMethods(ctx, row.TenantID)
-		if err != nil {
-			return nil, err
-		}
-		out.Methods.Passkey = passkey
+	if out.Methods.Password, out.Methods.Passkey, err = s.acceptMethods(ctx, row.TenantID); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

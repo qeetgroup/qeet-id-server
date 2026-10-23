@@ -121,9 +121,12 @@ func (s *Service) Disable(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID
 	return row.TenantID, row.Name, nil
 }
 
+// TokenResponse is a client-credentials token. ExpiresIn is the RFC 6749
+// lifetime in seconds, which OAuth clients read; ExpiresAt is the same moment.
 type TokenResponse struct {
 	AccessToken string    `json:"access_token"`
 	TokenType   string    `json:"token_type"`
+	ExpiresIn   int64     `json:"expires_in"`
 	ExpiresAt   time.Time `json:"expires_at"`
 	Scope       string    `json:"scope"`
 }
@@ -142,11 +145,12 @@ func (s *Service) IssueClientCredentials(ctx context.Context, clientID, clientSe
 	if err != nil {
 		return nil, err
 	}
-	if row.DisabledAt.Valid {
-		return nil, errs.ErrPrincipalDisabled
-	}
+	// The secret first, so only its holder learns that it is disabled.
 	if !password.Verify(row.SecretHash, clientSecret) {
 		return nil, errs.ErrPrincipalInvalidCredentials
+	}
+	if row.DisabledAt.Valid {
+		return nil, errs.ErrPrincipalDisabled
 	}
 	id, tenantID, scopes := row.ID, row.TenantID, row.Scopes
 	now := time.Now().UTC()
@@ -183,6 +187,7 @@ func (s *Service) IssueClientCredentials(ctx context.Context, clientID, clientSe
 	return &TokenResponse{
 		AccessToken: signed,
 		TokenType:   "Bearer",
+		ExpiresIn:   int64(exp.Sub(now).Seconds()),
 		ExpiresAt:   exp,
 		Scope:       scope,
 	}, nil
@@ -209,7 +214,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Delete("/service-principals/{id}", h.disable)
 }
 
-func (h *Handler) MountPublic(r chi.Router) {
+// MountToken registers the client-credentials token endpoint, which the router
+// rate-limits as machine traffic.
+func (h *Handler) MountToken(r chi.Router) {
 	r.Post("/oauth/token", h.tokenEndpoint)
 }
 
@@ -346,11 +353,16 @@ func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 // client_secret either in the body or in Basic auth.
 func (h *Handler) tokenEndpoint(w http.ResponseWriter, r *http.Request) {
 	if err := httpx.ParseForm(r, httpx.MaxFormBodyBytes); err != nil {
-		httpx.WriteError(w, r, err)
+		writeTokenError(w, r, err)
 		return
 	}
-	if r.Form.Get("grant_type") != "client_credentials" {
-		httpx.WriteError(w, r, errs.ErrPrincipalGrantUnsupported)
+	switch r.Form.Get("grant_type") {
+	case "client_credentials":
+	case "":
+		writeTokenError(w, r, errs.ErrBadRequest.WithMessage("grant_type is required."))
+		return
+	default:
+		writeTokenError(w, r, errs.ErrPrincipalGrantUnsupported)
 		return
 	}
 	clientID := r.Form.Get("client_id")
@@ -359,13 +371,38 @@ func (h *Handler) tokenEndpoint(w http.ResponseWriter, r *http.Request) {
 		clientID, clientSecret = u, p
 	}
 	if clientID == "" || clientSecret == "" {
-		httpx.WriteError(w, r, errs.ErrPrincipalInvalidCredentials)
+		writeTokenError(w, r, errs.ErrPrincipalInvalidCredentials)
 		return
 	}
 	resp, err := h.Service.IssueClientCredentials(r.Context(), clientID, clientSecret)
 	if err != nil {
-		httpx.WriteError(w, r, err)
+		writeTokenError(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
+// writeTokenError answers a failed token request in the RFC 6749 §5.2 shape:
+// invalid_client is 401, with a Basic challenge when the client sent Basic
+// credentials, and every other code 400. An internal error keeps the generic
+// answer.
+func writeTokenError(w http.ResponseWriter, r *http.Request, err error) {
+	e := errs.As(err)
+	if e == nil || e.Code == errs.CodeInternal {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	code, status := "invalid_request", http.StatusBadRequest
+	switch e.Code {
+	case errs.CodePrincipalInvalidCredentials:
+		code, status = "invalid_client", http.StatusUnauthorized
+		if _, _, basic := r.BasicAuth(); basic {
+			w.Header().Set("WWW-Authenticate", `Basic realm="qeet"`)
+		}
+	case errs.CodePrincipalDisabled:
+		code = "unauthorized_client"
+	case errs.CodePrincipalGrantUnsupported:
+		code = "unsupported_grant_type"
+	}
+	httpx.WriteJSON(w, status, map[string]string{"error": code, "error_description": e.Message})
 }

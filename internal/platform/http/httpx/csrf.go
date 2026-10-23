@@ -128,7 +128,7 @@ func ensureCSRFCookie(w http.ResponseWriter, r *http.Request, cfg CSRFConfig) {
 	if err != nil {
 		return // best-effort; failure to seed leaves later POSTs to retry
 	}
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- double-submit token, JS-readable by design
 		Name:     csrfCookieName,
 		Value:    tok,
 		Path:     "/",

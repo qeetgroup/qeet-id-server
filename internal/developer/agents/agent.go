@@ -272,7 +272,7 @@ func (s *Service) CreateWithActor(ctx context.Context, tenantID uuid.UUID, name 
 		Name:            name,
 		SecretHash:      hash,
 		Scopes:          scopes,
-		TokenTtlSeconds: int32(ttl),
+		TokenTtlSeconds: int32(ttl), // #nosec G115 -- clamped to 60–3600 by clampTTL
 		SponsorUserID:   pgUUID(sponsorUserID),
 	})
 	if err != nil {
@@ -496,11 +496,12 @@ func (s *Service) IssueToken(ctx context.Context, agentID, secret string) (*Toke
 	if err != nil {
 		return nil, err
 	}
-	if row.Status != "active" {
-		return nil, errs.ErrAgentInactive
-	}
+	// The secret first, so only its holder learns the agent's status.
 	if !password.Verify(row.SecretHash, secret) {
 		return nil, errs.ErrAgentTokenInvalid
+	}
+	if row.Status != "active" {
+		return nil, errs.ErrAgentInactive
 	}
 
 	now := time.Now().UTC()

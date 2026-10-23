@@ -169,7 +169,7 @@ its own decision.
 1  sync or async?                  async if retryable, slow, or must survive the request
 2  existing pattern                internal/platform/jobs/worker.go
 3  event-driven?                   write to the outbox in the SAME transaction as the state change
-4  register it                     cmd/worker/main.go and/or embedded in the API
+4  register it                     the workers list in bootstrap/dependencies.go (API and cmd/worker)
 5  scheduled instead?              add it to bootstrap.MaintenanceJobs — once per interval across instances
 6  retry + dead-letter             follow internal/developer/webhooks/
 7  observability                   metrics and structured logs — no PII
@@ -233,7 +233,7 @@ Additive only, or a deprecation window with direct customer notice. See
 
 ```text
 1  behaviour must not change       if it changes, it is not a refactor
-2  respect R1/R2                   no test checks this — review the imports
+2  respect R1/R2                   make lint fails otherwise (depguard)
 3  wiring stays in bootstrap
 4  no cross-context concrete imports
 5  make test
@@ -261,12 +261,13 @@ review before merge.
 ```bash
 go build ./...
 go test -race ./...        # includes the OpenAPI route-coverage gate
-make lint                  # go vet — NOT the CI lint
+make lint                  # go vet + golangci-lint, as CI runs it
+make test-db               # if you touched SQL, tenant scoping or sign-in
 git diff                   # no secrets, no unrelated changes, no dbgen hand-edits
 ```
 
-**`make lint` is `go vet` only.** CI additionally runs `golangci-lint` v2.14.0 with `errcheck`,
-`staticcheck` and `misspell` on new code. Passing locally does not guarantee CI passes.
+A query on a tenant-owned table must mention `tenant_id`, or `internal/platform/database/tenantguard` fails `go test`;
+an exception needs an allowlist line with a reason.
 
 ### Ask before proceeding if the change would
 

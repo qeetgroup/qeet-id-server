@@ -18,6 +18,7 @@ func init() {
 		errs.CodeSAMLLoginCodeExpired:         http.StatusUnauthorized,
 		errs.CodeSAMLConnectionFieldsRequired: http.StatusUnprocessableEntity,
 		errs.CodeSAMLCertificateInvalid:       http.StatusUnprocessableEntity,
+		errs.CodeSAMLSSOURLInvalid:            http.StatusUnprocessableEntity,
 		errs.CodeSAMLStatusInvalid:            http.StatusUnprocessableEntity,
 		errs.CodeSAMLConnectionDisabled:       http.StatusForbidden,
 		errs.CodeSAMLConnectionMisconfigured:  http.StatusInternalServerError,
@@ -33,6 +34,7 @@ func init() {
 		errs.CodeSAMLRequestParamMissing:      http.StatusBadRequest,
 		errs.CodeSAMLServiceProviderDisabled:  http.StatusForbidden,
 		errs.CodeSAMLACSMismatch:              http.StatusBadRequest,
+		errs.CodeSAMLACSURLInvalid:            http.StatusUnprocessableEntity,
 		errs.CodeSAMLSPFieldsRequired:         http.StatusUnprocessableEntity,
 		errs.CodeSAMLUserTenantMismatch:       http.StatusForbidden,
 	})

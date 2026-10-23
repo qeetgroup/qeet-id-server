@@ -112,7 +112,7 @@ func (s *Service) MaybeRememberDevice(ctx context.Context, userID, tenantID uuid
 // SetTrustedDeviceCookie writes the long-lived HttpOnly trusted-device cookie,
 // kept for as long as the device stays trusted.
 func SetTrustedDeviceCookie(w http.ResponseWriter, raw string, maxAge time.Duration, secure bool) {
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is off only in dev
 		Name:     TrustedDeviceCookie,
 		Value:    raw,
 		Path:     "/",

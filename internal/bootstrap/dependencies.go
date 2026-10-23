@@ -87,6 +87,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/health"
+	logger "github.com/qeetgroup/qeet-id-server/internal/platform/observability/logging"
 )
 
 type namedWorker struct {
@@ -306,6 +307,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	riskService := risk.NewService(pool)
 	authService.SetRiskAssessor(riskService) // assess every sign-in; a risky one skips no factor
 	authService.SetSender(sender)            // email the code that confirms a risky sign-in with no factor
+	// A rotated refresh token sent again within the grace gets its rotation's
+	// pair, for a client that renewed twice at once or lost the answer.
+	authService.SetRefreshReuseGrace(cfg.RefreshTokenReuseGrace, sharedCipher)
 	botService := bot.NewService(pool)
 	siemService := siem.NewService(pool, outboundPolicy) // forwards audit events to configured log sinks
 	siemService.SetCipher(sharedCipher)
@@ -339,10 +343,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 			os.Exit(1)
 		}
 		activityNATSConn = nc
-		slog.Info("activity hub: connected to NATS", "url", cfg.NATSURL)
-	}
-	if activityNATSConn != nil {
-		defer func() { _ = activityNATSConn.Drain() }()
+		slog.Info("activity hub: connected to NATS", "url", logger.StripURLCredentials(cfg.NATSURL))
 	}
 	activityHub := activity.NewHub(activityNATSConn)
 
@@ -507,6 +508,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 
 	ldapService := ldap.NewService(pool, authService, outboundPolicy)
 	ldapService.SetCipher(sharedCipher)
+	ldapService.SetAllowSkipTLSVerify(cfg.IsDev()) // skip_tls_verify is a dev-only escape hatch
 	directoryService := directory.NewService(scimService, ldapService)
 	directoryService.SetEventStore(pool)
 	scimService.SetOperationObserver(directoryService)
@@ -611,7 +613,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbacService, Validate: v, Decider: decider},
 		RBACChecker:   decider,
 		Verification:  &verification.Handler{Service: verifyService},
-		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService, DevMode: cfg.IsDev(), CookieSecure: !cfg.IsDev()},
+		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService, DevMode: cfg.IsDev(), CookieSecure: !cfg.IsDev(), PublicBaseURL: cfg.PublicBaseURL},
 		Retention:     &retention.Handler{Service: retentionService},
 		Invite:        &invite.Handler{Service: inviteService, AuthService: authService, Validate: v, GrantCheck: rbacRepo.CheckGrantRole},
 		Branding:      &branding.Handler{Repo: brandingRepo},
@@ -632,14 +634,14 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Sales:         &sales.Handler{Service: salesService},
 		Analytics:     &analytics.Handler{Reader: analyticsReader},
 		Outbox:        &outbox.Handler{Reader: outboxReader},
-		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Methods: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: !cfg.IsDev()},
+		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Methods: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: !cfg.IsDev(), PublicBaseURL: cfg.PublicBaseURL},
 		Passkey:       &passkey.Handler{Service: passkeyService, CookieSecure: !cfg.IsDev()},
-		Social:        &social.Handler{Service: socialService, CookieSecure: !cfg.IsDev(), LoginBaseURL: cfg.LoginBaseURL},
+		Social:        &social.Handler{Service: socialService, CookieSecure: !cfg.IsDev(), LoginBaseURL: cfg.LoginBaseURL, PublicBaseURL: cfg.PublicBaseURL},
 		Group:         &group.Handler{Service: groupService},
-		SCIM:          &scim.Handler{Service: scimService},
+		SCIM:          &scim.Handler{Service: scimService, PublicBaseURL: cfg.PublicBaseURL},
 		Secret:        &secret.Handler{Service: secretService},
-		TokenVault:    &tokenvault.Handler{Service: tokenVaultService},
-		SAML:          &saml.Handler{Service: samlService, IdP: samlIdP, CookieSecure: !cfg.IsDev()},
+		TokenVault:    &tokenvault.Handler{Service: tokenVaultService, PublicBaseURL: cfg.PublicBaseURL},
+		SAML:          &saml.Handler{Service: samlService, IdP: samlIdP, PublicBaseURL: cfg.PublicBaseURL},
 		AdminPortal:   &adminportal.Handler{Service: adminPortalService, SAML: samlService, SCIM: scimService, CookieSecure: !cfg.IsDev()},
 		LDAP:          &ldap.Handler{Service: ldapService},
 		Directory:     &directory.Handler{Service: directoryService},
@@ -671,11 +673,21 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		CSRFDisabled:     cfg.CSRFDisabled,
 		CSRFCookieDomain: cfg.CSRFCookieDomain,
 		RateLimitStore:   rlStore,
+		TenantLim:        tenantTenantLim,
+		UserLim:          tenantUserLim,
+		APIKeyLim:        tenantAPIKeyLim,
+	}
+	if activityNATSConn != nil {
+		deps.shutdownHooks = append(deps.shutdownHooks, func() { _ = activityNATSConn.Drain() })
 	}
 
 	outboxDispatcher := outbox.NewDispatcher(pool, outboxPub, 2*time.Second, 50)
 	workers := []namedWorker{
 		{name: "jwt-keyring", run: func(ctx context.Context) { signingKeyRegistry.Run(ctx, issuer, cfg.JWTSigningKeyRefreshInterval) }, always: true},
+		// Each instance enforces the overrides from its own cache.
+		{name: "rate-limit-overrides", run: func(ctx context.Context) {
+			ratelimit.ReloadEvery(ctx, time.Minute, tenantTenantLim, tenantUserLim, tenantAPIKeyLim)
+		}, always: true},
 		{name: "outbox", run: outboxDispatcher.Run},
 		{name: "oidc-logout", run: oidcService.RunLogoutDeliveries},
 		{name: "webhook", run: webhookService.RunDispatcher},

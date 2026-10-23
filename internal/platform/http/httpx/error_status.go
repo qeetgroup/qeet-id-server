@@ -71,9 +71,6 @@ var statusByCode = map[string]int{
 	// Organization / tenant.
 	errs.CodeOrgSlugTaken:    http.StatusConflict,
 	errs.CodeTenantLastOwner: http.StatusConflict,
-
-	// Qeet AI.
-	"qeetai_unconfigured": http.StatusConflict,
 }
 
 // registerStatuses adds a domain's code→status entries to statusByCode; each

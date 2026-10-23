@@ -68,7 +68,7 @@ looking for one.
 
 ### 3. Preserve package boundaries
 
-Two rules (no test enforces them; review does):
+Two rules, enforced by `depguard` in `golangci-lint` (`.golangci.yml`):
 
 - **R1** — `internal/platform/*` must not import a bounded context, `cmd/*`, or `internal/bootstrap`.
 - **R2** — a bounded context must not import `cmd/*` or `internal/bootstrap`.
@@ -147,18 +147,20 @@ make dev              # run the API on :4001 (persistent JWT + SAML keys from .s
 make dev-secrets      # generate local dev key material
 make build            # go build -o bin/qeet-id ./cmd/api
 make test             # go test ./...
-make lint             # go vet ./...             (NOT golangci-lint — see below)
+make test-db          # database tests against PostgreSQL (needs Docker)
+make lint             # go vet + golangci-lint, as CI runs it
+make sqlc             # regenerate dbgen/ from queries.sql
+make sqlc-check       # fail if dbgen/ is stale
 make db-up/db-down/db-reset      # docker compose: postgres :5001, nats :4222, mailpit :8025
 make migrate-up/migrate-down     # one migration at a time
 make seed/seed-reset             # demo data (development only)
 make kill                        # free a stuck :4001
 ```
 
-There is no `make help`, no `dev-*` variants beyond `dev-secrets`, and no `test-*` variants.
+There is no `make help`, and no `dev-*` variants beyond `dev-secrets`.
 
-**`make lint` runs `go vet` only.** CI additionally runs `golangci-lint` v2.14.0 on new code, with
-`errcheck`, `govet`, `staticcheck` and `misspell`. Passing `make lint` locally does not mean CI lint
-will pass.
+**`make lint` runs the same lint as CI:** `go vet` plus `golangci-lint` v2.14.0 over the whole tree,
+including the integration-tagged database tests, with the linters in `.golangci.yml`.
 
 Single test: `go test ./internal/access/authentication/... -run TestName`
 
@@ -168,11 +170,12 @@ Single test: `go test ./internal/access/authentication/... -run TestName`
 
 | Job | Runs |
 |---|---|
-| `test` | `go build ./...`, `go vet ./...`, `go test -race -count=1 ./...` — includes the OpenAPI route-coverage gate |
-| `lint` | `golangci-lint` v2.14.0, new code only |
+| `test` | `go build ./...`, `go vet ./...`, `go test -race -count=1 ./...` — includes the OpenAPI route-coverage gate and the static guards: tenant filter (`internal/platform/database/tenantguard`), pool use inside a transaction (`…/txguard`), error-code statuses and `.env.example` completeness; reports coverage |
+| `database` | `go test -tags integration ./...` — tenant-isolation and sign-in tests against PostgreSQL (testcontainers) |
+| `lint` | `golangci-lint` v2.14.0 on the whole tree; `sqlc diff` in every package |
 | `vuln` | `govulncheck ./cmd/... ./internal/...` blocking, plus an advisory full-tree scan |
-| `sast` | `gosec` — advisory, reports findings as a warning |
-| `image` | On push to `release/**` only, after `test`/`lint`/`vuln`: publish `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>` (amd64+arm64) for the Qeet ID Kit (`qeet-id-kit`). Never computes an RC number |
+| `sast` | `gosec` — blocking; an accepted finding needs `// #nosec <rule> -- <reason>` (`.gosec.json`) |
+| `image` | On push to `release/**` only, after `test`/`database`/`lint`/`vuln`: publish `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>` (amd64+arm64) for the Qeet ID Kit (`qeet-id-kit`). Never computes an RC number |
 | `deploy` | On push to `main` only: build, deploy to AWS via OIDC, then tag |
 
 ---
@@ -181,8 +184,9 @@ Single test: `go test ./internal/access/authentication/... -run TestName`
 
 ```bash
 go build ./...
-go test -race ./...        # includes the OpenAPI route-coverage gate
+go test -race ./...        # includes the route-coverage gate and the static guards
 make lint
+make test-db               # if you touched SQL, tenant scoping or sign-in
 git diff                   # no secrets, no unrelated changes, no generated junk
 ```
 

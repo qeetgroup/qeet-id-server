@@ -93,7 +93,7 @@ func int32Ptr(v int) *int32 {
 	if v == 0 {
 		return nil
 	}
-	i := int32(v)
+	i := int32(v) // #nosec G115 -- HTTP status codes only
 	return &i
 }
 
@@ -104,11 +104,6 @@ func strPtr(s string) *string {
 		return nil
 	}
 	return &s
-}
-
-// toTS converts a time.Time to a valid pgtype.Timestamptz.
-func toTS(t time.Time) pgtype.Timestamptz {
-	return pgtype.Timestamptz{Time: t, Valid: true}
 }
 
 type CreateInput struct {

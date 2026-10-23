@@ -15,7 +15,9 @@ info:
 
     ## Authentication
 
-    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /v1/ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it.
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it.
+
+    The responses of tenant creation and invitation acceptance, including accepting with an existing account (sign-in tokens), are sent with `Cache-Control: no-store` and `Pragma: no-cache`.
 
     ## Related APIs
 
@@ -934,7 +936,7 @@ paths:
   /v1/users/{id}/password:
     post:
       operationId: post_v1_users_ById_password
-      description: 'Administratively sets or replaces a user''s password. The password must meet the organisation''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). All of that user''s active sessions are revoked as a side effect, since an admin password reset is treated as incident response. The user must authenticate again after this call. Every hosted sign-in (browser) session of the person ends too, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey; the audit record counts them (revoked_login_sessions). Refused with 403 user.credentials_shared, and nothing changes, when the account also belongs to another organization: its password and second factors are the person''s credentials there too, so only they change them (the password reset link reaches only their address). Otherwise the person is emailed that an administrator of this organization made the change.'
+      description: 'Administratively sets or replaces a user''s password. The password must meet the organisation''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). Every way the user is signed in ends in the same step, as with the revoke-all-sessions call, since an admin password reset is treated as incident response: their sessions, their hosted sign-in (browser) sessions, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey, the refresh grants their applications hold, the devices remembered to skip the second factor, and pending authorisations (unredeemed codes and device or back-channel sign-in requests). The user must authenticate again after this call. The audit record counts each (revoked_sessions, revoked_login_sessions, revoked_app_grants, revoked_trusted_devices, ended_pending_authorizations). Answers 501 not_implemented when this server is not configured to end sign-ins. Refused with 403 user.credentials_shared, and nothing changes, when the account also belongs to another organization: its password and second factors are the person''s credentials there too, so only they change them (the password reset link reaches only their address). Otherwise the person is emailed that an administrator of this organization made the change.'
       summary: Set password
       tags:
         - Users
@@ -973,6 +975,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '501':
+          description: Not configured on this server (`not_implemented`); nothing changes.
   /v1/users/{id}/mfa:
     delete:
       operationId: delete_v1_users_ById_mfa
@@ -1244,7 +1248,11 @@ paths:
       description: >-
         Aggregated authentication posture for a user (User 360): MFA factors
         (TOTP / email-SMS OTP / push), passkeys, recovery codes, password state,
-        and the active-session / device count. Requires `user.read`.
+        and the active-session / device count. The sessions counted are those the
+        list-sessions call returns: only the user's sessions in the caller's
+        organization, plus their account-level sessions (in no organization) when
+        the caller's organization is the user's home organization. Requires
+        `user.read`.
       tags:
         - Users
       parameters:
@@ -1286,7 +1294,7 @@ paths:
     get:
       operationId: get_v1_users_ById_sessions
       summary: List a user's live sessions
-      description: Admin view of a user's active (non-revoked) sessions. Requires `user.read`.
+      description: 'Admin view of a user''s active (non-revoked) sessions, most recently seen first: only their sessions in the caller''s organization, plus their account-level sessions (in no organization) when the caller''s organization is the user''s home organization. Sessions the user holds in other organizations are not listed. Requires `user.read`.'
       tags:
         - Users
       parameters:
@@ -1691,7 +1699,7 @@ paths:
     post:
       operationId: post_v1_me_email_change_start
       summary: Start changing my email
-      description: Sends a verification code to a new email address. Pre-checks the address isn't already in use by another account (`verification.email_taken`).
+      description: 'Sends a verification code to the address the caller wants to move to, to prove they control it; confirm it with the confirm-email-change call. The answer is the same whether or not the address is already in use by another account. An address in use is sent a notice that it already has an account instead of a code, and is never assigned to the caller.'
       tags:
         - Verification
       security:
@@ -1719,8 +1727,6 @@ paths:
                 additionalProperties: true
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '409':
-          $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -1921,7 +1927,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: 'Creates a group in the caller''s tenant. A parent_id must name one of the tenant''s own groups; otherwise the call answers 404 group.parent_not_found, the same for a missing id as for another tenant''s group.'
+      description: 'Creates a group in the caller''s tenant. A parent_id must name one of the tenant''s own groups; otherwise the call answers 404 group.parent_not_found, the same for a missing id as for another tenant''s group. The name is stored trimmed, and a blank one answers 422 validation_failed. A name another of the organization''s groups already uses, ignoring case and surrounding spaces, answers 409 group.name_exists; groups an identity provider provisions over SCIM with an externalId don''t count.'
       responses:
         '201':
           description: Created
@@ -1936,6 +1942,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -1963,7 +1971,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: 'Changes only the fields sent: an omitted name, description or parent_id keeps its value, and "parent_id": null makes the group top-level. A new parent must be one of the tenant''s own groups (404 group.parent_not_found otherwise) and not the group itself or one of its subgroups (400 group.cycle).'
+      description: 'Changes only the fields sent: an omitted name, description or parent_id keeps its value, and "parent_id": null makes the group top-level. A new parent must be one of the tenant''s own groups (404 group.parent_not_found otherwise) and not the group itself or one of its subgroups (400 group.cycle). Renaming to a name another of the organization''s groups uses, ignoring case, answers 409 group.name_exists.'
       responses:
         '200':
           description: Updated
@@ -1980,6 +1988,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -2045,7 +2055,7 @@ paths:
       summary: Create a group template
       tags:
         - Groups
-      description: Stores a named tree of groups. Up to 6 levels deep and 200 groups.
+      description: Stores a named tree of groups. Up to 6 levels deep and 200 groups. A template that uses one group name twice, ignoring case and surrounding spaces, answers 422 validation_failed (field nodes, code duplicate_name).
       requestBody:
         required: true
         content:
@@ -2132,6 +2142,11 @@ paths:
       description: >-
         Creates every group in the template in one transaction, optionally under
         an existing parent. The parent must belong to the caller's tenant.
+        A template applies once per organization. Group names are unique in an
+        organization, ignoring case, so applying a template whose groups already
+        exist, including applying it a second time, answers 409
+        group.name_exists with the first colliding name in the error detail, and
+        creates nothing.
       requestBody:
         required: false
         content:
@@ -2159,6 +2174,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -2376,7 +2393,7 @@ paths:
               type: object
               additionalProperties: true
         description: 'Request body summarized; see the handler for exact fields. An invitation that carries a role follows the same rule as assigning it: The caller must hold every permission the role carries in this organization (403 rbac.grant_exceeds_caller, naming one it lacks), and only an owner gives the owner role (403 rbac.owner_only); an owner may give any role.'
-      description: 'Creates an invitation and emails its accept link. The response carries the invitation, its raw token (so the link can be shared by hand) and invite.delivery: status sent when a provider accepted the email, or not_sent with code and message when it did not (email.suppressed: the address bounced or reported spam before; email.provider_unavailable: no provider is configured). The invitation is created either way.'
+      description: 'Creates an invitation and emails its accept link. The accept link goes only to the invited address; the response carries the invitation and invite.delivery: status sent when a provider accepted the email, or not_sent with code and message when it did not (email.suppressed: the address bounced or reported spam before; email.provider_unavailable: no provider is configured). The invitation is created either way. A role_id that is not a role of the caller''s organization is refused with 404 not_found, the same answer whether the role does not exist or belongs to another organization, and no invitation is created.'
       responses:
         '201':
           description: Created
@@ -2392,8 +2409,6 @@ paths:
                     properties:
                       delivery:
                         $ref: '#/components/schemas/InviteDelivery'
-                  token:
-                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2419,7 +2434,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: 'Creates the invited account and signs it in. Its address is not verified by this: the invitation link is also returned to the inviter to share, so the account proves the address later with a code or link sent to it (its invitations inbox stays closed until then). The response is a token pair, or, where the organisation requires a second factor, the sign-in''s challenge instead (mfa_required, mfa_token and, for an account with no factor yet, enrollment_required), met as at sign-in. Where the inviting organisation has password sign-in switched off, accepting with a password is refused with 403 auth.method_disabled and nothing is created.'
+      description: 'Creates the invited account and signs it in. Its address is not verified by this: the account proves it later with a code or link sent to it (its invitations inbox stays closed until then). The response is a token pair, or, where the organisation requires a second factor, the sign-in''s challenge instead (mfa_required, mfa_token and, for an account with no factor yet, enrollment_required), met as at sign-in. Where the inviting organisation has password sign-in switched off, accepting with a password is refused with 403 auth.method_disabled and nothing is created.'
       responses:
         '201':
           description: Created
@@ -2441,8 +2456,8 @@ paths:
       description: >-
         Previews the invitation an emailed link names, so the acceptance screen
         can show the organisation and address and offer the ways of accepting
-        it. A password is always offered; a passkey where the organisation
-        allows passkeys. account_exists means an account already holds the
+        it. A password is offered where the organisation allows password
+        sign-in, and a passkey where it allows passkeys. account_exists means an account already holds the
         address, so the invitee signs in and accepts as themselves. Refused like
         acceptance: invite.link_invalid, invite.invalid (no longer pending),
         invite.expired. Read-only. The token travels in the body so it stays out
@@ -2759,7 +2774,7 @@ paths:
   /v1/invites/{id}/resend:
     post:
       operationId: post_v1_invites_ById_resend
-      description: 'Rotates the invitation token, extends its expiry, and re-sends the invitation email. Only pending or expired invites belonging to the caller''s tenant qualify; already-accepted or revoked invites are rejected. The recipient completes the flow through the accept-invite call, as with the original invitation. invite.delivery says whether the email went out (as on create): a suppressed address reports not_sent with email.suppressed rather than success.'
+      description: 'Rotates the invitation token, extends its expiry, and re-sends the invitation email; the new link goes only to the invited address. The response carries the invitation. Only pending or expired invites belonging to the caller''s tenant qualify; already-accepted or revoked invites are rejected. The recipient completes the flow through the accept-invite call, as with the original invitation. invite.delivery says whether the email went out (as on create): a suppressed address reports not_sent with email.suppressed rather than success.'
       summary: Resend an invitation
       tags: [Invites]
       parameters:
@@ -3266,15 +3281,38 @@ components:
           items:
             type: object
             required:
+              - code
               - message
             properties:
               line:
                 type: integer
-                description: 1-based index of the row within the submitted array.
+                description: 'POST /v1/users/bulk: the 1-based index in the users array. POST /v1/users/bulk/import: the line of the export file (azure_b2c: the 1-based position in value). Absent when the whole file failed.'
               email:
                 type: string
+              code:
+                type: string
+                description: Stable reason the row failed; word the error from this. Password and duplicate refusals reuse the API error codes.
+                enum:
+                  - user.import_field_missing
+                  - user.import_field_invalid
+                  - user.import_field_too_long
+                  - user.import_row_malformed
+                  - user.import_source_invalid
+                  - auth.email_exists
+                  - authpolicy.password_too_short
+                  - authpolicy.password_no_uppercase
+                  - authpolicy.password_no_number
+                  - authpolicy.password_no_symbol
+                  - authpolicy.password_breached
+                  - auth.password_weak
+                  - internal
+              field:
+                type: string
+                description: The row's field the error concerns; absent when none.
+                enum: [email, password, display_name, phone]
               message:
                 type: string
+                description: English text kept for compatibility; it may change. Show wording keyed on code.
     UserUpdate:
       type: object
       properties:

@@ -32,7 +32,7 @@ import (
 )
 
 const (
-	tokenPrefix      = "qf_scim_"
+	tokenPrefix      = "qf_scim_" // #nosec G101 -- token prefix, not a secret
 	provisionedScim  = "scim"
 	schemaUser       = "urn:ietf:params:scim:schemas:core:2.0:User"
 	schemaListResp   = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
@@ -121,12 +121,12 @@ func (s *Service) Rotate(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (fu
 			return "", errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "scim"})
 		}
 	}
-	raw, hash, err := codes.URLToken()
+	raw, _, err := codes.URLToken()
 	if err != nil {
 		return "", err
 	}
 	full = tokenPrefix + raw
-	hash = codes.Hash(full)
+	hash := codes.Hash(full)
 	display := tokenPrefix + raw[:6]
 	if err := s.q.WithTx(tx).UpsertScimToken(ctx, dbgen.UpsertScimTokenParams{
 		TenantID:    tenantID,
@@ -243,8 +243,12 @@ func (s *Service) tagProvisionedTx(ctx context.Context, tx pgx.Tx, id uuid.UUID,
 	})
 }
 
+// Handler serves the SCIM admin endpoints and the /scim/v2 protocol.
+// PublicBaseURL is this API's public origin, or "" to build resource locations
+// from the request's Host.
 type Handler struct {
-	Service *Service
+	Service       *Service
+	PublicBaseURL string
 }
 
 // Mount registers the admin endpoints under the authenticated /v1 group.
@@ -495,16 +499,14 @@ func writeSCIMTypedErr(w http.ResponseWriter, status int, scimType, detail strin
 	})
 }
 
-func scimLocation(r *http.Request, suffix string) string {
-	scheme := "https"
-	if r.TLS == nil && (strings.HasPrefix(r.Host, "localhost") || strings.HasPrefix(r.Host, "127.0.0.1")) {
-		scheme = "http"
-	}
-	return scheme + "://" + r.Host + "/scim/v2" + suffix
+// location returns the absolute URL of the SCIM endpoint at suffix, a path
+// under /scim/v2.
+func (h *Handler) location(r *http.Request, suffix string) string {
+	return httpx.PublicOrigin(r, h.PublicBaseURL) + "/scim/v2" + suffix
 }
 
 // toResource renders a user row as a SCIM core User.
-func toResource(r *http.Request, u *userRow) map[string]any {
+func (h *Handler) toResource(r *http.Request, u *userRow) map[string]any {
 	display := ""
 	if u.DisplayName != nil {
 		display = *u.DisplayName
@@ -519,7 +521,7 @@ func toResource(r *http.Request, u *userRow) map[string]any {
 			"resourceType": "User",
 			"created":      u.CreatedAt.UTC().Format(time.RFC3339),
 			"lastModified": u.UpdatedAt.UTC().Format(time.RFC3339),
-			"location":     scimLocation(r, "/Users/"+u.ID.String()),
+			"location":     h.location(r, "/Users/"+u.ID.String()),
 		},
 	}
 	if display != "" {
@@ -589,7 +591,7 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	resources := make([]map[string]any, 0, len(rows))
 	for i := range rows {
-		resources = append(resources, toResource(r, &rows[i]))
+		resources = append(resources, h.toResource(r, &rows[i]))
 	}
 	writeSCIM(w, http.StatusOK, map[string]any{
 		"schemas":      []string{schemaListResp},
@@ -737,7 +739,7 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		writeSCIMErr(w, http.StatusInternalServerError, "reload failed")
 		return
 	}
-	writeSCIM(w, http.StatusCreated, toResource(r, row))
+	writeSCIM(w, http.StatusCreated, h.toResource(r, row))
 }
 
 func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
@@ -750,7 +752,7 @@ func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return
 	}
-	writeSCIM(w, http.StatusOK, toResource(r, row))
+	writeSCIM(w, http.StatusOK, h.toResource(r, row))
 }
 
 func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request) {
@@ -783,7 +785,7 @@ func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request) {
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return
 	}
-	writeSCIM(w, http.StatusOK, toResource(r, row))
+	writeSCIM(w, http.StatusOK, h.toResource(r, row))
 }
 
 type patchBody struct {
@@ -857,7 +859,7 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return
 	}
-	writeSCIM(w, http.StatusOK, toResource(r, row))
+	writeSCIM(w, http.StatusOK, h.toResource(r, row))
 }
 
 func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
@@ -910,7 +912,7 @@ func statusFromActive(active *bool) string {
 func (h *Handler) serviceProviderConfig(w http.ResponseWriter, r *http.Request) {
 	writeSCIM(w, http.StatusOK, map[string]any{
 		"schemas":          []string{"urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"},
-		"documentationUri": scimLocation(r, ""),
+		"documentationUri": h.location(r, ""),
 		"patch":            map[string]any{"supported": true},
 		"bulk":             map[string]any{"supported": false, "maxOperations": 0, "maxPayloadSize": 0},
 		"filter":           map[string]any{"supported": true, "maxResults": maxPageCount},
@@ -923,7 +925,7 @@ func (h *Handler) serviceProviderConfig(w http.ResponseWriter, r *http.Request) 
 			"description": "Authentication via the tenant SCIM bearer token.",
 			"primary":     true,
 		}},
-		"meta": map[string]any{"resourceType": "ServiceProviderConfig", "location": scimLocation(r, "/ServiceProviderConfig")},
+		"meta": map[string]any{"resourceType": "ServiceProviderConfig", "location": h.location(r, "/ServiceProviderConfig")},
 	})
 }
 
@@ -935,7 +937,7 @@ func (h *Handler) resourceTypes(w http.ResponseWriter, r *http.Request) {
 		"endpoint":    "/Users",
 		"description": "User Account",
 		"schema":      schemaUser,
-		"meta":        map[string]any{"resourceType": "ResourceType", "location": scimLocation(r, "/ResourceTypes/User")},
+		"meta":        map[string]any{"resourceType": "ResourceType", "location": h.location(r, "/ResourceTypes/User")},
 	}
 	groupType := map[string]any{
 		"schemas":     []string{"urn:ietf:params:scim:schemas:core:2.0:ResourceType"},
@@ -944,7 +946,7 @@ func (h *Handler) resourceTypes(w http.ResponseWriter, r *http.Request) {
 		"endpoint":    "/Groups",
 		"description": "Group",
 		"schema":      schemaGroup,
-		"meta":        map[string]any{"resourceType": "ResourceType", "location": scimLocation(r, "/ResourceTypes/Group")},
+		"meta":        map[string]any{"resourceType": "ResourceType", "location": h.location(r, "/ResourceTypes/Group")},
 	}
 	writeSCIM(w, http.StatusOK, map[string]any{
 		"schemas":      []string{schemaListResp},
@@ -966,7 +968,7 @@ func (h *Handler) schemas(w http.ResponseWriter, r *http.Request) {
 			{"name": "active", "type": "boolean", "required": false, "mutability": "readWrite"},
 			{"name": "externalId", "type": "string", "required": false, "mutability": "readWrite"},
 		},
-		"meta": map[string]any{"resourceType": "Schema", "location": scimLocation(r, "/Schemas/"+schemaUser)},
+		"meta": map[string]any{"resourceType": "Schema", "location": h.location(r, "/Schemas/"+schemaUser)},
 	}
 	groupSchema := map[string]any{
 		"id":          schemaGroup,
@@ -988,7 +990,7 @@ func (h *Handler) schemas(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 		},
-		"meta": map[string]any{"resourceType": "Schema", "location": scimLocation(r, "/Schemas/"+schemaGroup)},
+		"meta": map[string]any{"resourceType": "Schema", "location": h.location(r, "/Schemas/"+schemaGroup)},
 	}
 	writeSCIM(w, http.StatusOK, map[string]any{
 		"schemas":      []string{schemaListResp},

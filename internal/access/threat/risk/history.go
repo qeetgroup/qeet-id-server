@@ -2,6 +2,7 @@ package risk
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -60,7 +61,7 @@ func (s *Service) lastCountry(ctx context.Context, tenantID, userID uuid.UUID) (
 		UserID:   userID,
 	})
 	if err != nil {
-		if err != pgx.ErrNoRows {
+		if !errors.Is(err, pgx.ErrNoRows) {
 			slog.Warn("risk: lookup last country", "err", err)
 		}
 		return "", time.Time{}, false

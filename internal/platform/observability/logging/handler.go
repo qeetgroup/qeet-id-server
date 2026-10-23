@@ -105,7 +105,7 @@ func writeAttr(sb *strings.Builder, a slog.Attr) {
 	case error:
 		sb.WriteString(strconv.Quote(v.Error()))
 	default:
-		sb.WriteString(fmt.Sprintf("%v", v))
+		fmt.Fprintf(sb, "%v", v)
 	}
 }
 

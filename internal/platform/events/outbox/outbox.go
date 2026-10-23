@@ -41,6 +41,34 @@ func Enqueue(ctx context.Context, tx pgx.Tx, e Event) error {
 	return err
 }
 
+// PublishedRetention is how long a published event is kept, to look into a
+// delivery. Its payload can hold personal data, so it doesn't stay for good.
+const PublishedRetention = 7 * 24 * time.Hour
+
+// purgeBatch bounds each purge statement, so a long backlog is deleted in
+// short statements rather than one that outlasts the statement timeout.
+var purgeBatch = 5000
+
+// PurgePublished deletes events published more than retention ago and returns
+// how many. Unpublished and dead-lettered events are left alone.
+func PurgePublished(ctx context.Context, pool *pgxpool.Pool, retention time.Duration) (int64, error) {
+	cutoff := time.Now().UTC().Add(-retention)
+	var total int64
+	for {
+		tag, err := pool.Exec(ctx, `
+			DELETE FROM platform.outbox
+			WHERE id IN (SELECT id FROM platform.outbox WHERE published_at < $1 LIMIT $2)
+		`, cutoff, purgeBatch)
+		if err != nil {
+			return total, err
+		}
+		total += tag.RowsAffected()
+		if tag.RowsAffected() < int64(purgeBatch) {
+			return total, nil
+		}
+	}
+}
+
 // Publisher delivers an event. A nil error marks the row published; an error
 // makes the Dispatcher retry it.
 type Publisher interface {

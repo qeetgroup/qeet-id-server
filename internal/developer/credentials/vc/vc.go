@@ -7,6 +7,7 @@ package vc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -171,8 +173,11 @@ type VerifyResult struct {
 // then the revocation registry. Only verifies credentials this server issued.
 func (s *Service) Verify(ctx context.Context, raw string) (*VerifyResult, error) {
 	claims, err := s.issuer.VerifyVC(raw)
+	if errors.Is(err, tokens.ErrNotCredential) {
+		return &VerifyResult{Valid: false, Reason: "not a verifiable credential"}, nil
+	}
 	if err != nil {
-		return &VerifyResult{Valid: false, Reason: "signature or expiry invalid"}, nil
+		return &VerifyResult{Valid: false, Reason: "signature or expiry invalid"}, nil //nolint:nilerr // an invalid credential is a result, not an error
 	}
 	res := &VerifyResult{Valid: true}
 	if sub, _ := claims["sub"].(string); sub != "" {
@@ -184,15 +189,21 @@ func (s *Service) Verify(ctx context.Context, raw string) (*VerifyResult, error)
 	if vcObj, ok := claims["vc"].(map[string]any); ok {
 		res.VC = vcObj
 	}
-	// Revocation: jti is the credential id. If we have a record and it's
-	// revoked, reject. (Absent record → can't disprove; treat as valid.)
-	if jti, _ := claims["jti"].(string); jti != "" {
-		if id, perr := uuid.Parse(jti); perr == nil {
-			revokedAt, qerr := s.q.GetCredentialRevocation(ctx, id)
-			if qerr == nil && revokedAt.Valid {
-				return &VerifyResult{Valid: false, Reason: "credential revoked"}, nil
-			}
-		}
+	// jti is the credential's id in the registry. Every credential this server
+	// issues has a record, so one without is not ours to vouch for.
+	jti, _ := claims["jti"].(string)
+	id, err := uuid.Parse(jti)
+	if err != nil {
+		return &VerifyResult{Valid: false, Reason: "unknown credential"}, nil //nolint:nilerr // an invalid credential is a result, not an error
+	}
+	revokedAt, err := s.q.GetCredentialRevocation(ctx, id)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return &VerifyResult{Valid: false, Reason: "unknown credential"}, nil
+	case err != nil:
+		return nil, err
+	case revokedAt.Valid:
+		return &VerifyResult{Valid: false, Reason: "credential revoked"}, nil
 	}
 	return res, nil
 }

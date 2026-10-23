@@ -181,6 +181,12 @@ func inviteFromListRow(row dbgen.ListInvitesRow) Invite {
 	}
 }
 
+// errRoleNotFound refuses an invitation whose role isn't the tenant's. A missing
+// and another tenant's role get the same answer, as on the rbac role routes.
+var errRoleNotFound = errs.ErrNotFound.WithDetail("role not found")
+
+// Create stores an invitation and emails its link. A role it carries must be
+// the tenant's, or it is errRoleNotFound.
 func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UUID) (*Invite, string, error) {
 	// Plan gate: a new invite consumes a seat, so refuse once the tenant's seat
 	// limit (members + pending invites) is reached.
@@ -212,6 +218,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UU
 		TokenHash: hash,
 		ExpiresAt: expires,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, "", errRoleNotFound
+	}
 	if err != nil {
 		return nil, "", err
 	}
@@ -308,6 +317,29 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (*AcceptResult, er
 	if s.rules == nil {
 		return nil, errs.ErrNotImplemented
 	}
+	// The new account will belong to the inviting organisation, so its
+	// methods and rules apply: no password account where passwords can't sign
+	// in. Checked once the invite is known to be good and before the
+	// transaction, as they read the policy and may call the breach service.
+	_, tenantID, email, err := s.InvitationForNewAccount(ctx, in.Token)
+	if err != nil {
+		return nil, err
+	}
+	passwordOn, _, err := s.acceptMethods(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if !passwordOn {
+		return nil, errs.ErrAuthMethodDisabled
+	}
+	if err := s.rules.ValidateForTenant(ctx, tenantID, email, in.Password); err != nil {
+		return nil, err
+	}
+	pwHash, err := password.Hash(in.Password)
+	if err != nil {
+		return nil, err
+	}
+
 	hash := codes.Hash(in.Token)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -341,25 +373,6 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (*AcceptResult, er
 		return nil, err
 	}
 
-	// The new account will belong to the inviting organisation, so its
-	// methods and rules apply: no password account where passwords can't sign
-	// in. Checked once the invite is known to be good.
-	if s.methods != nil {
-		passwordOn, _, _, err := s.methods.AllowedSignInMethods(ctx, inv.TenantID)
-		if err != nil {
-			return nil, err
-		}
-		if !passwordOn {
-			return nil, errs.ErrAuthMethodDisabled
-		}
-	}
-	if err := s.rules.ValidateForTenant(ctx, inv.TenantID, inv.Email, in.Password); err != nil {
-		return nil, err
-	}
-	pwHash, err := password.Hash(in.Password)
-	if err != nil {
-		return nil, err
-	}
 	userID, err := qtx.InsertInvitedUser(ctx, dbgen.InsertInvitedUserParams{
 		TenantID:    pgtype.UUID{Bytes: inv.TenantID, Valid: true},
 		Email:       inv.Email,

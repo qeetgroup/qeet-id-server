@@ -61,16 +61,13 @@ func (s *Service) enforceSessionLimit(ctx context.Context, tx pgx.Tx, userID, te
 	}
 	tid := tenantID
 	if action == sessionLimitRefuse {
-		// Recorded on its own: the sign-in it describes is rolled back.
-		if err := s.recordOnItsOwn(ctx, audit.Event{
+		// Recorded by signInFailed once the sign-in it describes is rolled back.
+		return &sessionLimitRefusal{event: audit.Event{
 			TenantID: &tid, ActorUserID: &userID, ActorType: "user",
 			Action: "auth.sign_in_refused_session_limit", ResourceType: "user", ResourceID: &userID,
 			IP: ip, UserAgent: ua,
 			Metadata: map[string]any{"max_sessions": *max, "live_sessions": len(live)},
-		}); err != nil {
-			return err
-		}
-		return errs.ErrAuthSessionLimit
+		}}
 	}
 	evicted := live[:over]
 	if _, err := tx.Exec(ctx, `UPDATE auth.sessions SET revoked_at = NOW() WHERE id = ANY($1) AND revoked_at IS NULL`, evicted); err != nil {
@@ -93,16 +90,27 @@ func (s *Service) enforceSessionLimit(ctx context.Context, tx pgx.Tx, userID, te
 	return nil
 }
 
-func (s *Service) recordOnItsOwn(ctx context.Context, e audit.Event) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
+// sessionLimitRefusal is ErrAuthSessionLimit carrying the refusal's audit
+// record, which must outlive the sign-in's rolled-back transaction.
+type sessionLimitRefusal struct{ event audit.Event }
+
+func (*sessionLimitRefusal) Error() string { return errs.ErrAuthSessionLimit.Error() }
+
+func (*sessionLimitRefusal) Unwrap() error { return errs.ErrAuthSessionLimit }
+
+// signInFailed is what a caller of issuePairTx returns for its error err. A
+// session-limit refusal rolls tx back first, then records the refusal on its
+// own and is ErrAuthSessionLimit; any other err is returned as it is.
+func (s *Service) signInFailed(ctx context.Context, tx pgx.Tx, err error) error {
+	var refusal *sessionLimitRefusal
+	if !errors.As(err, &refusal) {
 		return err
 	}
-	defer tx.Rollback(ctx)
-	if err := audit.Record(ctx, tx, e); err != nil {
+	_ = tx.Rollback(ctx)
+	if err := s.auditTx(ctx, refusal.event); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	return errs.ErrAuthSessionLimit
 }
 
 // A session's last use: last_seen_at moves on every renewal and, through

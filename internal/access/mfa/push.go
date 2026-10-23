@@ -458,7 +458,7 @@ func (s *Service) sendExpoPush(ctx context.Context, pushToken string, challengeI
 		req.Header.Set("Authorization", "Bearer "+s.pushAccessToken)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:forbidigo // operator-configured Expo endpoint, not tenant-controlled
 	if err != nil {
 		return err
 	}

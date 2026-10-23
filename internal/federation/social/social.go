@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -19,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social/dbgen"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
@@ -87,25 +90,33 @@ func normalizeOrigin(raw string) string {
 	return strings.ToLower(u.Scheme + "://" + u.Host)
 }
 
-// validateReturnTo accepts "" (no hosted flow), a root-relative path, or an
-// absolute URL on an allowed origin. The callback redirects there just after
-// setting the SSO cookie, so anything else is an open redirect from the sign-in
-// domain; "//host" and "/\" look relative but aren't.
+// validateReturnTo accepts "" (no hosted flow), a path with a single leading
+// "/", or an absolute URL without userinfo on an allowed origin. The callback
+// redirects there after setting the SSO cookie. Whitespace, control characters
+// and backslashes are refused anywhere, as browsers rewrite or drop them.
 func (s *Service) validateReturnTo(returnTo string) error {
 	if returnTo == "" {
 		return nil
 	}
-	if strings.HasPrefix(returnTo, "//") || strings.HasPrefix(returnTo, `/\`) {
+	if !utf8.ValidString(returnTo) || strings.ContainsFunc(returnTo, func(r rune) bool {
+		return r == '\\' || unicode.IsSpace(r) || unicode.IsControl(r)
+	}) {
 		return errs.ErrSocialReturnToInvalid
 	}
-	if strings.HasPrefix(returnTo, "/") {
+	u, err := url.Parse(returnTo)
+	if err != nil || u.User != nil {
+		return errs.ErrSocialReturnToInvalid
+	}
+	if returnTo[0] == '/' {
+		if strings.HasPrefix(returnTo, "//") || u.Scheme != "" || u.Host != "" {
+			return errs.ErrSocialReturnToInvalid
+		}
 		return nil
 	}
-	origin := normalizeOrigin(returnTo)
-	if origin == "" {
+	if u.Scheme == "" || u.Host == "" {
 		return errs.ErrSocialReturnToInvalid
 	}
-	if _, ok := s.returnOrigins[origin]; !ok {
+	if _, ok := s.returnOrigins[strings.ToLower(u.Scheme+"://"+u.Host)]; !ok {
 		return errs.ErrSocialReturnToInvalid
 	}
 	return nil
@@ -492,6 +503,9 @@ func (s *Service) BeginLogin(ctx context.Context, provider, tenantRef, redirectU
 	if err != nil {
 		return "", errs.ErrSocialDiscoveryFailed.Wrap(err)
 	}
+	if err := checkAuthorizationEndpoint(doc.AuthorizationEndpoint); err != nil {
+		return "", errs.ErrSocialProviderNoDiscovery.Wrap(err)
+	}
 	// PKCE S256: verifier is the raw token, challenge is its SHA-256 (codes.Hash).
 	verifier, challenge, err := codes.URLToken()
 	if err != nil {
@@ -638,6 +652,10 @@ func (s *Service) CheckHostedSignIn(ctx context.Context, tenantID, userID uuid.U
 // provider subject, then by globally-unique email) or provisions a new
 // password-less one. All in one tx so concurrent logins can't duplicate rows.
 func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, provider string, ui userInfo) (uuid.UUID, error) {
+	// Whether the organisation allows self-registration is read before the
+	// transaction, as the policy is read on another connection. It decides only
+	// the branch below that creates an account.
+	registration := s.requireSelfRegistration(ctx, tenantID)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return uuid.Nil, err
@@ -671,8 +689,8 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 		// self-registration, so it follows the organisation's setting exactly
 		// as password and passkey sign-up do. Refused before any write; the
 		// caller records the attempt.
-		if err := s.requireSelfRegistration(ctx, tenantID); err != nil {
-			return uuid.Nil, err
+		if registration != nil {
+			return uuid.Nil, registration
 		}
 		// An unverified assertion may name a new account (refusing would lock out
 		// providers that omit the claim) but never marks the address verified. Raw SQL
@@ -705,7 +723,7 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 		// Second, the account must belong to this tenant. Emails are unique across
 		// tenants, so otherwise a tenant admin's own IdP could assert another tenant's
 		// user's address and be handed that user's tokens.
-		belongs, err := userInTenant(ctx, tx, userID, tenantID)
+		belongs, err := identitylink.UserInTenant(ctx, tx, userID, tenantID)
 		if err != nil {
 			return uuid.Nil, err
 		}
@@ -819,12 +837,14 @@ func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*a
 }
 
 // Handler serves the social endpoints. CookieSecure marks the SSO and binding
-// cookies Secure (HTTPS-only). LoginBaseURL is the hosted login app's origin,
-// where browser-facing failures are sent with a generic error code.
+// cookies Secure. LoginBaseURL is the hosted login's origin, where browser
+// failures go with a generic error code. PublicBaseURL is this API's public
+// origin, or "" to build callback URLs from the request's Host.
 type Handler struct {
-	Service      *Service
-	CookieSecure bool
-	LoginBaseURL string
+	Service       *Service
+	CookieSecure  bool
+	LoginBaseURL  string
+	PublicBaseURL string
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -861,14 +881,10 @@ func (h *Handler) platformProviders(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"providers": h.Service.PlatformProviderNames()})
 }
 
-// callbackURL reconstructs the public callback URL the upstream provider must
+// callbackURL returns the public callback URL the upstream provider must
 // redirect back to; it must match between start and the token exchange.
-func callbackURL(r *http.Request, provider string) string {
-	scheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		scheme = "https"
-	}
-	return scheme + "://" + r.Host + "/v1/social/" + provider + "/callback"
+func (h *Handler) callbackURL(r *http.Request, provider string) string {
+	return httpx.PublicOrigin(r, h.PublicBaseURL) + "/v1/social/" + provider + "/callback"
 }
 
 func (h *Handler) upsertProvider(w http.ResponseWriter, r *http.Request) {
@@ -987,7 +1003,7 @@ func (h *Handler) linkStart(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSocialProviderNotConfigured)
 		return
 	}
-	authURL, err := h.Service.BeginPlatformLink(r.Context(), provider, callbackURL(r, provider), *p.UserID)
+	authURL, err := h.Service.BeginPlatformLink(r.Context(), provider, h.callbackURL(r, provider), *p.UserID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1101,22 +1117,22 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 	// account, so a "sign in with Google" can't silently create one.
 	if tenantRef == "" {
 		allowCreate := r.URL.Query().Get("intent") == "signup"
-		authURL, err := h.Service.BeginPlatformLogin(r.Context(), provider, callbackURL(r, provider), allowCreate)
+		authURL, err := h.Service.BeginPlatformLogin(r.Context(), provider, h.callbackURL(r, provider), allowCreate)
 		if err != nil {
 			h.redirectSocialError(w, r, err)
 			return
 		}
 		h.binding().Add(w, r, stateOf(authURL))
-		http.Redirect(w, r, authURL, http.StatusFound)
+		http.Redirect(w, r, authURL, http.StatusFound) // #nosec G710 -- operator-configured provider endpoint
 		return
 	}
-	authURL, err := h.Service.BeginLogin(r.Context(), provider, tenantRef, callbackURL(r, provider), r.URL.Query().Get("return_to"))
+	authURL, err := h.Service.BeginLogin(r.Context(), provider, tenantRef, h.callbackURL(r, provider), r.URL.Query().Get("return_to"))
 	if err != nil {
 		h.redirectSocialError(w, r, err)
 		return
 	}
 	h.binding().Add(w, r, stateOf(authURL))
-	http.Redirect(w, r, authURL, http.StatusFound)
+	http.Redirect(w, r, authURL, http.StatusFound) // #nosec G710 -- authorization_endpoint checked by checkAuthorizationEndpoint
 }
 
 // callback handles the provider's redirect. The hosted flow (return_to set) sets
@@ -1317,21 +1333,4 @@ func requireVerifiedAddress(ctx context.Context, db interface {
 		return errs.ErrSocialAccountUnverified
 	}
 	return nil
-}
-
-// userInTenant reports whether tenantID can sign userID in: it is the user's
-// home tenant, or the user holds a role there. The home tenant counts because
-// accounts this flow provisions get no role.
-func userInTenant(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID) (bool, error) {
-	var ok bool
-	err := tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM "user".users u
-			WHERE u.id = $1 AND u.deleted_at IS NULL AND u.tenant_id = $2
-			UNION ALL
-			SELECT 1 FROM rbac.user_roles ur
-			WHERE ur.user_id = $1 AND ur.tenant_id = $2
-		)
-	`, userID, tenantID).Scan(&ok)
-	return ok, err
 }

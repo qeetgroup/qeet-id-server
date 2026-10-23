@@ -50,7 +50,7 @@ func (s *Service) StartConsentRequest(ctx context.Context, loginSessionID, userI
 	if err := validateSignInRequest(info.Type, info.PkceExempt, in.Scopes, in.Nonce, in.CodeChallenge, in.CodeChallengeMethod); err != nil {
 		return uuid.Nil, err
 	}
-	if err := s.checkResource(ctx, info.TenantID, in.Resource); err != nil {
+	if err := checkResource(ctx, s.q, info.TenantID, in.Resource); err != nil {
 		return uuid.Nil, err
 	}
 	scopes := in.Scopes

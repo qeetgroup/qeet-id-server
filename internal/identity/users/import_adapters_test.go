@@ -1,6 +1,12 @@
 package user
 
-import "testing"
+import (
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+)
 
 func TestParseImportSource(t *testing.T) {
 	cases := []struct {
@@ -120,5 +126,78 @@ func TestParseVendorExport_UnknownSource(t *testing.T) {
 	_, errs := ParseVendorExport("okta", []byte("{}"))
 	if len(errs) != 1 {
 		t.Fatalf("expected exactly one error for an unknown source, got %+v", errs)
+	}
+}
+
+// parseErrorCases are the ways a vendor adapter refuses an export line or file,
+// with the line, code, field and message each reports.
+var parseErrorCases = []struct {
+	name    string
+	source  ImportSource
+	raw     string
+	line    int
+	code    string
+	field   string
+	message string
+}{
+	{"auth0 line not JSON", SourceAuth0, "{\"email\":\"a@example.com\"}\nnot-json\n", 2, CodeImportRowMalformed, "", "invalid JSON"},
+	{"auth0 email not a string", SourceAuth0, `{"email":42}`, 1, CodeImportRowMalformed, "", "invalid JSON"},
+	{"auth0 line too long", SourceAuth0, `{"email":"` + strings.Repeat("x", 1<<20) + `"}`, 1, CodeImportRowMalformed, "", "could not read the export file"},
+	{"auth0 missing email", SourceAuth0, `{"name":"No Email"}`, 1, CodeImportFieldMissing, "email", "missing email"},
+	{"cognito header unreadable", SourceCognito, "\"email\n", 0, CodeImportRowMalformed, "", "could not read the header row"},
+	{"cognito row unreadable", SourceCognito, "email\nbare\"quote@example.com\n", 2, CodeImportRowMalformed, "", "invalid row"},
+	{"cognito missing email", SourceCognito, "email,name\n,Nobody\n", 2, CodeImportFieldMissing, "email", "missing email"},
+	{"azure export not parsable", SourceAzureB2C, `{"value":[{"mail":42}]}`, 0, CodeImportRowMalformed, "", "invalid JSON"},
+	{"azure missing email", SourceAzureB2C, `{"value":[{"displayName":"No Email"}]}`, 1, CodeImportFieldMissing, "email", "missing email (no mail, userPrincipalName, or emailAddress identity)"},
+	{"unknown source", "okta", "{}", 0, errs.CodeUserImportSourceInvalid, "", "unknown import source"},
+}
+
+// TestParseVendorExport_ErrorCodes checks that every adapter refusal reports
+// its listed code and field, and a fixed message that never repeats the
+// parser's own error, which can name internal types.
+func TestParseVendorExport_ErrorCodes(t *testing.T) {
+	for _, tc := range parseErrorCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, rowErrs := ParseVendorExport(tc.source, []byte(tc.raw))
+			if len(rowErrs) != 1 {
+				t.Fatalf("errors = %+v, want one", rowErrs)
+			}
+			got := rowErrs[0]
+			if got.Code != tc.code || !slices.Contains(importErrorCodes, got.Code) {
+				t.Errorf("code = %q, want listed code %q", got.Code, tc.code)
+			}
+			if got.Line != tc.line || got.Field != tc.field || got.Message != tc.message {
+				t.Errorf("error = %+v, want line %d, field %q, message %q", got, tc.line, tc.field, tc.message)
+			}
+		})
+	}
+}
+
+// TestVendorRowsKeepTheirFileLine checks that each parsed row remembers its
+// line in the export file, past headers, blank lines, quoted line breaks and
+// refused lines, and an Azure record its position in value.
+func TestVendorRowsKeepTheirFileLine(t *testing.T) {
+	cases := []struct {
+		name   string
+		source ImportSource
+		raw    string
+		lines  []int
+	}{
+		{"auth0", SourceAuth0, "{\"email\":\"a@example.com\"}\n\nnot-json\n{\"email\":\"b@example.com\"}\n", []int{1, 4}},
+		{"cognito", SourceCognito, "email,name\n\na@example.com,\"Two\nLines\"\n,Nobody\nb@example.com,B\n", []int{3, 6}},
+		{"azure_b2c", SourceAzureB2C, `{"value":[{"mail":"a@example.com"},{"displayName":"No Email"},{"mail":"b@example.com"}]}`, []int{1, 3}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, _ := ParseVendorExport(tc.source, []byte(tc.raw))
+			if len(rows) != len(tc.lines) {
+				t.Fatalf("rows = %+v, want %d", rows, len(tc.lines))
+			}
+			for i, row := range rows {
+				if row.line != tc.lines[i] {
+					t.Errorf("row %d (%s) line = %d, want %d", i, row.Email, row.line, tc.lines[i])
+				}
+			}
+		})
 	}
 }

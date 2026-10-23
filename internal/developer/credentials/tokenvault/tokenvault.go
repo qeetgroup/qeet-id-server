@@ -85,14 +85,6 @@ func NewService(ctx context.Context, pool *pgxpool.Pool, kp secret.KeyProvider, 
 	return &Service{pool: pool, q: dbgen.New(pool), box: box, http: policy.HTTPClient(10 * time.Second), egress: policy}, nil
 }
 
-// pgtTS converts a *time.Time to pgtype.Timestamptz (null when nil).
-func pgtTS(t *time.Time) pgtype.Timestamptz {
-	if t == nil {
-		return pgtype.Timestamptz{}
-	}
-	return pgtype.Timestamptz{Time: *t, Valid: true}
-}
-
 // tsPtr converts a pgtype.Timestamptz to *time.Time (nil when not valid).
 func tsPtr(p pgtype.Timestamptz) *time.Time {
 	if !p.Valid {
@@ -365,13 +357,13 @@ func (s *Service) storeGrant(ctx context.Context, tenantID, userID uuid.UUID, pr
 // exchange POSTs a form-encoded OAuth2 token request and parses the response.
 // Shared by the initial code exchange and refresh.
 func (s *Service) exchange(ctx context.Context, tokenURL string, form url.Values) (*oauthTokenResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode())) // #nosec G704 -- token URL checked by the egress policy on save
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	resp, err := s.http.Do(req)
+	resp, err := s.http.Do(req) // #nosec G704 -- egress-guarded client
 	if err != nil {
 		return nil, errs.ErrTokenVaultTokenExchangeFailed.Wrap(err)
 	}
@@ -481,30 +473,13 @@ func randomState() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// externalScheme returns the request's public scheme, as oidc's helper of the
-// same name does: X-Forwarded-Proto from a TLS-terminating proxy, then TLS,
-// defaulting to https except on localhost.
-func externalScheme(r *http.Request) string {
-	if p := r.Header.Get("X-Forwarded-Proto"); p == "https" || p == "http" {
-		return p
-	}
-	if r.TLS != nil {
-		return "https"
-	}
-	if h := r.Host; strings.HasPrefix(h, "localhost") || strings.HasPrefix(h, "127.0.0.1") {
-		return "http"
-	}
-	return "https"
-}
-
-func externalBase(r *http.Request) string {
-	return externalScheme(r) + "://" + r.Host
-}
-
 // --- HTTP ---
 
+// Handler serves the token vault. PublicBaseURL is this API's public origin,
+// or "" to build OAuth callback URLs from the request's Host.
 type Handler struct {
-	Service *Service
+	Service       *Service
+	PublicBaseURL string
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -596,7 +571,7 @@ func (h *Handler) beginConnect(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	authorizeURL, err := h.Service.BeginConnect(r.Context(), tenantID, userID, chi.URLParam(r, "provider"), externalBase(r))
+	authorizeURL, err := h.Service.BeginConnect(r.Context(), tenantID, userID, chi.URLParam(r, "provider"), httpx.PublicOrigin(r, h.PublicBaseURL))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -618,7 +593,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		writeCallbackPage(w, false, "missing state or code")
 		return
 	}
-	if err := h.Service.FinishConnect(r.Context(), state, code, externalBase(r)); err != nil {
+	if err := h.Service.FinishConnect(r.Context(), state, code, httpx.PublicOrigin(r, h.PublicBaseURL)); err != nil {
 		msg := "connection failed"
 		if e := errs.As(err); e != nil {
 			msg = e.Message
@@ -640,7 +615,7 @@ func writeCallbackPage(w http.ResponseWriter, ok bool, errMsg string) {
 		return
 	}
 	w.WriteHeader(http.StatusBadRequest)
-	_, _ = w.Write([]byte(`<!doctype html><html><body><p>Connection failed: ` + htmlEscape(errMsg) + `</p></body></html>`))
+	_, _ = w.Write([]byte(`<!doctype html><html><body><p>Connection failed: ` + htmlEscape(errMsg) + `</p></body></html>`)) // #nosec G705 -- errMsg is HTML-escaped
 }
 
 func htmlEscape(s string) string {

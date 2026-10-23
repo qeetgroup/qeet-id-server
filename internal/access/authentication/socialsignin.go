@@ -38,6 +38,7 @@ func (s *Service) BeginSocialSignIn(ctx context.Context, userID, tenantID uuid.U
 	if err != nil {
 		return nil, err
 	}
+	s.recordSignIn(ctx, userID, tenantID, ua, httpx.GeoCountry(ctx))
 	return &LoginResult{Pair: pair}, nil
 }
 
@@ -71,5 +72,6 @@ func (s *Service) BeginSocialLoginSession(ctx context.Context, userID, tenantID 
 	if err != nil {
 		return nil, err
 	}
+	s.recordSignIn(ctx, userID, tenantID, ua, country)
 	return &LoginSessionResult{UserID: userID, RawCookie: raw}, nil
 }

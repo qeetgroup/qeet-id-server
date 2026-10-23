@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/groups/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -118,18 +120,18 @@ func groupFromUpdateRow(row dbgen.UpdateGroupRow) Group {
 	}
 }
 
-func groupFromListRow(row dbgen.ListGroupsRow) Group {
-	return Group{
-		ID:          row.ID,
-		TenantID:    row.TenantID,
-		ParentID:    pgtypeToUUIDPtr(row.ParentID),
-		Name:        row.Name,
-		Description: row.Description,
-		CreatedAt:   row.CreatedAt,
-	}
-}
+// errGroupUnnamed refuses a group name that is empty once trimmed.
+var errGroupUnnamed = errs.ErrValidationFailed.WithFields([]errs.FieldError{{
+	Field: "name", Code: "required", Message: "Give the group a name.",
+}})
 
+// Create adds a group to the tenant. Its name is trimmed and must be unique in
+// the tenant, ignoring case; a taken one returns errs.ErrGroupNameExists.
 func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor) (*Group, error) {
+	in.Name = strings.TrimSpace(in.Name)
+	if in.Name == "" {
+		return nil, errGroupUnnamed
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -152,6 +154,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor)
 		Name:        in.Name,
 		Description: in.Description,
 	})
+	if pgxerr.IsUnique(err) {
+		return nil, errs.ErrGroupNameExists
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -170,8 +175,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor)
 }
 
 // List returns every group in the tenant with its member count, counted in one
-// LEFT JOIN rather than a query per group. It is hand-written SQL because the
-// generated ListGroups has no member count.
+// LEFT JOIN rather than a query per group.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Group, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT g.id, g.tenant_id, g.parent_id, g.name, g.description, g.created_at,
@@ -225,7 +229,16 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audi
 	return tx.Commit(ctx)
 }
 
+// Update changes the fields in sets. A new name is trimmed and must be unique in
+// the tenant, ignoring case; a taken one returns errs.ErrGroupNameExists.
 func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateInput, actor audit.Actor) (*Group, error) {
+	if in.Name != nil {
+		name := strings.TrimSpace(*in.Name)
+		if name == "" {
+			return nil, errGroupUnnamed
+		}
+		in.Name = &name
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -264,6 +277,9 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrGroupNotFound
+	}
+	if pgxerr.IsUnique(err) {
+		return nil, errs.ErrGroupNameExists
 	}
 	if err != nil {
 		return nil, err

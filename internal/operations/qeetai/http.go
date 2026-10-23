@@ -242,7 +242,7 @@ func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
 	// to stream; conversation CRUD still works without one.
 	source, allowed := h.qeetaiAllowed(r, tenantID)
 	if source == SourceNone {
-		httpx.WriteError(w, r, errs.New("qeetai_unconfigured",
+		httpx.WriteError(w, r, errs.ErrQeetAIUnconfigured.WithMessage(
 			"Qeet AI is not configured — add your organization's AI provider key in Settings → Qeet AI (or set QEETAI_PROVIDER/QEETAI_API_KEY)"))
 		return
 	}

@@ -619,6 +619,10 @@ func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	if h.SignIns == nil {
+		httpx.WriteError(w, r, errs.ErrNotImplemented)
+		return
+	}
 	var in setPasswordInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
@@ -650,10 +654,10 @@ func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// setPasswordWithEvidence, in one transaction, sets userID's password hash, ends
-// all their sessions and hosted-login sessions, and records an audit row and a
-// user.password_set event. An administrator's reset is usually incident
-// response, so no session survives it.
+// setPasswordWithEvidence, in one transaction, ends every way userID is signed
+// in (as revokeAllSessions does), sets their password hash, and records an audit
+// row and a user.password_set event. An administrator's reset is usually
+// incident response, so no session, application grant or trusted device survives.
 func (h *Handler) setPasswordWithEvidence(r *http.Request, tenantID, userID uuid.UUID, hash string) error {
 	ctx := r.Context()
 	tx, err := h.Repo.Pool().Begin(ctx)
@@ -662,24 +666,18 @@ func (h *Handler) setPasswordWithEvidence(r *http.Request, tenantID, userID uuid
 	}
 	defer tx.Rollback(ctx)
 
+	// Unlike the self-service change there is no session to keep: the caller is
+	// a different person from the account holder.
+	ended, err := h.SignIns.EndAllSignIns(ctx, tx, userID, sessionsignal.ReasonAdminPasswordSet)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO auth.password_credentials (user_id, password_hash, updated_at)
 		VALUES ($1, $2, NOW())
 		ON CONFLICT (user_id) DO UPDATE SET
 		    password_hash = EXCLUDED.password_hash, updated_at = NOW()
 	`, userID, hash); err != nil {
-		return err
-	}
-	// Every session, including any the admin is not aware of. Unlike the
-	// self-service change there is no session to preserve here: the caller is a
-	// different person from the account holder.
-	ended, err := sessionsignal.EndUserSessions(ctx, tx, userID)
-	if err != nil {
-		return err
-	}
-	h.Signals.Revoked(ctx, tx, sessionsignal.ReasonAdminPasswordSet, ended...)
-	hosted, err := sessionsignal.EndLoginSessions(ctx, tx, userID)
-	if err != nil {
 		return err
 	}
 
@@ -704,7 +702,14 @@ func (h *Handler) setPasswordWithEvidence(r *http.Request, tenantID, userID uuid
 		IP:           httpx.ClientIP(r),
 		UserAgent:    r.UserAgent(),
 		RequestID:    httpx.RequestID(r),
-		Metadata:     map[string]any{"sessions_revoked": true, "revoked_sessions": len(ended), "revoked_login_sessions": hosted},
+		Metadata: map[string]any{
+			"sessions_revoked":             true,
+			"revoked_sessions":             ended.Sessions,
+			"revoked_login_sessions":       ended.LoginSessions,
+			"revoked_app_grants":           ended.AppGrants,
+			"revoked_trusted_devices":      ended.TrustedDevices,
+			"ended_pending_authorizations": ended.PendingAuthorizations,
+		},
 	}); err != nil {
 		return err
 	}

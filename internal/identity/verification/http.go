@@ -54,7 +54,7 @@ func (h *Handler) startEmailChange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"message": "We've sent a verification code to your new email.",
+		"message": "Check your new email address for a verification code.",
 	})
 }
 

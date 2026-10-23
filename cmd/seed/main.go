@@ -307,7 +307,7 @@ func main() {
 	// of the box. Dev-only (this whole seed is dev-only). RegisterClient mints random
 	// ids/secrets, so we insert directly to pin known values.
 	const exampleClientID = "qci_example_app"
-	const exampleClientSecret = "example-app-dev-secret-change-me"
+	const exampleClientSecret = "example-app-dev-secret-change-me" // #nosec G101 -- dev seed fixture, not a deployed secret
 	exHash, err := password.Hash(exampleClientSecret)
 	must(err, "hash example client secret")
 	_, err = pool.Exec(ctx, `
@@ -656,7 +656,7 @@ func main() {
 			_, err = socialSvc.UpsertProvider(ctx, social.CreateProviderInput{TenantID: t.ID, Provider: "google", ClientID: "meridian-google-client-id", ClientSecret: "meridian-google-secret", DiscoveryURL: "https://accounts.google.com/.well-known/openid-configuration"})
 			must(err, "meridian social")
 		case "lumen": // Pro (dev-tools company): GitHub social login
-			_, err = socialSvc.UpsertProvider(ctx, social.CreateProviderInput{TenantID: t.ID, Provider: "github", ClientID: "lumen-github-client-id", ClientSecret: "lumen-github-secret"})
+			_, err = socialSvc.UpsertProvider(ctx, social.CreateProviderInput{TenantID: t.ID, Provider: "github", ClientID: "lumen-github-client-id", ClientSecret: "lumen-github-secret"}) // #nosec G101 -- dev seed fixture, not a deployed secret
 			must(err, "lumen social")
 		}
 	}

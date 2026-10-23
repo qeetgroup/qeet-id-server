@@ -209,6 +209,7 @@ func (q *Queries) ListWebhookDeliveries(ctx context.Context, arg ListWebhookDeli
 }
 
 const listWebhookSubscriptions = `-- name: ListWebhookSubscriptions :many
+
 SELECT id, tenant_id, url, events, disabled_at, created_at
 FROM tenant.webhook_subscriptions
 WHERE tenant_id = $1 ORDER BY created_at DESC
@@ -223,6 +224,10 @@ type ListWebhookSubscriptionsRow struct {
 	CreatedAt  time.Time
 }
 
+// Queries for the webhooks domain.
+// Create and Disable accept a pgx.Tx from the handler (audit sharing);
+// they are called via q.WithTx(tx). Dispatcher (tick) queries are also
+// static and included here.
 func (q *Queries) ListWebhookSubscriptions(ctx context.Context, tenantID uuid.UUID) ([]ListWebhookSubscriptionsRow, error) {
 	rows, err := q.db.Query(ctx, listWebhookSubscriptions, tenantID)
 	if err != nil {

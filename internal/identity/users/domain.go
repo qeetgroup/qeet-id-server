@@ -62,12 +62,14 @@ type CreateInput struct {
 	Metadata    map[string]any `json:"metadata"`
 }
 
-// BulkUserInput is one row of a bulk user import (POST /v1/users/bulk).
+// BulkUserInput is one row of a bulk user import (POST /v1/users/bulk). line
+// is the row's line in a vendor export file, zero for a row of the JSON array.
 type BulkUserInput struct {
 	Email       string `json:"email" validate:"required,email"`
 	Password    string `json:"password" validate:"omitempty,max=256"`
 	DisplayName string `json:"display_name" validate:"omitempty,max=200"`
 	Phone       string `json:"phone" validate:"omitempty,e164"`
+	line        int
 }
 
 // BulkCreateInput is the POST /v1/users/bulk request body. TenantID is optional;
@@ -78,10 +80,14 @@ type BulkCreateInput struct {
 }
 
 // BulkImportError describes why a single row failed. Line is the row's 1-based
-// position in the submitted users array or export file.
+// position in the submitted users array, or its line in an export file (for
+// azure_b2c, its position in value); zero when the whole file failed. Code is
+// one of importErrorCodes, and Field the row's JSON field it concerns, if any.
 type BulkImportError struct {
 	Line    int    `json:"line,omitempty"`
 	Email   string `json:"email,omitempty"`
+	Code    string `json:"code"`
+	Field   string `json:"field,omitempty"`
 	Message string `json:"message"`
 }
 

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -175,9 +176,12 @@ func toFloat64(v any) (float64, bool) {
 
 // equal performs a type-aware equality comparison. JSON numbers decode as
 // float64, so numeric cross-type equality (e.g. int vs float64) is handled.
+// Arrays and objects compare by their printed form; == on them would panic.
 func equal(a, b any) bool {
-	if a == b {
-		return true
+	if as, ok := a.(string); ok {
+		if bs, ok := b.(string); ok {
+			return as == bs
+		}
 	}
 	af, aok := toFloat64(a)
 	bf, bok := toFloat64(b)
@@ -232,12 +236,16 @@ func compare(op string, attrVal, value any) (bool, error) {
 		return true, nil
 
 	case "contains":
-		// attrVal (string or array) contains value.
+		// attrVal (string or array) contains value. Every string contains "",
+		// so looking for it in a string is an error rather than a match.
 		switch v := attrVal.(type) {
 		case string:
 			s, ok := value.(string)
 			if !ok {
 				return false, nil
+			}
+			if s == "" {
+				return false, errors.New("abac: op 'contains' can't look for an empty string")
 			}
 			return strings.Contains(v, s), nil
 		case []any:
@@ -295,15 +303,21 @@ func compare(op string, attrVal, value any) (bool, error) {
 		}
 		return af <= bf, nil
 
-	case "prefix":
-		av, _ := attrVal.(string)
-		bv, _ := value.(string)
-		return strings.HasPrefix(av, bv), nil
-
-	case "suffix":
-		av, _ := attrVal.(string)
-		bv, _ := value.(string)
-		return strings.HasSuffix(av, bv), nil
+	case "prefix", "suffix":
+		// The value must be a non-empty string, as "" is an affix of every
+		// string; a non-string attribute matches nothing.
+		affix, ok := value.(string)
+		if !ok || affix == "" {
+			return false, fmt.Errorf("abac: op '%s' requires value to be a non-empty string", op)
+		}
+		av, ok := attrVal.(string)
+		if !ok {
+			return false, nil
+		}
+		if op == "prefix" {
+			return strings.HasPrefix(av, affix), nil
+		}
+		return strings.HasSuffix(av, affix), nil
 
 	case "regex":
 		av, ok := attrVal.(string)
@@ -314,10 +328,12 @@ func compare(op string, attrVal, value any) (bool, error) {
 		if !ok {
 			return false, nil
 		}
+		if pattern == "" {
+			return false, errors.New("abac: op 'regex' requires a non-empty pattern")
+		}
 		re, err := compileRegex(pattern)
 		if err != nil {
-			// fail-closed on bad pattern — matches nothing
-			return false, nil
+			return false, nil //nolint:nilerr // a bad pattern fails closed: it matches nothing
 		}
 		return re.MatchString(av), nil
 
@@ -326,116 +342,207 @@ func compare(op string, attrVal, value any) (bool, error) {
 	}
 }
 
+// truth is a condition's three-valued result. A leaf comparing two attributes
+// is unknown when either is absent or null; all, any and not combine unknown
+// as Kleene logic does, so all with a false child is false and any with a true
+// child is true. truth.applies turns the result into a policy match.
+type truth uint8
+
+const (
+	isFalse truth = iota
+	isTrue
+	isUnknown
+)
+
+// truthOf returns the known truth b.
+func truthOf(b bool) truth {
+	if b {
+		return isTrue
+	}
+	return isFalse
+}
+
+// applies reports whether a policy with effect applies when its condition is
+// t. Unknown applies to a deny and not to an allow: an absent attribute never
+// grants access and never lifts a deny.
+func (t truth) applies(effect string) bool {
+	return t == isTrue || (t == isUnknown && effect == "deny")
+}
+
+// refNamespaces are the namespaces an attribute reference may name.
+var refNamespaces = map[string]bool{"subject": true, "resource": true, "context": true}
+
+// refOps are the operators whose value may reference another attribute. Not
+// regex, so a pattern never comes from request data, nor prefix and suffix,
+// whose value must be a non-empty string literal.
+var refOps = map[string]bool{
+	"eq": true, "ne": true, "gt": true, "gte": true, "lt": true, "lte": true,
+	"in": true, "nin": true, "contains": true,
+}
+
+// leafReference returns the attribute a leaf's value references, or "" when
+// the value is a literal. An object value is a reference, and must be exactly
+// {"attr": "<namespace>.<path>"} naming another attribute, on an op in refOps;
+// a string such as "resource.region" stays a literal.
+func leafReference(m map[string]json.RawMessage, attr, op string) (string, error) {
+	raw := bytes.TrimSpace(m["value"])
+	if len(raw) == 0 || raw[0] != '{' {
+		return "", nil
+	}
+	var obj map[string]json.RawMessage
+	var ref string
+	if json.Unmarshal(raw, &obj) != nil || len(obj) != 1 || json.Unmarshal(obj["attr"], &ref) != nil {
+		return "", errors.New(`leaf 'value' object must be an attribute reference {"attr": "<namespace>.<path>"}`)
+	}
+	if !refOps[op] {
+		return "", fmt.Errorf("leaf op %q cannot compare with another attribute", op)
+	}
+	ns, path, _ := strings.Cut(ref, ".")
+	if !refNamespaces[ns] || path == "" || slices.Contains(strings.Split(path, "."), "") {
+		return "", fmt.Errorf("leaf 'value' references %q, which is not a subject., resource. or context. attribute", ref)
+	}
+	if ref == attr {
+		return "", errors.New("leaf 'value' references the leaf's own attribute")
+	}
+	return ref, nil
+}
+
 // evalLeaf evaluates one comparison leaf: {"attr":"...","op":"...","value":...}.
-func evalLeaf(m map[string]json.RawMessage, bag AttributeBag) (bool, error) {
+// The value is a literal or a reference to another attribute (leafReference).
+func evalLeaf(m map[string]json.RawMessage, bag AttributeBag) (truth, error) {
 	var attr string
 	if err := json.Unmarshal(m["attr"], &attr); err != nil || attr == "" {
-		return false, fmt.Errorf("abac: condition leaf 'attr' must be a non-empty string")
+		return isFalse, fmt.Errorf("abac: condition leaf 'attr' must be a non-empty string")
 	}
 	opRaw, ok := m["op"]
 	if !ok {
-		return false, fmt.Errorf("abac: condition leaf missing 'op'")
+		return isFalse, fmt.Errorf("abac: condition leaf missing 'op'")
 	}
 	var op string
 	if err := json.Unmarshal(opRaw, &op); err != nil {
-		return false, fmt.Errorf("abac: condition leaf 'op' must be a string: %w", err)
+		return isFalse, fmt.Errorf("abac: condition leaf 'op' must be a string: %w", err)
+	}
+	ref, err := leafReference(m, attr, op)
+	if err != nil {
+		return isFalse, fmt.Errorf("abac: condition %w", err)
 	}
 
 	// 'exists' only needs the presence test, not the value.
 	if op == "exists" {
 		_, present := resolvePath(attr, bag)
-		return present, nil
+		return truthOf(present), nil
 	}
 
 	attrVal, present := resolvePath(attr, bag)
 
+	// Comparing two attributes: unknown unless both have a value, whatever the
+	// op, so a missing one decides nothing (see truth.applies).
+	if ref != "" {
+		refVal, refPresent := resolvePath(ref, bag)
+		if !present || !refPresent || attrVal == nil || refVal == nil {
+			return isUnknown, nil
+		}
+		ok, err := compare(op, attrVal, refVal)
+		return truthOf(ok), err
+	}
+
 	// Absent attribute: fail-closed for all comparison ops except 'nin'
 	// (an absent value is not a member of any set).
 	if !present {
-		if op == "nin" {
-			return true, nil
-		}
-		return false, nil
+		return truthOf(op == "nin"), nil
 	}
 
 	var value any
 	if vRaw, ok := m["value"]; ok {
 		if err := json.Unmarshal(vRaw, &value); err != nil {
-			return false, fmt.Errorf("abac: condition leaf 'value': %w", err)
+			return isFalse, fmt.Errorf("abac: condition leaf 'value': %w", err)
 		}
 	}
 
-	return compare(op, attrVal, value)
+	ok, err = compare(op, attrVal, value)
+	return truthOf(ok), err
 }
 
 // evaluateNode recursively evaluates one condition node against the attribute
 // bag. An empty JSON object {} is a no-op condition (always true), used as
 // the default for unconditional policies.
-func evaluateNode(raw json.RawMessage, bag AttributeBag) (bool, error) {
+func evaluateNode(raw json.RawMessage, bag AttributeBag) (truth, error) {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 || string(raw) == "null" || string(raw) == "{}" {
-		return true, nil // no condition → unconditional match
+		return isTrue, nil // no condition → unconditional match
 	}
 
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return false, fmt.Errorf("abac: condition node must be a JSON object: %w", err)
+		return isFalse, fmt.Errorf("abac: condition node must be a JSON object: %w", err)
 	}
 
 	switch {
 	case m["all"] != nil:
 		var children []json.RawMessage
 		if err := json.Unmarshal(m["all"], &children); err != nil {
-			return false, fmt.Errorf("abac: 'all' must be an array: %w", err)
+			return isFalse, fmt.Errorf("abac: 'all' must be an array: %w", err)
 		}
+		result := isTrue // vacuously true for empty array
 		for i, child := range children {
-			ok, err := evaluateNode(child, bag)
+			t, err := evaluateNode(child, bag)
 			if err != nil {
-				return false, fmt.Errorf("abac: all[%d]: %w", i, err)
+				return isFalse, fmt.Errorf("abac: all[%d]: %w", i, err)
 			}
-			if !ok {
-				return false, nil // short-circuit AND
+			if t == isFalse {
+				return isFalse, nil // short-circuit AND
+			}
+			if t == isUnknown {
+				result = isUnknown
 			}
 		}
-		return true, nil // vacuously true for empty array
+		return result, nil
 
 	case m["any"] != nil:
 		var children []json.RawMessage
 		if err := json.Unmarshal(m["any"], &children); err != nil {
-			return false, fmt.Errorf("abac: 'any' must be an array: %w", err)
+			return isFalse, fmt.Errorf("abac: 'any' must be an array: %w", err)
 		}
+		result := isFalse // false for empty array
 		for i, child := range children {
-			ok, err := evaluateNode(child, bag)
+			t, err := evaluateNode(child, bag)
 			if err != nil {
-				return false, fmt.Errorf("abac: any[%d]: %w", i, err)
+				return isFalse, fmt.Errorf("abac: any[%d]: %w", i, err)
 			}
-			if ok {
-				return true, nil // short-circuit OR
+			if t == isTrue {
+				return isTrue, nil // short-circuit OR
+			}
+			if t == isUnknown {
+				result = isUnknown
 			}
 		}
-		return false, nil // false for empty array
+		return result, nil
 
 	case m["not"] != nil:
-		result, err := evaluateNode(m["not"], bag)
+		t, err := evaluateNode(m["not"], bag)
 		if err != nil {
-			return false, fmt.Errorf("abac: not: %w", err)
+			return isFalse, fmt.Errorf("abac: not: %w", err)
 		}
-		return !result, nil
+		if t == isUnknown {
+			return isUnknown, nil
+		}
+		return truthOf(t == isFalse), nil
 
 	case m["attr"] != nil:
 		return evalLeaf(m, bag)
 
 	default:
-		return false, fmt.Errorf("abac: condition node has no recognized key ('all', 'any', 'not', 'attr')")
+		return isFalse, fmt.Errorf("abac: condition node has no recognized key ('all', 'any', 'not', 'attr')")
 	}
 }
 
-// EvaluateCondition reports whether a condition tree holds for attrs. A node is
-// {"all": [...]}, {"any": [...]}, {"not": node} or a leaf {"attr":
-// "subject.dept", "op": "eq", "value": "eng"}; an empty tree holds. An error
-// means the tree is invalid, and callers must then deny (fail closed).
-func EvaluateCondition(node json.RawMessage, attrs AttributeBag) (bool, error) {
-	return evaluateNode(node, attrs)
+// EvaluateCondition reports whether a policy with effect and condition node
+// applies to attrs. A node is {"all": [...]}, {"any": [...]}, {"not": node} or
+// a leaf such as {"attr": "subject.dept", "op": "eq", "value": "eng"}; an empty
+// tree applies. An error means the tree is invalid: callers must deny.
+func EvaluateCondition(node json.RawMessage, effect string, attrs AttributeBag) (bool, error) {
+	t, err := evaluateNode(node, attrs)
+	return err == nil && t.applies(effect), err
 }
 
 // validateCondition performs a structural check of a condition tree without
@@ -493,6 +600,25 @@ func validateCondition(raw json.RawMessage) error {
 		}
 		if !validOps[op] {
 			return fmt.Errorf("leaf: unknown operator %q", op)
+		}
+		if _, err := leafReference(m, attr, op); err != nil {
+			return err
+		}
+		var affix string
+		if (op == "prefix" || op == "suffix") && (json.Unmarshal(m["value"], &affix) != nil || affix == "") {
+			return fmt.Errorf("leaf op %q needs a non-empty string value", op)
+		}
+		// "" is in every string and an empty pattern matches every string.
+		if (op == "contains" || op == "regex") && bytes.Equal(bytes.TrimSpace(m["value"]), []byte(`""`)) {
+			return fmt.Errorf("leaf op %q needs a non-empty value", op)
+		}
+		var elems []json.RawMessage
+		if json.Unmarshal(m["value"], &elems) == nil {
+			for _, el := range elems {
+				if el = bytes.TrimSpace(el); len(el) > 0 && el[0] == '{' {
+					return errors.New("leaf 'value' array may not hold an object: an attribute reference must be the whole value")
+				}
+			}
 		}
 	default:
 		return fmt.Errorf("node has no recognized key ('all', 'any', 'not', 'attr')")
@@ -577,7 +703,7 @@ func locksOutAuthor(effect, resourceType, action string, enabled bool, cond json
 	if (resourceType != policyResourceType && resourceType != "*") || (action != policyWriteAction && action != "*") {
 		return false
 	}
-	matched, err := EvaluateCondition(cond, AttributeBag{
+	matched, err := EvaluateCondition(cond, effect, AttributeBag{
 		"subject":  SubjectAttributes(actor.UserID.String(), tenantID),
 		"resource": {"type": policyResourceType, "id": ""},
 		"context":  {},
@@ -668,7 +794,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput
 		ResourceType: in.ResourceType,
 		Action:       in.Action,
 		Condition:    []byte(cond),
-		Priority:     int32(in.Priority),
+		Priority:     int32(in.Priority), // #nosec G115 -- only orders the trace; deny wins regardless
 		Enabled:      in.Enabled,
 	})
 	if err != nil {
@@ -762,7 +888,7 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 		ResourceType: in.ResourceType,
 		Action:       in.Action,
 		Condition:    []byte(cond),
-		Priority:     int32(in.Priority),
+		Priority:     int32(in.Priority), // #nosec G115 -- only orders the trace; deny wins regardless
 		Enabled:      in.Enabled,
 		ID:           id,
 		TenantID:     tenantID,
@@ -837,7 +963,8 @@ type candidate struct {
 
 // Evaluate applies tenantID's enabled policies for in's resource type and
 // action, highest priority first, deny-wins: a matching deny or a condition
-// that fails to evaluate refuses, else a matching allow permits, else deny.
+// that fails to evaluate refuses, else a matching allow permits, else deny. A
+// condition comparing an absent attribute matches a deny and never an allow.
 func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in EvaluationInput) (*Decision, error) {
 	if strings.TrimSpace(in.Action) == "" {
 		return nil, errs.ErrABACActionRequired
@@ -862,8 +989,12 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in Evaluatio
 			priority:  int(row.Priority),
 		})
 	}
+	return combine(policies, attributeBag(in)), nil
+}
 
-	// Build the attribute bag: merge resource type+id+attrs into one namespace.
+// attributeBag builds the bag policies see for in, with the resource's type,
+// id and attrs merged into one namespace.
+func attributeBag(in EvaluationInput) AttributeBag {
 	resourceAttrs := map[string]any{
 		"type": in.Resource.Type,
 		"id":   in.Resource.ID,
@@ -879,12 +1010,18 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in Evaluatio
 	if ctxAttrs == nil {
 		ctxAttrs = map[string]any{}
 	}
-	bag := AttributeBag{
+	return AttributeBag{
 		"subject":  subject,
 		"resource": resourceAttrs,
 		"context":  ctxAttrs,
 	}
+}
 
+// combine decides policies, in order, against bag deny-wins: a policy that
+// applies (truth.applies) with effect deny, or whose condition fails to
+// evaluate, refuses; else one that applies with effect allow permits; else
+// the answer is deny.
+func combine(policies []candidate, bag AttributeBag) *Decision {
 	trace := make([]string, 0, len(policies))
 
 	var denyPolicyID *uuid.UUID
@@ -897,7 +1034,7 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in Evaluatio
 		if len(cond) == 0 {
 			cond = json.RawMessage(`{}`)
 		}
-		matched, err := EvaluateCondition(cond, bag)
+		t, err := evaluateNode(cond, bag)
 		if err != nil {
 			// Malformed condition → fail-closed; record as deny.
 			trace = append(trace, fmt.Sprintf("policy %q: condition error (%v) → fail-closed deny", p.name, err))
@@ -908,21 +1045,31 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in Evaluatio
 			}
 			continue
 		}
-		if matched {
-			trace = append(trace, fmt.Sprintf("policy %q (effect=%s, priority=%d): condition matched → %s",
-				p.name, p.effect, p.priority, p.effect))
-			if p.effect == "deny" && denyPolicyID == nil {
-				id := p.id
-				denyPolicyID = &id
-				denyReason = fmt.Sprintf("explicitly denied by policy %q (priority %d)", p.name, p.priority)
-			} else if p.effect == "allow" && allowPolicyID == nil {
-				id := p.id
-				allowPolicyID = &id
-				allowReason = fmt.Sprintf("allowed by policy %q (priority %d)", p.name, p.priority)
+		matched := t.applies(p.effect)
+		outcome := "condition not matched"
+		switch {
+		case t == isUnknown && matched:
+			outcome = "an attribute the condition compares is absent → " + p.effect
+		case t == isUnknown:
+			outcome = "an attribute the condition compares is absent → not matched"
+		case matched:
+			outcome = "condition matched → " + p.effect
+		}
+		trace = append(trace, fmt.Sprintf("policy %q (effect=%s, priority=%d): %s", p.name, p.effect, p.priority, outcome))
+		if !matched {
+			continue
+		}
+		if p.effect == "deny" && denyPolicyID == nil {
+			id := p.id
+			denyPolicyID = &id
+			denyReason = fmt.Sprintf("explicitly denied by policy %q (priority %d)", p.name, p.priority)
+			if t == isUnknown {
+				denyReason = fmt.Sprintf("denied by policy %q (priority %d): an attribute it compares is absent", p.name, p.priority)
 			}
-		} else {
-			trace = append(trace, fmt.Sprintf("policy %q (effect=%s, priority=%d): condition not matched",
-				p.name, p.effect, p.priority))
+		} else if p.effect == "allow" && allowPolicyID == nil {
+			id := p.id
+			allowPolicyID = &id
+			allowReason = fmt.Sprintf("allowed by policy %q (priority %d)", p.name, p.priority)
 		}
 	}
 
@@ -934,7 +1081,7 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in Evaluatio
 			MatchedPolicyID: denyPolicyID,
 			Reason:          denyReason,
 			Trace:           trace,
-		}, nil
+		}
 	}
 	if allowPolicyID != nil {
 		return &Decision{
@@ -943,7 +1090,7 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in Evaluatio
 			MatchedPolicyID: allowPolicyID,
 			Reason:          allowReason,
 			Trace:           trace,
-		}, nil
+		}
 	}
 
 	trace = append(trace, "no matching allow policy found → default deny")
@@ -952,7 +1099,7 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in Evaluatio
 		Effect: "deny",
 		Reason: "no matching allow policy",
 		Trace:  trace,
-	}, nil
+	}
 }
 
 // HTTP handler

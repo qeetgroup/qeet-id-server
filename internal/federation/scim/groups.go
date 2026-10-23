@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -293,9 +294,9 @@ func parseDisplayNameFilter(filter string) (string, error) {
 }
 
 // toGroupResource renders a group row + its members as a SCIM core Group.
-func (s *Service) toGroupResource(ctx context.Context, r *http.Request, g *groupRow) (map[string]any, error) {
+func (h *Handler) toGroupResource(ctx context.Context, r *http.Request, g *groupRow) (map[string]any, error) {
 	tid, _ := tenantFromCtx(ctx)
-	members, err := s.listMembers(ctx, tid, g.ID)
+	members, err := h.Service.listMembers(ctx, tid, g.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +304,7 @@ func (s *Service) toGroupResource(ctx context.Context, r *http.Request, g *group
 	for _, m := range members {
 		entry := map[string]any{
 			"value": m.UserID.String(),
-			"$ref":  scimLocation(r, "/Users/"+m.UserID.String()),
+			"$ref":  h.location(r, "/Users/"+m.UserID.String()),
 		}
 		if m.DisplayName != nil && *m.DisplayName != "" {
 			entry["display"] = *m.DisplayName
@@ -321,7 +322,7 @@ func (s *Service) toGroupResource(ctx context.Context, r *http.Request, g *group
 			"resourceType": "Group",
 			"created":      g.CreatedAt.UTC().Format(time.RFC3339),
 			"lastModified": g.UpdatedAt.UTC().Format(time.RFC3339),
-			"location":     scimLocation(r, "/Groups/"+g.ID.String()),
+			"location":     h.location(r, "/Groups/"+g.ID.String()),
 		},
 	}
 	if g.ExternalID != nil && *g.ExternalID != "" {
@@ -360,7 +361,7 @@ func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	resources := make([]map[string]any, 0, len(rows))
 	for i := range rows {
-		res, err := h.Service.toGroupResource(r.Context(), r, &rows[i])
+		res, err := h.toGroupResource(r.Context(), r, &rows[i])
 		if err != nil {
 			writeSCIMErr(w, http.StatusInternalServerError, "list failed")
 			return
@@ -416,15 +417,28 @@ func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	g, err := h.Service.createGroup(ctx, tid, name, p.ExternalID, p.memberIDs())
 	if err != nil {
-		writeSCIMErr(w, http.StatusBadRequest, "create failed")
+		if !writeGroupConflict(w, err) {
+			writeSCIMErr(w, http.StatusBadRequest, "create failed")
+		}
 		return
 	}
-	res, err := h.Service.toGroupResource(ctx, r, g)
+	res, err := h.toGroupResource(ctx, r, g)
 	if err != nil {
 		writeSCIMErr(w, http.StatusInternalServerError, "reload failed")
 		return
 	}
 	writeSCIM(w, http.StatusCreated, res)
+}
+
+// writeGroupConflict answers err with RFC 7644's 409 uniqueness when it is a
+// taken name or externalId, and reports whether it did. A name is unique in the
+// organization, ignoring case, among groups without an externalId.
+func writeGroupConflict(w http.ResponseWriter, err error) bool {
+	if !pgxerr.IsUnique(err) {
+		return false
+	}
+	writeSCIMTypedErr(w, http.StatusConflict, "uniqueness", "a group with this displayName or externalId already exists")
+	return true
 }
 
 func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request) {
@@ -437,7 +451,7 @@ func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request) {
 		writeSCIMErr(w, http.StatusNotFound, "group not found")
 		return
 	}
-	res, err := h.Service.toGroupResource(r.Context(), r, g)
+	res, err := h.toGroupResource(r.Context(), r, g)
 	if err != nil {
 		writeSCIMErr(w, http.StatusInternalServerError, "render failed")
 		return
@@ -459,18 +473,19 @@ func (h *Handler) replaceGroup(w http.ResponseWriter, r *http.Request) {
 		writeSCIMErr(w, http.StatusBadRequest, "displayName is required")
 		return
 	}
-	var ext *string
-	ext = &p.ExternalID // PUT is a full replace: externalId is authoritative (empty clears it)
+	ext := &p.ExternalID // PUT is a full replace: externalId is authoritative (empty clears it)
 	g, err := h.Service.replaceGroup(r.Context(), tid, id, name, ext, p.memberIDs())
 	if err != nil {
 		if errors.Is(err, errs.ErrNotFound) {
 			writeSCIMErr(w, http.StatusNotFound, "group not found")
 			return
 		}
-		writeSCIMErr(w, http.StatusBadRequest, "replace failed")
+		if !writeGroupConflict(w, err) {
+			writeSCIMErr(w, http.StatusBadRequest, "replace failed")
+		}
 		return
 	}
-	res, err := h.Service.toGroupResource(r.Context(), r, g)
+	res, err := h.toGroupResource(r.Context(), r, g)
 	if err != nil {
 		writeSCIMErr(w, http.StatusInternalServerError, "render failed")
 		return
@@ -510,10 +525,12 @@ func (h *Handler) patchGroup(w http.ResponseWriter, r *http.Request) {
 			writeSCIMErr(w, http.StatusNotFound, "group not found")
 			return
 		}
-		writeSCIMErr(w, http.StatusBadRequest, "patch failed")
+		if !writeGroupConflict(w, err) {
+			writeSCIMErr(w, http.StatusBadRequest, "patch failed")
+		}
 		return
 	}
-	res, err := h.Service.toGroupResource(r.Context(), r, g)
+	res, err := h.toGroupResource(r.Context(), r, g)
 	if err != nil {
 		writeSCIMErr(w, http.StatusInternalServerError, "render failed")
 		return
@@ -523,8 +540,9 @@ func (h *Handler) patchGroup(w http.ResponseWriter, r *http.Request) {
 
 // parseGroupPatch resolves a SCIM PatchOp body into a groupPatch. It accepts
 // ops on "displayName", "externalId" and "members" (a value-less remove clears
-// them), Okta's `members[value eq "<id>"]` path, and path-less ops whose value
-// holds those attributes. Anything else is ignored.
+// externalId and members, and is refused for the required displayName), Okta's
+// `members[value eq "<id>"]` path, and path-less ops whose value holds those
+// attributes. Anything else is ignored.
 func parseGroupPatch(body patchBody) (*groupPatch, error) {
 	p := &groupPatch{}
 	for _, op := range body.Operations {
@@ -534,15 +552,21 @@ func parseGroupPatch(body patchBody) (*groupPatch, error) {
 
 		switch {
 		case lowerPath == "displayname":
-			if action == "add" || action == "replace" {
-				var dn string
+			var dn string
+			switch action {
+			case "remove":
+				p.setName = &dn // blank, which the update refuses
+			case "add", "replace":
 				if json.Unmarshal(op.Value, &dn) == nil {
 					p.setName = &dn
 				}
 			}
 		case lowerPath == "externalid":
-			if action == "add" || action == "replace" {
-				var ext string
+			var ext string
+			switch action {
+			case "remove":
+				p.setExternalID = &ext // blank clears it
+			case "add", "replace":
 				if json.Unmarshal(op.Value, &ext) == nil {
 					p.setExternalID = &ext
 				}
@@ -610,6 +634,14 @@ func parseGroupPatch(body patchBody) (*groupPatch, error) {
 			}
 		}
 	}
+	// The name is stored trimmed, as on create, and can't be emptied.
+	if p.setName != nil {
+		name := strings.TrimSpace(*p.setName)
+		if name == "" {
+			return nil, errors.New("displayName is required")
+		}
+		p.setName = &name
+	}
 	return p, nil
 }
 
@@ -646,8 +678,7 @@ func memberIDFromFilterPath(path string) (uuid.UUID, bool) {
 		return uuid.Nil, false
 	}
 	expr := path[open+1 : close]
-	lower := strings.ToLower(expr)
-	idx := strings.Index(lower, "eq")
+	idx := indexEqFold(expr)
 	if idx < 0 {
 		return uuid.Nil, false
 	}
@@ -658,6 +689,17 @@ func memberIDFromFilterPath(path string) (uuid.UUID, bool) {
 		return uuid.Nil, false
 	}
 	return id, true
+}
+
+// indexEqFold returns the byte index in s of the first "eq" in any letter case,
+// or -1. SCIM operators are case-insensitive (RFC 7644 §3.4.2.2).
+func indexEqFold(s string) int {
+	for i := 0; i+1 < len(s); i++ {
+		if s[i]|0x20 == 'e' && s[i+1]|0x20 == 'q' {
+			return i
+		}
+	}
+	return -1
 }
 
 func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request) {

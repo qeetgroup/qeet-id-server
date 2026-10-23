@@ -16,7 +16,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"math/big"
 	"sync"
 	"time"
 
@@ -446,10 +445,28 @@ func (i *Issuer) verifyAccess(raw string, opts ...jwt.ParserOption) (*Claims, er
 	return claims, nil
 }
 
+// ErrNotCredential is a token this issuer signed that is not a verifiable
+// credential, such as an access or ID token.
+var ErrNotCredential = errors.New("not a verifiable credential")
+
 // VerifyVC verifies a JWT Verifiable Credential this issuer signed (signature,
 // kid, issuer and expiry, but no audience) and returns its claims, including the
-// embedded vc object.
+// embedded vc object. Any other token this issuer signed is ErrNotCredential.
 func (i *Issuer) VerifyVC(raw string) (jwt.MapClaims, error) {
+	claims, err := i.VerifySigned(raw)
+	if err != nil {
+		return nil, err
+	}
+	if !isCredential(claims) {
+		return nil, ErrNotCredential
+	}
+	return claims, nil
+}
+
+// VerifySigned verifies a token this issuer signed (signature, kid, issuer and
+// lifetime) whatever its audience or kind, and returns its claims. Callers
+// check the claims that identify the kind of token they expect.
+func (i *Issuer) VerifySigned(raw string) (jwt.MapClaims, error) {
 	parser := jwt.NewParser(
 		jwt.WithValidMethods(validMethods),
 		jwt.WithIssuer(i.issuer),
@@ -460,9 +477,30 @@ func (i *Issuer) VerifyVC(raw string) (jwt.MapClaims, error) {
 		return nil, err
 	}
 	if !tok.Valid {
-		return nil, errors.New("invalid credential")
+		return nil, errors.New("invalid token")
 	}
 	return claims, nil
+}
+
+// isCredential reports whether claims hold a vc object whose type includes
+// VerifiableCredential, as a JWT-encoded credential does (VC Data Model 1.1
+// §6.3.1).
+func isCredential(claims jwt.MapClaims) bool {
+	vc, ok := claims["vc"].(map[string]any)
+	if !ok {
+		return false
+	}
+	switch types := vc["type"].(type) {
+	case string:
+		return types == "VerifiableCredential"
+	case []any:
+		for _, t := range types {
+			if t == "VerifiableCredential" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // VerifySignedAnyTime verifies a token this issuer signed (signature and
@@ -549,11 +587,15 @@ func (i *Issuer) JWKS() []JWK {
 		if !ok {
 			continue
 		}
+		x, y, err := coords(ec)
+		if err != nil {
+			continue
+		}
 		out = append(out, JWK{
 			Kty: "EC",
 			Crv: "P-256",
-			X:   coord(ec.X),
-			Y:   coord(ec.Y),
+			X:   x,
+			Y:   y,
 			Use: "sig",
 			Alg: k.alg,
 			Kid: k.kid,
@@ -653,19 +695,25 @@ func thumbprint(pub *ecdsa.PublicKey) (string, error) {
 	}
 	// RFC 7638 §3.2: members in lexicographic order, no whitespace. The values
 	// are base64url and need no JSON escaping, so a literal is safe and exact.
-	canonical := `{"crv":"P-256","kty":"EC","x":"` + coord(pub.X) + `","y":"` + coord(pub.Y) + `"}`
+	x, y, err := coords(pub)
+	if err != nil {
+		return "", err
+	}
+	canonical := `{"crv":"P-256","kty":"EC","x":"` + x + `","y":"` + y + `"}`
 	sum := sha256.Sum256([]byte(canonical))
 	return base64.RawURLEncoding.EncodeToString(sum[:]), nil
 }
 
-// coord encodes a P-256 coordinate as a fixed-length, left-padded base64url
-// string per RFC 7518 §6.2.1.2.
-func coord(c *big.Int) string {
-	b := c.Bytes()
-	if len(b) < p256CoordBytes {
-		padded := make([]byte, p256CoordBytes)
-		copy(padded[p256CoordBytes-len(b):], b)
-		b = padded
+// coords returns the base64url x and y coordinates of a P-256 public key,
+// each fixed-length per RFC 7518 §6.2.1.2.
+func coords(pub *ecdsa.PublicKey) (x, y string, err error) {
+	b, err := pub.Bytes()
+	if err != nil {
+		return "", "", err
 	}
-	return base64.RawURLEncoding.EncodeToString(b)
+	if len(b) != 1+2*p256CoordBytes {
+		return "", "", errors.New("coords: not a P-256 key")
+	}
+	enc := base64.RawURLEncoding
+	return enc.EncodeToString(b[1 : 1+p256CoordBytes]), enc.EncodeToString(b[1+p256CoordBytes:]), nil
 }

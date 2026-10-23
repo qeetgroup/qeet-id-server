@@ -30,6 +30,7 @@ func (s *Service) BeginMagicLinkSignIn(ctx context.Context, userID, tenantID uui
 	if err != nil {
 		return nil, err
 	}
+	s.recordSignIn(ctx, userID, tenantID, ua, httpx.GeoCountry(ctx))
 	return &LoginResult{Pair: pair}, nil
 }
 
@@ -56,5 +57,6 @@ func (s *Service) BeginMagicLinkSession(ctx context.Context, userID, tenantID uu
 	if err != nil {
 		return nil, err
 	}
+	s.recordSignIn(ctx, userID, tenantID, ua, country)
 	return &LoginSessionResult{UserID: userID, RawCookie: raw}, nil
 }

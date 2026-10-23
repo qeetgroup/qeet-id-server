@@ -139,23 +139,30 @@ type CreateClientInput struct {
 // transactions that wrap an OIDC mutation and its audit row.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
-func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClientInput) (*Client, string, error) {
-	// Plan gate: refuse once the tenant's plan cap for applications is reached.
-	if s.limits != nil {
-		lim, err := s.limits.Limit(ctx, in.TenantID, "apps")
-		if err != nil {
-			return nil, "", err
-		}
-		if lim >= 0 {
-			n, err := s.q.WithTx(tx).CountOIDCClientsByTenant(ctx, in.TenantID)
-			if err != nil {
-				return nil, "", err
-			}
-			if int(n) >= lim {
-				return nil, "", errs.ErrPlanLimit.WithMetadata(map[string]any{"resource": "apps", "limit": lim})
-			}
-		}
+// checkClientLimit refuses with ErrPlanLimit once the tenant's plan cap for
+// applications is reached. It reads on the pool, so the handlers run it before
+// they open the transaction RegisterClient joins.
+func (s *Service) checkClientLimit(ctx context.Context, tenantID uuid.UUID) error {
+	if s.limits == nil {
+		return nil
 	}
+	lim, err := s.limits.Limit(ctx, tenantID, "apps")
+	if err != nil || lim < 0 {
+		return err
+	}
+	n, err := s.q.CountOIDCClientsByTenant(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	if int(n) >= lim {
+		return errs.ErrPlanLimit.WithMetadata(map[string]any{"resource": "apps", "limit": lim})
+	}
+	return nil
+}
+
+// RegisterClient registers an application in tx. Callers check the plan cap
+// first, with checkClientLimit.
+func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClientInput) (*Client, string, error) {
 	if in.Type == "" {
 		in.Type = "confidential"
 	}
@@ -432,7 +439,7 @@ func (s *Service) AuthorizeInLoginSession(ctx context.Context, in AuthorizeInput
 	if err := validateSignInRequest(info.Type, info.PkceExempt, scopes, nonce, challenge, challengeMethod); err != nil {
 		return "", uuid.Nil, err
 	}
-	if err := s.checkResource(ctx, info.TenantID, resource); err != nil {
+	if err := checkResource(ctx, s.q, info.TenantID, resource); err != nil {
 		return "", uuid.Nil, err
 	}
 	// This is where the person signs in to the application, from the browser.
@@ -520,7 +527,7 @@ func (s *Service) tokenSubjectLive(ctx context.Context, claims *tokens.Claims) (
 	if claims.AgentID != "" && s.agentStatus != nil {
 		id, err := uuid.Parse(claims.AgentID)
 		if err != nil {
-			return false, nil
+			return false, nil //nolint:nilerr // an unparseable agent ID means the token is not active
 		}
 		status, err := s.agentStatus(ctx, id)
 		if err != nil || status != "active" {
@@ -546,10 +553,10 @@ func (s *Service) RegisteredRedirect(ctx context.Context, clientID, redirectURI 
 
 // activeTenantPrincipal reports whether userID and tenantID are both active and
 // not deleted, so the user may receive a token for that tenant. Each flow checks
-// membership separately.
-func (s *Service) activeTenantPrincipal(ctx context.Context, userID, tenantID uuid.UUID) (bool, error) {
+// membership separately. db is the pool, or the caller's transaction.
+func (s *Service) activeTenantPrincipal(ctx context.Context, db dbgen.DBTX, userID, tenantID uuid.UUID) (bool, error) {
 	var live bool
-	err := s.pool.QueryRow(ctx, `
+	err := db.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1
 			FROM "user".users u
@@ -664,8 +671,8 @@ type TokenResponse struct {
 
 // RFC 8693 token-exchange identifiers.
 const (
-	grantTypeTokenExchange = "urn:ietf:params:oauth:grant-type:token-exchange"
-	tokenTypeAccessToken   = "urn:ietf:params:oauth:token-type:access_token"
+	grantTypeTokenExchange = "urn:ietf:params:oauth:grant-type:token-exchange" // #nosec G101 -- RFC 8693 URN, not a credential
+	tokenTypeAccessToken   = "urn:ietf:params:oauth:token-type:access_token"   // #nosec G101 -- RFC 8693 URN, not a credential
 )
 
 // authedClient is the client a request identified itself as. For a public
@@ -754,7 +761,7 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 	if err := s.requireConfidential(ctx, client); err != nil {
 		return nil, err
 	}
-	if err := s.checkResource(ctx, client.TenantID, resource); err != nil {
+	if err := checkResource(ctx, s.q, client.TenantID, resource); err != nil {
 		return nil, err
 	}
 	if !containsAny(client.GrantTypes, "token_exchange", grantTypeTokenExchange) {
@@ -799,7 +806,7 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 		return nil, errs.ErrOIDCSubjectTokenInvalid
 	}
 	// A suspended or deleted person, or a closed organisation, gets nothing.
-	live, err := s.activeTenantPrincipal(ctx, userID, claims.TenantID)
+	live, err := s.activeTenantPrincipal(ctx, s.pool, userID, claims.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -951,7 +958,7 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 		}
 		resource = *ac.Resource
 	}
-	if err := s.checkResource(ctx, tenantID, resource); err != nil {
+	if err := checkResource(ctx, q, tenantID, resource); err != nil {
 		return nil, err
 	}
 	// A code issued with no challenge redeems only while its confidential
@@ -1060,8 +1067,8 @@ func (s *Service) issueRefreshToken(ctx context.Context, q *dbgen.Queries, clien
 
 // RefreshToken handles the refresh_token grant: it rotates the token and
 // reissues tokens for the original grant. Replaying a used token revokes every
-// live token for the client and user. A non-empty resource (RFC 8707) replaces
-// the bound resource; otherwise the bound one carries forward.
+// live token for the client and user. A resource (RFC 8707) other than the one
+// the grant is bound to is invalid_target; none carries the bound one forward.
 func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawRefresh, resource string) (*TokenResponse, error) {
 	if _, err := s.authenticateClient(ctx, clientID, clientSecret); err != nil {
 		return nil, err
@@ -1120,9 +1127,15 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	if time.Now().After(rt.ExpiresAt) {
 		return nil, errs.ErrOIDCRefreshTokenExpired
 	}
-	if resource == "" && rt.Resource != nil {
-		resource = *rt.Resource
-	} else if err := s.checkResource(ctx, rt.TenantID, resource); err != nil {
+	// RFC 8707 §2.2: a refresh may name only the resource the grant is bound
+	// to; naming none carries the bound one forward. Either way it must still be
+	// registered, so a removed resource gets no new tokens.
+	bound := derefStr(rt.Resource)
+	if resource != "" && resource != bound {
+		return nil, oauthErr("invalid_target", "resource differs from the one the grant was for")
+	}
+	resource = bound
+	if err := checkResource(ctx, q, rt.TenantID, resource); err != nil {
 		return nil, err
 	}
 
@@ -1469,6 +1482,9 @@ type Handler struct {
 	// CookieSecure marks the hosted-login SSO cookie Secure (HTTPS-only) when
 	// clearing it on logout; set from SERVICE_ENV != "dev".
 	CookieSecure bool
+	// PublicBaseURL is this API's public origin, the base of discovery
+	// metadata and return_to URLs, or "" to build them from the request's Host.
+	PublicBaseURL string
 }
 
 // Mount registers the authenticated admin/RP endpoints (require a user JWT or
@@ -1512,15 +1528,20 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/oidc/signing-keys", h.signingKeys)
 }
 
+// MountToken registers the token endpoint, client-credential M2M traffic that
+// is CSRF-exempt in the router and rate-limited apart from sign-in.
+func (h *Handler) MountToken(r chi.Router) {
+	r.Post("/oauth/token-code", h.tokenCode)
+}
+
 // MountBrowser registers the browser/RP-facing OAuth endpoints that authenticate
 // via the SSO cookie or client credentials (not a user JWT), so they live in
-// the public group. token-code is client-credential M2M and is CSRF-exempt in
-// the router; authorize (GET) and decision (cookie POST) are not.
+// the public group. authorize (GET) and decision (cookie POST) are not
+// CSRF-exempt.
 func (h *Handler) MountBrowser(r chi.Router) {
 	r.Get("/oauth/authorize", h.authorize)
 	r.Post("/oauth/authorize/decision", h.decision)
 	r.Get("/oauth/authorize/request", h.consentRequest)
-	r.Post("/oauth/token-code", h.tokenCode)
 	r.Get("/oauth/login-context", h.loginContext)
 	r.Get("/oauth/logout", h.endSession)  // RP-Initiated Logout
 	r.Post("/oauth/logout", h.endSession) // (some RPs POST)
@@ -1630,6 +1651,10 @@ func (h *Handler) registerClient(w http.ResponseWriter, r *http.Request) {
 	}
 	in.TenantID = tenantID
 	ctx := r.Context()
+	if err := h.Service.checkClientLimit(ctx, tenantID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	tx, err := h.Service.Pool().Begin(ctx)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -1715,14 +1740,14 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		h.authorizeError(w, r, clientID, redirect, state, oauthErr("login_required", "no active sign-in"))
 		return
 	case !ok:
-		http.Redirect(w, r, h.LoginBaseURL+"/login?return_to="+url.QueryEscape(currentURL(r)), http.StatusFound)
+		http.Redirect(w, r, h.LoginBaseURL+"/login?return_to="+url.QueryEscape(h.currentURL(r)), http.StatusFound)
 		return
 	case signInRequired(q, signedInAt, now) && silent:
 		h.authorizeError(w, r, clientID, redirect, state, oauthErr("login_required", "a fresh sign-in is required"))
 		return
 	case signInRequired(q, signedInAt, now):
 		// prompt=login or max_age: sign in again, then come back to this request.
-		http.Redirect(w, r, h.LoginBaseURL+"/login?prompt=login&return_to="+url.QueryEscape(reauthReturnTo(r, now)), http.StatusFound)
+		http.Redirect(w, r, h.LoginBaseURL+"/login?prompt=login&return_to="+url.QueryEscape(h.reauthReturnTo(r, now)), http.StatusFound)
 		return
 	}
 
@@ -1739,7 +1764,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		h.authorizeError(w, r, clientID, redirect, state, oauthErr("interaction_required", "the organisation requires a second factor"))
 		return
 	case !signedInForRequest(q, signedInAt):
-		http.Redirect(w, r, h.LoginBaseURL+"/login?prompt=login&return_to="+url.QueryEscape(reauthReturnTo(r, now)), http.StatusFound)
+		http.Redirect(w, r, h.LoginBaseURL+"/login?prompt=login&return_to="+url.QueryEscape(h.reauthReturnTo(r, now)), http.StatusFound)
 		return
 	default:
 		h.authorizeError(w, r, clientID, redirect, state, oauthErr("access_denied", "the organisation requires a second factor"))
@@ -1782,7 +1807,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// RFC 9207: identify the issuer in the authorization response.
-	http.Redirect(w, r, appendQuery(redirect, "code", code, "state", state, "iss", h.Service.issuer.JWTIssuer()), http.StatusFound)
+	http.Redirect(w, r, appendQuery(redirect, "code", code, "state", state, "iss", h.Service.issuer.JWTIssuer()), http.StatusFound) // #nosec G710 -- redirect_uri matched exactly against the registered list
 }
 
 // authorizeError reports a failure before a code was issued. Per RFC 6749
@@ -1815,7 +1840,7 @@ func (h *Handler) authorizeError(w http.ResponseWriter, r *http.Request, clientI
 		httpx.WriteError(w, r, err)
 		return
 	}
-	http.Redirect(w, r, appendQuery(redirect,
+	http.Redirect(w, r, appendQuery(redirect, // #nosec G710 -- redirect_uri matched exactly against the registered list
 		"error", oauthCode, "state", state, "iss", h.Service.issuer.JWTIssuer()), http.StatusFound)
 }
 
@@ -2006,7 +2031,7 @@ func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(frontchannel) == 0 {
 		if next != "" {
-			http.Redirect(w, r, next, http.StatusFound)
+			http.Redirect(w, r, next, http.StatusFound) // #nosec G710 -- post-logout URI matched exactly against the registered list
 			return
 		}
 		http.Redirect(w, r, h.LoginBaseURL+"/logged-out", http.StatusFound)
@@ -2032,7 +2057,7 @@ func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
 // hosted signed-out page was given; anything else goes to the signed-out page.
 func (h *Handler) endSessionContinue(w http.ResponseWriter, r *http.Request) {
 	if next, ok := h.Service.continuationTarget(r.URL.Query().Get("ticket")); ok {
-		http.Redirect(w, r, next, http.StatusFound)
+		http.Redirect(w, r, next, http.StatusFound) // #nosec G710 -- target from a ticket this server signed
 		return
 	}
 	http.Redirect(w, r, h.LoginBaseURL+"/logged-out", http.StatusFound)
@@ -2087,26 +2112,10 @@ func (h *Handler) loginSessionAt(r *http.Request) (sessionID, userID uuid.UUID, 
 	return sessionID, userID, signedInAt, true
 }
 
-// externalScheme returns the request's public scheme: X-Forwarded-Proto from a
-// TLS-terminating proxy, then the request's own TLS state, defaulting to https
-// for non-localhost hosts.
-func externalScheme(r *http.Request) string {
-	if p := r.Header.Get("X-Forwarded-Proto"); p == "https" || p == "http" {
-		return p
-	}
-	if r.TLS != nil {
-		return "https"
-	}
-	if h := r.Host; strings.HasPrefix(h, "localhost") || strings.HasPrefix(h, "127.0.0.1") {
-		return "http"
-	}
-	return "https"
-}
-
 // currentURL reconstructs the absolute URL of the current request (for the
 // login redirect's return_to).
-func currentURL(r *http.Request) string {
-	return externalScheme(r) + "://" + r.Host + r.URL.RequestURI()
+func (h *Handler) currentURL(r *http.Request) string {
+	return httpx.PublicOrigin(r, h.PublicBaseURL) + r.URL.RequestURI()
 }
 
 // appendQuery appends key/value pairs (skipping empty values) to a URL that may
@@ -2129,7 +2138,7 @@ func appendQuery(base string, kv ...string) string {
 
 func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 	if err := httpx.ParseForm(r, httpx.MaxFormBodyBytes); err != nil {
-		httpx.WriteError(w, r, err)
+		writeTokenError(w, r, err)
 		return
 	}
 	// RFC 8707 §2 — validate the optional resource indicator if present.
@@ -2139,7 +2148,7 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 	if resource != "" {
 		u, parseErr := url.Parse(resource)
 		if parseErr != nil || !u.IsAbs() || u.Fragment != "" {
-			writeOAuthError(w, oauthErr("invalid_target", "resource must be an absolute URI without a fragment"))
+			writeTokenError(w, r, oauthErr("invalid_target", "resource must be an absolute URI without a fragment"))
 			return
 		}
 	}
@@ -2148,15 +2157,15 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 	if u, p, ok := r.BasicAuth(); ok {
 		clientID, clientSecret = u, p
 	}
-	var resp *TokenResponse
-	var err error
-	switch gt := r.Form.Get("grant_type"); {
-	case resource != "" && (gt == "urn:ietf:params:oauth:grant-type:device_code" || gt == grantTypeCIBA):
+	grantType := r.Form.Get("grant_type")
+	if resource != "" && (grantType == grantTypeDeviceCode || grantType == grantTypeCIBA) {
 		// Explicitly refused, never silently dropped: these flows bind no resource.
-		writeOAuthError(w, oauthErr("invalid_target", "resource indicators aren't supported on the device and backchannel flows"))
+		writeTokenError(w, r, oauthErr("invalid_target", "resource indicators aren't supported on the device and backchannel flows"))
 		return
 	}
-	switch r.Form.Get("grant_type") {
+	var resp *TokenResponse
+	var err error
+	switch grantType {
 	case "authorization_code":
 		resp, err = h.Service.ExchangeCode(r.Context(),
 			clientID, clientSecret,
@@ -2170,49 +2179,69 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 			r.Form.Get("subject_token"), r.Form.Get("subject_token_type"),
 			r.Form.Get("requested_token_type"), r.Form.Get("scope"),
 			r.Form.Get("actor_token"), r.Form.Get("actor_token_type"), resource)
-	case "urn:ietf:params:oauth:grant-type:device_code":
-		// RFC 8628 §3.4 polling: the device_code is the proof, so no client_secret is
-		// needed. Errors use the RFC 6749 §5.2 shape.
-		resp, err = h.Service.DeviceToken(r.Context(), clientID, r.Form.Get("device_code"), httpx.ClientIP(r))
-		if err != nil {
-			var oe *oauthError
-			if errors.As(err, &oe) {
-				writeOAuthError(w, oe)
-				return
-			}
-			httpx.WriteError(w, r, err)
-			return
-		}
-		httpx.WriteJSON(w, http.StatusOK, resp)
-		return
+	case grantTypeDeviceCode:
+		// RFC 8628 §3.4 polling: a confidential client authenticates; for a public
+		// one the device_code is the proof.
+		resp, err = h.Service.DeviceToken(r.Context(), clientID, clientSecret, r.Form.Get("device_code"), httpx.ClientIP(r))
 	case grantTypeCIBA:
-		// OpenID CIBA §10 polling. Same error-rendering shape as device_code.
-		resp, err = h.Service.BackchannelToken(r.Context(), clientID, r.Form.Get("auth_req_id"))
-		if err != nil {
-			var oe *oauthError
-			if errors.As(err, &oe) {
-				writeOAuthError(w, oe)
-				return
-			}
-			httpx.WriteError(w, r, err)
-			return
-		}
-		httpx.WriteJSON(w, http.StatusOK, resp)
-		return
+		// OpenID CIBA §10 polling, answered like device_code polling.
+		resp, err = h.Service.BackchannelToken(r.Context(), clientID, clientSecret, r.Form.Get("auth_req_id"))
+	case "":
+		err = oauthErr("invalid_request", "grant_type is required")
 	default:
-		httpx.WriteError(w, r, errs.ErrOIDCGrantTypeUnsupported)
-		return
+		err = errs.ErrOIDCGrantTypeUnsupported
 	}
 	if err != nil {
-		var oe *oauthError
-		if errors.As(err, &oe) {
-			writeOAuthError(w, oe)
-			return
-		}
-		httpx.WriteError(w, r, err)
+		writeTokenError(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
+// tokenErrorCodes are the RFC 6749 §5.2 codes of the grants' own errors; any
+// other client error is invalid_request.
+var tokenErrorCodes = map[string]string{
+	errs.CodeOIDCClientAuthFailed:               "invalid_client",
+	errs.CodeOIDCGrantTypeUnsupported:           "unsupported_grant_type",
+	errs.CodeOIDCGrantTypeNotAllowed:            "unauthorized_client",
+	errs.CodeOIDCAuthCodeInvalid:                "invalid_grant",
+	errs.CodeOIDCAuthCodeUsed:                   "invalid_grant",
+	errs.CodeOIDCAuthCodeExpired:                "invalid_grant",
+	errs.CodeOIDCRedirectURIMismatch:            "invalid_grant",
+	errs.CodeOIDCCodeChallengeRequired:          "invalid_grant",
+	errs.CodeOIDCCodeChallengeMethodUnsupported: "invalid_grant",
+	errs.CodeOIDCCodeVerifierRequired:           "invalid_grant",
+	errs.CodeOIDCCodeVerifierInvalid:            "invalid_grant",
+	errs.CodeOIDCRefreshTokenInvalid:            "invalid_grant",
+	errs.CodeOIDCRefreshTokenClientMismatch:     "invalid_grant",
+	errs.CodeOIDCRefreshTokenRevoked:            "invalid_grant",
+	errs.CodeOIDCRefreshTokenExpired:            "invalid_grant",
+	errs.CodeOIDCRefreshTokenReuse:              "invalid_grant",
+	errs.CodeAuthAccountSuspended:               "invalid_grant",
+	errs.CodeOIDCScopeExceedsSubject:            "invalid_scope",
+}
+
+// writeTokenError answers a failed token request in the RFC 6749 §5.2 shape,
+// with a Basic challenge on invalid_client when the client sent Basic
+// credentials. An internal error keeps the generic answer.
+func writeTokenError(w http.ResponseWriter, r *http.Request, err error) {
+	var oe *oauthError
+	if !errors.As(err, &oe) {
+		e := errs.As(err)
+		if e == nil || e.Code == errs.CodeInternal {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		code, ok := tokenErrorCodes[e.Code]
+		if !ok {
+			code = "invalid_request"
+		}
+		oe = oauthErr(code, e.Message)
+	}
+	if _, _, basic := r.BasicAuth(); basic && oe.Code == "invalid_client" {
+		w.Header().Set("WWW-Authenticate", `Basic realm="qeet"`)
+	}
+	writeOAuthError(w, oe)
 }
 
 // clientCreds parses OAuth client credentials from the form body or HTTP Basic
@@ -2279,7 +2308,7 @@ func (h *Handler) authorizationServerMetadata(w http.ResponseWriter, r *http.Req
 // serverMetadata is the authorization server's metadata, for the request's
 // host.
 func (h *Handler) serverMetadata(r *http.Request) map[string]any {
-	base := externalScheme(r) + "://" + r.Host
+	base := httpx.PublicOrigin(r, h.PublicBaseURL)
 	return map[string]any{
 		"issuer":                                base,
 		"authorization_endpoint":                base + "/v1/oauth/authorize",
@@ -2290,7 +2319,7 @@ func (h *Handler) serverMetadata(r *http.Request) map[string]any {
 		"revocation_endpoint":                   base + "/oauth/revoke",
 		"introspection_endpoint":                base + "/oauth/introspect",
 		"end_session_endpoint":                  base + "/v1/oauth/logout",
-		"response_types_supported":              []string{"code"},
+		"response_types_supported":              responseTypesSupported,
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{h.Service.issuer.Alg()},
 		"scopes_supported":                      scopesSupported,
@@ -2303,7 +2332,7 @@ func (h *Handler) serverMetadata(r *http.Request) map[string]any {
 		"frontchannel_logout_supported":         true,
 		"frontchannel_logout_session_supported": true,
 		"request_uri_parameter_supported":       false,
-		"grant_types_supported":                 []string{"authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code", grantTypeTokenExchange, grantTypeCIBA},
+		"grant_types_supported":                 []string{"authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code", grantTypeTokenExchange, grantTypeCIBA},
 		// OpenID CIBA — poll mode only (no ping/push notification_endpoint).
 		"backchannel_token_delivery_modes_supported": []string{"poll"},
 		"backchannel_authentication_endpoint":        base + "/v1/oauth/bc-authorize",
@@ -2332,7 +2361,7 @@ var scopesSupported = []string{"openid", "profile", "email", "phone"}
 // so MCP clients can discover the resource's authorization server and
 // supported token types without out-of-band configuration.
 func (h *Handler) protectedResourceMetadata(w http.ResponseWriter, r *http.Request) {
-	base := externalScheme(r) + "://" + r.Host
+	base := httpx.PublicOrigin(r, h.PublicBaseURL)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"resource":                              base,
 		"authorization_servers":                 []string{base},

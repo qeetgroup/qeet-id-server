@@ -74,9 +74,9 @@ func (s *Service) StartMagicLink(ctx context.Context, tenantID uuid.UUID, email 
 }
 
 // RequestMagicLink emails a sign-in link to the account holding req.Email, if
-// any. It returns ErrTooManyRequests past the bounds, and ErrAuthMethodDisabled
-// when the asking organisation has magic links off; a console request for an
-// account whose organisation has them off sends nothing.
+// any, storing and sending it after it returns (see afterAnswer), so it answers
+// alike either way. It returns ErrTooManyRequests past the bounds, and
+// ErrAuthMethodDisabled when the asking organisation has magic links off.
 func (s *Service) RequestMagicLink(ctx context.Context, req MagicLinkRequest) error {
 	req.Email = strings.TrimSpace(req.Email)
 	if req.Email == "" {
@@ -101,8 +101,19 @@ func (s *Service) RequestMagicLink(ctx context.Context, req MagicLinkRequest) er
 	if err != nil {
 		return err
 	}
+	s.afterAnswer(ctx, "send a magic link", func(ctx context.Context) error {
+		return s.sendMagicLink(ctx, req, account, ttl)
+	})
+	return nil
+}
+
+// sendMagicLink stores and emails a link for account, requested by req; ttl
+// is the asking organisation's link lifetime (zero for a console request,
+// which the account's own organisation decides).
+func (s *Service) sendMagicLink(ctx context.Context, req MagicLinkRequest, account dbgen.GetMagicLinkAccountRow, ttl time.Duration) error {
 	if req.TenantID == uuid.Nil {
 		// From the console: the account's own organisation decides.
+		var err error
 		if ttl, err = s.magicLinkTTL(ctx, uuid.UUID(account.TenantID.Bytes)); err != nil {
 			if errors.Is(err, errs.ErrAuthMethodDisabled) {
 				return nil
@@ -229,40 +240,29 @@ func (s *Service) ConsumeHostedMagicLink(ctx context.Context, rawToken string, a
 }
 
 func (s *Service) consumeMagicLink(ctx context.Context, rawToken, app string, ac AuditCtx) (*MagicLinkResult, error) {
+	hash := codes.Hash(rawToken)
+	ml, account, err := magicLink(ctx, s.q, hash, app)
+	if err != nil {
+		return nil, err
+	}
+	// A link issued before its organisation switched magic links off stops
+	// working too; it stays unused. A console link answers to the account's
+	// own organisation. The policy is read before the transaction, and the
+	// link checked again under lock inside it.
+	policyTenant := uuid.UUID(ml.TenantID.Bytes)
+	if !ml.TenantID.Valid {
+		policyTenant = uuid.UUID(account.TenantID.Bytes)
+	}
+	if _, err := s.magicLinkTTL(ctx, policyTenant); err != nil {
+		return nil, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
 	qtx := s.q.WithTx(tx)
-	ml, err := qtx.GetMagicLinkByToken(ctx, codes.Hash(rawToken))
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && ml.App != app) {
-		return nil, errs.ErrMagicLinkInvalid
-	}
-	if err != nil {
-		return nil, err
-	}
-	if ml.UsedAt.Valid {
-		return nil, errs.ErrRecoveryLinkUsed
-	}
-	if time.Now().After(ml.ExpiresAt) {
-		return nil, errs.ErrRecoveryLinkExpired
-	}
-	account, err := qtx.GetMagicLinkAccount(ctx, ml.Email)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrMagicLinkInvalid
-	}
-	if err != nil {
-		return nil, err
-	}
-	// A link issued before its organisation switched magic links off stops
-	// working too; it stays unused. A console link answers to the account's
-	// own organisation.
-	policyTenant := uuid.UUID(ml.TenantID.Bytes)
-	if !ml.TenantID.Valid {
-		policyTenant = uuid.UUID(account.TenantID.Bytes)
-	}
-	if _, err := s.magicLinkTTL(ctx, policyTenant); err != nil {
+	if ml, account, err = magicLink(ctx, qtx, hash, app); err != nil {
 		return nil, err
 	}
 	if err := qtx.MarkMagicLinkUsed(ctx, ml.ID); err != nil {
@@ -301,4 +301,28 @@ func (s *Service) consumeMagicLink(ctx context.Context, rawToken, app string, ac
 		return nil, err
 	}
 	return res, nil
+}
+
+// magicLink reads, through q, the link for app that hash names and the
+// account it signs in to, refusing a link that is unknown, used or expired.
+func magicLink(ctx context.Context, q *dbgen.Queries, hash, app string) (dbgen.GetMagicLinkByTokenRow, dbgen.GetMagicLinkAccountRow, error) {
+	var account dbgen.GetMagicLinkAccountRow
+	ml, err := q.GetMagicLinkByToken(ctx, hash)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && ml.App != app) {
+		return ml, account, errs.ErrMagicLinkInvalid
+	}
+	if err != nil {
+		return ml, account, err
+	}
+	if ml.UsedAt.Valid {
+		return ml, account, errs.ErrRecoveryLinkUsed
+	}
+	if time.Now().After(ml.ExpiresAt) {
+		return ml, account, errs.ErrRecoveryLinkExpired
+	}
+	account, err = q.GetMagicLinkAccount(ctx, ml.Email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ml, account, errs.ErrMagicLinkInvalid
+	}
+	return ml, account, err
 }

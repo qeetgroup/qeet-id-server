@@ -137,10 +137,11 @@ func (r *Repository) Trends(ctx context.Context, tenantID uuid.UUID) (*UserTrend
 	return out, nil
 }
 
-// SecuritySummary aggregates a user's authentication posture. The two nullable
-// timestamps come from dedicated queries whose ErrNoRows cleanly means "never".
-func (r *Repository) SecuritySummary(ctx context.Context, id uuid.UUID) (*SecuritySummary, error) {
-	row, err := r.q.GetUserSecuritySummary(ctx, id)
+// SecuritySummary aggregates a user's authentication posture, counting the
+// sessions ListUserSessions lists for tenantID. The two nullable timestamps come
+// from dedicated queries whose ErrNoRows cleanly means "never".
+func (r *Repository) SecuritySummary(ctx context.Context, id, tenantID uuid.UUID) (*SecuritySummary, error) {
+	row, err := r.q.GetUserSecuritySummary(ctx, dbgen.GetUserSecuritySummaryParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
@@ -177,9 +178,10 @@ func (r *Repository) SecuritySummary(ctx context.Context, id uuid.UUID) (*Securi
 	return s, nil
 }
 
-// ListUserSessions returns a user's live (non-revoked) sessions.
-func (r *Repository) ListUserSessions(ctx context.Context, id uuid.UUID) ([]SessionInfo, error) {
-	rows, err := r.q.ListUserActiveSessions(ctx, id)
+// ListUserSessions returns a user's live sessions in tenantID, and, when it is
+// their home tenant, those in no tenant.
+func (r *Repository) ListUserSessions(ctx context.Context, id, tenantID uuid.UUID) ([]SessionInfo, error) {
+	rows, err := r.q.ListUserActiveSessions(ctx, dbgen.ListUserActiveSessionsParams{UserID: id, TenantID: tenantID})
 	if err != nil {
 		return nil, err
 	}
@@ -329,14 +331,15 @@ func (h *Handler) getUserTrends(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, trends)
 }
 
-// getSecurity handles GET /v1/users/{id}/security: the user's SecuritySummary.
+// getSecurity handles GET /v1/users/{id}/security: the user's SecuritySummary
+// as the caller's tenant sees it.
 func (h *Handler) getSecurity(w http.ResponseWriter, r *http.Request) {
-	id, _, err := h.memberID(r)
+	id, tenantID, err := h.memberID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	sum, err := h.Repo.SecuritySummary(r.Context(), id)
+	sum, err := h.Repo.SecuritySummary(r.Context(), id, tenantID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -344,14 +347,15 @@ func (h *Handler) getSecurity(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, sum)
 }
 
-// getSessions handles GET /v1/users/{id}/sessions: the user's live sessions.
+// getSessions handles GET /v1/users/{id}/sessions: the user's live sessions
+// in the caller's tenant.
 func (h *Handler) getSessions(w http.ResponseWriter, r *http.Request) {
-	id, _, err := h.memberID(r)
+	id, tenantID, err := h.memberID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	items, err := h.Repo.ListUserSessions(r.Context(), id)
+	items, err := h.Repo.ListUserSessions(r.Context(), id, tenantID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

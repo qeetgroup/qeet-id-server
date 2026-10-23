@@ -30,9 +30,9 @@ func (r *Repository) CheckGrantPermission(ctx context.Context, caller *httpx.Pri
 }
 
 // CheckGrantRole refuses the caller giving roleID of tenantID to anyone: with
-// ErrRBACOwnerOnly when it is the organisation's owner role and the caller
-// isn't an owner, and with ErrRBACGrantExceedsCaller naming a permission the
-// role carries that the caller doesn't hold there.
+// ErrRBACOwnerOnly for the owner role when the caller isn't an owner, and with
+// ErrRBACGrantExceedsCaller naming a permission of the role the caller lacks.
+// A role that isn't tenantID's passes, so the write itself must refuse it.
 func (r *Repository) CheckGrantRole(ctx context.Context, caller *httpx.Principal, tenantID, roleID uuid.UUID) error {
 	var ownerRole bool
 	var keys []string
@@ -45,7 +45,8 @@ func (r *Repository) CheckGrantRole(ctx context.Context, caller *httpx.Principal
 		WHERE ro.id = $1 AND ro.tenant_id = $2
 		GROUP BY ro.id, ro.is_system, ro.name`, roleID, tenantID).Scan(&ownerRole, &keys)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// The assignment itself answers for a role that isn't the tenant's.
+		// The write answers for a role that isn't the tenant's, so a missing
+		// and a foreign role get the same refusal.
 		return nil
 	}
 	if err != nil {

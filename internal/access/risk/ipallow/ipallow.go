@@ -216,21 +216,68 @@ func (s *Service) Check(ctx context.Context, tenantID uuid.UUID, ip string) (ena
 // its own transaction so the record outlives the sign-in. path names the
 // sign-in. With rules off or no tenant it allows all; read errors are returned.
 func (s *Service) CheckSignIn(ctx context.Context, tenantID, userID uuid.UUID, ip, path string) error {
-	if tenantID == uuid.Nil {
-		return nil
-	}
-	enabled, err := s.Enabled(ctx, tenantID)
-	if err != nil || !enabled {
+	d, err := decideSignIn(ctx, s.q, tenantID, ip)
+	if err != nil || d.Allowed {
 		return err
 	}
-	rules, err := s.ListRules(ctx, tenantID)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	d := Decide(rules, ip)
-	if d.Allowed {
-		return nil
+	defer tx.Rollback(ctx)
+	if err := audit.Record(ctx, tx, refusalEvent(tenantID, userID, ip, path, d)); err != nil {
+		return err
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	return errs.ErrAuthAddressNotAllowed
+}
+
+// CheckSignInTx is CheckSignIn inside the caller's transaction: the rules are
+// read, and a refusal recorded, through tx, which the caller commits to keep
+// the record.
+func (s *Service) CheckSignInTx(ctx context.Context, tx pgx.Tx, tenantID, userID uuid.UUID, ip, path string) error {
+	d, err := decideSignIn(ctx, s.q.WithTx(tx), tenantID, ip)
+	if err != nil || d.Allowed {
+		return err
+	}
+	if err := audit.Record(ctx, tx, refusalEvent(tenantID, userID, ip, path, d)); err != nil {
+		return err
+	}
+	return errs.ErrAuthAddressNotAllowed
+}
+
+// decideSignIn judges ip against tenantID's rules, read through q. With no
+// tenant, or rules not enforced, it is allowed.
+func decideSignIn(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, ip string) (Decision, error) {
+	allowed := Decision{Allowed: true, Reason: reasonAllowed}
+	if tenantID == uuid.Nil {
+		return allowed, nil
+	}
+	enabled, err := q.GetIPRulesEnabled(ctx, tenantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return allowed, nil
+	}
+	if err != nil {
+		return Decision{}, err
+	}
+	if !enabled {
+		return allowed, nil
+	}
+	rows, err := q.ListIPRules(ctx, tenantID)
+	if err != nil {
+		return Decision{}, err
+	}
+	rules := make([]Rule, len(rows))
+	for i, r := range rows {
+		rules[i] = ruleFromModel(r)
+	}
+	return Decide(rules, ip), nil
+}
+
+// refusalEvent is the auth.address_refused record of a sign-in that d refuses.
+func refusalEvent(tenantID, userID uuid.UUID, ip, path string, d Decision) audit.Event {
 	meta := map[string]any{"reason": d.Reason, "path": path, "address": ip}
 	var ruleID *uuid.UUID
 	if d.Rule != nil {
@@ -239,16 +286,9 @@ func (s *Service) CheckSignIn(ctx context.Context, tenantID, userID uuid.UUID, i
 		meta["rule_id"] = id
 		meta["cidr"] = d.Rule.CIDR
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	tid := tenantID
 	var actor *uuid.UUID
 	if userID != uuid.Nil {
-		uid := userID
-		actor = &uid
+		actor = &userID
 	}
 	// The address column takes only a readable address; an unreadable one is
 	// kept in the metadata alone.
@@ -256,8 +296,8 @@ func (s *Service) CheckSignIn(ctx context.Context, tenantID, userID uuid.UUID, i
 	if d.Reason == ReasonUnknownAddr {
 		recordedIP = ""
 	}
-	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tid,
+	return audit.Event{
+		TenantID:     &tenantID,
 		ActorUserID:  actor,
 		ActorType:    "user",
 		Action:       "auth.address_refused",
@@ -265,13 +305,7 @@ func (s *Service) CheckSignIn(ctx context.Context, tenantID, userID uuid.UUID, i
 		ResourceID:   ruleID,
 		IP:           recordedIP,
 		Metadata:     meta,
-	}); err != nil {
-		return err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
-	return errs.ErrAuthAddressNotAllowed
 }
 
 // refusesCaller returns ErrRiskRulesLockOutCaller if rules would refuse the

@@ -167,9 +167,24 @@ func (s *Service) SignInTenant(ctx context.Context, clientID string) (uuid.UUID,
 
 // newSignInAttempt resolves the lockout an attempt is held to.
 func (s *Service) newSignInAttempt(ctx context.Context, in SignInAttempt) (signInAttempt, error) {
+	if s.lockoutSource == nil {
+		return s.signInAttemptIn(ctx, uuid.Nil, in.Email, in.IP)
+	}
+	lctx, cancel := lockoutContext(ctx)
+	defer cancel()
+	tenantID, err := s.SignInTenant(lctx, in.ClientID)
+	if err != nil {
+		return signInAttempt{}, lockoutFailed(stageSettings, err)
+	}
+	return s.signInAttemptIn(ctx, tenantID, in.Email, in.IP)
+}
+
+// signInAttemptIn is an attempt to sign in as account from ip, held to
+// tenantID's lockout (uuid.Nil: the platform defaults).
+func (s *Service) signInAttemptIn(ctx context.Context, tenantID uuid.UUID, account, ip string) (signInAttempt, error) {
 	a := signInAttempt{
-		email:   strings.ToLower(strings.TrimSpace(in.Email)),
-		network: SourceNetwork(in.IP),
+		email:   strings.ToLower(strings.TrimSpace(account)),
+		network: SourceNetwork(ip),
 		lockout: s.lockout.Defaults,
 		// Microseconds, as PostgreSQL stores them, so a lock this attempt sets
 		// reads back equal to the one it asked for.
@@ -180,10 +195,7 @@ func (s *Service) newSignInAttempt(ctx context.Context, in SignInAttempt) (signI
 	}
 	ctx, cancel := lockoutContext(ctx)
 	defer cancel()
-	tenantID, err := s.SignInTenant(ctx, in.ClientID)
-	if err != nil {
-		return a, lockoutFailed(stageSettings, err)
-	}
+	var err error
 	if a.lockout, err = s.lockoutSource(ctx, tenantID); err != nil {
 		return a, lockoutFailed(stageSettings, err)
 	}
@@ -239,6 +251,23 @@ func (s *Service) checkLockout(ctx context.Context, a signInAttempt) error {
 	return nil
 }
 
+// refuseLocked is checkLockout that also records a refused attempt as a failed
+// sign-in. owner, when not nil, names the account for the record.
+func (s *Service) refuseLocked(ctx context.Context, a signInAttempt, f SignInFailure, owner func() uuid.UUID) error {
+	err := s.checkLockout(ctx, a)
+	if errors.Is(err, errs.ErrAuthAccountLocked) || errors.Is(err, errs.ErrTooManyRequests) {
+		f.Reason = FailureAccountLocked
+		if errors.Is(err, errs.ErrTooManyRequests) {
+			f.Reason = FailureSourceThrottled
+		}
+		if owner != nil {
+			f.UserID = owner()
+		}
+		s.RecordSignInFailure(ctx, f)
+	}
+	return err
+}
+
 // recordFailedSignIn counts a failed attempt on all three counters in one
 // transaction, then reports any lock or throttle it set — once, from the
 // attempt that set it — and records the failure and what it set in the audit
@@ -284,7 +313,7 @@ func (s *Service) countFailure(ctx context.Context, a signInAttempt) ([]AccountL
 	var locks []AccountLock
 	network, err := q.RecordNetworkFailure(ctx, dbgen.RecordNetworkFailureParams{
 		Email: a.email, Network: a.network, Now: a.now, WindowStart: windowStart,
-		Threshold: int32(a.lockout.Threshold), LockUntil: lockUntil,
+		Threshold: int32(a.lockout.Threshold), LockUntil: lockUntil, // #nosec G115 -- bounded by the lockout limits
 	})
 	if err != nil {
 		return nil, nil, err
@@ -300,7 +329,7 @@ func (s *Service) countFailure(ctx context.Context, a signInAttempt) ([]AccountL
 	accountCap := a.lockout.Threshold * max(s.lockout.AccountMultiplier, 1)
 	account, err := q.RecordAccountFailure(ctx, dbgen.RecordAccountFailureParams{
 		Email: a.email, Now: a.now, WindowStart: windowStart,
-		Threshold: int32(accountCap), LockUntil: lockUntil,
+		Threshold: int32(accountCap), LockUntil: lockUntil, // #nosec G115 -- bounded threshold × small multiplier
 	})
 	if err != nil {
 		return nil, nil, err
@@ -345,7 +374,7 @@ func (s *Service) countSourceFailure(ctx context.Context, q *dbgen.Queries, a si
 	}
 	until := a.now.Add(s.lockout.SourceBlock)
 	if _, err := q.ThrottleSource(ctx, dbgen.ThrottleSourceParams{
-		Network: a.network, Now: a.now, ThrottledUntil: until, DistinctAccounts: int32(accounts),
+		Network: a.network, Now: a.now, ThrottledUntil: until, DistinctAccounts: int32(accounts), // #nosec G115 -- account count, far below 2^31
 	}); errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil // another attempt throttled it first and reports it
 	} else if err != nil {
@@ -391,11 +420,16 @@ var timingHash = sync.OnceValue(func() string {
 
 // verifyPassword checks plain against a stored hash. With no stored hash it
 // still spends a full verification, so the outcome's timing does not reveal
-// that the account has no password.
-func verifyPassword(hash, plain string) bool {
-	if hash == "" {
-		password.Verify(timingHash(), plain)
-		return false
+// that the account has no password. When the hasher is too busy to answer in
+// time it returns ErrAuthSignInUnavailable, which is not a failed sign-in.
+func verifyPassword(ctx context.Context, hash, plain string) (bool, error) {
+	stored := hash
+	if stored == "" {
+		stored = timingHash()
 	}
-	return password.Verify(hash, plain)
+	ok, err := password.VerifyWithin(ctx, stored, plain)
+	if errors.Is(err, password.ErrHasherBusy) {
+		return false, errs.ErrAuthSignInUnavailable
+	}
+	return ok && hash != "", err
 }

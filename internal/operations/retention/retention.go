@@ -73,7 +73,7 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 	row, err := s.q.WithTx(tx).UpsertRetentionPolicy(ctx, dbgen.UpsertRetentionPolicyParams{
 		TenantID:            tenantID,
 		DeletedUsersEnabled: p.DeletedUsersEnabled,
-		DeletedUsersDays:    int32(p.DeletedUsersDays),
+		DeletedUsersDays:    int32(p.DeletedUsersDays), // #nosec G115 -- clamped to 1–3650 by clampDays
 	})
 	if err != nil {
 		return nil, err
@@ -90,7 +90,7 @@ func (s *Service) RipeDeletedUsers(ctx context.Context, tenantID uuid.UUID, days
 	// to the quoted "user" schema — pass Valid: true to match a non-null value.
 	n, err := s.q.CountRipeDeletedUsers(ctx, dbgen.CountRipeDeletedUsersParams{
 		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-		Days:     int32(clampDays(days)),
+		Days:     int32(clampDays(days)), // #nosec G115 -- clamped to 1–3650 by clampDays
 	})
 	return int(n), err
 }
@@ -101,7 +101,7 @@ func (s *Service) PurgeTenant(ctx context.Context, tenantID uuid.UUID, days int)
 	// See RipeDeletedUsers for the pgtype.UUID note.
 	n, err := s.q.PurgeRipeDeletedUsers(ctx, dbgen.PurgeRipeDeletedUsersParams{
 		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-		Days:     int32(clampDays(days)),
+		Days:     int32(clampDays(days)), // #nosec G115 -- clamped to 1–3650 by clampDays
 	})
 	return int(n), err
 }

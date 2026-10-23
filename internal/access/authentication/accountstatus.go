@@ -54,6 +54,20 @@ func (s *Service) refuseInactiveTenant(ctx context.Context, tenantID uuid.UUID) 
 	return err
 }
 
+// refuseSignIn refuses a session for an inactive account or organisation, or
+// from an address the organisation's rules refuse. Every caller of issuePairTx
+// runs it before beginning the transaction: each check reads, and records a
+// refusal, on the pool.
+func (s *Service) refuseSignIn(ctx context.Context, userID, tenantID uuid.UUID, method, ip, ua string) error {
+	if err := s.refuseInactiveAccount(ctx, userID, tenantID, method, ip, ua); err != nil {
+		return err
+	}
+	if err := s.refuseInactiveTenant(ctx, tenantID); err != nil {
+		return err
+	}
+	return s.checkAddress(ctx, tenantID, userID, ip, method)
+}
+
 // CheckSignInAccount is refuseInactiveAccount for a sign-in that hands out
 // something before the session — a social provider's one-time code, which
 // would otherwise be issued to a suspended account and refused only at the

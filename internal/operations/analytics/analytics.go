@@ -77,19 +77,21 @@ type TrendPoint struct {
 	Value float64 `json:"value"`
 }
 
-// ActivityPoint is one day of sign-ins by method. A method with none is 0, so
-// the console's stacked chart has no gaps.
+// ActivityPoint is one day of sign-ins by first factor. A method with none is
+// 0, so the console's stacked chart has no gaps.
 type ActivityPoint struct {
-	Date     string `json:"date"`
-	Password int64  `json:"password"`
-	Passkey  int64  `json:"passkey"`
-	Social   int64  `json:"social"`
-	SAML     int64  `json:"saml"`
-	OIDC     int64  `json:"oidc"`
+	Date      string `json:"date"`
+	Password  int64  `json:"password"`
+	Passkey   int64  `json:"passkey"`
+	Social    int64  `json:"social"`
+	SAML      int64  `json:"saml"`
+	OIDC      int64  `json:"oidc"`
+	MagicLink int64  `json:"magic_link"`
+	LDAP      int64  `json:"ldap"`
 }
 
-// MethodSlice is one sign-in method's share, in percent, of the last 30 days'
-// successful sign-ins.
+// MethodSlice is one first factor's share, in percent, of the last 30 days'
+// successful sign-ins, counted as for ActivityPoint.
 type MethodSlice struct {
 	Method string  `json:"method"`
 	Value  float64 `json:"value"`
@@ -215,7 +217,7 @@ func (r *Reader) kpis(ctx context.Context, tid uuid.UUID, out *Overview) error {
 	out.KPIs.MFAAdoptionPct = Metric{Value: mfaPct, DeltaPct: mfaPct - mfaPctPrev}
 
 	// Failed logins in the last 24h, against the 24h before, from
-	// auth.login_failed audit events.
+	// auth.sign_in_failed audit events.
 	failed, err := r.q.CountFailedLogins24hWindows(ctx, pgUUID(tid))
 	if err != nil {
 		return err
@@ -257,7 +259,7 @@ func (r *Reader) trends14d(ctx context.Context, tid uuid.UUID, out *Overview) er
 		failed_per_day AS (
 			SELECT date_trunc('day', created_at)::date AS day, COUNT(*) AS fails
 			FROM audit.events
-			WHERE tenant_id = $1 AND action = 'auth.login_failed'
+			WHERE tenant_id = $1 AND action = 'auth.sign_in_failed'
 			  AND created_at >= NOW() - INTERVAL '14 days'
 			GROUP BY 1
 		),
@@ -311,12 +313,14 @@ func (r *Reader) loginActivity14d(ctx context.Context, tid uuid.UUID, out *Overv
 	}
 	for _, row := range rows {
 		out.LoginActivity14d = append(out.LoginActivity14d, ActivityPoint{
-			Date:     row.Day,
-			Password: row.Password,
-			Passkey:  row.Passkey,
-			Social:   row.Social,
-			SAML:     row.Saml,
-			OIDC:     row.Oidc,
+			Date:      row.Day,
+			Password:  row.Password,
+			Passkey:   row.Passkey,
+			Social:    row.Social,
+			SAML:      row.Saml,
+			OIDC:      row.Oidc,
+			MagicLink: row.MagicLink,
+			LDAP:      row.Ldap,
 		})
 	}
 	return nil
@@ -324,10 +328,12 @@ func (r *Reader) loginActivity14d(ctx context.Context, tid uuid.UUID, out *Overv
 
 func (r *Reader) loginMethodsMix(ctx context.Context, tid uuid.UUID, out *Overview) error {
 	rows, err := r.pool.Query(ctx, `
-		SELECT COALESCE(metadata->>'method', 'password') AS method, COUNT(*) AS n
+		SELECT regexp_replace(COALESCE(metadata->>'method', 'password'), '_(mfa|email_confirmed)$', '') AS method,
+		       COUNT(*) AS n
 		FROM audit.events
 		WHERE tenant_id = $1
 		  AND action = 'auth.login_succeeded'
+		  AND COALESCE(metadata->>'method', '') NOT IN ('tenant_switch', 'tenant_create', 'invite_accept')
 		  AND created_at >= NOW() - INTERVAL '30 days'
 		GROUP BY 1
 		ORDER BY n DESC

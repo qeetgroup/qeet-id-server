@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -107,9 +108,20 @@ type signupInput struct {
 	DisplayName string `json:"display_name" validate:"omitempty,max=200"`
 }
 
+// NeutralSignupError keeps a sign-up's answer from saying whether the email
+// already has an account: ErrAuthEmailExists, and a generic conflict, become
+// one neutral 422. Other errors are returned unchanged.
+func NeutralSignupError(err error) error {
+	if errors.Is(err, errs.ErrAuthEmailExists) || errors.Is(err, errs.ErrConflict) {
+		return errs.ErrUnprocessable.WithMessage(
+			"We couldn't complete your signup. If you already have an account, try signing in or resetting your password.")
+	}
+	return err
+}
+
 func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
-	// A generic conflict error becomes a neutral 422, and every attempt takes at
-	// least signupFloor.
+	// An email that already has an account gets the neutral answer of
+	// NeutralSignupError, and every attempt takes at least signupFloor.
 	const signupFloor = 250 * time.Millisecond
 	start := time.Now()
 	defer httpx.ConstantTimeFloor(r.Context(), start, signupFloor)
@@ -131,13 +143,7 @@ func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
 		UserAgent:   r.UserAgent(),
 	})
 	if err != nil {
-		// A generic conflict becomes a neutral 422; other errors surface unchanged.
-		if e := errs.As(err); e != nil && e.Code == errs.ErrConflict.Code {
-			httpx.WriteError(w, r, errs.ErrUnprocessable.WithMessage(
-				"We couldn't complete your signup. If you already have an account, try signing in or resetting your password."))
-			return
-		}
-		httpx.WriteError(w, r, err)
+		httpx.WriteError(w, r, NeutralSignupError(err))
 		return
 	}
 	// Tenant-less: no tenant or roles; the user creates one from the UI.
@@ -334,7 +340,7 @@ type registerInput struct {
 // register is the hosted self-registration endpoint. It creates the user in the
 // client's tenant, if self-registration is enabled, and sets the SSO cookie, or
 // returns an enrolment challenge when the tenant requires MFA. Like signup, it
-// turns a generic conflict into a neutral 422 under a timing floor.
+// answers an email that already has an account neutrally, under a timing floor.
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	const registerFloor = 250 * time.Millisecond
 	start := time.Now()
@@ -351,12 +357,7 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	}
 	u, res, err := h.Service.RegisterInTenant(r.Context(), in.TenantID, in.Email, in.Password, in.DisplayName, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
-		if e := errs.As(err); e != nil && e.Code == errs.ErrConflict.Code {
-			httpx.WriteError(w, r, errs.ErrUnprocessable.WithMessage(
-				"We couldn't complete your signup. If you already have an account, try signing in or resetting your password."))
-			return
-		}
-		httpx.WriteError(w, r, err)
+		httpx.WriteError(w, r, NeutralSignupError(err))
 		return
 	}
 	if res.MFARequired {

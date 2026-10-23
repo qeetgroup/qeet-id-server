@@ -93,7 +93,7 @@ func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecr
 	// GetUserByEmailInTenant filters soft-deletes but not suspension, and the
 	// tenant's own state is never consulted. Match the authorization-code
 	// path's liveness requirement before minting anything.
-	live, err := s.activeTenantPrincipal(ctx, userID, tenantID)
+	live, err := s.activeTenantPrincipal(ctx, s.pool, userID, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -205,9 +205,13 @@ func (s *Service) DecideBackchannel(ctx context.Context, userID, id uuid.UUID, a
 }
 
 // BackchannelToken implements the CIBA §10 token-polling exchange for
-// grant_type=urn:openid:params:grant-type:ciba. Mirrors DeviceToken's
-// pending/denied/expired/slow_down handling and one-time consumption.
-func (s *Service) BackchannelToken(ctx context.Context, clientID, rawAuthReqID string) (*TokenResponse, error) {
+// grant_type=urn:openid:params:grant-type:ciba. Mirrors DeviceToken's client
+// authentication (CIBA §10.1), pending/denied/expired/slow_down handling and
+// one-time consumption.
+func (s *Service) BackchannelToken(ctx context.Context, clientID, clientSecret, rawAuthReqID string) (*TokenResponse, error) {
+	if _, err := s.authenticateClient(ctx, clientID, clientSecret); err != nil {
+		return nil, err
+	}
 	if rawAuthReqID == "" {
 		return nil, oauthErr("invalid_request", "auth_req_id required")
 	}

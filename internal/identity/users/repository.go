@@ -256,7 +256,16 @@ func (r *Repository) CreateWithCredentialTx(ctx context.Context, tx pgx.Tx, in C
 // Get returns the user with id, including avatar_url, which the list queries
 // leave out. ErrNotFound if it is missing or soft-deleted.
 func (r *Repository) Get(ctx context.Context, id uuid.UUID) (*User, error) {
-	row, err := r.q.GetUserByID(ctx, id)
+	return getUser(ctx, r.q, id)
+}
+
+// GetTx is Get read through tx.
+func (r *Repository) GetTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*User, error) {
+	return getUser(ctx, r.q.WithTx(tx), id)
+}
+
+func getUser(ctx context.Context, q *dbgen.Queries, id uuid.UUID) (*User, error) {
+	row, err := q.GetUserByID(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
@@ -485,11 +494,6 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 	return out, next, nil
 }
 
-// rowQuerier is satisfied by both *pgxpool.Pool and pgx.Tx.
-type rowQuerier interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}
-
 // Update applies the non-nil fields of in to user id and returns the result.
 // The SET clause is built at run time, so this is hand-written rather than sqlc.
 func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*User, error) {
@@ -515,7 +519,9 @@ func (r *Repository) SoftDeleteTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) 
 	return nil
 }
 
-func (r *Repository) update(ctx context.Context, db rowQuerier, id uuid.UUID, in UpdateInput) (*User, error) {
+// update applies in through db, a *pgxpool.Pool or a pgx.Tx; an empty update
+// reads the user through db too.
+func (r *Repository) update(ctx context.Context, db dbgen.DBTX, id uuid.UUID, in UpdateInput) (*User, error) {
 	ub := dbutil.NewUpdate()
 	if in.DisplayName != nil {
 		ub.Set("display_name", *in.DisplayName)
@@ -537,7 +543,7 @@ func (r *Repository) update(ctx context.Context, db rowQuerier, id uuid.UUID, in
 		ub.Set("metadata", meta)
 	}
 	if ub.Empty() {
-		return r.Get(ctx, id)
+		return getUser(ctx, dbgen.New(db), id)
 	}
 	ub.SetRaw("updated_at = NOW()")
 	idAt := ub.NextPlaceholder()

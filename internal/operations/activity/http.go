@@ -92,14 +92,18 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
+	// Subscribe before replaying, so a live event published during the replay
+	// waits in the channel instead of being lost. Live events come from the
+	// outbox and replayed ones from the audit log, with different ids, so they
+	// can't be matched: an event in both may arrive twice, but none is dropped.
+	evCh, unsub := h.Hub.Subscribe(tenantID)
+	defer unsub()
+
 	// On reconnect the client sends the ID of the last event it received; replay
 	// everything newer before switching to live.
 	if lastID := r.Header.Get("Last-Event-ID"); lastID != "" {
 		h.replayHistory(ctx, sse, tenantID, lastID, f)
 	}
-
-	evCh, unsub := h.Hub.Subscribe(tenantID)
-	defer unsub()
 
 	for {
 		select {
@@ -117,10 +121,16 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 			if !matchesStreamFilter(ev, f) {
 				continue
 			}
-			sse.sendActivity(ev)
+			sse.sendActivity(ev, ev.At.Add(-outboxLag))
 		}
 	}
 }
+
+// outboxLag is how far a live event may trail the audit record it reports: the
+// outbox's poll interval, with margin. A live frame's cursor is set back by it,
+// so a reconnect replays what the outbox had yet to publish; an event may
+// arrive twice, but none is skipped.
+const outboxLag = 10 * time.Second
 
 // replayHistory sends the audit events newer than the lastEventID cursor,
 // oldest first, as a connected client would have seen them. A lastEventID that
@@ -146,7 +156,7 @@ func (h *Handler) replayHistory(ctx context.Context, sse *sseWriter, tenantID uu
 		if !matchesStreamFilter(ev, f) {
 			continue
 		}
-		sse.sendActivity(ev)
+		sse.sendActivity(ev, ev.At)
 	}
 }
 
@@ -181,7 +191,8 @@ func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
 
 // listHistory returns a page of up to limit events (50 when limit is not in
 // 1..200) and the next page's cursor, or "" on the last page. Severity and
-// Category are filtered after the fetch, so it over-fetches when they are set.
+// Category are filtered after the fetch, so it over-fetches when they are set,
+// and a filtered page can be short yet have a next page.
 func (h *Handler) listHistory(ctx context.Context, tenantID uuid.UUID, f ListFilter, cursor string, limit int) ([]ActivityEvent, string, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -231,24 +242,30 @@ func (h *Handler) listHistory(ctx context.Context, tenantID uuid.UUID, f ListFil
 	}
 
 	out := []ActivityEvent{}
+	more := false
 	for _, row := range dbRows {
 		ev := mapAuditRow(listRowToAuditRow(row))
 		if !matchesListFilter(ev, f) {
 			continue
 		}
-		out = append(out, ev)
-		// Stop scanning once we have limit+1 matching rows — enough to know
-		// whether a next page exists without over-allocating.
-		if len(out) == limit+1 {
+		if len(out) == limit {
+			more = true
 			break
 		}
+		out = append(out, ev)
 	}
 
+	// The next page starts after the last event returned. When the post-fetch
+	// filters leave the page short with the fetch full, rows may remain, so it
+	// starts after the last row fetched.
 	var next string
-	if len(out) > limit {
-		last := out[limit]
+	switch {
+	case more:
+		last := out[limit-1]
 		next = encodeCursor(last.At, last.ID)
-		out = out[:limit]
+	case len(dbRows) == fetchLimit:
+		last := dbRows[len(dbRows)-1]
+		next = encodeCursor(last.CreatedAt, last.ID)
 	}
 	return out, next, nil
 }
@@ -627,14 +644,15 @@ func encodeCursor(createdAt time.Time, id uuid.UUID) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(raw))
 }
 
-// decodeCursor parses a cursor token, splitting its text at the first colon. It
-// returns errs.ErrBadRequest for malformed input.
+// decodeCursor parses a cursor token, splitting its text at the last colon:
+// the timestamp contains colons and the UUID none. It returns
+// errs.ErrBadRequest for malformed input.
 func decodeCursor(cursor string) (time.Time, uuid.UUID, error) {
 	b, err := base64.RawURLEncoding.DecodeString(cursor)
 	if err != nil {
 		return time.Time{}, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid cursor")
 	}
-	idx := strings.Index(string(b), ":")
+	idx := strings.LastIndex(string(b), ":")
 	if idx < 0 {
 		return time.Time{}, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid cursor")
 	}
@@ -859,14 +877,16 @@ func (s *sseWriter) write(frame string) {
 	s.flusher.Flush()
 }
 
-// sendActivity writes one "event: activity\ndata: <json>\n\n" SSE frame.
-func (s *sseWriter) sendActivity(ev ActivityEvent) {
+// sendActivity writes one "id: <cursor>\nevent: activity\ndata: <json>\n\n"
+// SSE frame. The id is the cursor of the event at cursorAt, which a
+// reconnecting client sends back as Last-Event-ID.
+func (s *sseWriter) sendActivity(ev ActivityEvent, cursorAt time.Time) {
 	raw, err := json.Marshal(ev)
 	if err != nil {
 		slog.Warn("activity: sse marshal", "err", err)
 		return
 	}
-	s.write(fmt.Sprintf("event: activity\ndata: %s\n\n", raw))
+	s.write(fmt.Sprintf("id: %s\nevent: activity\ndata: %s\n\n", encodeCursor(cursorAt, ev.ID), raw))
 }
 
 // keepAlive sends an SSE comment frame so proxies do not close an idle

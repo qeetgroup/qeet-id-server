@@ -114,13 +114,6 @@ type toolCallData struct {
 	Input json.RawMessage `json:"input"`
 }
 
-type toolResultData struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Status  string `json:"status"`
-	Summary string `json:"summary"`
-}
-
 type errorData struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`

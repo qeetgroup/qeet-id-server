@@ -334,50 +334,52 @@ func graphNodeID(typ, id string) string { return typ + ":" + id }
 // maxExpandDepth caps how many userset hops Expand follows.
 const maxExpandDepth = 10
 
-// expand adds the nodes and edges reachable from objType:objID#relation to
-// nodes and edges, depth first, up to maxExpandDepth hops. visited holds the
-// object#relation pairs already expanded, so cycles end.
-func expand(fetch fetcher, objType, objID, relation string, depth int, visited map[string]bool, nodes map[string]GraphNode, edges *[]GraphEdge) error {
-	if depth > maxExpandDepth {
-		return nil
+// expand returns the nodes and edges reachable from objType:objID#relation,
+// following at most limit userset hops. It walks breadth first, so each
+// object#relation is expanded once, at its fewest hops, and cycles end.
+func expand(fetch fetcher, objType, objID, relation string, limit int) (map[string]GraphNode, []GraphEdge, error) {
+	type step struct {
+		typ, id, relation string
+		depth             int
 	}
-	key := objType + ":" + objID + "#" + relation
-	if visited[key] {
-		return nil
-	}
-	visited[key] = true
-
-	fromID := graphNodeID(objType, objID)
-	if _, ok := nodes[fromID]; !ok {
-		nodes[fromID] = GraphNode{ID: fromID, Type: objType, Label: objID}
-	}
-
-	tuples, err := fetch(objType, objID, relation)
-	if err != nil {
-		return err
-	}
-	for _, t := range tuples {
-		toID := graphNodeID(t.subjectType, t.subjectID)
-		if _, ok := nodes[toID]; !ok {
-			nodes[toID] = GraphNode{ID: toID, Type: t.subjectType, Label: t.subjectID}
+	nodes := map[string]GraphNode{}
+	edges := make([]GraphEdge, 0)
+	addNode := func(typ, id string) string {
+		nid := graphNodeID(typ, id)
+		if _, ok := nodes[nid]; !ok {
+			nodes[nid] = GraphNode{ID: nid, Type: typ, Label: id}
 		}
-		// Edge label: the named relation (augmented with the userset relation if
-		// this is a userset reference, so "viewer via group#member" reads clearly).
-		edgeRelation := relation
-		if t.subjectRelation != "" {
-			edgeRelation = relation + " → " + t.subjectRelation
+		return nid
+	}
+	queue := []step{{objType, objID, relation, 0}}
+	queued := map[string]bool{objType + ":" + objID + "#" + relation: true}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		fromID := addNode(cur.typ, cur.id)
+		tuples, err := fetch(cur.typ, cur.id, cur.relation)
+		if err != nil {
+			return nil, nil, err
 		}
-		*edges = append(*edges, GraphEdge{From: fromID, To: toID, Relation: edgeRelation})
+		for _, t := range tuples {
+			toID := addNode(t.subjectType, t.subjectID)
+			// A userset edge names both relations, so "viewer → member" reads
+			// as "viewer via group#member".
+			edgeRelation := cur.relation
+			if t.subjectRelation != "" {
+				edgeRelation = cur.relation + " → " + t.subjectRelation
+			}
+			edges = append(edges, GraphEdge{From: fromID, To: toID, Relation: edgeRelation})
 
-		// Recurse into usersets: "group:eng#member" means we also expand
-		// group:eng at its own "member" relation.
-		if t.subjectRelation != "" {
-			if err := expand(fetch, t.subjectType, t.subjectID, t.subjectRelation, depth+1, visited, nodes, edges); err != nil {
-				return err
+			// "group:eng#member" also expands group:eng at its "member" relation.
+			key := t.subjectType + ":" + t.subjectID + "#" + t.subjectRelation
+			if t.subjectRelation != "" && cur.depth < limit && !queued[key] {
+				queued[key] = true
+				queue = append(queue, step{t.subjectType, t.subjectID, t.subjectRelation, cur.depth + 1})
 			}
 		}
 	}
-	return nil
+	return nodes, edges, nil
 }
 
 // Expand returns the graph of every subject reachable from object#relation
@@ -394,10 +396,8 @@ func (s *Service) Expand(ctx context.Context, tenantID uuid.UUID, object, relati
 	if depth <= 0 || depth > maxExpandDepth {
 		depth = maxExpandDepth
 	}
-	nodes := map[string]GraphNode{}
-	edges := make([]GraphEdge, 0)
-	visited := map[string]bool{}
-	if err := expand(s.tupleFetcher(ctx, tenantID), o.Type, o.ID, relation, 0, visited, nodes, &edges); err != nil {
+	nodes, edges, err := expand(s.tupleFetcher(ctx, tenantID), o.Type, o.ID, relation, depth)
+	if err != nil {
 		return nil, err
 	}
 

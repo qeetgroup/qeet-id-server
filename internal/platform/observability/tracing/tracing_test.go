@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/propagation"
 )
 
 // TestInit_DisabledByDefault checks that, with no endpoint, Init builds no
@@ -26,7 +25,7 @@ func TestInit_DisabledByDefault(t *testing.T) {
 
 	// Propagators are still installed even when disabled, so trace context is
 	// continued/forwarded if upstream supplies it.
-	if _, ok := otel.GetTextMapPropagator().(propagation.TextMapPropagator); !ok {
+	if otel.GetTextMapPropagator() == nil {
 		t.Fatal("expected a text map propagator to be installed")
 	}
 }

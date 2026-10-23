@@ -84,7 +84,7 @@ func (rd *Reader) List(ctx context.Context, tenantID uuid.UUID, limit int, curso
 			return nil, "", errs.ErrAuditCursorInvalid
 		}
 		args = append(args, cid)
-		q += ` AND (created_at, id) < (SELECT created_at, id FROM audit.events WHERE id = $` + strconv.Itoa(len(args)) + `)`
+		q += ` AND (created_at, id) < (SELECT created_at, id FROM audit.events WHERE id = $` + strconv.Itoa(len(args)) + ` AND tenant_id = $1)`
 	}
 	args = append(args, limit+1)
 	q += ` ORDER BY created_at DESC, id DESC LIMIT $` + strconv.Itoa(len(args))
@@ -109,10 +109,11 @@ func (rd *Reader) List(ctx context.Context, tenantID uuid.UUID, limit int, curso
 	if err := resRows.Err(); err != nil {
 		return nil, "", err
 	}
+	// The cursor is the last row returned; the next page starts after it.
 	var next string
 	if len(out) > limit {
-		next = out[limit].ID.String()
 		out = out[:limit]
+		next = out[limit-1].ID.String()
 	}
 	return out, next, nil
 }

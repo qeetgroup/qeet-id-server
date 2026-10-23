@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/mattn/go-isatty"
 
@@ -37,9 +38,9 @@ func parseLogLevel(s string) slog.Level {
 	}
 }
 
-// Run loads and validates the configuration, then runs the API server and its
-// workers until shutdown. It exits the process if startup fails.
-func Run() {
+// loadConfig loads and validates the configuration and installs the logger.
+// It exits the process if either fails.
+func loadConfig() *config.Config {
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("load config", "err", err)
@@ -69,6 +70,13 @@ func Run() {
 		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
 	}
 	slog.SetDefault(slog.New(logger.NewRedactingHandler(handler)))
+	return cfg
+}
+
+// Run loads and validates the configuration, then runs the API server and its
+// workers until shutdown. It exits the process if startup fails.
+func Run() {
+	cfg := loadConfig()
 
 	// Client IP resolution must be configured before the listener starts: it
 	// keys the login rate limiter and every audit record.
@@ -131,7 +139,7 @@ func Run() {
 	}
 	defer func() { _ = closeOutboxPub() }()
 	if cfg.NATSURL != "" {
-		slog.Info("outbox publishing to NATS", "url", cfg.NATSURL)
+		slog.Info("outbox publishing to NATS", "url", logger.StripURLCredentials(cfg.NATSURL))
 	}
 
 	deps, workers := buildDeps(rootCtx, cfg, pool, outboxPub)
@@ -158,4 +166,59 @@ func Run() {
 
 	<-rootCtx.Done()
 	gracefulShutdown(srv, deps, waitWorkers, tracerShutdown, pool, cfg)
+}
+
+// RunWorkers runs the background workers the API embeds, without the API, for
+// a deployment that runs the API with EMBEDDED_WORKERS=false. The API runs the
+// migrations; this refuses a schema it can't run on. It exits the process if
+// startup fails.
+func RunWorkers() {
+	cfg := loadConfig()
+	bi := buildinfo.Get()
+	slog.Info("worker starting", "service", cfg.ServiceName+"-worker", "version", bi.Version, "commit", bi.Commit, "go", bi.GoVersion)
+
+	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if _, err := migrations.CheckCompatible(cfg.DBURL); err != nil {
+		slog.Error("refusing to start: " + err.Error())
+		os.Exit(1)
+	}
+	pool, err := db.NewPool(rootCtx, cfg.DBURL, cfg.DBMinConns, cfg.DBMaxConns)
+	if err != nil {
+		slog.Error("connect db", "err", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
+	outboxPub, closeOutboxPub, err := outbox.NewPublisher(cfg.NATSURL)
+	if err != nil {
+		slog.Error("outbox publisher", "err", err)
+		os.Exit(1)
+	}
+	defer func() { _ = closeOutboxPub() }()
+
+	// Only the API serves the live activity feed, so the workers' wiring leaves
+	// out its NATS subscription; the outbox above still publishes to NATS.
+	depsCfg := *cfg
+	depsCfg.NATSURL = ""
+	deps, workers := buildDeps(rootCtx, &depsCfg, pool, outboxPub)
+	sup := worker.New()
+	for _, w := range workers {
+		sup.Register(w.name, w.run)
+	}
+	waitWorkers := sup.Start(rootCtx)
+
+	<-rootCtx.Done()
+	slog.Info("worker shutdown initiated")
+	done := make(chan struct{})
+	go func() { waitWorkers(); close(done) }()
+	select {
+	case <-done:
+		slog.Info("worker shutdown complete")
+	case <-time.After(workerDrainTimeout):
+		slog.Warn("worker drain timed out; leased jobs are picked up again")
+	}
+	for _, hook := range deps.shutdownHooks {
+		hook()
+	}
 }

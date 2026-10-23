@@ -8,9 +8,12 @@ import (
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // ImportSource names a supported vendor export format.
@@ -53,9 +56,9 @@ func normalizePhone(raw string) string {
 	return b.String()
 }
 
-// ParseVendorExport parses raw, an export file from source, into import rows. A
-// row that can't be parsed or has no email is returned as a BulkImportError
-// rather than aborting the batch.
+// ParseVendorExport parses raw, an export file from source, into import rows
+// that remember their line in the file. A row that can't be parsed or has no
+// email is returned as a BulkImportError rather than aborting the batch.
 func ParseVendorExport(source ImportSource, raw []byte) ([]BulkUserInput, []BulkImportError) {
 	switch source {
 	case SourceAuth0:
@@ -65,7 +68,7 @@ func ParseVendorExport(source ImportSource, raw []byte) ([]BulkUserInput, []Bulk
 	case SourceAzureB2C:
 		return parseAzureB2CExport(raw)
 	default:
-		return nil, []BulkImportError{{Message: "unknown import source"}}
+		return nil, []BulkImportError{{Code: errs.CodeUserImportSourceInvalid, Message: "unknown import source"}}
 	}
 }
 
@@ -92,11 +95,11 @@ func parseAuth0Export(raw []byte) ([]BulkUserInput, []BulkImportError) {
 		}
 		var rec auth0Record
 		if err := json.Unmarshal([]byte(text), &rec); err != nil {
-			errs = append(errs, BulkImportError{Line: line, Message: "invalid JSON: " + err.Error()})
+			errs = append(errs, BulkImportError{Line: line, Code: CodeImportRowMalformed, Message: "invalid JSON"})
 			continue
 		}
 		if rec.Email == "" {
-			errs = append(errs, BulkImportError{Line: line, Message: "missing email"})
+			errs = append(errs, BulkImportError{Line: line, Code: CodeImportFieldMissing, Field: "email", Message: "missing email"})
 			continue
 		}
 		displayName := rec.Name
@@ -107,10 +110,11 @@ func parseAuth0Export(raw []byte) ([]BulkUserInput, []BulkImportError) {
 			Email:       rec.Email,
 			DisplayName: displayName,
 			Phone:       normalizePhone(rec.PhoneNumber),
+			line:        line,
 		})
 	}
-	if err := sc.Err(); err != nil {
-		errs = append(errs, BulkImportError{Message: "read error: " + err.Error()})
+	if sc.Err() != nil {
+		errs = append(errs, BulkImportError{Line: line + 1, Code: CodeImportRowMalformed, Message: "could not read the export file"})
 	}
 	return rows, errs
 }
@@ -125,7 +129,7 @@ func parseCognitoExport(raw []byte) ([]BulkUserInput, []BulkImportError) {
 		if err == io.EOF {
 			return nil, nil
 		}
-		return nil, []BulkImportError{{Message: "read header: " + err.Error()}}
+		return nil, []BulkImportError{{Code: CodeImportRowMalformed, Message: "could not read the header row"}}
 	}
 	col := make(map[string]int, len(header))
 	for i, h := range header {
@@ -141,20 +145,26 @@ func parseCognitoExport(raw []byte) ([]BulkUserInput, []BulkImportError) {
 
 	var rows []BulkUserInput
 	var errs []BulkImportError
-	line := 1 // header was line 1
 	for {
-		line++
 		rec, err := r.Read()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			errs = append(errs, BulkImportError{Line: line, Message: "invalid row: " + err.Error()})
+			var parseErr *csv.ParseError
+			line := 0
+			if errors.As(err, &parseErr) {
+				line = parseErr.StartLine
+			}
+			errs = append(errs, BulkImportError{Line: line, Code: CodeImportRowMalformed, Message: "invalid row"})
 			continue
 		}
+		// The record's own line in the file, past skipped blank lines and
+		// quoted line breaks.
+		line, _ := r.FieldPos(0)
 		email := get(rec, "email")
 		if email == "" {
-			errs = append(errs, BulkImportError{Line: line, Message: "missing email"})
+			errs = append(errs, BulkImportError{Line: line, Code: CodeImportFieldMissing, Field: "email", Message: "missing email"})
 			continue
 		}
 		displayName := get(rec, "name")
@@ -166,6 +176,7 @@ func parseCognitoExport(raw []byte) ([]BulkUserInput, []BulkImportError) {
 			Email:       email,
 			DisplayName: displayName,
 			Phone:       normalizePhone(get(rec, "phone_number")),
+			line:        line,
 		})
 	}
 	return rows, errs
@@ -206,7 +217,7 @@ func (rec azureB2CRecord) resolveEmail() string {
 func parseAzureB2CExport(raw []byte) ([]BulkUserInput, []BulkImportError) {
 	var doc azureB2CExport
 	if err := json.Unmarshal(raw, &doc); err != nil {
-		return nil, []BulkImportError{{Message: "invalid JSON: " + err.Error()}}
+		return nil, []BulkImportError{{Code: CodeImportRowMalformed, Message: "invalid JSON"}}
 	}
 	var rows []BulkUserInput
 	var errs []BulkImportError
@@ -214,13 +225,14 @@ func parseAzureB2CExport(raw []byte) ([]BulkUserInput, []BulkImportError) {
 		line := i + 1
 		email := rec.resolveEmail()
 		if email == "" {
-			errs = append(errs, BulkImportError{Line: line, Message: "missing email (no mail, userPrincipalName, or emailAddress identity)"})
+			errs = append(errs, BulkImportError{Line: line, Code: CodeImportFieldMissing, Field: "email", Message: "missing email (no mail, userPrincipalName, or emailAddress identity)"})
 			continue
 		}
 		rows = append(rows, BulkUserInput{
 			Email:       email,
 			DisplayName: rec.DisplayName,
 			Phone:       normalizePhone(rec.MobilePhone),
+			line:        line,
 		})
 	}
 	return rows, errs

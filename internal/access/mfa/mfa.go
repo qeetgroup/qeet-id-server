@@ -1136,12 +1136,14 @@ func (h *Handler) recordStepUp(ctx context.Context, tx pgx.Tx, r *http.Request, 
 	})
 }
 
-// WebAuthnVerifier asserts a signed-in user's passkeys as a second factor. It
-// is satisfied by *passkey.Service; the interface keeps package mfa from
-// importing package passkey.
+// WebAuthnVerifier asserts a signed-in user's passkeys as a second factor;
+// FinishMFATx does so inside the caller's transaction. It is satisfied by
+// *passkey.Service; the interface keeps package mfa from importing package
+// passkey.
 type WebAuthnVerifier interface {
 	BeginMFA(ctx context.Context, userID uuid.UUID) (uuid.UUID, *protocol.CredentialAssertion, error)
 	FinishMFA(ctx context.Context, userID, sessionID uuid.UUID, cred json.RawMessage) error
+	FinishMFATx(ctx context.Context, tx pgx.Tx, userID, sessionID uuid.UUID, cred json.RawMessage) error
 }
 
 // Handler serves the MFA routes. WebAuthn, when set, offers the user's passkeys

@@ -45,15 +45,16 @@ func wellFormedResource(resource string) bool {
 }
 
 // checkResource holds a requested resource ("" for none) to the client's
-// organisation's registry: anything it hasn't registered is invalid_target.
-func (s *Service) checkResource(ctx context.Context, tenantID uuid.UUID, resource string) error {
+// organisation's registry: anything it hasn't registered is invalid_target. q
+// lets it run in the caller's transaction.
+func checkResource(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, resource string) error {
 	if resource == "" {
 		return nil
 	}
 	if !wellFormedResource(resource) {
 		return oauthErr("invalid_target", "resource must be an absolute URI without a fragment")
 	}
-	ok, err := s.q.ResourceRegistered(ctx, dbgen.ResourceRegisteredParams{TenantID: tenantID, Identifier: resource})
+	ok, err := q.ResourceRegistered(ctx, dbgen.ResourceRegisteredParams{TenantID: tenantID, Identifier: resource})
 	if err != nil {
 		return err
 	}
@@ -90,10 +91,11 @@ func (s *Service) CreateResource(ctx context.Context, tx pgx.Tx, tenantID uuid.U
 	if !wellFormedResource(in.Identifier) {
 		return nil, errs.ErrOIDCResourceInvalid
 	}
+	q := s.q.WithTx(tx)
 	var server *string
 	if in.ServerClientID != "" {
-		_, owner, err := s.ClientName(ctx, in.ServerClientID)
-		if errors.Is(err, pgx.ErrNoRows) || (err == nil && owner != tenantID) {
+		owner, err := q.GetClientName(ctx, in.ServerClientID)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && owner.TenantID != tenantID) {
 			return nil, errs.ErrOIDCClientNotFound
 		}
 		if err != nil {
@@ -101,7 +103,7 @@ func (s *Service) CreateResource(ctx context.Context, tx pgx.Tx, tenantID uuid.U
 		}
 		server = &in.ServerClientID
 	}
-	row, err := s.q.WithTx(tx).InsertResource(ctx, dbgen.InsertResourceParams{
+	row, err := q.InsertResource(ctx, dbgen.InsertResourceParams{
 		TenantID: tenantID, Identifier: in.Identifier, Name: strings.TrimSpace(in.Name), ServerClientID: server,
 	})
 	if pgxerr.IsUnique(err) {

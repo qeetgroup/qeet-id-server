@@ -183,11 +183,11 @@ func (handler *Handler) saveMapping(response http.ResponseWriter, request *http.
 		return
 	}
 	if err := ValidateMapping(mapping); err != nil {
-		httpx.WriteError(response, request, errs.ErrBadRequest)
+		httpx.WriteError(response, request, err)
 		return
 	}
 	if !strings.HasPrefix(connectionID, "scim:") && !ldapAttributePattern.MatchString(mapping.Source) {
-		httpx.WriteError(response, request, errs.ErrBadRequest)
+		httpx.WriteError(response, request, invalid("source_attribute", CodeMappingSourceInvalid, "source attribute must be an LDAP attribute name").validationError())
 		return
 	}
 	ctx := request.Context()

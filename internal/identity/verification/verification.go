@@ -308,10 +308,10 @@ func isCodeRefusal(err error) bool {
 		errors.Is(err, errs.ErrVerifyCodeUsed) || errors.Is(err, errs.ErrVerifyAttemptsExceeded)
 }
 
-// StartEmailChange sends a verification code to a *new* address the user wants
-// to move to. It pre-checks that no other account already owns that address
-// (email is globally unique) and sends the code to the new address, since that's
-// the one whose control we're proving.
+// StartEmailChange sends a code to the address the user wants to move to, to
+// prove they control it. An address another account holds (email is unique
+// platform-wide) is sent a notice instead, and the caller gets the same answer,
+// so the reply doesn't show whether the address has an account.
 func (s *Service) StartEmailChange(ctx context.Context, userID uuid.UUID, newEmail string, who Requester) error {
 	newEmail = strings.TrimSpace(newEmail)
 	if newEmail == "" {
@@ -324,12 +324,14 @@ func (s *Service) StartEmailChange(ctx context.Context, userID uuid.UUID, newEma
 	if err != nil {
 		return err
 	}
-	if taken {
-		return errs.ErrEmailTaken
-	}
+	// A code is stored either way, so it supersedes an earlier one alike. One
+	// for a held address is never sent, and confirming it couldn't assign it.
 	code, err := s.issueEmailCode(ctx, userID, newEmail, purposeChangeEmail, who)
 	if err != nil {
 		return err
+	}
+	if taken {
+		return s.noticeAddressInUse(ctx, newEmail)
 	}
 	expiry := fmt.Sprintf("%d minutes", int(s.ttl.Minutes()))
 	return s.sender.Send(ctx, notifier.Message{
@@ -342,6 +344,20 @@ func (s *Service) StartEmailChange(ctx context.Context, userID uuid.UUID, newEma
 			"Use the code below to confirm your new email address.",
 			code, expiry,
 		),
+	})
+}
+
+// noticeAddressInUse tells an address another account holds that it was asked
+// for, and why no code came.
+func (s *Service) noticeAddressInUse(ctx context.Context, email string) error {
+	intro := "Someone asked to use this email address for a Qeet ID account, but it already belongs to another Qeet ID account, so it can't be used."
+	note := "If that was you, sign in with the account that uses this address. If it wasn't, you can ignore this email."
+	return s.sender.Send(ctx, notifier.Message{
+		Channel: "email",
+		To:      email,
+		Subject: "This email address already has an account",
+		Body:    intro + " " + note,
+		HTML:    emailtmpl.Notice("This email address already has an account", intro, note),
 	})
 }
 

@@ -1,7 +1,7 @@
 // Package notification is the in-app notification inbox behind the console's
-// header bell. Notifications are per user and append-only; their owner reads
-// them and marks them read. Other packages call Service.Notify through their own
-// small interfaces, such as for a locked-account alert.
+// header bell. Notifications belong to an account, not a tenant: their owner
+// reads them and marks them read in any organisation. Other packages call
+// Service.Notify through small interfaces, such as for a locked-account alert.
 package notification
 
 import (

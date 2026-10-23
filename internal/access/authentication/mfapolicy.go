@@ -60,10 +60,10 @@ func decideMFARequirement(row dbgen.MFARequirementRow, now time.Time) mfaRequire
 	return req
 }
 
-// mfaRequirementFor reads whether the account must use a second factor to sign
-// in to tenantID (uuid.Nil: only the account's own flag applies).
-func (s *Service) mfaRequirementFor(ctx context.Context, userID, tenantID uuid.UUID) (mfaRequirement, error) {
-	row, err := s.q.MFARequirement(ctx, dbgen.MFARequirementParams{UserID: userID, TenantID: tenantID})
+// mfaRequirementFor reads, through q, whether the account must use a second
+// factor to sign in to tenantID (uuid.Nil: only the account's own flag applies).
+func mfaRequirementFor(ctx context.Context, q *dbgen.Queries, userID, tenantID uuid.UUID) (mfaRequirement, error) {
+	row, err := q.MFARequirement(ctx, dbgen.MFARequirementParams{UserID: userID, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return mfaRequirement{}, nil
 	}
@@ -124,7 +124,7 @@ func (s *Service) tenantFactorShortfall(ctx context.Context, userID, tenantID uu
 	if s.mfa == nil || tenantID == uuid.Nil || secondFactor != "" {
 		return nil
 	}
-	req, err := s.mfaRequirementFor(ctx, userID, tenantID)
+	req, err := mfaRequirementFor(ctx, s.q, userID, tenantID)
 	if err != nil || req.reason == "" {
 		return err
 	}
@@ -191,12 +191,12 @@ func (s *Service) mfaGateFor(ctx context.Context, userID, tenantID, alsoTenant u
 	if err != nil {
 		return mfaGate{}, err
 	}
-	req, err := s.mfaRequirementFor(ctx, userID, tenantID)
+	req, err := mfaRequirementFor(ctx, s.q, userID, tenantID)
 	if err != nil {
 		return mfaGate{}, err
 	}
 	if alsoTenant != uuid.Nil && alsoTenant != tenantID {
-		also, err := s.mfaRequirementFor(ctx, userID, alsoTenant)
+		also, err := mfaRequirementFor(ctx, s.q, userID, alsoTenant)
 		if err != nil {
 			return mfaGate{}, err
 		}
@@ -222,10 +222,10 @@ func (s *Service) StartMFAEnrollment(ctx context.Context, mfaToken, ip, ua strin
 		if !c.enrollment {
 			return errs.ErrBadRequest.WithDetail("This sign-in is not setting up a second factor.")
 		}
-		if err := s.stillWithoutFactor(ctx, c.userID); err != nil {
+		if err := s.stillWithoutFactor(ctx, tx, c.userID); err != nil {
 			return err
 		}
-		u, err := s.users.Get(ctx, c.userID)
+		u, err := s.users.GetTx(ctx, tx, c.userID)
 		if err != nil {
 			return err
 		}
@@ -252,9 +252,10 @@ func (s *Service) StartMFAEnrollment(ctx context.Context, mfaToken, ip, ua strin
 
 // stillWithoutFactor refuses, as an expired challenge, an enrolment challenge
 // for an account that has gained a factor since it was raised: setting up
-// another, or skipping, must not get round the one it now holds.
-func (s *Service) stillWithoutFactor(ctx context.Context, userID uuid.UUID) error {
-	factors, err := s.mfa.LoginFactors(ctx, userID)
+// another, or skipping, must not get round the one it now holds. Read through
+// the challenge transaction tx.
+func (s *Service) stillWithoutFactor(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
+	factors, err := s.mfa.LoginFactorsTx(ctx, tx, userID)
 	if err != nil {
 		return err
 	}
@@ -267,12 +268,12 @@ func (s *Service) stillWithoutFactor(ctx context.Context, userID uuid.UUID) erro
 // mayDeferEnrollment refuses with ErrMFAEnrollmentRequired a skipped
 // enrolment challenge once the account must set up a factor now — the grace
 // period has ended, or never applied. If the requirement has been lifted
-// since, skipping is allowed.
-func (s *Service) mayDeferEnrollment(ctx context.Context, userID, tenantID uuid.UUID) (*time.Time, error) {
-	if err := s.stillWithoutFactor(ctx, userID); err != nil {
+// since, skipping is allowed. Read through the challenge transaction tx.
+func (s *Service) mayDeferEnrollment(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID) (*time.Time, error) {
+	if err := s.stillWithoutFactor(ctx, tx, userID); err != nil {
 		return nil, err
 	}
-	req, err := s.mfaRequirementFor(ctx, userID, tenantID)
+	req, err := mfaRequirementFor(ctx, s.q.WithTx(tx), userID, tenantID)
 	if err != nil {
 		return nil, err
 	}

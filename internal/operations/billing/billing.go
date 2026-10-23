@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -224,7 +225,7 @@ func (s *Service) SeedBuiltins(ctx context.Context) error {
 			Description: b.description,
 			Interval:    b.interval,
 			Features:    feat,
-			Sort:        int32(b.sort),
+			Sort:        int32(b.sort), // #nosec G115 -- built-in plan order, 1–6
 		})
 		if err != nil {
 			return err
@@ -281,8 +282,10 @@ func (s *Service) ListPlans(ctx context.Context) ([]Plan, error) {
 	return plans, nil
 }
 
-func (s *Service) planByCode(ctx context.Context, code string) (uuid.UUID, string, string, error) {
-	row, err := s.q.GetBillingPlanByCode(ctx, code)
+// planByCode returns the id, interval and name of the active plan with code,
+// read through q.
+func planByCode(ctx context.Context, q *dbgen.Queries, code string) (uuid.UUID, string, string, error) {
+	row, err := q.GetBillingPlanByCode(ctx, code)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, "", "", errs.ErrBillingPlanNotFound
 	}
@@ -292,8 +295,10 @@ func (s *Service) planByCode(ctx context.Context, code string) (uuid.UUID, strin
 	return row.ID, row.Interval, row.Name, nil
 }
 
-func (s *Service) priceFor(ctx context.Context, planID uuid.UUID, currency string) (int64, bool, error) {
-	amt, err := s.q.GetBillingPlanPrice(ctx, dbgen.GetBillingPlanPriceParams{
+// priceFor returns the plan's price in currency, read through q, and whether it
+// has one.
+func priceFor(ctx context.Context, q *dbgen.Queries, planID uuid.UUID, currency string) (int64, bool, error) {
+	amt, err := q.GetBillingPlanPrice(ctx, dbgen.GetBillingPlanPriceParams{
 		PlanID:   planID,
 		Currency: currency,
 	})
@@ -318,6 +323,11 @@ func (s *Service) GetSubscription(ctx context.Context, tenantID uuid.UUID) (*Sub
 	if err != nil {
 		return nil, err
 	}
+	return subscriptionFromRow(row), nil
+}
+
+// subscriptionFromRow converts a GetSubscription row.
+func subscriptionFromRow(row dbgen.GetSubscriptionRow) *Subscription {
 	sub := Subscription{
 		PlanCode:           row.Code,
 		PlanName:           row.Name,
@@ -333,7 +343,7 @@ func (s *Service) GetSubscription(ctx context.Context, tenantID uuid.UUID) (*Sub
 		t := row.TrialEnd.Time
 		sub.TrialEnd = &t
 	}
-	return &sub, nil
+	return &sub
 }
 
 // trialDuration is the length of a no-card trial.
@@ -358,7 +368,7 @@ func (s *Service) StartTrial(ctx context.Context, tenantID uuid.UUID, planCode, 
 	if existing.Status != "none" {
 		return nil, errs.ErrBillingTrialNotEligible.WithMessage("This organization isn't eligible for a trial.")
 	}
-	planID, interval, planName, err := s.planByCode(ctx, tier)
+	planID, interval, planName, err := planByCode(ctx, s.q, tier)
 	if err != nil {
 		return nil, err
 	}
@@ -398,7 +408,12 @@ var gstinRe = regexp.MustCompile(`^[0-9A-Z]{15}$`)
 // GetBillingProfile returns the tenant's billing and tax details, or an empty
 // profile with tax_id_type "none" if none has been saved.
 func (s *Service) GetBillingProfile(ctx context.Context, tenantID uuid.UUID) (*BillingProfile, error) {
-	row, err := s.q.GetBillingProfile(ctx, tenantID)
+	return billingProfile(ctx, s.q, tenantID)
+}
+
+// billingProfile is GetBillingProfile read through q.
+func billingProfile(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID) (*BillingProfile, error) {
+	row, err := q.GetBillingProfile(ctx, tenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return &BillingProfile{TaxIDType: "none"}, nil
 	}
@@ -463,31 +478,108 @@ func periodEnd(start time.Time, interval string) time.Time {
 }
 
 // ChangePlan sets or switches the tenant's subscription within tx and issues an
-// invoice for the new period. The plan must have a price in currency.
+// invoice for the new period. The plan must have a price in currency. It takes
+// no payment, so callers check that the plan is paid for or free first.
 func (s *Service) ChangePlan(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, planCode, currency string) (*Subscription, error) {
+	q := s.q.WithTx(tx)
+	p, err := lookupPlanPrice(ctx, q, planCode, currency)
+	if err != nil {
+		return nil, err
+	}
+	return s.activate(ctx, q, tenantID, p)
+}
+
+// SwitchPlan is ChangePlan for a tenant changing its own plan without a
+// checkout. A free plan starts a new period. A paid plan that costsNoMore than
+// the current subscription takes over its paid period, with no new invoice;
+// any other returns errs.ErrBillingCheckoutRequired, unless invoice-only
+// billing activates the plan in that currency.
+func (s *Service) SwitchPlan(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, planCode, currency string) (*Subscription, error) {
+	q := s.q.WithTx(tx)
+	p, err := lookupPlanPrice(ctx, q, planCode, currency)
+	if err != nil {
+		return nil, err
+	}
+	if p.amountMinor == 0 || s.unpaidActivation(p.currency) {
+		return s.activate(ctx, q, tenantID, p)
+	}
+	current, err := q.GetSubscription(ctx, tenantID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	// With no subscription, current is empty and pays for nothing.
+	if !costsNoMore(p, current) {
+		return nil, errs.ErrBillingCheckoutRequired.
+			WithMessage("This plan costs more than your current one. Start a checkout to switch to it.")
+	}
+	if current.Code == p.code {
+		return subscriptionFromRow(current), nil
+	}
+	if err := q.SwitchSubscriptionPlan(ctx, dbgen.SwitchSubscriptionPlanParams{PlanID: p.id, TenantID: tenantID}); err != nil {
+		return nil, err
+	}
+	if err := q.SetTenantPlan(ctx, dbgen.SetTenantPlanParams{Plan: strings.TrimSuffix(p.code, "_year"), TenantID: tenantID}); err != nil {
+		return nil, err
+	}
+	sub := subscriptionFromRow(current)
+	sub.PlanCode, sub.PlanName, sub.AmountMinor, sub.CancelAtPeriodEnd = p.code, p.name, p.amountMinor, false
+	return sub, nil
+}
+
+// costsNoMore reports whether the current subscription already pays for p: it
+// is active, not a trial, in p's currency and interval, and its plan is priced
+// at least as high as p. Prices in another currency or interval don't compare.
+func costsNoMore(p planPrice, current dbgen.GetSubscriptionRow) bool {
+	return current.Status == "active" &&
+		current.Currency == p.currency &&
+		current.Interval == p.interval &&
+		p.amountMinor <= current.AmountMinor
+}
+
+// unpaidActivation reports whether invoice-only billing activates a paid plan in
+// currency without payment: it is enabled and no card provider charges currency.
+func (s *Service) unpaidActivation(currency string) bool {
+	return s.allowUnpaidActivation && s.payments.forCurrency(currency) == nil
+}
+
+// planPrice is a plan and its price in one currency.
+type planPrice struct {
+	id                   uuid.UUID
+	code, name, interval string
+	currency             string
+	amountMinor          int64
+}
+
+// lookupPlanPrice returns the plan with code and its price in currency, read
+// through q. The plan must exist and have a price in currency.
+func lookupPlanPrice(ctx context.Context, q *dbgen.Queries, code, currency string) (planPrice, error) {
 	cur, ok := normalizeCurrency(currency)
 	if !ok {
-		return nil, errs.ErrBillingCurrencyInvalid
+		return planPrice{}, errs.ErrBillingCurrencyInvalid
 	}
-	planID, interval, planName, err := s.planByCode(ctx, planCode)
+	id, interval, name, err := planByCode(ctx, q, code)
 	if err != nil {
-		return nil, err
+		return planPrice{}, err
 	}
-	amt, priced, err := s.priceFor(ctx, planID, cur)
+	amt, priced, err := priceFor(ctx, q, id, cur)
 	if err != nil {
-		return nil, err
+		return planPrice{}, err
 	}
 	if !priced {
-		return nil, errs.ErrBillingPlanNotPriced
+		return planPrice{}, errs.ErrBillingPlanNotPriced
 	}
+	return planPrice{id: id, code: code, name: name, interval: interval, currency: cur, amountMinor: amt}, nil
+}
 
+// activate puts the tenant on p through q, which must run on a transaction, and
+// issues an invoice for the new period.
+func (s *Service) activate(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, p planPrice) (*Subscription, error) {
 	start := time.Now().UTC()
-	end := periodEnd(start, interval)
-	qTx := s.q.WithTx(tx)
-	if err := qTx.UpsertSubscription(ctx, dbgen.UpsertSubscriptionParams{
+	end := periodEnd(start, p.interval)
+	if err := q.UpsertSubscription(ctx, dbgen.UpsertSubscriptionParams{
 		TenantID:    tenantID,
-		PlanID:      planID,
-		Currency:    cur,
+		PlanID:      p.id,
+		Currency:    p.currency,
 		PeriodStart: start,
 		PeriodEnd:   end,
 	}); err != nil {
@@ -495,18 +587,18 @@ func (s *Service) ChangePlan(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID,
 	}
 	// Tax comes from the tenant's billing profile and is zero until a tax
 	// configuration is set. amount_minor is the total including tax.
-	tr := s.taxFor(ctx, tenantID, amt)
+	tr := s.taxFor(ctx, q, tenantID, p.amountMinor)
 	// Zero-amount plans still get an invoice record.
-	if err := qTx.InsertInvoice(ctx, dbgen.InsertInvoiceParams{
+	if err := q.InsertInvoice(ctx, dbgen.InsertInvoiceParams{
 		TenantID:           tenantID,
-		PlanCode:           planCode,
-		Currency:           cur,
+		PlanCode:           p.code,
+		Currency:           p.currency,
 		AmountMinor:        tr.TotalMinor,
 		PeriodStart:        start,
 		PeriodEnd:          end,
 		TaxableAmountMinor: tr.TaxableMinor,
 		TaxAmountMinor:     tr.TaxMinor,
-		TaxRateBps:         int32(tr.RateBps),
+		TaxRateBps:         int32(tr.RateBps), // #nosec G115 -- operator-set GST rate in basis points
 		TaxType:            tr.Type,
 		PlaceOfSupply:      tr.PlaceOfSupply,
 	}); err != nil {
@@ -514,15 +606,15 @@ func (s *Service) ChangePlan(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID,
 	}
 	// Billing is the only writer of tenants.plan, which holds the tier without
 	// the "_year" suffix.
-	if err := qTx.SetTenantPlan(ctx, dbgen.SetTenantPlanParams{
-		Plan:     strings.TrimSuffix(planCode, "_year"),
+	if err := q.SetTenantPlan(ctx, dbgen.SetTenantPlanParams{
+		Plan:     strings.TrimSuffix(p.code, "_year"),
 		TenantID: tenantID,
 	}); err != nil {
 		return nil, err
 	}
 	return &Subscription{
-		PlanCode: planCode, PlanName: planName, Currency: cur, AmountMinor: amt,
-		Interval: interval, Status: "active",
+		PlanCode: p.code, PlanName: p.name, Currency: p.currency, AmountMinor: p.amountMinor,
+		Interval: p.interval, Status: "active",
 		CurrentPeriodStart: &start, CurrentPeriodEnd: &end, CancelAtPeriodEnd: false,
 	}, nil
 }
@@ -552,11 +644,11 @@ func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, cu
 	if country != "" && !countryRe.MatchString(country) {
 		return nil, errs.ErrBillingCountryInvalid
 	}
-	planID, _, planName, err := s.planByCode(ctx, planCode)
+	planID, _, planName, err := planByCode(ctx, s.q, planCode)
 	if err != nil {
 		return nil, err
 	}
-	amt, priced, err := s.priceFor(ctx, planID, cur)
+	amt, priced, err := priceFor(ctx, s.q, planID, cur)
 	if err != nil {
 		return nil, err
 	}
@@ -647,30 +739,41 @@ func (s *Service) CompleteCheckout(ctx context.Context, ref string) error {
 	if err != nil {
 		return errs.ErrBillingCheckoutRefInvalid
 	}
+	completed, err := s.completeTenantCheckout(ctx, id)
+	if err != nil || completed {
+		return err
+	}
+	// Not a tenant checkout: it may be a signup checkout, whose organization is
+	// created now.
+	return s.completeSignupCheckout(ctx, id)
+}
+
+// completeTenantCheckout claims a pending tenant checkout and activates its
+// plan in one transaction. It reports false, having changed nothing, when id
+// is not a pending tenant checkout.
+func (s *Service) completeTenantCheckout(ctx context.Context, id uuid.UUID) (bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback(ctx)
 	row, err := s.q.WithTx(tx).CompleteCheckout(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// Not a tenant checkout: it may be a signup checkout, whose organization is
-		// created now.
-		return s.completeSignupCheckout(ctx, id)
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	if _, err := s.ChangePlan(ctx, tx, row.TenantID, row.PlanCode, row.Currency); err != nil {
-		return err
+		return false, err
 	}
-	return tx.Commit(ctx)
+	return true, tx.Commit(ctx)
 }
 
 // completeSignupCheckout claims a pending signup checkout, creates its
 // organization and activates the subscription. An unknown or completed checkout
-// is a no-op. If creating the organization fails, the checkout returns to
-// pending so a retry can try again.
+// is a no-op. If a step fails, the checkout returns to pending, keeping any
+// organization already created, so a retry resumes where it stopped.
 func (s *Service) completeSignupCheckout(ctx context.Context, id uuid.UUID) error {
 	if s.orgProvisioner == nil {
 		return nil
@@ -678,27 +781,65 @@ func (s *Service) completeSignupCheckout(ctx context.Context, id uuid.UUID) erro
 	var (
 		userID                                     uuid.UUID
 		name, slug, region, planCode, currencyCode string
+		created                                    *uuid.UUID
 	)
 	err := s.pool.QueryRow(ctx, `
 		UPDATE tenant.signup_checkouts
 		SET status = 'completed', completed_at = NOW()
 		WHERE id = $1 AND status = 'pending'
-		RETURNING user_id, org_name, org_slug, region, plan_code, currency`,
+		RETURNING user_id, org_name, org_slug, region, plan_code, currency, tenant_id`,
 		id,
-	).Scan(&userID, &name, &slug, &region, &planCode, &currencyCode)
+	).Scan(&userID, &name, &slug, &region, &planCode, &currencyCode, &created)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil // unknown, already completed, or failed — idempotent no-op
 	}
 	if err != nil {
 		return err
 	}
+	retryLater := func(cause error) error {
+		_, _ = s.pool.Exec(ctx,
+			`UPDATE tenant.signup_checkouts SET status = 'pending', completed_at = NULL WHERE id = $1`, id)
+		return cause
+	}
 
+	var tenantID uuid.UUID
+	if created != nil {
+		tenantID = *created // an earlier attempt created it
+	} else {
+		if tenantID, err = s.provisionSignupOrg(ctx, userID, name, slug, region, planCode); err != nil {
+			return retryLater(err)
+		}
+		// Recorded at once, so a retry after a later failure reuses this
+		// organization rather than creating another. Failing here leaves the
+		// checkout completed: a retry would create a second organization.
+		if _, err := s.pool.Exec(ctx, `UPDATE tenant.signup_checkouts SET tenant_id = $1 WHERE id = $2`, tenantID, id); err != nil {
+			slog.Error("billing: signup organization created but not recorded", "checkout_id", id, "tenant_id", tenantID, "err", err)
+			return err
+		}
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return retryLater(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := s.ChangePlan(ctx, tx, tenantID, planCode, currencyCode); err != nil {
+		return retryLater(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return retryLater(err)
+	}
+	return nil
+}
+
+// provisionSignupOrg creates a signup checkout's organization, with the plan's
+// tier as its label. The slug may have been taken since the checkout was
+// staged, so a taken one is retried with a unique suffix: the customer has
+// already paid.
+func (s *Service) provisionSignupOrg(ctx context.Context, userID uuid.UUID, name, slug, region, planCode string) (uuid.UUID, error) {
 	// The tenant's plan label is the tier; the subscription keeps the full code
 	// (such as "starter_year") so its interval and price are right.
 	tier := strings.TrimSuffix(planCode, "_year")
-	// The slug may have been taken since the checkout was staged. Retry with a
-	// unique slug: reverting to pending would fail the same way forever, with the
-	// customer already charged.
 	var tenantID uuid.UUID
 	var provErr error
 	for attempt := 0; attempt < 5; attempt++ {
@@ -713,26 +854,9 @@ func (s *Service) completeSignupCheckout(ctx context.Context, id uuid.UUID) erro
 		if errors.Is(provErr, errs.ErrOrgSlugTaken) {
 			continue // slug collided since staging — try a fresh, unique slug
 		}
-		break // other (likely transient) error: fall through and revert for retry
+		break // other (likely transient) error: the checkout is retried
 	}
-	if provErr != nil {
-		_, _ = s.pool.Exec(ctx,
-			`UPDATE tenant.signup_checkouts SET status = 'pending', completed_at = NULL WHERE id = $1`, id)
-		return provErr
-	}
-
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	if _, err := s.ChangePlan(ctx, tx, tenantID, planCode, currencyCode); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE tenant.signup_checkouts SET tenant_id = $1 WHERE id = $2`, tenantID, id); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	return tenantID, provErr
 }
 
 // StartSignupCheckout opens a hosted payment for a paid plan chosen at signup,
@@ -747,11 +871,11 @@ func (s *Service) StartSignupCheckout(ctx context.Context, ownerID uuid.UUID, in
 	if in.Country != "" && !countryRe.MatchString(in.Country) {
 		return nil, errs.ErrBillingCountryInvalid
 	}
-	planID, _, planName, err := s.planByCode(ctx, in.PlanCode)
+	planID, _, planName, err := planByCode(ctx, s.q, in.PlanCode)
 	if err != nil {
 		return nil, err
 	}
-	amt, priced, err := s.priceFor(ctx, planID, cur)
+	amt, priced, err := priceFor(ctx, s.q, planID, cur)
 	if err != nil {
 		return nil, err
 	}
@@ -1005,7 +1129,7 @@ func (h *Handler) sandboxPay(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	http.Redirect(w, r, successURL, http.StatusSeeOther)
+	http.Redirect(w, r, successURL, http.StatusSeeOther) // #nosec G710 -- dev-only sandbox, refused outside dev by config
 }
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
@@ -1138,7 +1262,7 @@ func (h *Handler) changePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	sub, err := h.Service.ChangePlan(ctx, tx, tenantID, in.PlanCode, in.Currency)
+	sub, err := h.Service.SwitchPlan(ctx, tx, tenantID, in.PlanCode, in.Currency)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

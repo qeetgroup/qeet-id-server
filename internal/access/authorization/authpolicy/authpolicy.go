@@ -239,7 +239,7 @@ func int32OrNil(v *int) *int32 {
 	if v == nil {
 		return nil
 	}
-	n := int32(*v)
+	n := int32(*v) // #nosec G115 -- lockout fields, range-checked by CheckLockout
 	return &n
 }
 
@@ -316,18 +316,18 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 	row, err := s.q.WithTx(tx).UpsertAuthPolicy(ctx, dbgen.UpsertAuthPolicyParams{
 		TenantID:                 tenantID,
 		PasswordEnabled:          p.PasswordEnabled,
-		PasswordMinLength:        int32(p.PasswordMinLength),
+		PasswordMinLength:        int32(p.PasswordMinLength), // #nosec G115 -- clamped to 8–128 above
 		PasswordRequireUppercase: p.PasswordRequireUppercase,
 		PasswordRequireNumber:    p.PasswordRequireNumber,
 		PasswordRequireSymbol:    p.PasswordRequireSymbol,
 		MagicLinkEnabled:         p.MagicLinkEnabled,
-		MagicLinkTtlMinutes:      int32(p.MagicLinkTTLMinutes),
+		MagicLinkTtlMinutes:      int32(p.MagicLinkTTLMinutes), // #nosec G115 -- clamped to 5–1440 above
 		PasskeyEnabled:           p.PasskeyEnabled,
 		OtpEmailEnabled:          p.OTPEmailEnabled,
 		OtpSmsEnabled:            p.OTPSMSEnabled,
 		SelfRegistrationEnabled:  p.SelfRegistrationEnabled,
 		RememberDeviceEnabled:    p.RememberDeviceEnabled,
-		RememberDeviceDays:       int32(p.RememberDeviceDays),
+		RememberDeviceDays:       int32(p.RememberDeviceDays), // #nosec G115 -- checked 1–90 above
 		LockoutThreshold:         int32OrNil(p.LockoutThreshold),
 		LockoutWindowMinutes:     int32OrNil(p.LockoutWindowMinutes),
 		LockoutDurationMinutes:   int32OrNil(p.LockoutDurationMinutes),

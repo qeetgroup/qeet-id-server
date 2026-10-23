@@ -130,7 +130,8 @@ func (l *Limiter) MiddlewareBy(scopeName string, extract KeyFunc) func(http.Hand
 	}
 }
 
-// Middleware applies the limiter using client IP as the bucket key.
+// Middleware applies the limiter per client IP under the scope "ip". Limiters
+// sharing a Store need scopes of their own: use MiddlewareBy.
 func (l *Limiter) Middleware(next http.Handler) http.Handler {
 	return l.MiddlewareBy("ip", PerIP)(next)
 }

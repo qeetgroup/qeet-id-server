@@ -288,3 +288,40 @@ func TestCategoryOf(t *testing.T) {
 		})
 	}
 }
+
+// TestHubFanOutDuringUnsubscribe checks that fanning out while other
+// connections of the tenant subscribe and unsubscribe is free of data races.
+// It is meaningful under the race detector.
+func TestHubFanOutDuringUnsubscribe(t *testing.T) {
+	h := NewHub(nil)
+	tenant := uuid.New()
+	for i := 0; i < 3; i++ {
+		_, unsub := h.Subscribe(tenant)
+		defer unsub()
+	}
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			// Removing the earlier of two subscribers shifts the later one down
+			// in the slice fanOut reads.
+			_, unsubFirst := h.Subscribe(tenant)
+			_, unsubSecond := h.Subscribe(tenant)
+			unsubFirst()
+			unsubSecond()
+		}
+	}()
+	ev := newTestEvent("user.created", SeveritySuccess)
+	for i := 0; i < 2000; i++ {
+		h.fanOut(tenant, ev)
+	}
+	close(stop)
+	<-done
+}

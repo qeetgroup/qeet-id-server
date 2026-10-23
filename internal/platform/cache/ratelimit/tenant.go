@@ -2,10 +2,12 @@ package ratelimit
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -80,6 +82,23 @@ func (l *TenantLimiter) LoadOverrides(ctx context.Context) {
 	l.mu.Unlock()
 }
 
+// ReloadEvery reloads each limiter's overrides every interval until ctx ends,
+// so a change made through another instance, or its reset, takes effect here.
+func ReloadEvery(ctx context.Context, interval time.Duration, limiters ...*TenantLimiter) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for _, l := range limiters {
+				l.LoadOverrides(ctx)
+			}
+		}
+	}
+}
+
 // SetOverride upserts tenantID's override in the database and the cache.
 func (l *TenantLimiter) SetOverride(ctx context.Context, tenantID uuid.UUID, rate float64, capacity int) error {
 	_, err := l.pool.Exec(ctx, `
@@ -127,7 +146,7 @@ func (l *TenantLimiter) GetAll(ctx context.Context, pool *pgxpool.Pool) ([]Tenan
 	rows, err := pool.Query(ctx, `
 		SELECT tenant_id, rate, capacity FROM platform.rate_limit_overrides WHERE limit_key = $1
 	`, l.key)
-	if err != nil && err != pgx.ErrNoRows {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
 	defer rows.Close()

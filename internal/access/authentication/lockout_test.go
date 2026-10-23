@@ -1,6 +1,9 @@
 package auth
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestSourceNetwork(t *testing.T) {
 	for ip, want := range map[string]string{
@@ -24,8 +27,8 @@ func TestSourceNetwork(t *testing.T) {
 
 func TestVerifyPassword_NoStoredPasswordNeverMatches(t *testing.T) {
 	for _, plain := range []string{"", "anything"} {
-		if verifyPassword("", plain) {
-			t.Errorf("verifyPassword with no stored hash matched %q", plain)
+		if ok, err := verifyPassword(context.Background(), "", plain); ok || err != nil {
+			t.Errorf("verifyPassword with no stored hash = %v, %v for %q; want false, nil", ok, err, plain)
 		}
 	}
 	if timingHash() == "" {

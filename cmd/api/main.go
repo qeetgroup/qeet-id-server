@@ -40,6 +40,7 @@ func main() {
 
 // probe succeeds only when url answers HTTP 200.
 func probe(url string, client *http.Client) error {
+	// #nosec G704 -- probes this server's own port on 127.0.0.1
 	resp, err := client.Get(url) //nolint:noctx // bounded by the client timeout
 	if err != nil {
 		return err

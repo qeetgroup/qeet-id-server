@@ -627,7 +627,7 @@ func (h *Handler) setSessionCookie(w http.ResponseWriter, raw string, expiresAt 
 	if maxAge < 1 {
 		maxAge = 1
 	}
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is off only in dev
 		Name: portalSessionCookie, Value: raw, Path: portalCookiePath,
 		Expires: expiresAt, MaxAge: maxAge, HttpOnly: true,
 		Secure: h.CookieSecure, SameSite: http.SameSiteStrictMode,
@@ -635,7 +635,7 @@ func (h *Handler) setSessionCookie(w http.ResponseWriter, raw string, expiresAt 
 }
 
 func (h *Handler) clearSessionCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is off only in dev
 		Name: portalSessionCookie, Path: portalCookiePath,
 		Expires: time.Unix(1, 0), MaxAge: -1, HttpOnly: true,
 		Secure: h.CookieSecure, SameSite: http.SameSiteStrictMode,

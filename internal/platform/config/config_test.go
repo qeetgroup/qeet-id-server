@@ -20,6 +20,7 @@ func prodOK() *Config {
 		SecretsKey:                   "c2VjcmV0cy1rZXktMzItYnl0ZXMtYmFzZTY0LXh4eHg=",
 		AllowedOriginsRaw:            "https://app.acme.com",
 		AppBaseURL:                   "https://app.acme.com",
+		PublicBaseURL:                "https://api.acme.com",
 	}
 }
 
@@ -53,6 +54,13 @@ func TestValidate_ProdRejectsInsecure(t *testing.T) {
 		"kit zone base url":        func(c *Config) { c.AppBaseURL = "https://console.test.id.qeet.in" },
 		"unknown env":              func(c *Config) { c.ServiceEnv = "production" },
 		"profile outside local":    func(c *Config) { c.ServiceProfile = "test" },
+		"missing public base url":  func(c *Config) { c.PublicBaseURL = "" },
+		"http public base url":     func(c *Config) { c.PublicBaseURL = "http://api.acme.com" },
+		"public base url path":     func(c *Config) { c.PublicBaseURL = "https://api.acme.com/v1" },
+		"public base url userinfo": func(c *Config) { c.PublicBaseURL = "https://user@api.acme.com" },
+		"public base url query":    func(c *Config) { c.PublicBaseURL = "https://api.acme.com?" },
+		"public base url fragment": func(c *Config) { c.PublicBaseURL = "https://api.acme.com#" },
+		"public base url no host":  func(c *Config) { c.PublicBaseURL = "https://:443" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -288,6 +296,9 @@ func TestLoad_SessionLifetimeDefaults(t *testing.T) {
 	if c.SessionMaxAge != 720*time.Hour || c.SessionIdleTimeout != 24*time.Hour {
 		t.Errorf("session defaults = %v / %v, want 720h / 24h", c.SessionMaxAge, c.SessionIdleTimeout)
 	}
+	if c.RefreshTokenReuseGrace != 30*time.Second {
+		t.Errorf("refresh reuse grace default = %v, want 30s", c.RefreshTokenReuseGrace)
+	}
 }
 
 func TestLoad_RejectsUnusableSessionLifetime(t *testing.T) {
@@ -297,6 +308,8 @@ func TestLoad_RejectsUnusableSessionLifetime(t *testing.T) {
 		"idle timeout under 15 minutes":       {"SESSION_IDLE_TIMEOUT", "10m"},
 		"idle timeout over the maximum age":   {"SESSION_IDLE_TIMEOUT", "721h"},
 		"access tokens outliving idle bounds": {"ACCESS_TOKEN_TTL", "15m"},
+		"a refresh reuse grace over a minute": {"REFRESH_TOKEN_REUSE_GRACE", "61s"},
+		"a negative refresh reuse grace":      {"REFRESH_TOKEN_REUSE_GRACE", "-1s"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			setRequiredEnv(t)

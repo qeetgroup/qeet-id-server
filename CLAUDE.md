@@ -28,11 +28,11 @@ organization or product understanding; this repository does not restate them.
 
 1. **Tenant scope comes from `httpx.RequireTenant(r)`** — never from a path, body or header. There
    is **no PostgreSQL RLS**; a missing `WHERE tenant_id = $1` is a cross-tenant data exposure.
-2. **`make lint` is `go vet` only.** CI also runs `golangci-lint` v2.14.0. Passing locally proves
-   less than it looks.
+2. **A query on a tenant-owned table must mention `tenant_id`.** `internal/platform/database/tenantguard` fails `go test`
+   otherwise; an exception needs an allowlist line with a reason.
 3. **A new route without an OpenAPI entry fails CI** — `internal/bootstrap/openapi_coverage_test.go`.
 4. **Wiring goes in `internal/bootstrap`.** `internal/platform` must not import a bounded context
-   (rule R1 in AGENTS.md; no test enforces it).
+   (rule R1 in AGENTS.md; `make lint` and CI fail on it).
 5. **Two behaviours that look like bugs are deliberate, with ADRs:** the rate limiter fails **open**
    on store error, and auth hooks default to **fail-open**. Do not "fix" them.
 
@@ -51,6 +51,7 @@ organization or product understanding; this repository does not restate them.
 
 ```bash
 go build ./... && go test -race ./... && make lint && git diff
+make test-db      # if the change touched SQL, tenant scoping or sign-in
 ```
 
 ## Issues and the project board

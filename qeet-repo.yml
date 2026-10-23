@@ -49,7 +49,7 @@ architecture:
     - internal/developer     # API keys, principals, agents, webhooks, vaults
     - internal/operations    # audit, billing, GDPR, analytics, SIEM, retention
   boundary_enforcement:
-    mechanism: none          # documented rules only; no test enforces them
+    mechanism: lint          # depguard rules in .golangci.yml
     rules:
       R1: internal/platform/* imports no bounded context, no cmd/*, not internal/bootstrap
       R2: bounded contexts import neither cmd/* nor internal/bootstrap
@@ -111,7 +111,7 @@ security:
 
 ci:
   workflows: [.github/workflows/ci.yml, .github/workflows/deploy.yml]
-  jobs: [test, lint, vuln, sast, image, deploy]
+  jobs: [test, database, lint, vuln, sast, image, deploy]
   deploy_trigger: push to main
   release_image: "ci.yml job `image` — push to release/** after all gates: ghcr.io/qeetgroup/qeet-id-server:sha-<commit>, linux/amd64+arm64, OCI + in.qeet.* labels (consumed by the Qeet ID Kit, qeet-id-kit)"
 

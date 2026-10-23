@@ -351,7 +351,7 @@ func (s *Service) EndLoginSession(ctx context.Context, in EndLoginSessionInput) 
 // outside dev so it is only sent over HTTPS. SameSite=Lax so it survives the
 // top-level GET redirects of the OAuth authorize flow.
 func SetLoginSessionCookie(w http.ResponseWriter, raw string, secure bool) {
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is off only in dev
 		Name:     LoginSessionCookie,
 		Value:    raw,
 		Path:     "/",
@@ -364,7 +364,7 @@ func SetLoginSessionCookie(w http.ResponseWriter, raw string, secure bool) {
 
 // ClearLoginSessionCookie expires the SSO cookie.
 func ClearLoginSessionCookie(w http.ResponseWriter, secure bool) {
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is off only in dev
 		Name:     LoginSessionCookie,
 		Value:    "",
 		Path:     "/",

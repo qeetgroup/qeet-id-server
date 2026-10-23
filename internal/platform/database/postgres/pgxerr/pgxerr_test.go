@@ -29,11 +29,11 @@ func TestPredicates(t *testing.T) {
 }
 
 func TestTranslate(t *testing.T) {
-	if got := pgxerr.Translate(&pgconn.PgError{Code: "23505"}); got != errs.ErrConflict {
+	if got := pgxerr.Translate(&pgconn.PgError{Code: "23505"}); !errors.Is(got, errs.ErrConflict) {
 		t.Errorf("23505 -> %v, want ErrConflict", got)
 	}
 	other := errors.New("boom")
-	if got := pgxerr.Translate(other); got != other {
+	if got := pgxerr.Translate(other); got != other { //nolint:errorlint // pass-through must return the same value, not a wrapper
 		t.Errorf("non-pg error should pass through, got %v", got)
 	}
 	if got := pgxerr.Translate(nil); got != nil {

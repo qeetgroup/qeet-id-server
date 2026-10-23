@@ -1,5 +1,5 @@
-// Package identitylink holds the check SAML and LDAP sign-in run before adopting
-// an existing account by email. Emails are unique across tenants, so the
+// Package identitylink holds the check SAML, LDAP and social sign-in run before
+// adopting an existing account by email. Emails are unique across tenants, so the
 // matched user may belong to a different tenant from the one signing in.
 package identitylink
 

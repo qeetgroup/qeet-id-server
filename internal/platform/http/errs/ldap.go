@@ -13,6 +13,7 @@ const (
 	CodeLDAPServerURLInvalid         = "ldap.server_url_invalid"
 	CodeLDAPStatusInvalid            = "ldap.status_invalid"
 	CodeLDAPAccountNotInTenant       = "ldap.account_not_in_tenant"
+	CodeLDAPTLSVerifyRequired        = "ldap.tls_verify_required"
 )
 
 // LDAP errors. The Message is what the end user (or admin configuring a
@@ -30,4 +31,6 @@ var (
 	ErrLDAPStatusInvalid            = New(CodeLDAPStatusInvalid, "Status must be draft, active or disabled.")
 	ErrLDAPAccountNotInTenant       = New(CodeLDAPAccountNotInTenant,
 		"That directory account belongs to a different organization.") // a directory never adopts another tenant's account
+	ErrLDAPTLSVerifyRequired = New(CodeLDAPTLSVerifyRequired,
+		"Directory connections must verify the server's certificate. Turn off skip_tls_verify and give the server a certificate it can be verified with.")
 )

@@ -71,6 +71,9 @@ type Service struct {
 	gate     PlanGate
 	observer OperationObserver
 	mapper   ProfileMapper
+	// allowSkipVerify lets a connection turn certificate verification off;
+	// see SetAllowSkipTLSVerify.
+	allowSkipVerify bool
 }
 
 func NewService(pool *pgxpool.Pool, authSvc *auth.Service, policies ...*egress.Policy) *Service {
@@ -78,6 +81,20 @@ func NewService(pool *pgxpool.Pool, authSvc *auth.Service, policies ...*egress.P
 }
 
 func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
+
+// SetAllowSkipTLSVerify lets connections turn off verification of the
+// directory's certificate, for a developer workstation (SERVICE_ENV=dev) only.
+// Otherwise saving or binding such a connection is refused.
+func (s *Service) SetAllowSkipTLSVerify(allow bool) { s.allowSkipVerify = allow }
+
+// checkTLSVerify refuses a connection that turns certificate verification off
+// where that isn't allowed.
+func (s *Service) checkTLSVerify(skip bool) error {
+	if skip && !s.allowSkipVerify {
+		return errs.ErrLDAPTLSVerifyRequired
+	}
+	return nil
+}
 
 // PlanGate reports whether a plan-gated boolean feature is included in the
 // tenant's plan. Satisfied by *entitlements.Service.
@@ -145,6 +162,9 @@ func defaulted(v, def string) string {
 func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in CreateInput) (*Connection, error) {
 	if _, err := s.egress.ValidateLDAPURL(in.ServerURL); err != nil {
 		return nil, errs.ErrLDAPServerURLInvalid
+	}
+	if err := s.checkTLSVerify(in.SkipTLSVerify); err != nil {
+		return nil, err
 	}
 	// Plan gate: LDAP/AD directory sync is an Enterprise feature.
 	if s.gate != nil {
@@ -312,6 +332,11 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 			return nil, errs.ErrLDAPServerURLInvalid
 		}
 	}
+	if in.SkipTLSVerify != nil {
+		if err := s.checkTLSVerify(*in.SkipTLSVerify); err != nil {
+			return nil, err
+		}
+	}
 	bindPassword := in.BindPassword
 	r, err := s.q.WithTx(tx).UpdateLdapConnection(ctx, dbgen.UpdateLdapConnectionParams{
 		ID:             id,
@@ -331,6 +356,11 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 		return nil, errs.ErrNotFound
 	}
 	if err != nil {
+		return nil, err
+	}
+	// A connection saved before verification was required keeps it off until
+	// changed; it can't be saved again that way.
+	if err := s.checkTLSVerify(r.SkipTlsVerify); err != nil {
 		return nil, err
 	}
 	if bindPassword != nil {
@@ -370,8 +400,10 @@ func (s *Service) Delete(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID)
 
 // --- LDAP protocol ---
 
-func (c *connFull) tlsConfig() *tls.Config {
-	cfg := &tls.Config{InsecureSkipVerify: c.SkipTLSVerify} //nolint:gosec // operator opt-in for self-signed labs
+// tlsConfig verifies the directory's certificate unless the connection turns
+// that off and allowSkipVerify permits it (see SetAllowSkipTLSVerify).
+func (c *connFull) tlsConfig(allowSkipVerify bool) *tls.Config {
+	cfg := &tls.Config{InsecureSkipVerify: c.SkipTLSVerify && allowSkipVerify} // #nosec G402 -- only with SERVICE_ENV=dev; refused elsewhere
 	if host := hostOnly(c.ServerURL); host != "" {
 		cfg.ServerName = host
 	}
@@ -387,7 +419,7 @@ func hostOnly(serverURL string) string {
 }
 
 // dial opens a connection, applying LDAPS or StartTLS as configured.
-func (c *connFull) dial(ctx context.Context, policy *egress.Policy) (*goldap.Conn, error) {
+func (c *connFull) dial(ctx context.Context, policy *egress.Policy, allowSkipVerify bool) (*goldap.Conn, error) {
 	u, err := policy.ValidateLDAPURL(c.ServerURL)
 	if err != nil {
 		return nil, err
@@ -395,13 +427,13 @@ func (c *connFull) dial(ctx context.Context, policy *egress.Policy) (*goldap.Con
 	if err := policy.ValidateHost(ctx, u.Hostname()); err != nil {
 		return nil, err
 	}
-	conn, err := goldap.DialURL(c.ServerURL, goldap.DialWithDialer(policy.NetDialer(dialTimeout)), goldap.DialWithTLSConfig(c.tlsConfig()))
+	conn, err := goldap.DialURL(c.ServerURL, goldap.DialWithDialer(policy.NetDialer(dialTimeout)), goldap.DialWithTLSConfig(c.tlsConfig(allowSkipVerify)))
 	if err != nil {
 		return nil, err
 	}
 	if c.StartTLS && strings.HasPrefix(strings.ToLower(c.ServerURL), "ldap://") {
-		if err := conn.StartTLS(c.tlsConfig()); err != nil {
-			conn.Close()
+		if err := conn.StartTLS(c.tlsConfig(allowSkipVerify)); err != nil {
+			conn.Close() // #nosec G104 -- the StartTLS error is returned instead
 			return nil, err
 		}
 	}
@@ -411,7 +443,10 @@ func (c *connFull) dial(ctx context.Context, policy *egress.Policy) (*goldap.Con
 // TestBind dials and binds with the service account — proving the connection
 // settings are correct without authenticating any end user.
 func (s *Service) TestBind(ctx context.Context, c *connFull) error {
-	conn, err := c.dial(ctx, s.egress)
+	if err := s.checkTLSVerify(c.SkipTLSVerify); err != nil {
+		return err
+	}
+	conn, err := c.dial(ctx, s.egress, s.allowSkipVerify)
 	if err != nil {
 		return errs.ErrLDAPDialFailed.Wrap(err)
 	}
@@ -433,10 +468,10 @@ type ldapUser struct {
 // authenticate binds the service account, finds the user, then verifies the
 // password by binding as the user's DN. Returns the resolved directory user.
 func (s *Service) authenticate(ctx context.Context, c *connFull, username, password string) (*ldapUser, error) {
-	if username == "" || password == "" {
-		return nil, errs.ErrLDAPCredentialsRequired
+	if err := s.checkTLSVerify(c.SkipTLSVerify); err != nil {
+		return nil, err
 	}
-	conn, err := c.dial(ctx, s.egress)
+	conn, err := c.dial(ctx, s.egress, s.allowSkipVerify)
 	if err != nil {
 		return nil, errs.ErrLDAPDirectoryUnreachable.Wrap(err)
 	}
@@ -471,7 +506,7 @@ func (s *Service) authenticate(ctx context.Context, c *connFull, username, passw
 
 	// Verify the password by binding as the user. A fresh conn keeps the
 	// service-account binding intact and side-steps connection-state quirks.
-	userConn, err := c.dial(ctx, s.egress)
+	userConn, err := c.dial(ctx, s.egress, s.allowSkipVerify)
 	if err != nil {
 		return nil, errs.ErrLDAPDirectoryUnreachable.Wrap(err)
 	}
@@ -580,8 +615,11 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *l
 	return userID, tx.Commit(ctx)
 }
 
-// Login runs the full directory authentication and issues a token pair.
-func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, password, ip, ua string) (pair *auth.TokenPair, resultError error) {
+// Login checks the password with the directory and signs the person in as a
+// password sign-in to the connection's organisation is (auth.SignInExternal):
+// under its address, lockout, hook, risk and second-factor rules. The result
+// is a token pair, or a challenge to complete at /v1/auth/mfa.
+func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, password, ip, ua string) (res *auth.LoginResult, resultError error) {
 	c, err := s.getFull(ctx, connID, uuid.Nil)
 	if err != nil {
 		return nil, err
@@ -591,16 +629,35 @@ func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, passwor
 	if c.Status == "disabled" {
 		return nil, errs.ErrLDAPConnectionDisabled
 	}
-	du, err := s.authenticate(ctx, c, username, password)
-	if err != nil {
-		return nil, err
+	if username == "" || password == "" {
+		return nil, errs.ErrLDAPCredentialsRequired
 	}
-	userID, err := s.findOrCreateUser(ctx, c.TenantID, du)
+	res, err = s.auth.SignInExternal(ctx, auth.ExternalSignIn{
+		TenantID:  c.TenantID,
+		Account:   provider + ":" + connID.String() + ":" + lockoutName(username),
+		Method:    provider,
+		IP:        ip,
+		UserAgent: ua,
+	}, func(ctx context.Context) (uuid.UUID, bool, error) {
+		du, err := s.authenticate(ctx, c, username, password)
+		if err != nil {
+			return uuid.Nil, errors.Is(err, errs.ErrLDAPInvalidCredentials), err
+		}
+		userID, err := s.findOrCreateUser(ctx, c.TenantID, du)
+		return userID, false, err
+	})
 	if err != nil {
 		return nil, err
 	}
 	_ = s.q.TouchLdapLastLogin(ctx, connID)
-	return s.auth.IssuePair(ctx, userID, c.TenantID, ip, ua, provider)
+	return res, nil
+}
+
+// lockoutName is username as the lockout counts it: lower-cased, with runs of
+// spaces made one and none at either end, as directories compare names, so
+// one account's spellings share a counter.
+func lockoutName(username string) string {
+	return strings.ToLower(strings.Join(strings.Fields(username), " "))
 }
 
 type Handler struct {
@@ -851,10 +908,16 @@ func (h *Handler) authenticateHTTP(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	pair, err := h.Service.Login(r.Context(), id, body.Username, body.Password, httpx.ClientIP(r), r.UserAgent())
+	res, err := h.Service.Login(r.Context(), id, body.Username, body.Password, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, pair)
+	if res.MFARequired {
+		// The directory accepted the password; the client completes the
+		// challenge at POST /v1/auth/mfa.
+		httpx.WriteJSON(w, http.StatusOK, res.Body())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res.Pair)
 }

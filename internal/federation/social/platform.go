@@ -253,7 +253,8 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 	}
 
 	var ui userInfo
-	if pc.kind == "github" {
+	switch pc.kind {
+	case "github":
 		accessToken, err := s.oauth.githubExchange(ctx, pc.clientID, pc.clientSecret, code, redirectURI)
 		if err != nil {
 			return nil, errs.ErrSocialTokenExchangeFailed.Wrap(err)
@@ -261,7 +262,7 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 		if ui, err = s.oauth.githubUserinfo(ctx, accessToken); err != nil {
 			return nil, errs.ErrSocialUserinfoFailed.Wrap(err)
 		}
-	} else if pc.kind == "apple" {
+	case "apple":
 		if nonceHash == nil || *nonceHash == "" {
 			return nil, errs.ErrSocialStateInvalid
 		}
@@ -272,7 +273,7 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 		if ui, err = s.oauth.appleExchange(ctx, secret, pc.clientID, code, redirectURI, *nonceHash); err != nil {
 			return nil, errs.ErrSocialTokenExchangeFailed.Wrap(err)
 		}
-	} else {
+	default:
 		doc, err := s.oauth.discovery(ctx, pc.discoveryURL)
 		if err != nil {
 			return nil, errs.ErrSocialDiscoveryFailed.Wrap(err)

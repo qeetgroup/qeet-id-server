@@ -14,7 +14,9 @@ info:
 
     ## Authentication
 
-    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /v1/ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it.
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it.
+
+    Responses that carry a token, a sign-in session or a newly created secret are sent with `Cache-Control: no-store` and `Pragma: no-cache`; no operation in this API returns one.
 
     ## Related APIs
 
@@ -176,7 +178,9 @@ paths:
       description: >-
         Returns a cursor-paginated list of ActivityEvent derived from the
         tenant-scoped audit log. Severity and category are computed from the
-        event type and applied post-fetch. Tenant is derived from the JWT
+        event type and applied post-fetch, so with either filter a page can
+        hold fewer events than limit, or none, and still carry next_cursor;
+        follow it until it is absent. Tenant is derived from the JWT
         principal only — never from URL or body.
       tags:
         - Activity
@@ -186,7 +190,7 @@ paths:
           required: false
           description: >-
             Opaque pagination cursor from a previous response next_cursor field.
-            Encodes the ID of the last seen event.
+            Encodes the time and ID of the last event that page returned.
           schema:
             type: string
         - name: limit
@@ -293,13 +297,17 @@ paths:
       summary: Live activity stream (SSE)
       description: >-
         Opens a Server-Sent Events stream of ActivityEvent frames for the
-        caller's tenant. Each frame is `event: activity\ndata: <json>\n\n`;
-        periodic `: keep-alive` comments prevent proxy timeouts.
+        caller's tenant. Each frame is
+        `id: <cursor>\nevent: activity\ndata: <json>\n\n`; periodic
+        `: keep-alive` comments prevent proxy timeouts.
 
 
-        When `Last-Event-ID` is supplied the server replays up to 100 audit
-        events newer than that ID (chronological order) before switching to
-        the live stream, covering reconnect gaps.
+        When `Last-Event-ID` is supplied (the `id` of the last frame received,
+        an opaque cursor, not the event's UUID) the server replays up to 100
+        audit events newer than it (chronological order) before switching to
+        the live stream, covering reconnect gaps. A live frame's id sits ten
+        seconds before its event, to cover events the server had yet to
+        publish, so a reconnect may repeat an event but never skips one.
 
 
         Server-side filters (`?types`, `?severity`, `?category`) are applied
@@ -629,7 +637,7 @@ paths:
         - name: cursor
           in: query
           required: false
-          description: The id of the last-seen event, for keyset pagination.
+          description: The previous page's next_cursor (the id of its last event), for keyset pagination.
           schema:
             type: string
       security:
@@ -637,11 +645,11 @@ paths:
         - apiKeyAuth: []
       responses:
         '200':
-          description: '{ items: AuditEvent[], next_cursor: string }'
+          description: '{ items: AuditEvent[], next_cursor: string }; next_cursor is empty on the last page.'
           content:
             application/json:
               example:
-                events:
+                items:
                   - id: 018f2a90-1b2c-7d3e-8f40-5a6b7c8d9e01
                     action: user.created
                     resource_type: user
@@ -1687,7 +1695,7 @@ paths:
       operationId: get_v1_tenants_ByTenantID_email_messages
       summary: Email delivery to an address
       description: >-
-        Lists the organisation's most recent emails to one address with what happened to each (sent, delivered, bounced, complained, suppressed or failed, with the provider's reason), and whether the address is suppressed. Addresses are stored hashed, so the lookup is by exact address. A suppression carries its id only when this organisation's mail caused it, since only that organisation may clear it. Records are kept 90 days.
+        Lists the organisation's most recent emails to one address with what happened to each (sent, delivered, bounced, complained, suppressed or failed, with the provider's reason), and whether the address is suppressed. Addresses are stored hashed, so the lookup is by exact address. A suppression caused by this organisation's mail (own true) carries its id, reason, provider detail and date, since only that organisation may clear it; one caused by other mail carries only own false. Records are kept 90 days.
       tags:
         - Email Templates
       parameters:
@@ -1729,6 +1737,7 @@ paths:
                     type: object
                     nullable: true
                     properties:
+                      own: { type: boolean, description: "This organisation's mail caused the suppression; the other fields are present only then." }
                       id: { type: string, format: uuid }
                       reason: { type: string, enum: [bounce, complaint] }
                       detail: { type: string }
@@ -2101,7 +2110,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Qeet AIStatus'
+                $ref: '#/components/schemas/QeetAIStatus'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/qeetai/conversations:
@@ -2127,7 +2136,7 @@ paths:
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Qeet AIConversation'
+                      $ref: '#/components/schemas/QeetAIConversation'
         '401':
           $ref: '#/components/responses/Unauthorized'
     post:
@@ -2155,7 +2164,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Qeet AIConversation'
+                $ref: '#/components/schemas/QeetAIConversation'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/qeetai/conversations/{conversationID}:
@@ -2186,11 +2195,11 @@ paths:
                 type: object
                 properties:
                   conversation:
-                    $ref: '#/components/schemas/Qeet AIConversation'
+                    $ref: '#/components/schemas/QeetAIConversation'
                   messages:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Qeet AIMessage'
+                      $ref: '#/components/schemas/QeetAIMessage'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -2228,7 +2237,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Qeet AIConversation'
+                $ref: '#/components/schemas/QeetAIConversation'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -2397,23 +2406,37 @@ paths:
   /v1/qeetai/provider-config/test:
     post:
       operationId: post_v1_qeetai_provider_config_test
-      description: 'Validates AI provider credentials with a live call and reports whether they work, without persisting them. Accepts candidate credentials in the body or, when omitted, tests the stored configuration. Use this before saving a new key to confirm the provider accepts it.'
+      description: 'Validates candidate AI provider credentials with a live call and reports whether they work, without persisting them. Use this before saving a new key to confirm the provider accepts it. A failed test answers 400 naming the reason: qeetai_provider_unreachable, qeetai_provider_key_invalid, qeetai_provider_model_invalid or qeetai_provider_error.'
       summary: Test tenant AI provider credentials
       tags: [Qeet AI]
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: true }
+            schema:
+              type: object
+              required: [provider, model, api_key]
+              properties:
+                provider: { type: string, enum: [anthropic, openai, azure] }
+                model: { type: string }
+                api_key: { type: string, writeOnly: true }
+                base_url: { type: string, description: 'Required for azure; must be an allowed outbound destination.' }
+                max_tokens: { type: integer, description: 'Defaults to 4096; at most 200000.' }
       responses:
         '200':
-          description: Provider connectivity result
+          description: The provider accepted the credentials.
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/tenants/{tenantID}/billing/checkout:
@@ -2650,7 +2673,15 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: >-
+        Puts the tenant on plan_code, priced in currency; no payment is taken here. A free
+        plan starts a new period with a zero invoice. A paid plan that costs no more than the
+        tenant's active subscription in the same currency and billing interval takes over the
+        period already paid for, with no new invoice; the current plan itself changes nothing.
+        Any other paid plan, such as one that costs more, must go through checkout
+        (POST /v1/tenants/{tenantID}/billing/checkout) and is refused with 402
+        billing.checkout_required, unless invoice-only billing
+        (BILLING_ALLOW_UNPAID_ACTIVATION) is on and no card provider serves the currency.
       responses:
         '200':
           description: OK
@@ -2661,6 +2692,8 @@ paths:
                 additionalProperties: true
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '402':
+          $ref: '#/components/responses/PaymentRequired'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -3017,8 +3050,20 @@ components:
       name: qe_ls
       description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session and consumed by the OAuth authorize/consent flow.
   responses:
+    BadRequest:
+      description: Malformed request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     Unauthorized:
       description: Missing or invalid credentials
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    PaymentRequired:
+      description: The change needs payment (`billing.checkout_required`); start a checkout to make it.
       content:
         application/json:
           schema:
@@ -3150,13 +3195,13 @@ components:
           type: string
           format: uuid
           description: >-
-            For audit-log events this is the stable audit.events row UUID and
-            is safe to use as Last-Event-ID for reconnect replay. For live NATS
-            events a fresh UUID is generated per delivery.
+            For audit-log events this is the stable audit.events row UUID. For
+            live NATS events a fresh UUID is generated per delivery. Reconnect
+            with the stream frame's `id`, not this.
         type:
           type: string
           description: >-
-            Audit action string (e.g. "user.created", "auth.login.failed").
+            Audit action string (e.g. "user.created", "auth.sign_in_failed").
             Dot-namespaced; first segment is the resource type.
           example: user.created
         category:
@@ -3173,10 +3218,11 @@ components:
         severity:
           type: string
           description: >-
-            Derived severity level.
+            Derived from the words of the event type.
             critical — security incident (token reuse, threat detection);
-            warning — failure or destructive operation;
-            success — positive transition (create, enable, login);
+            error — a failure, lock or refusal (auth.sign_in_failed, auth.account_locked);
+            warning — a destructive or sensitive change (delete, revoke, rotate, reset);
+            success — positive transition (create, enable, sign-in);
             info — everything else.
           enum: [info, success, warning, error, critical]
         title:
@@ -3234,8 +3280,9 @@ components:
         next_cursor:
           type: string
           description: >-
-            Opaque cursor for the next page. Present only when more results
-            exist; omitted when this is the last page.
+            Opaque cursor for the next page: the time and ID of the last event
+            fetched. Present when more results may exist; omitted on the last
+            page.
     ActivitySummaryResponse:
       type: object
       description: >-
@@ -3406,7 +3453,7 @@ components:
           description: >-
             Opaque cursor for the next page. Present only when more results
             exist; omitted (not null) when this is the last page.
-    Qeet AIStatus:
+    QeetAIStatus:
       type: object
       description: AI qeetai configuration state. Never contains key material.
       properties:
@@ -3419,7 +3466,7 @@ components:
         model:
           type: string
           description: Model identifier (e.g. "claude-sonnet-5"); empty when not configured.
-    Qeet AIConversation:
+    QeetAIConversation:
       type: object
       description: A named qeetai conversation thread (tenant + user scoped).
       properties:
@@ -3442,7 +3489,7 @@ components:
         updated_at:
           type: string
           format: date-time
-    Qeet AIMessage:
+    QeetAIMessage:
       type: object
       description: >-
         One turn in a qeetai conversation. `content` is an array of Anthropic

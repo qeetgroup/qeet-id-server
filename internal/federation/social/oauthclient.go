@@ -3,6 +3,7 @@ package social
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -87,10 +88,24 @@ func (c *oauthClient) discovery(ctx context.Context, discoveryURL string) (disco
 	if doc.AuthorizationEndpoint == "" || doc.TokenEndpoint == "" {
 		return discoveryDoc{}, fmt.Errorf("discovery: missing endpoints")
 	}
+	if err := checkAuthorizationEndpoint(doc.AuthorizationEndpoint); err != nil {
+		return discoveryDoc{}, err
+	}
 	c.mu.Lock()
 	c.cache[discoveryURL] = cachedDoc{doc: doc, expiresAt: time.Now().Add(discoveryTTL)}
 	c.mu.Unlock()
 	return doc, nil
+}
+
+// checkAuthorizationEndpoint returns an error unless raw is an absolute https
+// URL with a host and no userinfo or fragment (RFC 6749 §3.1), since the
+// browser is redirected there.
+func checkAuthorizationEndpoint(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || strings.Contains(raw, "#") {
+		return errors.New("discovery: authorization_endpoint must be an absolute https URL without userinfo or a fragment")
+	}
+	return nil
 }
 
 // exchange swaps an authorization code for an access token at the token endpoint.

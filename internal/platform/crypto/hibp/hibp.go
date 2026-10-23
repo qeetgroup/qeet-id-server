@@ -7,7 +7,7 @@ package hibp
 import (
 	"bufio"
 	"context"
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 -- the HIBP range API is keyed by SHA-1
 	"encoding/hex"
 	"errors"
 	"fmt"

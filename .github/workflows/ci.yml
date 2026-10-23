@@ -32,15 +32,47 @@ jobs:
         run: go vet ./...
 
       - name: Unit tests
-        run: go test -race -count=1 ./...
+        run: go test -race -count=1 -coverprofile=coverage.out ./... | tee test-output.txt
+
+      # Informational: no threshold. Generated dbgen/ code is left out of the total.
+      - name: Coverage summary
+        run: |
+          grep -v '/dbgen/' coverage.out > coverage.app.out
+          {
+            echo "### Unit test coverage: $(go tool cover -func=coverage.app.out | tail -1 | awk '{print $NF}') (excluding dbgen/)"
+            echo
+            echo "| Package | Coverage |"
+            echo "|---|---|"
+            awk '/coverage: [0-9.]+% of statements/ { for (i = 1; i <= NF; i++) if ($i == "coverage:") { p = ($1 == "ok") ? $2 : $1; print "| " p " | " $(i+1) " |" } }' test-output.txt \
+              | sed 's#github.com/qeetgroup/qeet-id-server/##' | awk '!/\/dbgen/' | sort -t'|' -k3 -n
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Tenant-isolation and sign-in tests against a real PostgreSQL
+  # (testcontainers; files tagged `integration`, helper in
+  # internal/platform/database/dbtest). With CI set, a missing Docker fails
+  # the job instead of skipping the tests.
+  database:
+    name: Database tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Database tests
+        env:
+          CI: "true"
+          TESTCONTAINERS_RYUK_DISABLED: "true"
+        run: go test -tags integration -count=1 -timeout 10m ./...
 
   lint:
     name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0  # full history so the diff-based lint can reach the base commit
 
       - uses: actions/setup-go@v7
         with:
@@ -50,23 +82,24 @@ jobs:
       # Installed from source so golangci-lint is compiled with this repo's Go
       # toolchain — a prebuilt binary built with an older Go refuses go.mod's
       # newer target ("go language version ... lower than the targeted version").
-      - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
-
-      # Lint only the code this PR/push changes. This repo had no lint gate
-      # before, so its existing tree carries pre-existing findings; grandfather
-      # those and require new/changed code to be clean.
-      - name: golangci-lint (new code only)
-        env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+      - name: Install golangci-lint and sqlc
         run: |
-          GOLANGCI="$(go env GOPATH)/bin/golangci-lint"
-          if [ -n "$BASE" ] && [ "$BASE" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BASE" 2>/dev/null; then
-            echo "Linting changes since $BASE"
-            "$GOLANGCI" run --new-from-rev="$BASE" ./...
-          else
-            echo "No base revision available ($BASE) — skipping diff-based lint."
-          fi
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+          go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+
+      # The whole tree, including the integration-tagged database tests.
+      - name: golangci-lint
+        run: golangci-lint run --build-tags=integration ./...
+
+      # dbgen/ must be what sqlc generates from each package's queries.sql.
+      - name: Generated SQL is up to date
+        run: |
+          fail=0
+          for cfg in $(find internal -name sqlc.yaml); do
+            (cd "$(dirname "$cfg")" && sqlc diff) \
+              || { echo "::error::stale sqlc output in $(dirname "$cfg"); run make sqlc"; fail=1; }
+          done
+          exit $fail
 
   vuln:
     name: Vulnerability scan
@@ -97,14 +130,9 @@ jobs:
   sast:
     name: Security scan
     runs-on: ubuntu-latest
-    # Advisory, not blocking. gosec currently reports 92 findings against this
-    # tree; the four that are both HIGH severity and HIGH confidence were
-    # checked by hand and are all scanner blind spots (the token-vault SSRF
-    # hits go through the egress policy, the SAML one is xml.Unmarshal into a
-    # typed struct, and cmd/migrate uses exec.Command with an arg slice, not a
-    # shell). 42 of the 65 HIGH findings are G101 "hardcoded credentials" on
-    # constant names. Promote this to blocking once those are triaged and the
-    # genuine false positives carry #nosec justifications.
+    # Blocking. Every accepted finding carries a `#nosec <rule> -- <reason>` on
+    # its line; .gosec.json excludes only G101 in the errs catalogue (error-code
+    # constants) and requires a rule and a reason on every #nosec.
     steps:
       - uses: actions/checkout@v7
 
@@ -126,14 +154,9 @@ jobs:
           go get github.com/securego/gosec/v2/cmd/gosec@v2.29.0 golang.org/x/tools@v0.52.0
           go build -o "$(go env GOPATH)/bin/gosec" github.com/securego/gosec/v2/cmd/gosec
 
-      # Generated sqlc code is excluded for the same reason golangci-lint
-      # excludes it: it is not hand-authored. Findings surface as a warning
-      # annotation rather than a red job, so the check list stays readable
-      # while the report is still one click away in the log.
+      # Generated sqlc code is excluded, as in golangci-lint: it is not hand-authored.
       - name: gosec
-        run: |
-          gosec -exclude-dir='.*dbgen' -exclude-generated ./... \
-            || echo "::warning title=gosec::Findings reported - advisory only, see log. Not yet triaged."
+        run: gosec -conf .gosec.json -exclude-dir='.*dbgen' -exclude-generated ./...
 
   # Release branches only: publish one immutable, commit-addressed image
   # (ghcr.io/qeetgroup/qeet-id-server:sha-<commit>) after every gate above has
@@ -144,7 +167,7 @@ jobs:
   image:
     name: Release image
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
-    needs: [test, lint, vuln]
+    needs: [test, database, lint, vuln]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

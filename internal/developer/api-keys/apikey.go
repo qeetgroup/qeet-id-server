@@ -277,7 +277,7 @@ func (s *Service) Verify(ctx context.Context, raw string) (*Key, error) {
 		return nil, errs.ErrAPIKeyExpired
 	}
 	// Best-effort, detached from the request but time-bounded so it can't leak.
-	go func(id uuid.UUID) {
+	go func(id uuid.UUID) { // #nosec G118 -- detached on purpose, with its own timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := s.q.TouchAPIKeyLastUsed(ctx, id); err != nil {

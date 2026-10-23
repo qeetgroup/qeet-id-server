@@ -152,7 +152,7 @@ func StepUpRoutes() map[string]mfa.StepUpRule {
 // it so a new sensitive-looking route has to be classified one way or the
 // other.
 func stepUpExempt() map[string]string {
-	return map[string]string{
+	return map[string]string{ // #nosec G101 -- route descriptions, not credentials
 		"POST /v1/mfa/totp/enroll/confirm":                                                  "completes a setup its start already gated, with a code from the app",
 		"DELETE /v1/mfa/push/pairing/{id}":                                                  "withdraws an unused pairing code; asking for one is gated",
 		"POST /v1/mfa/totp/verify":                                                          "is how a session steps up",

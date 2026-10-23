@@ -173,7 +173,7 @@ func (s *Service) postLogoutToken(ctx context.Context, uri, token string) error 
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	resp.Body.Close() // #nosec G104 -- body unread; a close error changes nothing
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return fmt.Errorf("sign-out notice answered %d", resp.StatusCode)
 	}
@@ -217,7 +217,7 @@ func (s *Service) confirmedFor(ticket string, sessionID uuid.UUID) bool {
 	if ticket == "" {
 		return false
 	}
-	claims, err := s.issuer.VerifyVC(ticket)
+	claims, err := s.issuer.VerifySigned(ticket)
 	if err != nil {
 		return false
 	}
@@ -240,7 +240,7 @@ func (s *Service) continuationTarget(ticket string) (string, bool) {
 	if ticket == "" {
 		return "", false
 	}
-	claims, err := s.issuer.VerifyVC(ticket)
+	claims, err := s.issuer.VerifySigned(ticket)
 	if err != nil {
 		return "", false
 	}

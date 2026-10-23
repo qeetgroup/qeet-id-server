@@ -74,11 +74,13 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # Fast gate: don't ship code that doesn't build/pass unit tests.
-      - name: Build & unit test
+      # main accepts only pull requests that passed CI (branch ruleset), so this
+      # repeats the CI test job as a last check on the merged commit.
+      - name: Build, vet & unit test
         run: |
           go build ./...
-          go test ./...
+          go vet ./...
+          go test -race -count=1 ./...
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6

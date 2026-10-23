@@ -13,6 +13,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/risk"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery"
@@ -52,6 +53,19 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller) []wor
 			},
 		},
 		{
+			// A rotation's kept pair is needed only for the refresh reuse grace.
+			Name:     "refresh-retry-cleanup",
+			Interval: 5 * time.Minute,
+			Run: func(ctx context.Context) error {
+				n, err := auth.ClearRefreshRetries(ctx, pool)
+				if err != nil {
+					return err
+				}
+				slog.Info("kept refresh rotations cleared", "cleared", n)
+				return nil
+			},
+		},
+		{
 			Name:     "mfa-cleanup",
 			Interval: time.Hour,
 			Run: func(ctx context.Context) error {
@@ -81,6 +95,18 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller) []wor
 					return err
 				}
 				slog.Info("sign-in history cleaned", "deleted", n)
+				return nil
+			},
+		},
+		{
+			Name:     "outbox-cleanup",
+			Interval: time.Hour,
+			Run: func(ctx context.Context) error {
+				n, err := outbox.PurgePublished(ctx, pool, outbox.PublishedRetention)
+				if err != nil {
+					return err
+				}
+				slog.Info("published outbox events cleaned", "deleted", n)
 				return nil
 			},
 		},

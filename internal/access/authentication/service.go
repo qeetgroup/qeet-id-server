@@ -21,6 +21,7 @@ import (
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
@@ -83,6 +84,11 @@ type Service struct {
 	uses sessionUses
 	// failures bounds the record of failed sign-ins; see signinaudit.go.
 	failures failureBound
+	// refreshGrace is how long a rotated refresh token gets its rotation's
+	// pair again, kept sealed with refreshCipher (zero or nil = never). See
+	// refreshretry.go.
+	refreshGrace  time.Duration
+	refreshCipher *envelope.Cipher
 }
 
 func NewService(pool *pgxpool.Pool, users *user.Repository, t *tokens.Issuer) *Service {
@@ -119,7 +125,9 @@ func endedSessions(userID uuid.UUID, ids []uuid.UUID, tenants []pgtype.UUID) []s
 type MFAEnroller interface {
 	// LoginFactors lists the second factors the user can meet a sign-in
 	// challenge with (none: sign in without one). See mfalogin.go.
+	// LoginFactorsTx reads them through tx.
 	LoginFactors(ctx context.Context, userID uuid.UUID) ([]LoginFactor, error)
+	LoginFactorsTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]LoginFactor, error)
 	// VerifyForLoginTx checks an authenticator-app, recovery or email/SMS code
 	// inside the challenge transaction and returns the kind that matched ("totp",
 	// "recovery_code" or "otp"). It returns ("", nil) for a wrong code.
@@ -128,9 +136,10 @@ type MFAEnroller interface {
 	// factors for a sign-in to tenantID (nil: none).
 	SendLoginCode(ctx context.Context, userID uuid.UUID, tenantID *uuid.UUID, factorID uuid.UUID) error
 	// BeginLoginPasskey starts a passkey assertion for the user's own
-	// passkeys; FinishLoginPasskey verifies one (a domain error: not verified).
+	// passkeys; FinishLoginPasskeyTx verifies one inside the challenge
+	// transaction (a domain error: not verified).
 	BeginLoginPasskey(ctx context.Context, userID uuid.UUID) (uuid.UUID, any, error)
-	FinishLoginPasskey(ctx context.Context, userID, sessionID uuid.UUID, credential json.RawMessage) error
+	FinishLoginPasskeyTx(ctx context.Context, tx pgx.Tx, userID, sessionID uuid.UUID, credential json.RawMessage) error
 	// StartLoginPush sends a push approval request to the user's devices and
 	// returns its id and expiry; LoginPushStatusTx reads its state
 	// ("pending", "approved", "denied" or "expired") under lock.
@@ -241,6 +250,9 @@ type RiskAssessor interface {
 	// force-MFA threshold. country is an ISO code, or empty when unknown. It fails
 	// open (false) on any error.
 	ShouldForceMFA(ctx context.Context, tenantID, userID uuid.UUID, ip, ua, country string) bool
+	// RecordSignIn remembers a sign-in that got its session, as later
+	// assessments' history.
+	RecordSignIn(ctx context.Context, tenantID, userID uuid.UUID, ua, country string)
 }
 
 // SetRiskAssessor wires the sign-in risk assessment.
@@ -503,6 +515,9 @@ func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*Toke
 			return nil, err
 		}
 	}
+	if err := s.refuseSignIn(ctx, in.UserID, in.TenantID, "tenant_switch", in.IP, in.UserAgent); err != nil {
+		return nil, err
+	}
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -528,7 +543,7 @@ func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*Toke
 	pair, err := s.issuePairTx(ctx, tx, in.UserID, in.TenantID, in.IP, in.UserAgent, "tenant_switch", claims,
 		map[string]any{"previous_session_id": in.FromSessionID, "second_factor": carried}, ends)
 	if err != nil {
-		return nil, err
+		return nil, s.signInFailed(ctx, tx, err)
 	}
 	if err := carrySecondFactor(ctx, tx, pair.SessionID, carried); err != nil {
 		return nil, err
@@ -589,6 +604,9 @@ func (s *Service) EnterInvitedTenant(ctx context.Context, userID, tenantID, from
 	if err := s.tenantFactorShortfall(ctx, userID, tenantID, carried); err != nil {
 		return nil, err
 	}
+	if err := s.refuseSignIn(ctx, userID, tenantID, "invite_accept", ip, ua); err != nil {
+		return nil, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -597,7 +615,7 @@ func (s *Service) EnterInvitedTenant(ctx context.Context, userID, tenantID, from
 	pair, err := s.issuePairTx(ctx, tx, userID, tenantID, ip, ua, "invite_accept", nil,
 		map[string]any{"previous_session_id": fromSessionID, "second_factor": carried}, time.Time{})
 	if err != nil {
-		return nil, err
+		return nil, s.signInFailed(ctx, tx, err)
 	}
 	if err := carrySecondFactor(ctx, tx, pair.SessionID, carried); err != nil {
 		return nil, err
@@ -670,6 +688,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 	if err != nil {
 		return nil, err
 	}
+	s.recordSignIn(ctx, u.ID, u.TenantID, in.UserAgent, httpx.GeoCountry(ctx))
 	return &LoginResult{Pair: pair}, nil
 }
 
@@ -719,6 +738,7 @@ func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, t
 	if err != nil {
 		return nil, err
 	}
+	s.recordSignIn(ctx, u.ID, u.TenantID, ua, country)
 	return &LoginSessionResult{UserID: u.ID, RawCookie: raw}, nil
 }
 
@@ -794,7 +814,8 @@ func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, emai
 	if err != nil {
 		return nil, nil, err
 	}
-	if s.nextSignInStep(ctx, u.ID, tenantID, gate, firstFactorPassword, "", ip, ua, httpx.GeoCountry(ctx)) == stepChallenge {
+	step := s.nextSignInStep(ctx, u.ID, tenantID, gate, firstFactorPassword, "", ip, ua, httpx.GeoCountry(ctx))
+	if step == stepChallenge {
 		challenge, err := s.challengeSignIn(ctx, u.ID, tenantID, nil, gate, firstFactorPassword, ip, ua)
 		if err != nil {
 			return nil, nil, err
@@ -804,6 +825,9 @@ func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, emai
 	raw, err := s.CreateLoginSession(ctx, u.ID, ip, ua)
 	if err != nil {
 		return nil, nil, err
+	}
+	if step == stepSession {
+		s.recordSignIn(ctx, u.ID, tenantID, ua, httpx.GeoCountry(ctx))
 	}
 	return u, &LoginSessionResult{UserID: u.ID, RawCookie: raw}, nil
 }
@@ -984,7 +1008,7 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken str
 	case enrollment && !enrollmentStarted:
 		return metChallenge{}, errs.ErrMFAEnrollNotStarted
 	case enrollment:
-		if err := s.stillWithoutFactor(ctx, userID); err != nil {
+		if err := s.stillWithoutFactor(ctx, tx, userID); err != nil {
 			return metChallenge{}, err
 		}
 	}
@@ -1097,7 +1121,7 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken str
 // period runs, and audits it. Refused (ErrMFAEnrollmentRequired) once the
 // account must set up a factor now; refusing costs no attempt.
 func (s *Service) deferEnrollment(ctx context.Context, tx pgx.Tx, id uuid.UUID, met metChallenge) (metChallenge, error) {
-	graceUntil, err := s.mayDeferEnrollment(ctx, met.userID, met.tenantID)
+	graceUntil, err := s.mayDeferEnrollment(ctx, tx, met.userID, met.tenantID)
 	if err != nil {
 		return metChallenge{}, err
 	}
@@ -1193,6 +1217,9 @@ func (s *Service) CompleteMFALoginWith(ctx context.Context, mfaToken string, pro
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := s.refuseSignIn(ctx, met.userID, met.tenantID, met.method(), ip, ua); err != nil {
+		return nil, nil, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -1200,7 +1227,7 @@ func (s *Service) CompleteMFALoginWith(ctx context.Context, mfaToken string, pro
 	defer tx.Rollback(ctx)
 	pair, err := s.issuePairTx(ctx, tx, met.userID, met.tenantID, ip, ua, met.method(), met.claims, nil, time.Time{})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, s.signInFailed(ctx, tx, err)
 	}
 	// The second factor this sign-in met steps up the session it opens, and
 	// only that one: no other session of the person's gains anything from it.
@@ -1212,6 +1239,7 @@ func (s *Service) CompleteMFALoginWith(ctx context.Context, mfaToken string, pro
 	if err := tx.Commit(ctx); err != nil {
 		return nil, nil, err
 	}
+	s.recordSignIn(ctx, met.userID, met.tenantID, ua, httpx.GeoCountry(ctx))
 	return pair, met.recoveryCodes, nil
 }
 
@@ -1257,6 +1285,7 @@ func (s *Service) CompleteMFALoginSessionWith(ctx context.Context, mfaToken stri
 	if err != nil {
 		return nil, err
 	}
+	s.recordSignIn(ctx, met.userID, met.tenantID, ua, httpx.GeoCountry(ctx))
 	// A confirmed risky sign-in met no factor either, so earns no remembered device.
 	return &MFALoginSession{UserID: met.userID, TenantID: met.tenantID, RawCookie: raw,
 		RecoveryCodes: met.recoveryCodes, Deferred: met.deferred || met.riskVerified}, nil
@@ -1281,17 +1310,13 @@ func (s *Service) CheckPassword(ctx context.Context, in SignInAttempt) (*user.Us
 		return nil, nil, err
 	}
 	failure := SignInFailure{TenantID: signInTenant, Method: "password", IP: in.IP, UserAgent: in.UserAgent}
-	if err := s.checkLockout(ctx, attempt); err != nil {
-		if errors.Is(err, errs.ErrAuthAccountLocked) || errors.Is(err, errs.ErrTooManyRequests) {
-			failure.Reason = FailureAccountLocked
-			if errors.Is(err, errs.ErrTooManyRequests) {
-				failure.Reason = FailureSourceThrottled
-			}
-			if locked, lerr := s.users.GetByEmailGlobal(ctx, in.Email); lerr == nil {
-				failure.UserID = locked.ID
-			}
-			s.RecordSignInFailure(ctx, failure)
+	owner := func() uuid.UUID {
+		if locked, err := s.users.GetByEmailGlobal(ctx, in.Email); err == nil {
+			return locked.ID
 		}
+		return uuid.Nil
+	}
+	if err := s.refuseLocked(ctx, attempt, failure, owner); err != nil {
 		return nil, nil, err
 	}
 	u, err := s.users.GetByEmailGlobal(ctx, in.Email)
@@ -1301,7 +1326,9 @@ func (s *Service) CheckPassword(ctx context.Context, in SignInAttempt) (*user.Us
 			// failure exactly as for a wrong password, so neither the answer,
 			// its timing nor the lockout tells the two apart. Its record
 			// names no person.
-			verifyPassword("", in.Password)
+			if _, err := verifyPassword(ctx, "", in.Password); err != nil {
+				return nil, nil, err
+			}
 			failure.Reason = FailureUnknownAccount
 			if err := s.recordFailedSignIn(ctx, attempt, failure); err != nil {
 				return nil, nil, err
@@ -1310,19 +1337,25 @@ func (s *Service) CheckPassword(ctx context.Context, in SignInAttempt) (*user.Us
 		}
 		return nil, nil, err
 	}
-	if u.Status != "active" && u.Status != "invited" {
-		return nil, nil, errs.ErrAuthAccountInactive
-	}
 	hash, err := s.users.PasswordHash(ctx, u.ID)
 	if err != nil {
 		return nil, nil, err
 	}
-	if !verifyPassword(hash, in.Password) {
+	ok, err := verifyPassword(ctx, hash, in.Password)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ok {
 		failure.UserID, failure.Reason = u.ID, FailureWrongPassword
 		if err := s.recordFailedSignIn(ctx, attempt, failure); err != nil {
 			return nil, nil, err
 		}
 		return nil, nil, errs.ErrAuthInvalidCredentials
+	}
+	// Only the right password learns the account's status, so a wrong one
+	// answers the same for every address.
+	if u.Status != "active" && u.Status != "invited" {
+		return nil, nil, errs.ErrAuthAccountInactive
 	}
 	if err := s.clearFailedSignIns(ctx, attempt); err != nil {
 		return nil, nil, err
@@ -1344,17 +1377,21 @@ func (s *Service) CheckPassword(ctx context.Context, in SignInAttempt) (*user.Us
 			}
 		}
 	}
-	// Actions/Hooks gate: a tenant policy endpoint may deny the sign-in, or
-	// supply claims to carry into the token. No-op when no hook is wired, so
-	// the common path is untouched.
-	if s.loginHook != nil {
-		claims, err := s.loginHook.Run(ctx, u.TenantID, u.ID, u.Email)
-		if err != nil {
-			return nil, nil, err
-		}
-		return u, claims, nil
+	claims, err := s.hookClaims(ctx, u.TenantID, u)
+	if err != nil {
+		return nil, nil, err
 	}
-	return u, nil, nil
+	return u, claims, nil
+}
+
+// hookClaims runs the login hook for a sign-in of u to tenantID: the tenant's
+// policy endpoint may deny it, or supply claims to carry into the token. No
+// hook wired: no claims.
+func (s *Service) hookClaims(ctx context.Context, tenantID uuid.UUID, u *user.User) (map[string]any, error) {
+	if s.loginHook == nil {
+		return nil, nil
+	}
+	return s.loginHook.Run(ctx, tenantID, u.ID, u.Email)
 }
 
 // IssuePair creates a session, issues an access and refresh token pair, and
@@ -1370,6 +1407,9 @@ func (s *Service) IssuePairWithClaims(ctx context.Context, userID, tenantID uuid
 }
 
 func (s *Service) issuePair(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, method string, claims map[string]any) (*TokenPair, error) {
+	if err := s.refuseSignIn(ctx, userID, tenantID, method, ip, ua); err != nil {
+		return nil, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -1377,7 +1417,7 @@ func (s *Service) issuePair(ctx context.Context, userID, tenantID uuid.UUID, ip,
 	defer tx.Rollback(ctx)
 	pair, err := s.issuePairTx(ctx, tx, userID, tenantID, ip, ua, method, claims, nil, time.Time{})
 	if err != nil {
-		return nil, err
+		return nil, s.signInFailed(ctx, tx, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
@@ -1385,24 +1425,11 @@ func (s *Service) issuePair(ctx context.Context, userID, tenantID uuid.UUID, ip,
 	return pair, nil
 }
 
-// issuePairTx is issuePair inside the caller's transaction, which commits. The
-// hook claims are stored with the session so renewals issue them again;
-// auditMeta (may be nil) is added to the sign-in audit record. notAfter (zero:
-// none) is when the sign-in this session continues ends: it ends no later.
+// issuePairTx is issuePair inside the caller's transaction, begun once
+// refuseSignIn has passed and committed by the caller. Hook claims are stored
+// with the session so renewals issue them again; auditMeta (may be nil) joins
+// the audit record; the session ends no later than notAfter (zero: no bound).
 func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID, ip, ua, method string, claims, auditMeta map[string]any, notAfter time.Time) (*TokenPair, error) {
-	// Every sign-in ends here, whatever its method, so a suspended or deleted
-	// account is refused here, and the organisation's address rules
-	// are asked here, before anything is written (the session limit below may
-	// end another session).
-	if err := s.refuseInactiveAccount(ctx, userID, tenantID, method, ip, ua); err != nil {
-		return nil, err
-	}
-	if err := s.refuseInactiveTenant(ctx, tenantID); err != nil {
-		return nil, err
-	}
-	if err := s.checkAddress(ctx, tenantID, userID, ip, method); err != nil {
-		return nil, err
-	}
 	sessionID := uuid.New()
 	var ipArg any
 	if ip != "" {
@@ -1517,7 +1544,7 @@ func (s *Service) refreshExpiry(sessionExp time.Time) time.Time {
 
 // Refresh rotates a refresh token and issues a new access token. Reusing an
 // already-used token revokes the whole session as suspected theft and notifies
-// the user.
+// the user, unless it is a retry within the reuse grace (refreshretry.go).
 func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, error) {
 	hash := tokens.HashRefresh(in.RefreshToken)
 
@@ -1609,8 +1636,16 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 		return nil, errs.ErrAuthRefreshTokenInvalid
 	}
 	if usedAt != nil {
-		// Reuse means theft: revoke the session and record the audit and outbox
-		// events atomically with the revocation.
+		// A retry within the grace gets the pair its rotation issued.
+		pair, age, ok, err := s.keptRotation(ctx, tx, id, sessionID)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			return s.answerRetry(ctx, tx, pair, age, id, userID, tenantID, in)
+		}
+		// Any other reuse means theft: revoke the session and record the audit
+		// and outbox events atomically with the revocation.
 		if err := s.handleRefreshReuse(ctx, tx, userID, tenantID, sessionID, id, in); err != nil {
 			return nil, err
 		}
@@ -1622,8 +1657,14 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 
 	// A session renews only from an address its organisation still allows, so
 	// a newly blocked address stops renewing. The session itself stays: it
-	// renews again from an allowed address.
-	if err := s.checkAddress(ctx, tenantID, userID, in.IP, "refresh"); err != nil {
+	// renews again from an allowed address. Nothing else is written yet, so
+	// committing keeps only the refusal's record.
+	if err := s.checkAddressTx(ctx, tx, tenantID, userID, in.IP, "refresh"); err != nil {
+		if errors.Is(err, errs.ErrAuthAddressNotAllowed) {
+			if cerr := tx.Commit(ctx); cerr != nil {
+				return nil, cerr
+			}
+		}
 		return nil, err
 	}
 
@@ -1661,10 +1702,7 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 	if err != nil {
 		return nil, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
-	return &TokenPair{
+	pair := &TokenPair{
 		AccessToken:      access,
 		TokenType:        "Bearer",
 		ExpiresAt:        exp,
@@ -1674,7 +1712,14 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 		SessionID:        sessionID,
 		UserID:           userID,
 		TenantID:         tenantPtr,
-	}, nil
+	}
+	if err := s.keepRotation(ctx, tx, id, pair); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return pair, nil
 }
 
 // buildReuseEvents constructs the audit + outbox events emitted when a
@@ -1908,8 +1953,13 @@ const maxGrantPasses = 5
 // row first and does not commit; reason is sent with the session.revoked
 // signals. It returns errs.ErrNotFound for an unknown user.
 func (s *Service) EndAllSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID, reason string) (SignInsEnded, error) {
-	var ended SignInsEnded
-	q := s.q.WithTx(tx)
+	return EndSignIns(ctx, tx, s.signals, userID, reason)
+}
+
+// EndSignIns is EndAllSignIns for a service that holds no *Service, such as
+// password reset; signals (nil: none) announces the ended sessions.
+func EndSignIns(ctx context.Context, tx pgx.Tx, signals *sessionsignal.Signaller, userID uuid.UUID, reason string) (SignInsEnded, error) {
+	q := dbgen.New(tx)
 	if _, err := q.LockUserForSessionRevocation(ctx, userID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return SignInsEnded{}, errs.ErrNotFound
@@ -1920,20 +1970,33 @@ func (s *Service) EndAllSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID
 	if err != nil {
 		return SignInsEnded{}, err
 	}
-	ended.Sessions = int64(len(rows))
-	signals := make([]sessionsignal.Session, len(rows))
+	sessions := make([]sessionsignal.Session, len(rows))
 	for i, r := range rows {
-		signals[i] = sessionsignal.Session{ID: r.ID, UserID: userID}
+		sessions[i] = sessionsignal.Session{ID: r.ID, UserID: userID}
 		if r.TenantID.Valid {
-			signals[i].TenantID = uuid.UUID(r.TenantID.Bytes)
+			sessions[i].TenantID = uuid.UUID(r.TenantID.Bytes)
 		}
 	}
-	s.signals.Revoked(ctx, tx, reason, signals...)
+	signals.Revoked(ctx, tx, reason, sessions...)
+	ended, err := endOtherSignIns(ctx, tx, userID)
+	if err != nil {
+		return SignInsEnded{}, err
+	}
+	ended.Sessions = int64(len(rows))
+	return ended, nil
+}
+
+// endOtherSignIns ends, inside tx, every way the user signs in besides their
+// API sessions: hosted-login sessions, remembered devices, which skip the
+// second factor, pending authorisations, which would become grants, and
+// application grants. The caller has locked the user row.
+func endOtherSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (SignInsEnded, error) {
+	var ended SignInsEnded
+	q := dbgen.New(tx)
+	var err error
 	if ended.LoginSessions, err = sessionsignal.EndLoginSessions(ctx, tx, userID); err != nil {
 		return SignInsEnded{}, err
 	}
-	// Also end the ways back in that aren't sessions: remembered devices skip the
-	// second factor, and pending codes or approved requests would become grants.
 	if ended.TrustedDevices, err = q.DeleteTrustedDevicesForUser(ctx, userID); err != nil {
 		return SignInsEnded{}, err
 	}
@@ -1975,10 +2038,10 @@ type ChangePasswordInput struct {
 	RequestID     string
 }
 
-// ChangePassword updates the password, revokes every other session and records
-// audit evidence in one transaction; the current session stays. The new password
-// is checked against the account's organisation's rules before the current one
-// is verified.
+// ChangePassword updates the password, ends every other session, hosted-login
+// session, remembered device and application grant, and records audit evidence
+// in one transaction; the current session stays. The new password is checked
+// against the account's organisation's rules before the current one is verified.
 func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) error {
 	account, err := s.users.Get(ctx, in.UserID)
 	if err != nil {
@@ -2024,8 +2087,8 @@ func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) er
 	}
 	revoked := int64(len(rows))
 	s.signals.Revoked(ctx, tx, sessionsignal.ReasonPasswordChanged, otherSessionsEnded(in.UserID, rows)...)
-	// Every hosted sign-in too: the calling session is an API one, kept above.
-	hosted, err := sessionsignal.EndLoginSessions(ctx, tx, in.UserID)
+	// Every other way in too: the calling session is an API one, kept above.
+	ended, err := endOtherSignIns(ctx, tx, in.UserID)
 	if err != nil {
 		return err
 	}
@@ -2033,7 +2096,11 @@ func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) er
 		TenantID: in.TenantID, ActorUserID: &in.UserID, ActorType: "user",
 		Action: "auth.password_changed", ResourceType: "user", ResourceID: &in.UserID,
 		IP: in.IP, UserAgent: in.UserAgent, RequestID: in.RequestID,
-		Metadata: map[string]any{"revoked_sessions": revoked, "revoked_login_sessions": hosted, "kept_session_id": in.KeepSessionID},
+		Metadata: map[string]any{
+			"revoked_sessions": revoked, "revoked_login_sessions": ended.LoginSessions,
+			"revoked_app_grants": ended.AppGrants, "revoked_trusted_devices": ended.TrustedDevices,
+			"ended_pending_authorizations": ended.PendingAuthorizations, "kept_session_id": in.KeepSessionID,
+		},
 	}); err != nil {
 		return err
 	}
@@ -2041,7 +2108,7 @@ func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) er
 		AggregateID: in.UserID, Topic: "auth", EventType: "auth.password.changed",
 		Payload: map[string]any{
 			"user_id": in.UserID, "tenant_id": in.TenantID,
-			"kept_session_id": in.KeepSessionID, "revoked_sessions": revoked, "revoked_login_sessions": hosted,
+			"kept_session_id": in.KeepSessionID, "revoked_sessions": revoked, "revoked_login_sessions": ended.LoginSessions,
 		},
 	}); err != nil {
 		return err

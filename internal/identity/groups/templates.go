@@ -3,6 +3,8 @@ package group
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -68,6 +70,26 @@ func countNodes(nodes []TemplateNode, depth int) (int, error) {
 	return total, nil
 }
 
+// duplicateNodeName returns a name that more than one node of the tree uses,
+// ignoring case and surrounding space, or "" if there is none. seen holds the
+// names met so far.
+func duplicateNodeName(nodes []TemplateNode, seen map[string]bool) string {
+	for _, n := range nodes {
+		name := strings.TrimSpace(n.Name)
+		if seen[strings.ToLower(name)] {
+			return name
+		}
+		seen[strings.ToLower(name)] = true
+		if dup := duplicateNodeName(n.Children, seen); dup != "" {
+			return dup
+		}
+	}
+	return ""
+}
+
+// validateTemplate checks a template's name and tree and returns how many
+// groups applying it creates. Group names are unique in an organization, so a
+// tree that uses one twice could never be applied.
 func validateTemplate(in TemplateInput) (int, error) {
 	if strings.TrimSpace(in.Name) == "" {
 		return 0, errs.ErrGroupTemplateUnnamed
@@ -81,6 +103,12 @@ func validateTemplate(in TemplateInput) (int, error) {
 	}
 	if count > maxTemplateNodes {
 		return 0, errs.ErrGroupTemplateTooLarge
+	}
+	if dup := duplicateNodeName(in.Nodes, map[string]bool{}); dup != "" {
+		return 0, errs.ErrValidationFailed.WithFields([]errs.FieldError{{
+			Field: "nodes", Code: "duplicate_name",
+			Message: fmt.Sprintf("%q is used more than once; each group in a template needs its own name.", dup),
+		}})
 	}
 	return count, nil
 }
@@ -173,7 +201,7 @@ func (s *Service) DeleteTemplate(
 		`DELETE FROM tenant.group_templates WHERE id = $1 AND tenant_id = $2 RETURNING name`,
 		id, tenantID).Scan(&name)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return errs.ErrNotFound
 		}
 		return err
@@ -196,7 +224,7 @@ func (s *Service) ApplyTemplate(
 		`SELECT name, nodes FROM tenant.group_templates WHERE id = $1 AND tenant_id = $2`,
 		id, tenantID).Scan(&tmplName, &raw)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrNotFound
 		}
 		return nil, err
@@ -263,7 +291,8 @@ func insertTree(
 			Scan(&g.ID, &g.TenantID, &g.Name, &g.Description, &g.CreatedAt)
 		if err != nil {
 			if pgxerr.IsUnique(err) {
-				return nil, errs.ErrGroupNameExists.WithDetail(n.Name)
+				return nil, errs.ErrGroupNameExists.WithDetail(
+					fmt.Sprintf("group %q already exists in this organization", strings.TrimSpace(n.Name)))
 			}
 			return nil, err
 		}

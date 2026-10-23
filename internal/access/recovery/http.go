@@ -10,7 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -24,12 +24,14 @@ type tokenIssuer interface {
 
 // Handler serves the password-reset and magic-link routes. DevMode, for local
 // development only, returns the reset token in the forgot-password response;
-// CookieSecure marks the hosted-login session cookie Secure.
+// CookieSecure marks the hosted-login session cookie Secure. PublicBaseURL is
+// this API's public origin, or "" to take it from the request's Host.
 type Handler struct {
-	Service      *Service
-	AuthService  tokenIssuer
-	DevMode      bool
-	CookieSecure bool
+	Service       *Service
+	AuthService   tokenIssuer
+	DevMode       bool
+	CookieSecure  bool
+	PublicBaseURL string
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -53,14 +55,14 @@ type forgotInput struct {
 }
 
 // authorizeReturnTo returns raw if it is this service's own OAuth authorize
-// endpoint on this request's host, and "" otherwise, so an emailed link can't
+// endpoint, on its public origin, and "" otherwise, so an emailed link can't
 // send the user to a caller-chosen site.
-func authorizeReturnTo(r *http.Request, raw string) string {
+func (h *Handler) authorizeReturnTo(r *http.Request, raw string) string {
 	if raw == "" {
 		return ""
 	}
 	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host != r.Host ||
+	if err != nil || u.Scheme+"://"+u.Host != httpx.PublicOrigin(r, h.PublicBaseURL) ||
 		!strings.HasSuffix(u.Path, "/oauth/authorize") {
 		return ""
 	}
@@ -68,6 +70,7 @@ func authorizeReturnTo(r *http.Request, raw string) string {
 }
 
 func (h *Handler) forgot(w http.ResponseWriter, r *http.Request) {
+	defer httpx.ConstantTimeFloor(r.Context(), time.Now(), requestFloor)
 	var in forgotInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
@@ -75,7 +78,7 @@ func (h *Handler) forgot(w http.ResponseWriter, r *http.Request) {
 	}
 	raw, err := h.Service.StartPasswordResetFrom(r.Context(), in.Email, ResetOrigin{
 		App:      in.App,
-		ReturnTo: authorizeReturnTo(r, in.ReturnTo),
+		ReturnTo: h.authorizeReturnTo(r, in.ReturnTo),
 		Audit:    AuditCtx{IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)},
 	})
 	if err != nil {
@@ -125,12 +128,12 @@ type magicStartInput struct {
 	ReturnTo string    `json:"return_to,omitempty"`
 }
 
-// magicFloor is how long a magic-link request takes at least, so its timing
-// does not reveal whether a link was sent.
-const magicFloor = 250 * time.Millisecond
+// requestFloor is how long a forgot-password or magic-link request takes at
+// least, so its timing does not reveal whether a link was sent.
+const requestFloor = 250 * time.Millisecond
 
 func (h *Handler) magicStart(w http.ResponseWriter, r *http.Request) {
-	defer httpx.ConstantTimeFloor(r.Context(), time.Now(), magicFloor)
+	defer httpx.ConstantTimeFloor(r.Context(), time.Now(), requestFloor)
 	var in magicStartInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
@@ -140,7 +143,7 @@ func (h *Handler) magicStart(w http.ResponseWriter, r *http.Request) {
 		Email:     in.Email,
 		TenantID:  in.TenantID,
 		App:       in.App,
-		ReturnTo:  authorizeReturnTo(r, in.ReturnTo),
+		ReturnTo:  h.authorizeReturnTo(r, in.ReturnTo),
 		Caller:    httpx.ClientIP(r),
 		UserAgent: r.UserAgent(),
 	}); err != nil {
@@ -225,7 +228,7 @@ func (h *Handler) magicSession(w http.ResponseWriter, r *http.Request) {
 // magicResend sends a new link in place of the one a token names, to the same
 // address — for a link that was used or has expired.
 func (h *Handler) magicResend(w http.ResponseWriter, r *http.Request) {
-	defer httpx.ConstantTimeFloor(r.Context(), time.Now(), magicFloor)
+	defer httpx.ConstantTimeFloor(r.Context(), time.Now(), requestFloor)
 	var in magicConsumeInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)

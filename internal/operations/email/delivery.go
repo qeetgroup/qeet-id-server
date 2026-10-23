@@ -59,11 +59,12 @@ func (h *DeliveryHandler) messages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if sup != nil {
-		view := map[string]any{"reason": sup.Reason, "detail": sup.Detail, "created_at": sup.CreatedAt}
-		// Only the organisation whose mail caused a suppression may clear it,
-		// so only it is told which one it is.
+		// Only the organisation whose mail caused a suppression may clear it, so
+		// only it is told which one it is, and why and when. Any other learns
+		// only that its mail to the address isn't sent.
+		view := map[string]any{"own": false}
 		if sup.TenantID != nil && *sup.TenantID == tenantID {
-			view["id"] = sup.ID
+			view = map[string]any{"own": true, "id": sup.ID, "reason": sup.Reason, "detail": sup.Detail, "created_at": sup.CreatedAt}
 		}
 		out["suppression"] = view
 	}

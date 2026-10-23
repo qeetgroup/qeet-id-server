@@ -167,6 +167,7 @@ func productionRouteInventory(t *testing.T) map[string]routeClass {
 	mountRootPublicRoutes(all, deps, ratelimit.New(5, 20), ratelimit.New(50, 200))
 	all.Route("/v1", func(r chi.Router) {
 		mountV1PublicRoutes(r, deps)
+		mountV1TokenRoutes(r, deps)
 		mountAuthenticatedRoutes(r, deps)
 	})
 	mounted := walkRoutes(t, all)

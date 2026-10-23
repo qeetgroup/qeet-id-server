@@ -73,7 +73,7 @@ func (b BindingCookie) Remove(w http.ResponseWriter, r *http.Request, id string)
 }
 
 func (b BindingCookie) write(w http.ResponseWriter, ids []string) {
-	c := &http.Cookie{
+	c := &http.Cookie{ // #nosec G124 -- Secure is off only in dev
 		Name:     b.cookieName(),
 		Value:    strings.Join(ids, "."),
 		Path:     "/",

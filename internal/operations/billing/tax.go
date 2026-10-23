@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+
+	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
 )
 
 // Invoice tax. It is off until an operator configures the seller's jurisdiction
@@ -49,11 +51,11 @@ type TaxResult struct {
 	PlaceOfSupply string
 }
 
-// taxFor computes the tax on a net amount for the tenant's billing profile. A
-// profile that cannot be read is treated as empty.
-func (s *Service) taxFor(ctx context.Context, tenantID uuid.UUID, amountMinor int64) TaxResult {
+// taxFor computes the tax on a net amount for the tenant's billing profile,
+// read through q. A profile that cannot be read is treated as empty.
+func (s *Service) taxFor(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, amountMinor int64) TaxResult {
 	in := TaxInput{AmountMinor: amountMinor}
-	if p, err := s.GetBillingProfile(ctx, tenantID); err == nil && p != nil {
+	if p, err := billingProfile(ctx, q, tenantID); err == nil && p != nil {
 		in.BuyerCountry = p.Country
 		in.BuyerState = p.State
 		in.TaxIDType = p.TaxIDType

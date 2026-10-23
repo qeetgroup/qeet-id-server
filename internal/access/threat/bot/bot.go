@@ -6,6 +6,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -179,7 +180,7 @@ func (s *Service) Stats(ctx context.Context, tenantID uuid.UUID) (*Stats, error)
 
 func (s *Service) GetSettings(ctx context.Context, tenantID uuid.UUID) (Settings, error) {
 	row, err := s.q.GetBotSettings(ctx, tenantID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return DefaultSettings(), nil
 	}
 	if err != nil {

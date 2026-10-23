@@ -1,4 +1,8 @@
-.PHONY: install dev dev-secrets build test lint migrate-up migrate-down db-up db-down db-reset seed seed-reset kill
+.PHONY: install dev dev-secrets build test test-db lint sqlc sqlc-check migrate-up migrate-down db-up db-down db-reset seed seed-reset kill
+
+# Tool versions; keep in step with .github/workflows/ci.yml.
+GOLANGCI_VERSION = v2.14.0
+SQLC_VERSION     = v1.31.1
 
 ifneq (,$(wildcard .env))
     include .env
@@ -33,8 +37,8 @@ dev-secrets:
 		echo "generated $(SECRETS_DIR)/saml_idp_key.pem + saml_idp_cert.pem (SAML IdP pair)"; }
 
 # `make dev` injects the persistent keys from $(SECRETS_DIR) with real newlines —
-# a multi-line PEM can't be carried by the Make-included .env. JWT_SIGNING_KEY here
-# overrides the blank one exported from .env; SAML_IDP_KEY/CERT aren't in .env at all.
+# a multi-line PEM can't be carried by the Make-included .env. These override the
+# blank JWT_SIGNING_KEY, SAML_IDP_KEY and SAML_IDP_CERT exported from .env.
 dev: dev-secrets
 	@echo "starting qeet-id on :$${HTTP_PORT:-4001} — persistent JWT + SAML keys from $(SECRETS_DIR)/"
 	@JWT_SIGNING_KEY="$$(cat $(SECRETS_DIR)/jwt_es256.pem)" \
@@ -48,8 +52,26 @@ build:
 test:
 	go test ./...
 
+# Tenant-isolation and sign-in tests against a real PostgreSQL (needs Docker).
+test-db:
+	go test -tags integration -count=1 -timeout 10m ./...
+
+# The linters CI runs, over the whole tree including the database tests.
 lint:
 	go vet ./...
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION) run --build-tags=integration ./...
+
+# Regenerate every package's dbgen/ from its queries.sql.
+sqlc:
+	@for cfg in $$(find internal -name sqlc.yaml); do \
+		(cd "$$(dirname "$$cfg")" && go run github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION) generate) || exit 1; \
+	done
+
+# Fail if any dbgen/ differs from what sqlc generates.
+sqlc-check:
+	@for cfg in $$(find internal -name sqlc.yaml); do \
+		(cd "$$(dirname "$$cfg")" && go run github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION) diff) || exit 1; \
+	done
 
 db-up:
 	docker compose up -d

@@ -6336,17 +6336,18 @@
               "type": "noauth"
             },
             "url": {
-              "raw": "{{baseUrl}}/saml/idp/metadata",
+              "raw": "{{baseUrl}}/saml/idp/{{tenantId}}/metadata",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "saml",
                 "idp",
+                "{{tenantId}}",
                 "metadata"
               ]
             },
-            "description": "Qeet-as-IdP metadata XML (public)."
+            "description": "Qeet-as-IdP metadata XML for the tenant (public)."
           }
         },
         {
@@ -6358,13 +6359,14 @@
               "type": "noauth"
             },
             "url": {
-              "raw": "{{baseUrl}}/saml/idp/sso?SAMLRequest=<deflated-base64>&RelayState=",
+              "raw": "{{baseUrl}}/saml/idp/{{tenantId}}/sso?SAMLRequest=<deflated-base64>&RelayState=",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "saml",
                 "idp",
+                "{{tenantId}}",
                 "sso"
               ],
               "query": [
@@ -6409,13 +6411,14 @@
               ]
             },
             "url": {
-              "raw": "{{baseUrl}}/saml/idp/sso",
+              "raw": "{{baseUrl}}/saml/idp/{{tenantId}}/sso",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "saml",
                 "idp",
+                "{{tenantId}}",
                 "sso"
               ]
             }

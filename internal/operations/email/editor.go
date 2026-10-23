@@ -2,6 +2,7 @@ package email
 
 import (
 	"context"
+	"errors"
 	"html"
 	"io"
 	"net/http"
@@ -127,7 +128,7 @@ func validateTemplateURLs(markup string) error {
 	for {
 		switch tokenizer.Next() {
 		case htmlparser.ErrorToken:
-			if tokenizer.Err() == io.EOF {
+			if errors.Is(tokenizer.Err(), io.EOF) {
 				return nil
 			}
 			return errs.ErrBadRequest.WithDetail("invalid email markup")

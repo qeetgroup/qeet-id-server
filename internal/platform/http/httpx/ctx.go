@@ -15,7 +15,15 @@ import (
 
 type ctxKey string
 
-const ctxKeyPrincipal ctxKey = "qeet.principal"
+const (
+	ctxKeyPrincipal     ctxKey = "qeet.principal"
+	ctxKeyPrincipalSlot ctxKey = "qeet.principal-slot"
+)
+
+// principalSlot receives the principal a request authenticates as, for a
+// middleware above the authentication, such as AccessLog, which holds the
+// request from before the principal was added.
+type principalSlot struct{ p atomic.Pointer[Principal] }
 
 // Principal is the authenticated caller of a request.
 type Principal struct {
@@ -39,6 +47,9 @@ type Principal struct {
 
 // WithPrincipal returns a copy of ctx carrying p.
 func WithPrincipal(ctx context.Context, p *Principal) context.Context {
+	if slot, _ := ctx.Value(ctxKeyPrincipalSlot).(*principalSlot); slot != nil {
+		slot.p.Store(p)
+	}
 	return context.WithValue(ctx, ctxKeyPrincipal, p)
 }
 
