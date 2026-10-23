@@ -159,7 +159,14 @@ func TestVerifyReadsTheChainInPages(t *testing.T) {
 		t.Fatal(err)
 	}
 	res, err = NewVerifier(dbtest.Pool(t)).Verify(ctx, &tenant)
-	if err != nil || res.OK || res.BrokenAtID == nil || *res.BrokenAtID != ids[5] || res.RowsChecked != 5 {
-		t.Errorf("verify an altered chain: %+v, %v; want broken at %s after 5 rows", res, err, ids[5])
+	if err != nil || res.OK || res.BrokenAtID == nil || *res.BrokenAtID != ids[5] || res.RowsChecked != 5 || res.ReasonCode != ChainRowHashMismatch {
+		t.Errorf("verify an altered chain: %+v, %v; want broken at %s after 5 rows, its row hash wrong", res, err, ids[5])
+	}
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE audit.events SET prev_hash = 'x' WHERE id = $1 AND tenant_id = $2`, ids[2], tenant); err != nil {
+		t.Fatal(err)
+	}
+	res, err = NewVerifier(dbtest.Pool(t)).Verify(ctx, &tenant)
+	if err != nil || res.BrokenAtID == nil || *res.BrokenAtID != ids[2] || res.ReasonCode != ChainPrevHashMismatch {
+		t.Errorf("verify a relinked chain: %+v, %v; want broken at %s, its link wrong", res, err, ids[2])
 	}
 }

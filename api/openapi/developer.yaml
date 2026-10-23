@@ -2108,6 +2108,11 @@ components:
           type: string
         reason:
           type: string
+          description: Why an invalid credential is refused, in English. Show reason_code's meaning instead.
+        reason_code:
+          type: string
+          enum: [vc.not_credential, vc.signature_invalid, vc.unknown, vc.revoked]
+          description: 'Why an invalid credential is refused: not a JWT-VC, a bad signature or expired, not one this server issued, or revoked.'
         subject:
           type: string
         valid:

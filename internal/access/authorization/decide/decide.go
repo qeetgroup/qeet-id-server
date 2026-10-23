@@ -41,22 +41,40 @@ const (
 )
 
 // Decision is one composed answer. Model and Rule name what decided it, and
-// PolicyID the ABAC policy when one did; Trace lists each step in order, each
-// prefixed with its model.
+// PolicyID the ABAC policy when one did. ReasonCode is Rule as a stable code
+// (these, or an ABAC decision's), with what it names in ReasonParams. Trace
+// lists each step in order, each prefixed with its model.
 type Decision struct {
-	Allow    bool       `json:"allow"`
-	Model    string     `json:"model"`
-	Rule     string     `json:"rule,omitempty"`
-	PolicyID *uuid.UUID `json:"policy_id,omitempty"`
-	Trace    []string   `json:"trace,omitempty"`
+	Allow        bool           `json:"allow"`
+	Model        string         `json:"model"`
+	Rule         string         `json:"rule,omitempty"`
+	ReasonCode   string         `json:"reason_code,omitempty"`
+	ReasonParams map[string]any `json:"reason_params,omitempty"`
+	PolicyID     *uuid.UUID     `json:"policy_id,omitempty"`
+	Trace        []string       `json:"trace,omitempty"`
 }
 
+// Decision.ReasonCode values of the composition itself.
+const (
+	ReasonNoTenant      = "authz.no_tenant"      // no organisation to decide in
+	ReasonEngineError   = "authz.engine_error"   // an engine failed, so it refused
+	ReasonRoleGrant     = "authz.role_grant"     // a role grants the permission
+	ReasonRelationGrant = "authz.relation_grant" // a relationship tuple grants it
+	ReasonNothingAllows = "authz.nothing_allows" // nothing allows it: refused by default
+)
+
 // DecidedBy is the part of a decision every check response carries: the model
-// that decided, and the rule (and ABAC policy) as the caller may see them.
+// that decided, and the rule, reason and ABAC policy as the caller may see them.
 func (dec Decision) DecidedBy() map[string]any {
 	out := map[string]any{"model": dec.Model}
 	if dec.Rule != "" {
 		out["rule"] = dec.Rule
+	}
+	if dec.ReasonCode != "" {
+		out["reason_code"] = dec.ReasonCode
+	}
+	if dec.ReasonParams != nil {
+		out["reason_params"] = dec.ReasonParams
 	}
 	if dec.PolicyID != nil {
 		out["policy_id"] = dec.PolicyID
@@ -136,12 +154,12 @@ func (d *Decider) Check(ctx context.Context, userID, tenantID uuid.UUID, permiss
 
 func (d *Decider) decide(ctx context.Context, q question) (Decision, error) {
 	if q.tenantID == uuid.Nil {
-		return Decision{Model: ModelTenant, Rule: "no organisation", Trace: []string{"tenant: no organisation, refused"}}, nil
+		return Decision{Model: ModelTenant, Rule: "no organisation", ReasonCode: ReasonNoTenant, Trace: []string{"tenant: no organisation, refused"}}, nil
 	}
 	trace := []string{"tenant: " + q.tenantID.String()}
 	refuse := func(model string, err error) (Decision, error) {
 		trace = append(trace, fmt.Sprintf("%s: error, refused (%v)", model, err))
-		return Decision{Model: model, Rule: "engine error", Trace: trace}, err
+		return Decision{Model: model, Rule: "engine error", ReasonCode: ReasonEngineError, Trace: trace}, err
 	}
 
 	// Deny first: ABAC, wherever the tenant has a deny policy.
@@ -165,7 +183,7 @@ func (d *Decider) decide(ctx context.Context, q question) (Decision, error) {
 		// An explicit deny, or a condition that failed to evaluate (abac fails
 		// closed on it), names the policy. The default deny names none.
 		if !res.Allow && res.MatchedPolicyID != nil {
-			return Decision{Model: ModelABAC, Rule: res.Reason, PolicyID: res.MatchedPolicyID, Trace: trace}, nil
+			return Decision{Model: ModelABAC, Rule: res.Reason, ReasonCode: res.ReasonCode, ReasonParams: res.ReasonParams, PolicyID: res.MatchedPolicyID, Trace: trace}, nil
 		}
 		if res.Allow && q.abacAllows {
 			abacAllow = res
@@ -183,7 +201,8 @@ func (d *Decider) decide(ctx context.Context, q question) (Decision, error) {
 			}
 			if ok {
 				trace = append(trace, "rbac: a role grants "+perm+", allowed")
-				return Decision{Allow: true, Model: ModelRBAC, Rule: "role grants " + perm, Trace: trace}, nil
+				return Decision{Allow: true, Model: ModelRBAC, Rule: "role grants " + perm, ReasonCode: ReasonRoleGrant,
+					ReasonParams: map[string]any{"permission": perm}, Trace: trace}, nil
 			}
 			trace = append(trace, "rbac: no role grants "+perm)
 		}
@@ -195,16 +214,18 @@ func (d *Decider) decide(ctx context.Context, q question) (Decision, error) {
 		}
 		if ok {
 			trace = append(trace, "rebac: "+q.relation+" on "+q.object+", allowed")
-			return Decision{Allow: true, Model: ModelReBAC, Rule: q.relation + " on " + q.object, Trace: trace}, nil
+			return Decision{Allow: true, Model: ModelReBAC, Rule: q.relation + " on " + q.object, ReasonCode: ReasonRelationGrant,
+				ReasonParams: map[string]any{"relation": q.relation, "object": q.object}, Trace: trace}, nil
 		}
 		trace = append(trace, "rebac: no "+q.relation+" on "+q.object)
 	}
 	if abacAllow != nil {
 		trace = append(trace, "abac: "+abacAllow.Reason+", allowed")
-		return Decision{Allow: true, Model: ModelABAC, Rule: abacAllow.Reason, PolicyID: abacAllow.MatchedPolicyID, Trace: trace}, nil
+		return Decision{Allow: true, Model: ModelABAC, Rule: abacAllow.Reason, ReasonCode: abacAllow.ReasonCode,
+			ReasonParams: abacAllow.ReasonParams, PolicyID: abacAllow.MatchedPolicyID, Trace: trace}, nil
 	}
 	trace = append(trace, "none: nothing allows it, refused")
-	return Decision{Model: ModelNone, Rule: "nothing allows it", Trace: trace}, nil
+	return Decision{Model: ModelNone, Rule: "nothing allows it", ReasonCode: ReasonNothingAllows, Trace: trace}, nil
 }
 
 // SplitPermission reads a permission key as ABAC's resource type and action,
@@ -222,16 +243,17 @@ func SplitPermission(permission string) (resourceType, action string) {
 const policyRead = "policy.read"
 
 // ForViewer returns dec as the caller p may see it: the ABAC policy that
-// decided, and the ABAC steps of the trace, are shown only to a caller who may
-// read policies (policy.read); anyone else learns that a policy decided, not
-// which. An error checking that hides them.
+// decided (its rule, id and reason parameters), and the ABAC steps of the
+// trace, are shown only to a caller who may read policies (policy.read); anyone
+// else learns that a policy decided, and why, not which. An error checking that
+// hides them.
 func (d *Decider) ForViewer(ctx context.Context, p *httpx.Principal, tenantID uuid.UUID, dec Decision) Decision {
 	if d.mayReadPolicies(ctx, p, tenantID) {
 		return dec
 	}
 	out := dec
 	if out.Model == ModelABAC {
-		out.Rule, out.PolicyID = "an attribute policy", nil
+		out.Rule, out.PolicyID, out.ReasonParams = "an attribute policy", nil, nil
 	}
 	out.Trace = nil
 	hidden := false

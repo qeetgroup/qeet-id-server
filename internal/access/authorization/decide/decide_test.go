@@ -3,6 +3,7 @@ package decide
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -58,11 +59,14 @@ func (f *fakeAttributes) Evaluate(_ context.Context, _ uuid.UUID, in abac.Evalua
 	id := uuid.New()
 	switch {
 	case f.deny[key]:
-		return &abac.Decision{Effect: "deny", MatchedPolicyID: &id, Reason: `explicitly denied by policy "block"`}, nil
+		return &abac.Decision{Effect: "deny", MatchedPolicyID: &id, Reason: `explicitly denied by policy "block"`,
+			ReasonCode: abac.ReasonDeniedByPolicy, ReasonParams: map[string]any{"policy_name": "block"}}, nil
 	case f.allow[key]:
-		return &abac.Decision{Allow: true, Effect: "allow", MatchedPolicyID: &id, Reason: `allowed by policy "open"`}, nil
+		return &abac.Decision{Allow: true, Effect: "allow", MatchedPolicyID: &id, Reason: `allowed by policy "open"`,
+			ReasonCode: abac.ReasonAllowedByPolicy, ReasonParams: map[string]any{"policy_name": "open"}}, nil
 	}
-	return &abac.Decision{Effect: "deny", Reason: "no matching allow policy", Trace: []string{"no matching allow policy found → default deny"}}, nil
+	return &abac.Decision{Effect: "deny", Reason: "no matching allow policy", ReasonCode: abac.ReasonNoMatchingAllow,
+		Trace: []string{"no matching allow policy found → default deny"}}, nil
 }
 
 var (
@@ -241,8 +245,8 @@ func TestForViewerHidesPolicies(t *testing.T) {
 
 	reader := &httpx.Principal{UserID: &uma, ActorType: "user"}
 	hidden := d.ForViewer(ctx, reader, tenant, dec)
-	if hidden.Rule != "an attribute policy" || hidden.PolicyID != nil {
-		t.Fatalf("hidden decision = %+v", hidden)
+	if hidden.Rule != "an attribute policy" || hidden.PolicyID != nil || hidden.ReasonParams != nil || hidden.ReasonCode != abac.ReasonDeniedByPolicy {
+		t.Fatalf("hidden decision = %+v; want why it was refused, not which policy", hidden)
 	}
 	for _, step := range hidden.Trace {
 		if strings.Contains(step, "block") {
@@ -257,5 +261,41 @@ func TestForViewerHidesPolicies(t *testing.T) {
 	key := &httpx.Principal{ActorType: "api_key", Scopes: []string{"policy.read"}}
 	if shown := d.ForViewer(ctx, key, tenant, dec); shown.PolicyID == nil {
 		t.Fatalf("an api key with policy.read sees %+v, want the policy", shown)
+	}
+}
+
+// TestDecisionsCarryReasonCodes checks that each kind of decision carries its
+// stable reason code, with what it names.
+func TestDecisionsCarryReasonCodes(t *testing.T) {
+	permission := func(d *Decider, tenantID uuid.UUID) Decision {
+		dec, _ := d.Permission(ctx, tenantID, uma, "doc:write")
+		return dec
+	}
+	for _, tc := range []struct {
+		name   string
+		dec    Decision
+		code   string
+		params map[string]any
+	}{
+		{"no organisation", permission(New(&fakeRoles{}, &fakeRelations{}, &fakeAttributes{}), uuid.Nil), ReasonNoTenant, nil},
+		{"a role grants it", permission(New(&fakeRoles{grants: map[string]bool{"doc:write": true}}, &fakeRelations{}, &fakeAttributes{}), tenant),
+			ReasonRoleGrant, map[string]any{"permission": "doc:write"}},
+		{"an attribute policy refuses it", permission(New(&fakeRoles{}, &fakeRelations{}, &fakeAttributes{deny: map[string]bool{"doc/write": true}}), tenant),
+			abac.ReasonDeniedByPolicy, map[string]any{"policy_name": "block"}},
+		{"an attribute policy allows it", permission(New(&fakeRoles{}, &fakeRelations{}, &fakeAttributes{allow: map[string]bool{"doc/write": true}}), tenant),
+			abac.ReasonAllowedByPolicy, map[string]any{"policy_name": "open"}},
+		{"nothing allows it", permission(New(&fakeRoles{}, &fakeRelations{}, &fakeAttributes{}), tenant), ReasonNothingAllows, nil},
+	} {
+		if tc.dec.ReasonCode != tc.code || fmt.Sprint(tc.dec.ReasonParams) != fmt.Sprint(tc.params) {
+			t.Errorf("%s: %s %v; want %s %v", tc.name, tc.dec.ReasonCode, tc.dec.ReasonParams, tc.code, tc.params)
+		}
+	}
+	d := New(&fakeRoles{}, &fakeRelations{allow: true}, &fakeAttributes{})
+	dec, _ := d.Relation(ctx, tenant, uma.String(), "doc:42", "write")
+	if want := map[string]any{"relation": "write", "object": "doc:42"}; dec.ReasonCode != ReasonRelationGrant || fmt.Sprint(dec.ReasonParams) != fmt.Sprint(want) {
+		t.Errorf("a tuple grants it: %s %v; want %s %v", dec.ReasonCode, dec.ReasonParams, ReasonRelationGrant, want)
+	}
+	if by := dec.DecidedBy(); by["reason_code"] != ReasonRelationGrant || by["reason_params"] == nil {
+		t.Errorf("decided_by %v; want the reason code and its parameters", by)
 	}
 }

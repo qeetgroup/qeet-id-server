@@ -100,16 +100,35 @@ func Decide(rules []Rule, ipStr string) Decision {
 // Evaluate is Decide as (allowed, a sentence for an admin).
 func Evaluate(rules []Rule, ipStr string) (bool, string) {
 	d := Decide(rules, ipStr)
+	return d.Allowed, d.sentence()
+}
+
+// sentence is d's reason in English, for an admin.
+func (d Decision) sentence() string {
 	switch d.Reason {
 	case ReasonDenyRule:
-		return false, "blocked by deny rule " + d.Rule.CIDR
+		return "blocked by deny rule " + d.Rule.CIDR
 	case ReasonNotAllowed:
-		return false, "not in any allow rule"
+		return "not in any allow rule"
 	case ReasonUnknownAddr:
-		return false, "refused: not a readable address"
+		return "refused: not a readable address"
 	}
-	return true, "allowed"
+	return "allowed"
 }
+
+// CheckResult is what Check makes of an address. ReasonCode is "ip." and the
+// Decision.Reason, or CodeEnforcementOff; Reason is the same in English.
+// ReasonParams names the deny rule's CIDR when one refused it.
+type CheckResult struct {
+	Enabled      bool           `json:"enabled"`
+	Allowed      bool           `json:"allowed"`
+	Reason       string         `json:"reason"`
+	ReasonCode   string         `json:"reason_code"`
+	ReasonParams map[string]any `json:"reason_params,omitempty"`
+}
+
+// CodeEnforcementOff is Check's reason code when the rules are off.
+const CodeEnforcementOff = "ip.enforcement_disabled"
 
 // Service manages each tenant's address rules and checks sign-ins against
 // them.
@@ -204,20 +223,24 @@ func (s *Service) DeleteRule(ctx context.Context, tx pgx.Tx, tenantID, ruleID uu
 
 // Check evaluates an address against the tenant's rules, honouring the enabled
 // flag (disabled → always allowed).
-func (s *Service) Check(ctx context.Context, tenantID uuid.UUID, ip string) (enabled, allowed bool, reason string, err error) {
-	enabled, err = s.Enabled(ctx, tenantID)
+func (s *Service) Check(ctx context.Context, tenantID uuid.UUID, ip string) (CheckResult, error) {
+	enabled, err := s.Enabled(ctx, tenantID)
 	if err != nil {
-		return false, true, "", err
+		return CheckResult{}, err
 	}
 	if !enabled {
-		return false, true, reasonEnforcingOff, nil
+		return CheckResult{Allowed: true, Reason: reasonEnforcingOff, ReasonCode: CodeEnforcementOff}, nil
 	}
 	rules, err := s.ListRules(ctx, tenantID)
 	if err != nil {
-		return enabled, true, "", err
+		return CheckResult{}, err
 	}
-	allowed, reason = Evaluate(rules, ip)
-	return enabled, allowed, reason, nil
+	d := Decide(rules, ip)
+	res := CheckResult{Enabled: true, Allowed: d.Allowed, Reason: d.sentence(), ReasonCode: "ip." + d.Reason}
+	if d.Rule != nil {
+		res.ReasonParams = map[string]any{"cidr": d.Rule.CIDR}
+	}
+	return res, nil
 }
 
 // CheckSignIn returns errs.ErrAuthAddressNotAllowed when the tenant's enforced
@@ -543,10 +566,10 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	enabled, allowed, reason, err := h.Service.Check(r.Context(), tenantID, in.IP)
+	res, err := h.Service.Check(r.Context(), tenantID, in.IP)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"enabled": enabled, "allowed": allowed, "reason": reason})
+	httpx.WriteJSON(w, http.StatusOK, res)
 }

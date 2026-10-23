@@ -161,13 +161,34 @@ func (s *Service) Issue(ctx context.Context, tenantID uuid.UUID, subject, credTy
 	return result, nil
 }
 
-// VerifyResult is whether a presented credential is valid and, if not, why.
+// VerifyResult is whether a presented credential is valid and, if not, why:
+// ReasonCode is one of the Reason* codes, Reason the same in English.
 type VerifyResult struct {
-	Valid   bool           `json:"valid"`
-	Reason  string         `json:"reason,omitempty"`
-	Subject string         `json:"subject,omitempty"`
-	Issuer  string         `json:"issuer,omitempty"`
-	VC      map[string]any `json:"vc,omitempty"`
+	Valid      bool           `json:"valid"`
+	Reason     string         `json:"reason,omitempty"`
+	ReasonCode string         `json:"reason_code,omitempty"`
+	Subject    string         `json:"subject,omitempty"`
+	Issuer     string         `json:"issuer,omitempty"`
+	VC         map[string]any `json:"vc,omitempty"`
+}
+
+// Why a presented credential is invalid.
+const (
+	ReasonNotVC            = "vc.not_credential"    // not a JWT-VC
+	ReasonSignatureInvalid = "vc.signature_invalid" // a bad signature, or expired
+	ReasonUnknown          = "vc.unknown"           // not one this server issued
+	ReasonRevoked          = "vc.revoked"           // revoked by its issuer
+)
+
+// invalid is the result for a credential refused with code.
+func invalid(code string) *VerifyResult {
+	reason := map[string]string{
+		ReasonNotVC:            "not a verifiable credential",
+		ReasonSignatureInvalid: "signature or expiry invalid",
+		ReasonUnknown:          "unknown credential",
+		ReasonRevoked:          "credential revoked",
+	}[code]
+	return &VerifyResult{Valid: false, Reason: reason, ReasonCode: code}
 }
 
 // Verify checks a presented JWT-VC: signature + issuer + expiry (cryptographic)
@@ -175,10 +196,10 @@ type VerifyResult struct {
 func (s *Service) Verify(ctx context.Context, raw string) (*VerifyResult, error) {
 	claims, err := s.issuer.VerifyVC(raw)
 	if errors.Is(err, tokens.ErrNotCredential) {
-		return &VerifyResult{Valid: false, Reason: "not a verifiable credential"}, nil
+		return invalid(ReasonNotVC), nil
 	}
 	if err != nil {
-		return &VerifyResult{Valid: false, Reason: "signature or expiry invalid"}, nil //nolint:nilerr // an invalid credential is a result, not an error
+		return invalid(ReasonSignatureInvalid), nil //nolint:nilerr // an invalid credential is a result, not an error
 	}
 	res := &VerifyResult{Valid: true}
 	if sub, _ := claims["sub"].(string); sub != "" {
@@ -195,16 +216,16 @@ func (s *Service) Verify(ctx context.Context, raw string) (*VerifyResult, error)
 	jti, _ := claims["jti"].(string)
 	id, err := uuid.Parse(jti)
 	if err != nil {
-		return &VerifyResult{Valid: false, Reason: "unknown credential"}, nil //nolint:nilerr // an invalid credential is a result, not an error
+		return invalid(ReasonUnknown), nil //nolint:nilerr // an invalid credential is a result, not an error
 	}
 	revokedAt, err := s.q.GetCredentialRevocation(ctx, id)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		return &VerifyResult{Valid: false, Reason: "unknown credential"}, nil
+		return invalid(ReasonUnknown), nil
 	case err != nil:
 		return nil, err
 	case revokedAt.Valid:
-		return &VerifyResult{Valid: false, Reason: "credential revoked"}, nil
+		return invalid(ReasonRevoked), nil
 	}
 	return res, nil
 }

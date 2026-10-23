@@ -110,7 +110,7 @@ func TestVerify_RefusesTheIssuersOtherTokens(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: Verify returned error: %v", name, err)
 		}
-		if res == nil || res.Valid || res.Reason != "not a verifiable credential" {
+		if res == nil || res.Valid || res.Reason != "not a verifiable credential" || res.ReasonCode != ReasonNotVC {
 			t.Errorf("%s: got %+v, want invalid: not a verifiable credential", name, res)
 		}
 	}

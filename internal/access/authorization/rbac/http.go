@@ -291,9 +291,12 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		}
 		out["paths"] = exp.Paths
 		if !dec.Allow {
-			out["reason"] = exp.Reason
+			out["reason"], out["reason_code"] = exp.Reason, exp.ReasonCode
 			if dec.Model == decide.ModelABAC {
-				out["reason"] = "refused by " + dec.Rule
+				out["reason"], out["reason_code"] = "refused by "+dec.Rule, dec.ReasonCode
+				if dec.ReasonParams != nil {
+					out["reason_params"] = dec.ReasonParams
+				}
 			}
 		}
 		out["trace"] = dec.Trace

@@ -2,6 +2,7 @@ package abac
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -869,5 +870,45 @@ func TestEmptyContainsAndRegexFailClosed(t *testing.T) {
 		if !eval(t, cond, b) {
 			t.Errorf("%s: did not match", cond)
 		}
+	}
+}
+
+// TestDecisionReasonCodes checks that each kind of decision carries its reason
+// code and names the policy that decided, and that a condition error names the
+// policy without the evaluation error.
+func TestDecisionReasonCodes(t *testing.T) {
+	b := resourceBag(map[string]any{"name": "prod-api"})
+	allow := candidate{id: uuid.New(), name: "allow_prod", effect: "allow", priority: 5, condition: []byte(`{"attr":"resource.name","op":"prefix","value":"prod-"}`)}
+	deny := candidate{id: uuid.New(), name: "deny_prod", effect: "deny", priority: 9, condition: []byte(`{"attr":"resource.name","op":"prefix","value":"prod-"}`)}
+	absent := candidate{id: uuid.New(), name: "deny_owner", effect: "deny", priority: 7, condition: []byte(`{"attr":"resource.owner","op":"eq","value":{"attr":"subject.id"}}`)}
+	broken := candidate{id: uuid.New(), name: "broken", effect: "allow", priority: 3, condition: []byte(`{"attr":"resource.name","op":"bogus","value":"x"}`)}
+	for _, tc := range []struct {
+		name     string
+		policies []candidate
+		code     string
+		by       *candidate
+	}{
+		{"an allow policy matches", []candidate{allow}, ReasonAllowedByPolicy, &allow},
+		{"a deny policy matches", []candidate{deny, allow}, ReasonDeniedByPolicy, &deny},
+		{"a deny compares an absent attribute", []candidate{absent}, ReasonAttributeAbsent, &absent},
+		{"a condition fails to evaluate", []candidate{broken}, ReasonConditionError, &broken},
+		{"nothing matches", nil, ReasonNoMatchingAllow, nil},
+	} {
+		dec := combine(tc.policies, b)
+		if dec.ReasonCode != tc.code {
+			t.Errorf("%s: reason code %q, want %q", tc.name, dec.ReasonCode, tc.code)
+		}
+		var want map[string]any
+		if tc.by != nil {
+			want = map[string]any{"policy_id": tc.by.id, "policy_name": tc.by.name, "priority": tc.by.priority}
+		}
+		if fmt.Sprint(dec.ReasonParams) != fmt.Sprint(want) {
+			t.Errorf("%s: reason params %v, want %v", tc.name, dec.ReasonParams, want)
+		}
+	}
+
+	dec := combine([]candidate{broken}, b)
+	if shown := dec.Reason + strings.Join(dec.Trace, "\n"); strings.Contains(shown, "unknown operator") || strings.Contains(shown, "bogus") {
+		t.Errorf("a condition error showed its evaluation error: %q", shown)
 	}
 }

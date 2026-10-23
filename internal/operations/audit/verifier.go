@@ -13,14 +13,22 @@ import (
 	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
 )
 
-// VerifyResult is the outcome of verifying one chain.
+// VerifyResult is the outcome of verifying one chain. When it is broken,
+// ReasonCode is one of the Chain* codes and BrokenReason the same in English.
 type VerifyResult struct {
 	OK             bool       `json:"ok"`
 	RowsChecked    int        `json:"rows_checked"`
 	LastVerifiedID *uuid.UUID `json:"last_verified_id,omitempty"`
 	BrokenAtID     *uuid.UUID `json:"broken_at_id,omitempty"`
 	BrokenReason   string     `json:"broken_reason,omitempty"`
+	ReasonCode     string     `json:"reason_code,omitempty"`
 }
+
+// Why a chain is broken at a row.
+const (
+	ChainPrevHashMismatch = "audit.chain_prev_hash_mismatch" // its prev_hash isn't the preceding row's row_hash
+	ChainRowHashMismatch  = "audit.chain_row_hash_mismatch"  // its row_hash isn't the hash of its contents
+)
 
 // verifyPageSize is how many rows of a chain each verification query reads.
 var verifyPageSize int32 = 5000
@@ -77,6 +85,7 @@ func (v *Verifier) Verify(ctx context.Context, tenantID *uuid.UUID) (VerifyResul
 					LastVerifiedID: lastID,
 					BrokenAtID:     &brokenID,
 					BrokenReason:   "prev_hash does not match preceding row_hash",
+					ReasonCode:     ChainPrevHashMismatch,
 				}, nil
 			}
 
@@ -107,6 +116,7 @@ func (v *Verifier) Verify(ctx context.Context, tenantID *uuid.UUID) (VerifyResul
 					LastVerifiedID: lastID,
 					BrokenAtID:     &brokenID,
 					BrokenReason:   "row_hash does not match recomputed hash",
+					ReasonCode:     ChainRowHashMismatch,
 				}, nil
 			}
 
