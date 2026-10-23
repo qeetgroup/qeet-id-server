@@ -12,6 +12,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
+// Mapping maps a directory attribute to a profile field.
 type Mapping struct {
 	ID        uuid.UUID `json:"id"`
 	Source    string    `json:"source_attribute"`
@@ -90,6 +91,8 @@ func (problem *mappingProblem) validationError() error {
 	return errs.ErrValidationFailed.WithFields([]errs.FieldError{{Field: problem.field, Code: problem.code, Message: problem.message}})
 }
 
+// MappingPreview is the profile a set of mappings makes from a sample source,
+// with any issues.
 type MappingPreview struct {
 	Profile map[string]any `json:"profile"`
 	Values  map[string]any `json:"values"`
@@ -250,6 +253,8 @@ func transformValue(mapping Mapping, value any) (any, *mappingProblem) {
 	return result, nil
 }
 
+// PreviewMappings applies mappings to source and reports the profile, each
+// rule's value and any issues. partial maps only the attributes present.
 func PreviewMappings(mappings []Mapping, source map[string]any, partial bool) MappingPreview {
 	result := MappingPreview{Profile: map[string]any{}, Values: map[string]any{}, Issues: []MappingIssue{}, Valid: true}
 	encoded, err := json.Marshal(source)

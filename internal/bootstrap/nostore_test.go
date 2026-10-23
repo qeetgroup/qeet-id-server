@@ -69,3 +69,16 @@ func TestTokenAndSecretResponsesAreNotStored(t *testing.T) {
 		}
 	}
 }
+
+// TestIdempotentRoutesAreMountedCreates checks that every route honouring an
+// Idempotency-Key is a mounted authenticated POST, the only kind the
+// middleware sits in front of.
+func TestIdempotentRoutesAreMountedCreates(t *testing.T) {
+	mounted := productionRouteInventory(t)
+	for _, route := range IdempotentRoutes() {
+		class, ok := mounted[route]
+		if !ok || !class.authenticated || !strings.HasPrefix(route, "POST ") {
+			t.Errorf("%s is not a mounted authenticated POST route", route)
+		}
+	}
+}

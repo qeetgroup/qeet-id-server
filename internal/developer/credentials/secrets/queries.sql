@@ -3,10 +3,12 @@
 -- returned via RevealSecret / GetSecretByName and always audited by the caller.
 
 -- name: ListSecrets :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, name, scope, last4, created_at, updated_at
 FROM tenant.secrets
 WHERE tenant_id = $1
-ORDER BY created_at DESC;
+ORDER BY created_at DESC
+LIMIT 1001;
 
 -- name: CreateSecret :one
 INSERT INTO tenant.secrets (tenant_id, name, scope, ciphertext, nonce, last4)

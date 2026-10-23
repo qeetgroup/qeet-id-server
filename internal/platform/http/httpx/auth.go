@@ -143,6 +143,30 @@ func EnforceTenantScope(next http.Handler) http.Handler {
 	})
 }
 
+// PathTenant returns the caller's tenant once the {tenantID} path parameter
+// names it: bad_request for a malformed parameter, forbidden for another
+// tenant's. It repeats EnforceTenantScope's check inside a handler.
+func PathTenant(r *http.Request) (uuid.UUID, error) {
+	return PathTenantOr(r, errs.ErrBadRequest.WithDetail("invalid tenantID"), errs.ErrForbidden.WithDetail("tenant mismatch"))
+}
+
+// PathTenantOr is PathTenant answering a malformed parameter with invalid and
+// another tenant's with mismatch, for a domain with its own error codes.
+func PathTenantOr(r *http.Request, invalid, mismatch error) (uuid.UUID, error) {
+	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	if err != nil {
+		return uuid.Nil, invalid
+	}
+	scope, err := RequireTenant(r)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if pathTenant != scope {
+		return uuid.Nil, mismatch
+	}
+	return scope, nil
+}
+
 // RequireTenant returns the principal's tenant id — the only trustworthy
 // source of tenant scope. Handlers must never take tenant id from URL/body.
 func RequireTenant(r *http.Request) (uuid.UUID, error) {

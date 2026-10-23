@@ -19,6 +19,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // OAuth 2.0 Device Authorization Grant (RFC 8628) for clients that can't open a
@@ -506,7 +507,7 @@ func (h *Handler) listDevices(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }
 
 func (h *Handler) revokeDevice(w http.ResponseWriter, r *http.Request) {
@@ -532,7 +533,7 @@ func (h *Handler) revokeDevice(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	tid := tenantID
 	resourceID := id
 	if err := audit.Record(ctx, tx, audit.Event{

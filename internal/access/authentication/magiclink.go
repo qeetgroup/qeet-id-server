@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
@@ -15,18 +16,22 @@ import (
 // BeginMagicLinkSignIn signs in the account a console magic link was consumed
 // for: a token pair, or a challenge to complete first.
 func (s *Service) BeginMagicLinkSignIn(ctx context.Context, userID, tenantID uuid.UUID, ip, ua string) (*LoginResult, error) {
+	claims, err := s.signInHook(ctx, userID, tenantID)
+	if err != nil {
+		return nil, err
+	}
 	gate, err := s.mfaGate(ctx, userID, tenantID)
 	if err != nil {
 		return nil, err
 	}
 	if s.nextSignInStep(ctx, userID, tenantID, gate, firstFactorMagicLink, "", ip, ua, httpx.GeoCountry(ctx)) == stepChallenge {
-		challenge, err := s.challengeSignIn(ctx, userID, tenantID, nil, gate, firstFactorMagicLink, ip, ua)
+		challenge, err := s.challengeSignIn(ctx, userID, tenantID, claims, gate, firstFactorMagicLink, ip, ua)
 		if err != nil {
 			return nil, err
 		}
 		return &LoginResult{MFAChallenge: challenge}, nil
 	}
-	pair, err := s.IssuePair(ctx, userID, tenantID, ip, ua, firstFactorMagicLink)
+	pair, err := s.IssuePairWithClaims(ctx, userID, tenantID, ip, ua, firstFactorMagicLink, claims)
 	if err != nil {
 		return nil, err
 	}
@@ -42,12 +47,16 @@ func (s *Service) BeginMagicLinkSession(ctx context.Context, userID, tenantID uu
 	if err := s.checkAddress(ctx, tenantID, userID, ip, "hosted_magic_link"); err != nil {
 		return nil, err
 	}
+	claims, err := s.signInHook(ctx, userID, tenantID)
+	if err != nil {
+		return nil, err
+	}
 	gate, err := s.mfaGate(ctx, userID, tenantID)
 	if err != nil {
 		return nil, err
 	}
 	if s.nextSignInStep(ctx, userID, tenantID, gate, firstFactorMagicLink, trustedToken, ip, ua, country) == stepChallenge {
-		challenge, err := s.challengeSignIn(ctx, userID, tenantID, nil, gate, firstFactorMagicLink, ip, ua)
+		challenge, err := s.challengeSignIn(ctx, userID, tenantID, claims, gate, firstFactorMagicLink, ip, ua)
 		if err != nil {
 			return nil, err
 		}

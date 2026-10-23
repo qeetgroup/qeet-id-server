@@ -111,13 +111,17 @@ func Evaluate(rules []Rule, ipStr string) (bool, string) {
 	return true, "allowed"
 }
 
+// Service manages each tenant's address rules and checks sign-ins against
+// them.
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 }
 
+// NewService returns the address rule service.
 func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool, q: dbgen.New(pool)} }
 
+// Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 // ruleFromModel converts the generated TenantIpRule to the domain Rule type.
@@ -132,6 +136,7 @@ func ruleFromModel(m dbgen.TenantIpRule) Rule {
 	}
 }
 
+// ListRules returns the tenant's address rules.
 func (s *Service) ListRules(ctx context.Context, tenantID uuid.UUID) ([]Rule, error) {
 	rows, err := s.q.ListIPRules(ctx, tenantID)
 	if err != nil {
@@ -144,6 +149,7 @@ func (s *Service) ListRules(ctx context.Context, tenantID uuid.UUID) ([]Rule, er
 	return out, nil
 }
 
+// Enabled reports whether the tenant's address rules are on.
 func (s *Service) Enabled(ctx context.Context, tenantID uuid.UUID) (bool, error) {
 	enabled, err := s.q.GetIPRulesEnabled(ctx, tenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -152,6 +158,7 @@ func (s *Service) Enabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
 	return enabled, err
 }
 
+// SetEnabled turns the tenant's address rules on or off.
 func (s *Service) SetEnabled(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, enabled bool) error {
 	return s.q.WithTx(tx).SetIPRulesEnabled(ctx, dbgen.SetIPRulesEnabledParams{
 		TenantID: tenantID,
@@ -159,6 +166,7 @@ func (s *Service) SetEnabled(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID,
 	})
 }
 
+// AddRule adds an allow or deny rule for a CIDR range to the tenant.
 func (s *Service) AddRule(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, cidr, label, action string) (*Rule, error) {
 	if _, err := parsePrefix(cidr); err != nil {
 		return nil, errs.ErrRiskCIDRInvalid
@@ -179,6 +187,7 @@ func (s *Service) AddRule(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, ci
 	return &r, nil
 }
 
+// DeleteRule removes one of the tenant's address rules.
 func (s *Service) DeleteRule(ctx context.Context, tx pgx.Tx, tenantID, ruleID uuid.UUID) error {
 	n, err := s.q.WithTx(tx).DeleteIPRule(ctx, dbgen.DeleteIPRuleParams{
 		ID:       ruleID,
@@ -318,31 +327,18 @@ func refusesCaller(rules []Rule, r *http.Request) error {
 	return nil
 }
 
+// Handler serves the address rule HTTP API.
 type Handler struct {
 	Service *Service
 }
 
+// Mount registers the address rule routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/ip-rules", h.list)
 	r.Put("/tenants/{tenantID}/ip-rules/config", h.setConfig)
 	r.Post("/tenants/{tenantID}/ip-rules", h.add)
 	r.Delete("/tenants/{tenantID}/ip-rules/{ruleID}", h.del)
 	r.Post("/tenants/{tenantID}/ip-rules/check", h.check)
-}
-
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
-	}
-	return scope, nil
 }
 
 func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID uuid.UUID, action string, meta map[string]any) error {
@@ -391,7 +387,7 @@ func (h *Handler) guardEnforced(ctx context.Context, tx pgx.Tx, r *http.Request,
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -410,7 +406,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) setConfig(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -456,7 +452,7 @@ func (h *Handler) setConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) add(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -498,7 +494,7 @@ func (h *Handler) add(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -535,7 +531,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

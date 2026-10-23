@@ -21,6 +21,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // Secret is the metadata view — the plaintext value is never included.
@@ -33,6 +34,7 @@ type Secret struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// Service stores each tenant's secrets, encrypted at rest.
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
@@ -53,6 +55,7 @@ func NewService(ctx context.Context, pool *pgxpool.Pool, kp KeyProvider) (*Servi
 	return &Service{pool: pool, q: dbgen.New(pool), box: box}, nil
 }
 
+// Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 func (s *Service) encrypt(tenantID uuid.UUID, name, plaintext string) (ciphertext, nonce []byte, err error) {
@@ -86,6 +89,7 @@ func rowToSecret(id uuid.UUID, name, scope, last4 string, createdAt, updatedAt t
 // order scanSecret reads.
 const metaCols = `id, name, scope, last4, created_at, updated_at`
 
+// List returns the tenant's secrets.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Secret, error) {
 	rows, err := s.q.ListSecrets(ctx, tenantID)
 	if err != nil {
@@ -98,6 +102,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Secret, error
 	return out, nil
 }
 
+// Create stores a secret for the tenant.
 func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name, scope, value string) (*Secret, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || value == "" {
@@ -124,6 +129,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name, scope, v
 	return rowToSecret(row.ID, row.Name, row.Scope, row.Last4, row.CreatedAt, row.UpdatedAt), nil
 }
 
+// UpdateInput is what Update takes.
 type UpdateInput struct {
 	Scope *string `json:"scope"`
 	Value *string `json:"value"`
@@ -177,6 +183,7 @@ func scanSecret(row pgx.Row) (*Secret, error) {
 	return &sec, nil
 }
 
+// Reveal returns one of the tenant's secrets: its name and decrypted value.
 func (s *Service) Reveal(ctx context.Context, tenantID, id uuid.UUID) (string, string, error) {
 	row, err := s.q.RevealSecret(ctx, dbgen.RevealSecretParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -209,6 +216,7 @@ func (s *Service) GetByName(ctx context.Context, tenantID uuid.UUID, name string
 	return row.ID, val, nil
 }
 
+// Delete removes one of the tenant's secrets.
 func (s *Service) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 	n, err := s.q.DeleteSecret(ctx, dbgen.DeleteSecretParams{ID: id, TenantID: tenantID})
 	if err != nil {
@@ -220,10 +228,12 @@ func (s *Service) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 	return nil
 }
 
+// Handler serves the secrets vault HTTP API.
 type Handler struct {
 	Service *Service
 }
 
+// Mount registers the secrets vault routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/secrets", h.list)
 	r.Post("/tenants/{tenantID}/secrets", h.create)
@@ -233,21 +243,6 @@ func (h *Handler) Mount(r chi.Router) {
 	// Token vaulting: a scoped principal (e.g. an AI agent) fetches a vault
 	// secret by name. Gated by a vault:<name> (or vault:read) scope; audited.
 	r.Get("/vault/{name}", h.vaultGet)
-}
-
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
-	}
-	return scope, nil
 }
 
 func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID, resourceID uuid.UUID, action string, meta map[string]any) error {
@@ -278,7 +273,7 @@ func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, t
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -288,11 +283,11 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -323,7 +318,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -359,7 +354,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) reveal(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -435,7 +430,7 @@ func (h *Handler) vaultGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

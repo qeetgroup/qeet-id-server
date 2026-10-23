@@ -20,7 +20,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/migrations"
-	db "github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 )
 
 const (
@@ -75,7 +75,7 @@ func run(m *testing.M) int {
 		err = migrations.Run(dsn)
 	}
 	if err == nil {
-		pool, err = db.NewPool(ctx, dsn, 0, maxConns)
+		pool, err = postgres.NewPool(ctx, dsn, 0, maxConns)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "dbtest: %v\n", err)

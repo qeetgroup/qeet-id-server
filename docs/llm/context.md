@@ -168,14 +168,14 @@ internal/platform      shared kernel — pure infrastructure
 
 **File-naming convention — `<domain>.go`, not layered file names.** Domain logic, persistence and
 HTTP handlers usually live in **one file named after the package**; additional files split by
-**feature**, not by layer. Only four packages use `service.go`/`repository.go` naming and only twelve
+**feature**, not by layer. Only four packages use `service.go`/`repository.go` naming and sixteen
 have a dedicated `http.go`.
 
 ```text
 access/passkeys/     passkey.go                          ← everything in one file
 developer/agents/    agent.go                            ← everything in one file
-access/mfa/          mfa.go  push.go                     ← split by FEATURE
-federation/oidc/     oidc.go  device.go  ciba.go  clients_admin.go
+access/mfa/          mfa.go  totp.go  otp.go  push.go    ← split by FEATURE
+federation/oidc/     oidc.go  token.go  authorize.go  device.go  ciba.go
 identity/users/      domain.go  http.go  repository.go   ← one of the four layered packages
 ```
 
@@ -352,7 +352,7 @@ self-scope in-handler; other tenant-scoped resources rely entirely on the middle
 ## Authentication
 
 **Status:** verified
-**Evidence:** `internal/platform/crypto/encryption/hasher.go`, `internal/access/authentication/`
+**Evidence:** `internal/platform/crypto/password/hasher.go`, `internal/access/authentication/`
 
 Password hashing is **Argon2id** (`m=19456,t=2,p=1`) with transparent upgrade of legacy bcrypt on
 successful login. bcrypt remains in use for MFA recovery codes and API-key secrets — a different
@@ -413,7 +413,7 @@ The **route → permission map** lives in `internal/bootstrap/permissions.go` an
 | Vault | AES-256-GCM, per-tenant HKDF-derived key, static or AWS KMS provider |
 | Randomness | `crypto/rand` only |
 
-**Evidence:** `internal/platform/crypto/tokens/{jwt,registry}.go`, `internal/platform/crypto/encryption/`
+**Evidence:** `internal/platform/crypto/tokens/{jwt,registry}.go`, `internal/platform/crypto/envelope/`
 
 > There is no signing-key mutation API. `JWT_SIGNING_KEY` stages encrypted key
 > material in PostgreSQL; `JWT_ACTIVATE_SIGNING_KEY=true` performs the explicit
@@ -463,7 +463,7 @@ webhook delivery  /  NATS publish
 dead-letter
 ```
 
-**Evidence:** `internal/platform/events/outbox/`, `internal/platform/jobs/worker.go`
+**Evidence:** `internal/platform/events/outbox/`, `internal/platform/worker/worker.go`
 
 Workers run **embedded in `cmd/api` by default**; set `EMBEDDED_WORKERS=false` when `cmd/worker`
 runs them standalone. Webhook, outbox, and GDPR queues use durable PostgreSQL leases with
@@ -584,7 +584,7 @@ Then `make test`, `make lint`, `make build`.
 | **Authorization** | `internal/access/authorization/` | **Critical** | Security review |
 | **Authentication, sessions** | `internal/access/authentication/` | **Critical** | Security review |
 | **Tokens, signing, rotation** | `internal/platform/crypto/tokens/jwt.go` | **Critical** | Security review · cross-repo |
-| **Hashing, vault crypto** | `internal/platform/crypto/encryption/` | **Critical** | Security review |
+| **Hashing, vault crypto** | `internal/platform/crypto/{password,envelope}/` | **Critical** | Security review |
 | **CSRF** | `internal/platform/http/httpx/csrf.go` | **Critical** | Security review |
 | **Boot gate** | `internal/platform/config/config.go` | **Critical** | Security review |
 | MFA, passkeys, recovery | `internal/access/{mfa,passkeys,recovery}/` | High | Security review |

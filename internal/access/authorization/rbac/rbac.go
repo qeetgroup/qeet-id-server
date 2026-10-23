@@ -20,6 +20,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
+// Permission is a permission key a role can grant, such as "user.read".
 type Permission struct {
 	ID          uuid.UUID `json:"id"`
 	Key         string    `json:"key"`
@@ -76,6 +77,7 @@ func ValidateMachineScopes(scopes []string) error {
 	return nil
 }
 
+// Role is a named set of permissions in a tenant.
 type Role struct {
 	ID          uuid.UUID `json:"id"`
 	TenantID    uuid.UUID `json:"tenant_id"`
@@ -85,11 +87,13 @@ type Role struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+// Repository reads and writes roles, permissions and role assignments.
 type Repository struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 }
 
+// NewRepository returns a Repository over pool.
 func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool, q: dbgen.New(pool)}
 }
@@ -129,6 +133,7 @@ func uuidPtrToPgtype(u *uuid.UUID) pgtype.UUID {
 	return pgtype.UUID{Bytes: *u, Valid: true}
 }
 
+// UpsertPermission creates the permission key, or updates its description.
 func (r *Repository) UpsertPermission(ctx context.Context, tx pgx.Tx, key, desc string) (*Permission, error) {
 	row, err := r.q.WithTx(tx).UpsertPermission(ctx, dbgen.UpsertPermissionParams{Key: key, Description: desc})
 	if err != nil {
@@ -138,6 +143,7 @@ func (r *Repository) UpsertPermission(ctx context.Context, tx pgx.Tx, key, desc 
 	return &p, nil
 }
 
+// ListPermissions returns every permission key.
 func (r *Repository) ListPermissions(ctx context.Context) ([]Permission, error) {
 	rows, err := r.q.ListPermissions(ctx)
 	if err != nil {
@@ -150,6 +156,7 @@ func (r *Repository) ListPermissions(ctx context.Context) ([]Permission, error) 
 	return out, nil
 }
 
+// CreateRole adds a role to the tenant.
 func (r *Repository) CreateRole(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, name, desc string, isSystem bool) (*Role, error) {
 	row, err := r.q.WithTx(tx).CreateRole(ctx, dbgen.CreateRoleParams{
 		TenantID:    tenantID,
@@ -167,6 +174,7 @@ func (r *Repository) CreateRole(ctx context.Context, tx pgx.Tx, tenantID uuid.UU
 	return &role, nil
 }
 
+// ListRoles returns the tenant's roles.
 func (r *Repository) ListRoles(ctx context.Context, tenantID uuid.UUID) ([]Role, error) {
 	rows, err := r.q.ListRoles(ctx, tenantID)
 	if err != nil {
@@ -192,6 +200,7 @@ func (r *Repository) RoleTenant(ctx context.Context, roleID uuid.UUID) (uuid.UUI
 	return tid, nil
 }
 
+// ListRolePermissions returns the permissions a role grants.
 func (r *Repository) ListRolePermissions(ctx context.Context, roleID uuid.UUID) ([]Permission, error) {
 	rows, err := r.q.ListRolePermissions(ctx, roleID)
 	if err != nil {
@@ -204,10 +213,12 @@ func (r *Repository) ListRolePermissions(ctx context.Context, roleID uuid.UUID) 
 	return out, nil
 }
 
+// GrantPermission adds a permission to a role.
 func (r *Repository) GrantPermission(ctx context.Context, tx pgx.Tx, roleID, permID uuid.UUID) error {
 	return r.q.WithTx(tx).GrantPermission(ctx, dbgen.GrantPermissionParams{RoleID: roleID, PermissionID: permID})
 }
 
+// RevokePermission removes a permission from a role.
 func (r *Repository) RevokePermission(ctx context.Context, tx pgx.Tx, roleID, permID uuid.UUID) error {
 	return r.q.WithTx(tx).RevokePermission(ctx, dbgen.RevokePermissionParams{RoleID: roleID, PermissionID: permID})
 }
@@ -232,6 +243,7 @@ func (r *Repository) AssignRole(ctx context.Context, tx pgx.Tx, userID, tenantID
 	return nil
 }
 
+// UnassignRole takes a role away from a user in the tenant.
 func (r *Repository) UnassignRole(ctx context.Context, tx pgx.Tx, userID, tenantID, roleID uuid.UUID) error {
 	return r.q.WithTx(tx).UnassignUserRole(ctx, dbgen.UnassignUserRoleParams{
 		UserID:   userID,

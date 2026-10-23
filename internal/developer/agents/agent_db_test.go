@@ -8,6 +8,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -23,7 +24,7 @@ func TestAgentsStayInTheirTenant(t *testing.T) {
 	tenantA, tenantB := dbtest.Tenant(t), dbtest.Tenant(t)
 	sponsorA := dbtest.User(t, tenantA, tenantA)
 	adminB := dbtest.User(t, tenantB, tenantB)
-	agentA, err := svc.Create(ctx, tenantA, "triage-bot", nil, 0, sponsorA.ID)
+	agentA, err := svc.Create(ctx, tenantA, "triage-bot", nil, 0, sponsorA.ID, audit.Actor{Type: "system"})
 	if err != nil {
 		t.Fatalf("create agent in A: %v", err)
 	}
@@ -72,11 +73,11 @@ func TestTokenChecksTheSecretFirst(t *testing.T) {
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
 	tenant := dbtest.Tenant(t)
 	sponsor := dbtest.User(t, tenant, tenant)
-	a, err := svc.Create(ctx, tenant, "batch-bot", nil, 0, sponsor.ID)
+	a, err := svc.Create(ctx, tenant, "batch-bot", nil, 0, sponsor.ID, audit.Actor{Type: "system"})
 	if err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
-	if _, err := svc.Suspend(ctx, a.ID, tenant); err != nil {
+	if _, err := svc.Transition(ctx, a.ID, tenant, "suspended", audit.Actor{Type: "system"}); err != nil {
 		t.Fatalf("suspend: %v", err)
 	}
 	if _, err := svc.IssueToken(ctx, a.ID.String(), "wrong-secret"); !errors.Is(err, errs.ErrAgentTokenInvalid) {

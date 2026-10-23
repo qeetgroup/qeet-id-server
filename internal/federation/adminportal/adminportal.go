@@ -24,6 +24,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 const (
@@ -40,6 +41,7 @@ const (
 
 var validCapabilities = []string{CapabilitySAML, CapabilitySCIM}
 
+// Link is an admin-portal link, without its token.
 type Link struct {
 	ID           uuid.UUID  `json:"id"`
 	TenantID     uuid.UUID  `json:"tenant_id"`
@@ -54,6 +56,7 @@ type Link struct {
 // Has reports whether the link authorizes the given capability.
 func (l Link) Has(capability string) bool { return slices.Contains(l.Capabilities, capability) }
 
+// Service manages the portal links.
 type Service struct {
 	pool         *pgxpool.Pool
 	q            *dbgen.Queries
@@ -68,6 +71,7 @@ type brandingLister interface {
 	LoginBranding(ctx context.Context, tenantID uuid.UUID) (logoURL, primaryColor, secondaryColor, backgroundColor string)
 }
 
+// NewService returns the admin portal service.
 func NewService(pool *pgxpool.Pool, brandingRepo brandingLister, loginBaseURL string) *Service {
 	return &Service{
 		pool:         pool,
@@ -95,6 +99,7 @@ func pgTimeToPtr(t pgtype.Timestamptz) *time.Time {
 	return &v
 }
 
+// Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 func normalizeCapabilities(in []string) ([]string, error) {
@@ -167,8 +172,10 @@ func (s *Service) URL(rawToken string) string {
 	return s.loginBaseURL + "/admin-portal#token=" + rawToken
 }
 
+// PortalURL returns the hosted admin portal's address.
 func (s *Service) PortalURL() string { return s.loginBaseURL + "/admin-portal" }
 
+// List returns the tenant's portal links.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Link, error) {
 	rows, err := s.q.ListAdminPortalLinksByTenant(ctx, tenantID)
 	if err != nil {
@@ -190,6 +197,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Link, error) 
 	return out, nil
 }
 
+// Revoke revokes one of the tenant's portal links.
 func (s *Service) Revoke(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) error {
 	n, err := s.q.WithTx(tx).RevokeAdminPortalLink(ctx, dbgen.RevokeAdminPortalLinkParams{
 		ID:       id,
@@ -331,6 +339,7 @@ func (s *Service) ResolveSession(ctx context.Context, rawSession string) (*Link,
 	return &l, nil
 }
 
+// RevokeSession ends the portal session the raw cookie value names.
 func (s *Service) RevokeSession(ctx context.Context, rawSession string) error {
 	if rawSession == "" {
 		return errs.ErrAdminPortalSessionMissing
@@ -371,6 +380,8 @@ type PortalContext struct {
 	Branding     *PortalBranding `json:"branding,omitempty"`
 }
 
+// Context returns what the portal shows for a link: the tenant's name, the
+// link's capabilities and when it expires.
 func (s *Service) Context(ctx context.Context, l *Link) (*PortalContext, error) {
 	name, err := s.tenantName(ctx, l.TenantID)
 	if err != nil {
@@ -405,6 +416,7 @@ type scimService interface {
 	Pool() *pgxpool.Pool
 }
 
+// Handler serves the admin portal HTTP API.
 type Handler struct {
 	Service      *Service
 	SAML         samlService
@@ -453,30 +465,7 @@ func adminPortalHeaders(next http.Handler) http.Handler {
 }
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrAdminPortalTenantIDInvalid
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrAdminPortalTenantMismatch
-	}
-	return scope, nil
-}
-
-func auditActor(r *http.Request) (*uuid.UUID, string) {
-	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil {
-		return nil, "system"
-	}
-	at := p.ActorType
-	if at == "" {
-		at = "user"
-	}
-	return p.UserID, at
+	return httpx.PathTenantOr(r, errs.ErrAdminPortalTenantIDInvalid, errs.ErrAdminPortalTenantMismatch)
 }
 
 func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, action string, resourceID *uuid.UUID, actorID *uuid.UUID, actorType, ip, ua, requestID string, meta map[string]any) error {
@@ -528,7 +517,7 @@ func (h *Handler) generate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	if err := h.recordAudit(ctx, tx, tenantID, "admin_portal.link_generated", &link.ID, actorID, actorType,
 		httpx.ClientIP(r), r.UserAgent(), httpx.RequestID(r), map[string]any{"capabilities": link.Capabilities}); err != nil {
 		httpx.WriteError(w, r, err)
@@ -556,7 +545,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }
 
 func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
@@ -581,7 +570,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	if err := h.recordAudit(ctx, tx, tenantID, "admin_portal.link_revoked", &id, actorID, actorType,
 		httpx.ClientIP(r), r.UserAgent(), httpx.RequestID(r), nil); err != nil {
 		httpx.WriteError(w, r, err)

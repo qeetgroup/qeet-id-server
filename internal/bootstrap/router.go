@@ -61,14 +61,16 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/siem"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/idempotency"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/health"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/metrics"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/tracing"
 )
 
+// Deps is everything the router serves: each package's handler and the shared
+// middleware settings.
 type Deps struct {
 	Tenant     *tenant.Handler
 	User       *user.Handler
@@ -100,7 +102,6 @@ type Deps struct {
 	Entitlement   *entitlements.Handler
 	Sales         *sales.Handler
 	Analytics     *analytics.Handler
-	Outbox        *outbox.Handler
 	OIDC          *oidc.Handler
 	Passkey       *passkey.Handler
 	Social        *social.Handler
@@ -146,10 +147,15 @@ type Deps struct {
 	// organisation, user and API key, at the organisation's own limits where it
 	// has set them.
 	TenantLim, UserLim, APIKeyLim *ratelimit.TenantLimiter
+	// Idempotency stores the answers to IdempotentRoutes requests sent with
+	// an Idempotency-Key.
+	Idempotency *idempotency.Store
 
 	shutdownHooks []func() // run once the HTTP server has drained
 }
 
+// NewRouter builds the HTTP API: the middleware chain, the public routes, and
+// the authenticated routes behind it.
 func NewRouter(d Deps) http.Handler {
 	r := chi.NewRouter()
 
@@ -176,8 +182,8 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   d.AllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Request-Id", "X-Dev-User", "X-Dev-Tenant", "X-CSRF-Token"},
-		ExposedHeaders:   []string{"X-Request-Id"},
+		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Request-Id", "X-Dev-User", "X-Dev-Tenant", "X-CSRF-Token", idempotency.Header},
+		ExposedHeaders:   []string{"X-Request-Id", "Idempotent-Replayed"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
@@ -262,6 +268,8 @@ func NewRouter(d Deps) http.Handler {
 			// Sensitive actions also need a step-up of the calling session
 			// (StepUpRoutes); asked only of a caller already authorized.
 			r.Use(d.MFA.Service.StepUpGate(StepUpRoutes()))
+			// Last, so only a request that may run is remembered for its key.
+			r.Use(d.Idempotency.Middleware(IdempotentRoutes()))
 
 			mountAuthenticatedRoutes(r, d)
 		})
@@ -350,7 +358,6 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.Entitlement.Mount(r)
 	d.Sales.Mount(r)
 	d.Analytics.Mount(r)
-	d.Outbox.Mount(r)
 	d.OIDC.Mount(r)
 	d.Passkey.Mount(r)
 	d.Social.Mount(r)
@@ -404,6 +411,22 @@ func LoginSessionRoutes() []string {
 		"PATCH /v1/passkeys/{id}",
 		"POST /v1/passkeys/register/begin",
 		"POST /v1/passkeys/register/finish",
+	}
+}
+
+// IdempotentRoutes are the create routes that honour an Idempotency-Key: one
+// sent again with the same key and body gets the first answer instead of
+// creating twice (see the idempotency package).
+func IdempotentRoutes() []string {
+	return []string{
+		"POST /v1/api-keys",
+		"POST /v1/groups",
+		"POST /v1/invites",
+		"POST /v1/service-principals",
+		"POST /v1/tenants/{tenantID}/agents",
+		"POST /v1/tenants/{tenantID}/billing/checkout",
+		"POST /v1/users",
+		"POST /v1/webhooks",
 	}
 }
 

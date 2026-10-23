@@ -49,6 +49,7 @@ type PlanGate interface {
 	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
 }
 
+// Service manages the webhook subscriptions.
 type Service struct {
 	pool     *pgxpool.Pool
 	q        *dbgen.Queries
@@ -60,6 +61,7 @@ type Service struct {
 	lease    time.Duration
 }
 
+// NewService returns the webhook service.
 func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
 	policy := egress.PublicPolicy(policies...)
 	return &Service{
@@ -75,8 +77,10 @@ func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
 // SetPlanGate wires the plan-feature gate. nil (default) allows all features.
 func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 
+// SetCipher sets the cipher that encrypts webhook secrets at rest.
 func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
 
+// Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 // tsPtr converts a pgtype.Timestamptz to *time.Time (nil when not valid).
@@ -106,12 +110,14 @@ func strPtr(s string) *string {
 	return &s
 }
 
+// CreateInput is what Create takes.
 type CreateInput struct {
 	TenantID uuid.UUID `json:"tenant_id"`
 	URL      string    `json:"url"`
 	Events   []string  `json:"events"`
 }
 
+// Create subscribes an endpoint to the tenant's events.
 func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Subscription, error) {
 	if _, err := s.egress.ValidateHTTPURL(in.URL); err != nil {
 		return nil, errs.ErrBadRequest.WithDetail("webhook URL is not an allowed outbound destination")
@@ -164,6 +170,7 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Subsc
 	}, nil
 }
 
+// List returns the tenant's webhook subscriptions.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Subscription, error) {
 	rows, err := s.q.ListWebhookSubscriptions(ctx, tenantID)
 	if err != nil {
@@ -179,6 +186,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Subscription,
 	return out, nil
 }
 
+// Get returns one of the tenant's webhook subscriptions.
 func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Subscription, error) {
 	row, err := s.q.GetWebhookSubscription(ctx, dbgen.GetWebhookSubscriptionParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -342,10 +350,6 @@ func (s *Service) RunDispatcher(ctx context.Context) {
 	}
 }
 
-// Sweep runs a single dispatch pass over due deliveries — the same work
-// RunDispatcher does on each tick. Exposed for ops-triggered sweeps and tests.
-func (s *Service) Sweep(ctx context.Context) error { return s.tick(ctx) }
-
 func (s *Service) tick(ctx context.Context) error {
 	rows, err := s.pool.Query(ctx, `
 		WITH candidates AS (
@@ -506,10 +510,12 @@ func truncate(s string, max int) string {
 	return s[:max]
 }
 
+// Handler serves the webhook HTTP API.
 type Handler struct {
 	Service *Service
 }
 
+// Mount registers the webhook routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/webhooks", h.create)
 	r.Get("/tenants/{tenantID}/webhooks", h.list)
@@ -576,18 +582,6 @@ func (h *Handler) retryDelivery(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"message": "Delivery re-queued."})
 }
 
-func auditActor(r *http.Request) (*uuid.UUID, string) {
-	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil {
-		return nil, "system"
-	}
-	at := p.ActorType
-	if at == "" {
-		at = "user"
-	}
-	return p.UserID, at
-}
-
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := httpx.RequireTenant(r)
 	if err != nil {
@@ -616,7 +610,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	tid := sub.TenantID
 	rid := sub.ID
 	if err := audit.Record(ctx, tx, audit.Event{
@@ -687,7 +681,7 @@ func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	rid := id
 	if err := audit.Record(ctx, tx, audit.Event{
 		TenantID:     &tenantID,

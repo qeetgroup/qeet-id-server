@@ -321,9 +321,6 @@ func (s *Service) scoreOne(ctx context.Context, e unscoredEvent) error {
 	return tx.Commit(ctx)
 }
 
-// Sweep scores one batch of events, the work Run does on each tick.
-func (s *Service) Sweep(ctx context.Context) error { return s.tick(ctx) }
-
 // Run is the background sweeper: it scores a batch every minute until ctx is
 // done.
 func (s *Service) Run(ctx context.Context) {
@@ -511,18 +508,7 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrAuditTenantInvalid
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrAuditTenantMismatch
-	}
-	return scope, nil
+	return httpx.PathTenantOr(r, errs.ErrAuditTenantInvalid, errs.ErrAuditTenantMismatch)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {

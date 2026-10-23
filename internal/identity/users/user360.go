@@ -202,6 +202,7 @@ func (r *Repository) ListUserSessions(ctx context.Context, id, tenantID uuid.UUI
 	return out, nil
 }
 
+// UserRolesInTenant returns the user's roles in the tenant.
 func (r *Repository) UserRolesInTenant(ctx context.Context, id, tenantID uuid.UUID) ([]RoleInfo, error) {
 	rows, err := r.q.ListUserRolesInTenant(ctx, dbgen.ListUserRolesInTenantParams{UserID: id, TenantID: tenantID})
 	if err != nil {
@@ -214,6 +215,7 @@ func (r *Repository) UserRolesInTenant(ctx context.Context, id, tenantID uuid.UU
 	return out, nil
 }
 
+// UserGroupsInTenant returns the user's groups in the tenant.
 func (r *Repository) UserGroupsInTenant(ctx context.Context, id, tenantID uuid.UUID) ([]GroupInfo, error) {
 	rows, err := r.q.ListUserGroupsInTenant(ctx, dbgen.ListUserGroupsInTenantParams{UserID: id, TenantID: tenantID})
 	if err != nil {

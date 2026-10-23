@@ -131,10 +131,6 @@ func (d *Dispatcher) Run(ctx context.Context) {
 	}
 }
 
-// Sweep claims and processes one due batch. It is exposed for operational
-// triggers and concurrency tests; leases make concurrent callers safe.
-func (d *Dispatcher) Sweep(ctx context.Context) error { return d.tick(ctx) }
-
 func (d *Dispatcher) tick(ctx context.Context) error {
 	// Lease unleased rows that are new or whose backoff (2^attempts seconds,
 	// capped at 300) has elapsed.

@@ -26,7 +26,7 @@ this repository** — this file points at them and stops.
 handlers usually live in one file named after the package. Additional files split by **feature**,
 not by layer.
 
-Only four packages use `service.go` / `repository.go` naming, and only twelve have a dedicated
+Only four packages use `service.go` / `repository.go` naming, and sixteen have a dedicated
 `http.go`. **Do not assume a `service.go` or `repository.go` exists** — check the L4 pointers below.
 
 Every leaf package additionally carries `queries.sql` + `sqlc.yaml` + a generated `dbgen/`
@@ -62,7 +62,12 @@ with ES256 (asymmetric) and verifiable via the public JWKS."*
 **L4 pointers**
 
 ```text
-service.go          login, refresh, logout, session storage
+service.go          Service, its policies and the shared sign-in types
+password.go         password sign-in and password changes
+issue.go            session issuing, the login hook
+refresh.go          refresh-token rotation and reuse
+sessions.go         sign-out and session listing
+mfachallenge.go     the second-factor step of a sign-in
 http.go             HTTP handlers
 loginsession.go     hosted SSO session cookie  qe_ls; sign-out ends the app grants it started
 trusteddevice.go    MFA-skip cookie            qe_td
@@ -110,14 +115,16 @@ authpolicy/authpolicy.go   password rules, permitted login methods
 codes are bcrypt-hashed."* Passkeys: *"implements WebAuthn passkey registration and login on top of
 go-webauthn."* Recovery: *"forgot-password and magic-link login. Both are stateless tokens."*
 **Path** `internal/access/{mfa,passkeys,recovery}/`
-**Key dependencies** `platform/crypto/encryption` (+`totp`) · `platform/messaging/{notifier,emailtmpl}` ·
+**Key dependencies** `platform/crypto/password` · `platform/crypto/totp` · `platform/messaging/{notifier,emailtmpl}` ·
 `platform/http/{errs,httpx}` · **`operations/audit`**
 **Security** **Critical** — second factors and account recovery
 
 **L4 pointers**
 
 ```text
-mfa/mfa.go           TOTP, OTP, recovery codes
+mfa/totp.go          TOTP and recovery codes
+mfa/otp.go           SMS and email codes
+mfa/stepup.go        step-up of a session
 mfa/push.go          push approval — pairs with the qeet-id-auth mobile app
 passkeys/passkey.go  WebAuthn registration + login ceremonies (single file)
 recovery/http.go     handlers
@@ -200,7 +207,10 @@ JWKS, and userinfo endpoints."*
 **L4 pointers**
 
 ```text
-oidc/oidc.go            provider core, discovery, JWKS, authorize, token-code
+oidc/token.go           token grants (code, refresh, token exchange)
+oidc/authorize.go       authorization and consent
+oidc/discovery.go       discovery and JWKS
+oidc/http*.go           HTTP handlers
 oidc/device.go          RFC 8628 device grant
 oidc/ciba.go            CIBA (poll mode)
 oidc/clients_admin.go   OAuth client administration
@@ -306,17 +316,19 @@ http/httpx/middleware.go · response.go · ctx.go · timing.go
 http/errs/                ~50 files, one per domain
 http/httpx/error_status_*.go   ~40 files, 1:1 mirror of errs/
 crypto/tokens/jwt.go      ES256, RFC 7638 kid, rotation
-crypto/encryption/        Argon2id hashing, AES-256-GCM vault, totp/
+crypto/password/          Argon2id hashing and strength rules
+crypto/envelope/          AES-256-GCM encryption under the data key
+crypto/totp/              TOTP codes
 crypto/hibp/              breached-password k-anonymity
 config/config.go          81 env vars + Config.Validate() boot gate
 database/postgres/pool.go     "owns the single pgx pool shared by every module"
 database/migrations/runner.go //go:embed *.sql
-events/outbox/{outbox,nats,admin}.go
-jobs/worker.go · cache/ratelimit/ · messaging/ · observability/ · ai/
+events/outbox/{outbox,nats}.go
+worker/worker.go · cache/ratelimit/ · messaging/ · observability/ · ai/
 ```
 
 **Tests** `http/httpx/{auth,csrf,middleware}_test.go`, `crypto/tokens/jwt_test.go`,
-`config/config_test.go`, `events/outbox/{outbox,nats}_test.go`, `jobs/worker_test.go` — 24 unit
+`config/config_test.go`, `events/outbox/{outbox,nats}_test.go`, `worker/worker_test.go` — 24 unit
 tests, the densest coverage in the repository
 
 > The `errs/` ↔ `error_status_*.go` pairing is 1:1 by domain. A new error domain needs a file in

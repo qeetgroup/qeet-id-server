@@ -554,7 +554,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CIBAPendingRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/oauth/bc-authorize/decision:
@@ -721,11 +726,15 @@ paths:
       requestBody:
         required: false
         content:
-          application/json:
+          application/x-www-form-urlencoded:
             schema:
               type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+              properties:
+                id_token_hint: {type: string}
+                post_logout_redirect_uri: {type: string}
+                client_id: {type: string}
+                state: {type: string}
+                logout_confirmation: {type: string}
       responses:
         '302':
           description: Redirect to post_logout_redirect_uri
@@ -1003,7 +1012,7 @@ paths:
   /v1/service-principals:
     post:
       operationId: post_v1_service_principals
-      description: 'Creates a service principal, a non-human machine identity, in the caller''s tenant and returns its client id and one-time client secret, which cannot be retrieved afterward. The principal authenticates for machine-to-machine access at the client-credentials token endpoint (POST /v1/oauth/token). Creation is audited; disable the principal when it is no longer needed.'
+      description: 'Creates a service principal, a non-human machine identity, in the caller''s tenant and returns its client id and one-time client secret, which cannot be retrieved afterward. The principal authenticates for machine-to-machine access at the client-credentials token endpoint (POST /v1/oauth/token). Creation is audited; disable the principal when it is no longer needed. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress.'
       summary: Create service principal
       tags:
         - OIDC
@@ -1016,14 +1025,27 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/ServicePrincipalCreate'
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       responses:
+        '409': {description: 'A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly.'}
         '201':
           description: Service principal created (secret shown once)
           content:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [client_id, client_secret, service_principal, warning]
+                properties:
+                  client_id:
+                    type: string
+                    format: uuid
+                  client_secret:
+                    type: string
+                  service_principal:
+                    $ref: '#/components/schemas/Principal'
+                  warning:
+                    type: string
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -1047,7 +1069,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Disables a service principal: its credentials no longer get tokens. Requires apikey.write. Needs a recent step-up.'
       responses:
         '204':
           description: No Content
@@ -1086,6 +1108,7 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated: {type: boolean, description: 'Present, true, when the list was cut at its limit (1000).'}
                   items:
                     type: array
                     items:
@@ -1558,7 +1581,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ShadowAICandidate'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1619,11 +1647,11 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated: {type: boolean, description: 'Present, true, when the list was cut at its limit (1000).'}
                   items:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/Grant'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1675,7 +1703,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the organisation''s service principals, without their secrets. Requires apikey.read.'
       responses:
         '200':
           description: OK
@@ -1683,7 +1711,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Principal'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1706,18 +1739,17 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+              $ref: '#/components/schemas/exchangeInput'
       description: 'Trades the one-time code a social sign-in callback handed back (the console''s own, or an organisation''s) for the sign-in''s result. Social sign-in takes the same second-factor decision as a password sign-in: the response is a token pair, or, when the account holds a second factor, the organisation requires one, or the sign-in is risky, the challenge instead (mfa_required, mfa_token, methods, factors, and enrollment_required for an account that must set one up), completed at POST /v1/auth/mfa.'
       responses:
-        '201':
-          description: Created
+        '200':
+          description: A token pair, or the second-factor challenge to complete first.
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                oneOf:
+                  - $ref: '#/components/schemas/TokenPair'
+                  - $ref: '#/components/schemas/MFAChallenge'
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
@@ -1741,7 +1773,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ExternalIdentity'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '429':
@@ -1862,7 +1899,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Unlinks one of the caller''s social accounts. Requires user.write.'
       responses:
         '204':
           description: No Content
@@ -1916,8 +1953,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Provider'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1976,8 +2012,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Provider'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2040,13 +2075,8 @@ paths:
             type: string
       security: []
       responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
+        '302':
+          description: 'OK'
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
@@ -2094,7 +2124,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [providers]
+                properties:
+                  providers:
+                    type: array
+                    items:
+                      type: string
   /v1/social/{provider}/start:
     get:
       operationId: get_v1_social_ByProvIDer_start
@@ -2110,13 +2145,8 @@ paths:
       security: []
       description: 'Begins a social sign-in and redirects the browser to the provider. ?tenant (slug) or ?tenant_id names the organisation; without either it is the console''s own sign-in, where ?intent=signup allows creating an account. ?return_to opts into the hosted flow. The browser is given an HttpOnly binding cookie (qe_social, __Host- prefixed outside dev, SameSite=None so a form_post callback carries it) naming the sign-in, which the callback requires.'
       responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
+        '302':
+          description: 'OK'
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
@@ -2138,7 +2168,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the organisation''s social sign-in providers, without their client secrets. Requires connection.read.'
       responses:
         '200':
           description: OK
@@ -2146,7 +2176,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Provider'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2172,7 +2207,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the social accounts linked to a user in the organisation. Requires user.read.'
       responses:
         '200':
           description: OK
@@ -2180,7 +2215,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ExternalIdentity'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2663,8 +2703,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/TestResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2870,7 +2909,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the organisation''s LDAP connections, without their bind passwords. Requires connection.read.'
       responses:
         '200':
           description: OK
@@ -2878,7 +2917,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LdapConnection'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2908,18 +2952,15 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: 'Response body summarized; accurate path/method/params/security. Enrich the body later. Creates a directory connection. A connection that turns off verification of the directory server''s certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required, and nothing is saved; only a development server (SERVICE_ENV=dev) allows it.'
+              $ref: '#/components/schemas/LdapCreateInput'
+      description: 'Creates a directory connection. A connection that turns off verification of the directory server''s certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required, and nothing is saved; only a development server (SERVICE_ENV=dev) allows it. Requires connection.write.'
       responses:
         '201':
           description: Created
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/LdapConnection'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2950,7 +2991,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Deletes one of the organisation''s LDAP connections. Requires connection.write.'
       responses:
         '204':
           description: No Content
@@ -2983,15 +3024,14 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Returns one of the organisation''s LDAP connections, without its bind password. Requires connection.read.'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/LdapConnection'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3026,18 +3066,15 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: 'Response body summarized; accurate path/method/params/security. Enrich the body later. Applies a partial update to a directory connection. A connection that turns off verification of the directory server''s certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required, and so is any other change to a connection saved that way until it turns verification back on; only a development server (SERVICE_ENV=dev) allows it.'
+              $ref: '#/components/schemas/LdapUpdateInput'
+      description: 'Applies a partial update to a directory connection. A connection that turns off verification of the directory server''s certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required, and so is any other change to a connection saved that way until it turns verification back on; only a development server (SERVICE_ENV=dev) allows it. Requires connection.write.'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/LdapConnection'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3068,15 +3105,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: 'Response body summarized; accurate path/method/params/security. Enrich the body later. Binds with the connection''s service account to prove its settings, without signing anyone in. A connection that turns off verification of the directory server''s certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required; only a development server (SERVICE_ENV=dev) allows it.'
+      description: 'Binds with the connection''s service account to prove its settings, without signing anyone in. A connection that turns off verification of the directory server''s certificate (skip_tls_verify) is refused with 422 ldap.tls_verify_required; only a development server (SERVICE_ENV=dev) allows it. Requires connection.write.'
       responses:
         '200':
           description: 'The bind succeeded ({"ok": true})'
@@ -3084,7 +3113,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3168,7 +3200,7 @@ paths:
         '401': {description: Authentication required}
         '403': {description: Tenant mismatch or missing connection.write}
         '404': {description: Connection not found}
-        '409': {description: Stale version, missing mapping or duplicate enabled target}
+        '409': {description: 'Stale version, missing mapping or duplicate enabled target'}
     delete:
       operationId: delete_directory_connection_mapping
       description: 'Deletes a single profile attribute-mapping rule from a directory connection, scoped to the tenant and connection in the path and requiring connection.write. The removal is audited in the same transaction, and subsequent SCIM writes and LDAP provisioning no longer apply the rule. Returns 404 when the mapping does not exist in this tenant and connection.'
@@ -3982,15 +4014,14 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Returns the organisation''s SCIM settings: whether a token is set and its prefix, never the token. Requires connection.read.'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/ConfigView'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4016,7 +4047,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Deletes the organisation''s SCIM token, which stops provisioning. Requires connection.write. Needs a recent step-up.'
       responses:
         '204':
           description: No Content
@@ -4044,15 +4075,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Issues a new SCIM token, replacing any earlier one; it is shown only in this answer. Requires connection.write. Needs a recent step-up.'
       responses:
         '201':
           description: Created
@@ -4060,7 +4083,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [config, token]
+                properties:
+                  config:
+                    $ref: '#/components/schemas/ConfigView'
+                  token:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4086,7 +4114,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the users provisioned over SCIM. Requires connection.read.'
       responses:
         '200':
           description: OK
@@ -4094,7 +4122,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/adminUser'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4129,6 +4162,7 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated: {type: boolean, description: 'Present, true, when the list was cut at its limit (1000).'}
                   items:
                     type: array
                     items:
@@ -4241,7 +4275,15 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [context, expires_at, redirect_url]
+                properties:
+                  context:
+                    $ref: '#/components/schemas/PortalContext'
+                  expires_at:
+                    type: string
+                    format: date-time
+                  redirect_url:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
     delete:
@@ -4436,8 +4478,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/TestResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4459,8 +4500,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/ConfigView'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4481,7 +4521,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [config, token]
+                properties:
+                  config:
+                    $ref: '#/components/schemas/ConfigView'
+                  token:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4502,6 +4547,13 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: 'A key of the client''s choosing, 1 to 255 printable characters, that makes retrying the request safe. Kept for 24 hours.'
+      schema: {type: string, minLength: 1, maxLength: 255}
   securitySchemes:
     bearerAuth:
       type: http
@@ -5106,8 +5158,7 @@ components:
         keys:
           type: array
           items:
-            type: object
-            additionalProperties: true
+            $ref: '#/components/schemas/JWK'
     SAMLConnection:
       type: object
       properties:
@@ -5409,3 +5460,385 @@ components:
           items:
             type: object
             additionalProperties: true
+    CIBAPendingRequest:
+      type: object
+      required: [client_name, created_at, expires_at, id, scopes]
+      properties:
+        binding_message:
+          type: string
+        client_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        scopes:
+          type: array
+          items:
+            type: string
+    ConfigView:
+      type: object
+      required: [created_at, last_used_at, provisioned_count, token_set]
+      properties:
+        created_at:
+          type: [string, 'null']
+          format: date-time
+        last_used_at:
+          type: [string, 'null']
+          format: date-time
+        provisioned_count:
+          type: integer
+        token_prefix:
+          type: string
+        token_set:
+          type: boolean
+    ExternalIdentity:
+      type: object
+      required: [email, id, linked_at, provider, subject, tenant_id, user_id]
+      properties:
+        email:
+          type: [string, 'null']
+        id:
+          type: string
+          format: uuid
+        linked_at:
+          type: string
+          format: date-time
+        provider:
+          type: string
+        subject:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+    LdapConnection:
+      type: object
+      required: [base_dn, bind_dn, created_at, email_attribute, id, last_login_at, name, name_attribute, server_url, skip_tls_verify, start_tls, status, tenant_id, updated_at, user_filter]
+      properties:
+        base_dn:
+          type: string
+        bind_dn:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        email_attribute:
+          type: string
+        id:
+          type: string
+          format: uuid
+        last_login_at:
+          type: [string, 'null']
+          format: date-time
+        name:
+          type: string
+        name_attribute:
+          type: string
+        server_url:
+          type: string
+        skip_tls_verify:
+          type: boolean
+        start_tls:
+          type: boolean
+        status:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+        updated_at:
+          type: string
+          format: date-time
+        user_filter:
+          type: string
+    LdapCreateInput:
+      type: object
+      required: [base_dn, bind_dn, bind_password, email_attribute, name, name_attribute, server_url, skip_tls_verify, start_tls, status, user_filter]
+      properties:
+        base_dn:
+          type: string
+        bind_dn:
+          type: string
+        bind_password:
+          type: string
+        email_attribute:
+          type: string
+        name:
+          type: string
+        name_attribute:
+          type: string
+        server_url:
+          type: string
+        skip_tls_verify:
+          type: boolean
+        start_tls:
+          type: boolean
+        status:
+          type: string
+        user_filter:
+          type: string
+    LdapUpdateInput:
+      type: object
+      required: [base_dn, bind_dn, bind_password, email_attribute, name, name_attribute, server_url, skip_tls_verify, start_tls, status, user_filter]
+      properties:
+        base_dn:
+          type: [string, 'null']
+        bind_dn:
+          type: [string, 'null']
+        bind_password:
+          type: [string, 'null']
+        email_attribute:
+          type: [string, 'null']
+        name:
+          type: [string, 'null']
+        name_attribute:
+          type: [string, 'null']
+        server_url:
+          type: [string, 'null']
+        skip_tls_verify:
+          type: [boolean, 'null']
+        start_tls:
+          type: [boolean, 'null']
+        status:
+          type: [string, 'null']
+        user_filter:
+          type: [string, 'null']
+    PortalBranding:
+      type: object
+      properties:
+        background_color:
+          type: string
+        logo_url:
+          type: string
+        primary_color:
+          type: string
+        secondary_color:
+          type: string
+    PortalContext:
+      type: object
+      required: [capabilities, expires_at, tenant_name]
+      properties:
+        branding:
+          $ref: '#/components/schemas/PortalBranding'
+        capabilities:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+        tenant_name:
+          type: string
+    Principal:
+      type: object
+      required: [created_at, disabled_at, id, name, scopes, tenant_id]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        disabled_at:
+          type: [string, 'null']
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        tenant_id:
+          type: string
+          format: uuid
+    Provider:
+      type: object
+      required: [client_id, created_at, discovery_url, enabled, id, provider, tenant_id]
+      properties:
+        client_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        discovery_url:
+          type: [string, 'null']
+        enabled:
+          type: boolean
+        id:
+          type: string
+          format: uuid
+        provider:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+    ShadowAICandidate:
+      type: object
+      required: [client_id, created_at, grant_types, id, live_grants, name]
+      properties:
+        client_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        grant_types:
+          type: array
+          items:
+            type: string
+        id:
+          type: string
+          format: uuid
+        live_grants:
+          type: integer
+        name:
+          type: string
+    TestCheck:
+      type: object
+      required: [name, ok]
+      properties:
+        detail:
+          type: string
+        name:
+          type: string
+        ok:
+          type: boolean
+    TestResult:
+      type: object
+      required: [checks, ok]
+      properties:
+        checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/TestCheck'
+        ok:
+          type: boolean
+    adminUser:
+      type: object
+      required: [created_at, display_name, email, external_id, id, status]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        display_name:
+          type: [string, 'null']
+        email:
+          type: string
+        external_id:
+          type: [string, 'null']
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+    exchangeInput:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+    Grant:
+      type: object
+      required: [client_id, expires_at, id, issued_at, scopes, user_email, user_id]
+      properties:
+        client_id:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        issued_at:
+          type: string
+          format: date-time
+        scopes:
+          type: array
+          items:
+            type: string
+        user_email:
+          type: string
+        user_id:
+          type: string
+          format: uuid
+    JWK:
+      type: object
+      required: [alg, crv, kid, kty, use, x, y]
+      properties:
+        alg:
+          type: string
+        crv:
+          type: string
+        kid:
+          type: string
+        kty:
+          type: string
+        use:
+          type: string
+        x:
+          type: string
+        y:
+          type: string
+    MFAChallenge:
+      type: object
+      description: >-
+        A sign-in stopped before its session: the account holds a second factor,
+        or must have one — its organisation requires MFA (of everyone, or of
+        administrators) or it is marked as requiring it. Complete it at POST
+        /v1/auth/mfa (token sign-in) or /v1/auth/session/mfa (hosted login).
+        Each challenge is audited as auth.mfa_challenged with its reason
+        (enrolled, tenant_required, admin_required or user_required) and how
+        the first factor was proven (password, magic_link, social or ldap); meeting it as
+        auth.mfa_verified.
+      properties:
+        mfa_required:
+          type: boolean
+        mfa_token:
+          type: string
+        methods:
+          type: array
+          description: The distinct factor types of factors (["totp"] for an enrolment challenge).
+          items:
+            type: string
+            enum: [totp, recovery_code, email, sms, passkey, push]
+        factors:
+          type: array
+          description: >-
+            Exactly the second factors this person can complete the challenge
+            with — an authenticator app, recovery codes, each confirmed email or
+            SMS factor (with its id and masked destination, for
+            POST /v1/auth/mfa/send), passkeys while the organisation allows them,
+            and push devices. Empty for an enrolment challenge.
+          items:
+            $ref: '#/components/schemas/LoginFactor'
+        enrollment_required:
+          type: boolean
+          description: >-
+            The account must have a second factor and holds none: set up an
+            authenticator app (POST /v1/auth/mfa/enroll) and complete the
+            challenge with a code from it.
+        enrollment_due_at:
+          type: string
+          format: date-time
+          description: >-
+            On an enrolment challenge in the organisation's grace period: when
+            it ends. Until then the setup may be put off (skip: true).
+    LoginFactor:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [totp, recovery_code, email, sms, passkey, push]
+        id:
+          type: string
+          format: uuid
+          description: An email or SMS factor's id.
+        destination:
+          type: string
+          description: An email or SMS factor's masked address or number.

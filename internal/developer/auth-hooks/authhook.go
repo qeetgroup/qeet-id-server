@@ -71,6 +71,7 @@ type hookState struct {
 	failOpen bool
 }
 
+// Hook is a tenant's login hook, without its signing secret.
 type Hook struct {
 	ID        uuid.UUID `json:"id"`
 	Trigger   string    `json:"trigger"`
@@ -92,11 +93,13 @@ type Service struct {
 	known  sync.Map
 }
 
+// NewService returns the login hook service.
 func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
 	policy := egress.PublicPolicy(policies...)
 	return &Service{pool: pool, q: dbgen.New(pool), client: policy.HTTPClient(hookTimeout), egress: policy}
 }
 
+// SetCipher sets the cipher that encrypts login hook secrets at rest.
 func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
 
 // Run implements auth.LoginHook. It returns ErrAuthHookDenied to refuse the
@@ -289,11 +292,9 @@ func decide(failOpen bool, callErr error, body []byte) (denyMsg string, denied b
 	return "", false, r.Claims
 }
 
-func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, url, secret string, failOpen bool) (*Hook, error) {
-	return s.CreateWithActor(ctx, tenantID, url, secret, failOpen, audit.Actor{Type: "system"})
-}
-
-func (s *Service) CreateWithActor(ctx context.Context, tenantID uuid.UUID, url, secret string, failOpen bool, actor audit.Actor) (*Hook, error) {
+// Create registers a login hook at url, its signing secret encrypted, recorded
+// as actor's. The URL must be an allowed outbound destination.
+func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, url, secret string, failOpen bool, actor audit.Actor) (*Hook, error) {
 	if _, err := s.egress.ValidateHTTPURL(url); err != nil {
 		return nil, errs.ErrAuthHookURLInvalid
 	}
@@ -353,6 +354,7 @@ func (s *Service) CreateWithActor(ctx context.Context, tenantID uuid.UUID, url, 
 	return hook, nil
 }
 
+// List returns the tenant's hooks.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Hook, error) {
 	rows, err := s.q.ListHooks(ctx, tenantID)
 	if err != nil {
@@ -372,11 +374,9 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Hook, error) 
 	return out, nil
 }
 
-func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, enabled, failOpen bool) error {
-	return s.UpdateWithActor(ctx, id, tenantID, enabled, failOpen, audit.Actor{Type: "system"})
-}
-
-func (s *Service) UpdateWithActor(ctx context.Context, id, tenantID uuid.UUID, enabled, failOpen bool, actor audit.Actor) error {
+// Update enables or disables one of the tenant's hooks and sets whether it
+// fails open, recorded as actor's.
+func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, enabled, failOpen bool, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -404,11 +404,8 @@ func (s *Service) UpdateWithActor(ctx context.Context, id, tenantID uuid.UUID, e
 	return tx.Commit(ctx)
 }
 
-func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
-	return s.DeleteWithActor(ctx, id, tenantID, audit.Actor{Type: "system"})
-}
-
-func (s *Service) DeleteWithActor(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+// Delete removes one of the tenant's hooks, recorded as actor's.
+func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -430,21 +427,12 @@ func (s *Service) DeleteWithActor(ctx context.Context, id, tenantID uuid.UUID, a
 	return tx.Commit(ctx)
 }
 
+// Handler serves the login hook HTTP API.
 type Handler struct {
 	Service *Service
 }
 
-func actorOf(r *http.Request) audit.Actor {
-	actor := audit.Actor{Type: "system", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	if principal := httpx.PrincipalFromCtx(r.Context()); principal != nil {
-		actor.UserID = principal.UserID
-		if principal.ActorType != "" {
-			actor.Type = principal.ActorType
-		}
-	}
-	return actor
-}
-
+// Mount registers the login hook routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/auth-hooks", h.list)
 	r.Post("/tenants/{tenantID}/auth-hooks", h.create)
@@ -453,18 +441,7 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrAuthHookInvalidID
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrAuthHookTenantMismatch
-	}
-	return scope, nil
+	return httpx.PathTenantOr(r, errs.ErrAuthHookInvalidID, errs.ErrAuthHookTenantMismatch)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -500,7 +477,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if in.FailOpen != nil {
 		failOpen = *in.FailOpen
 	}
-	hook, err := h.Service.CreateWithActor(r.Context(), tenantID, in.URL, in.Secret, failOpen, actorOf(r))
+	hook, err := h.Service.Create(r.Context(), tenantID, in.URL, in.Secret, failOpen, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -527,7 +504,7 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.UpdateWithActor(r.Context(), id, tenantID, in.Enabled, in.FailOpen, actorOf(r)); err != nil {
+	if err := h.Service.Update(r.Context(), id, tenantID, in.Enabled, in.FailOpen, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -545,7 +522,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrAuthHookInvalidID)
 		return
 	}
-	if err := h.Service.DeleteWithActor(r.Context(), id, tenantID, actorOf(r)); err != nil {
+	if err := h.Service.Delete(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

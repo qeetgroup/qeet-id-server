@@ -109,10 +109,17 @@ func newIssuerFromKey(priv *ecdsa.PrivateKey, issuer, audience string, accessTTL
 	}, nil
 }
 
-func (i *Issuer) AccessTTL() time.Duration  { return i.accessTTL }
+// AccessTTL returns how long an access token lasts.
+func (i *Issuer) AccessTTL() time.Duration { return i.accessTTL }
+
+// RefreshTTL returns how long a refresh token lasts.
 func (i *Issuer) RefreshTTL() time.Duration { return i.refreshTTL }
-func (i *Issuer) JWTIssuer() string         { return i.issuer }
-func (i *Issuer) JWTAudience() string       { return i.audience }
+
+// JWTIssuer returns the tokens' iss claim.
+func (i *Issuer) JWTIssuer() string { return i.issuer }
+
+// JWTAudience returns the tokens' aud claim.
+func (i *Issuer) JWTAudience() string { return i.audience }
 
 // KID is the active signing key's id (its RFC 7638 JWK thumbprint).
 func (i *Issuer) KID() string {
@@ -632,20 +639,6 @@ func GenerateES256KeyPEM() (string, error) {
 		return "", err
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})), nil
-}
-
-// PublicKeyPEM returns the SPKI ("PUBLIC KEY") PEM for an EC private key, the
-// form JWT_RETIRED_KEYS accepts.
-func PublicKeyPEM(privateKeyPEM string) (string, error) {
-	priv, err := parseECPrivateKey(privateKeyPEM)
-	if err != nil {
-		return "", err
-	}
-	der, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
-	if err != nil {
-		return "", err
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})), nil
 }
 
 func parseECPrivateKey(pemStr string) (*ecdsa.PrivateKey, error) {

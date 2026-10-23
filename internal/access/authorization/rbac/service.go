@@ -19,6 +19,7 @@ type Service struct {
 	limits  PlanLimiter
 }
 
+// NewService returns the role and permission service.
 func NewService(repo *Repository) *Service { return &Service{repo: repo} }
 
 // PlanLimiter returns the cap for a plan-gated resource (negative: unlimited).
@@ -46,6 +47,7 @@ func (s *Service) emit(ctx context.Context, tenantID uuid.UUID, eventType string
 	_ = s.emitter(ctx, tenantID, eventType, payload)
 }
 
+// CreateRole adds a role to the tenant, recorded as actor's.
 func (s *Service) CreateRole(ctx context.Context, tenantID uuid.UUID, name, desc string, actor audit.Actor) (*Role, error) {
 	// Plan gate: custom roles are capped by plan (Free allows none — built-in
 	// roles don't count). Refuse once the cap is reached.
@@ -84,6 +86,7 @@ func (s *Service) CreateRole(ctx context.Context, tenantID uuid.UUID, name, desc
 	return role, nil
 }
 
+// GrantPermission adds a permission to a role, recorded as actor's.
 func (s *Service) GrantPermission(ctx context.Context, roleID, permID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.repo.Pool().Begin(ctx)
 	if err != nil {
@@ -101,6 +104,7 @@ func (s *Service) GrantPermission(ctx context.Context, roleID, permID uuid.UUID,
 	return tx.Commit(ctx)
 }
 
+// RevokePermission removes a permission from a role, recorded as actor's.
 func (s *Service) RevokePermission(ctx context.Context, roleID, permID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.repo.Pool().Begin(ctx)
 	if err != nil {
@@ -118,6 +122,8 @@ func (s *Service) RevokePermission(ctx context.Context, roleID, permID uuid.UUID
 	return tx.Commit(ctx)
 }
 
+// AssignRole gives a user a role in the tenant, granted by grantedBy and
+// recorded as actor's.
 func (s *Service) AssignRole(ctx context.Context, userID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID, actor audit.Actor) error {
 	tx, err := s.repo.Pool().Begin(ctx)
 	if err != nil {
@@ -167,6 +173,8 @@ func (s *Service) recordAssignRefused(ctx context.Context, userID, tenantID, rol
 	return tx.Commit(ctx)
 }
 
+// UnassignRole takes a role away from a user in the tenant, recorded as
+// actor's.
 func (s *Service) UnassignRole(ctx context.Context, userID, tenantID, roleID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.repo.Pool().Begin(ctx)
 	if err != nil {

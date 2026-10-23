@@ -59,6 +59,7 @@ type Policy struct {
 // "30m"), the form the console edits. It also reads a number of nanoseconds.
 type Duration time.Duration
 
+// MarshalJSON implements json.Marshaler.
 func (d Duration) MarshalJSON() ([]byte, error) {
 	v := time.Duration(d)
 	switch {
@@ -70,6 +71,7 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 	return json.Marshal(v.String())
 }
 
+// UnmarshalJSON implements json.Unmarshaler.
 func (d *Duration) UnmarshalJSON(b []byte) error {
 	var s string
 	if err := json.Unmarshal(b, &s); err == nil {
@@ -113,6 +115,7 @@ type Repository struct {
 	sessionIdle   time.Duration
 }
 
+// NewRepository returns a Repository over pool.
 func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool, sessionMaxAge: 30 * 24 * time.Hour, sessionIdle: 24 * time.Hour}
 }
@@ -185,8 +188,10 @@ func (r *Repository) normalize(p *Policy) []errs.FieldError {
 	return bad
 }
 
+// Pool returns the connection pool, for handlers that run their own transaction.
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
+// Get returns the tenant's security policy, or the defaults when it has none.
 func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, error) {
 	var p Policy
 	var settings []byte
@@ -296,10 +301,12 @@ func (u policyUpdate) retiredFields() []errs.FieldError {
 	return bad
 }
 
+// Handler serves the security policy HTTP API.
 type Handler struct {
 	Repo *Repository
 }
 
+// Mount registers the security policy routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/policy", h.get)
 	r.Put("/tenants/{tenantID}/policy", h.put)
@@ -317,18 +324,6 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, p)
-}
-
-func auditActor(r *http.Request) (*uuid.UUID, string) {
-	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil {
-		return nil, "system"
-	}
-	at := p.ActorType
-	if at == "" {
-		at = "user"
-	}
-	return p.UserID, at
 }
 
 func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
@@ -363,7 +358,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	target := tid
 	if err := audit.Record(ctx, tx, audit.Event{
 		TenantID:     &target,

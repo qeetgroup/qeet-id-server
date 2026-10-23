@@ -61,6 +61,8 @@ type GrantMeta struct {
 	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
+// Service stores each tenant's OAuth provider settings and its users'
+// third-party tokens, encrypted at rest.
 type Service struct {
 	pool   *pgxpool.Pool
 	q      *dbgen.Queries
@@ -110,6 +112,7 @@ func (s *Service) decrypt(tenantID, userID uuid.UUID, provider, purpose string, 
 
 // --- provider registration (admin) ---
 
+// RegisterProviderInput is what RegisterProvider takes.
 type RegisterProviderInput struct {
 	Provider     string `json:"provider" validate:"required"`
 	ClientID     string `json:"client_id" validate:"required"`
@@ -119,6 +122,7 @@ type RegisterProviderInput struct {
 	Scopes       string `json:"scopes"`
 }
 
+// RegisterProvider stores the tenant's settings for an OAuth provider.
 func (s *Service) RegisterProvider(ctx context.Context, tenantID uuid.UUID, in RegisterProviderInput) (*Provider, error) {
 	if _, err := s.egress.ValidateHTTPURL(in.AuthorizeURL); err != nil {
 		return nil, errs.ErrTokenVaultProviderAuthorizeInvalid
@@ -154,6 +158,7 @@ func (s *Service) RegisterProvider(ctx context.Context, tenantID uuid.UUID, in R
 	return &provider, err
 }
 
+// ListProviders returns the tenant's OAuth providers.
 func (s *Service) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]Provider, error) {
 	rows, err := s.q.ListProviders(ctx, tenantID)
 	if err != nil {
@@ -170,6 +175,7 @@ func (s *Service) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]Prov
 	return out, nil
 }
 
+// DeleteProvider removes the tenant's settings for an OAuth provider.
 func (s *Service) DeleteProvider(ctx context.Context, tenantID uuid.UUID, provider string) error {
 	n, err := s.q.DeleteProvider(ctx, dbgen.DeleteProviderParams{TenantID: tenantID, Provider: provider})
 	if err != nil {
@@ -435,6 +441,8 @@ func (s *Service) GetAccessToken(ctx context.Context, tenantID, userID uuid.UUID
 	return tok.AccessToken, nil
 }
 
+// ListGrants returns the providers the user has connected, without their
+// tokens.
 func (s *Service) ListGrants(ctx context.Context, tenantID, userID uuid.UUID) ([]GrantMeta, error) {
 	rows, err := s.q.ListGrants(ctx, dbgen.ListGrantsParams{TenantID: tenantID, UserID: userID})
 	if err != nil {
@@ -454,6 +462,7 @@ func (s *Service) ListGrants(ctx context.Context, tenantID, userID uuid.UUID) ([
 	return out, nil
 }
 
+// Disconnect deletes the user's stored tokens for a provider.
 func (s *Service) Disconnect(ctx context.Context, tenantID, userID uuid.UUID, provider string) error {
 	n, err := s.q.DeleteGrant(ctx, dbgen.DeleteGrantParams{TenantID: tenantID, UserID: userID, Provider: provider})
 	if err != nil {
@@ -482,6 +491,7 @@ type Handler struct {
 	PublicBaseURL string
 }
 
+// Mount registers the token vault routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/tenants/{tenantID}/vault/tokens/providers", h.registerProvider)
 	r.Get("/tenants/{tenantID}/vault/tokens/providers", h.listProviders)
@@ -499,23 +509,8 @@ func (h *Handler) MountPublic(r chi.Router) {
 	r.Get("/vault/tokens/callback", h.callback)
 }
 
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
-	}
-	return scope, nil
-}
-
 func (h *Handler) registerProvider(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -534,7 +529,7 @@ func (h *Handler) registerProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listProviders(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -548,7 +543,7 @@ func (h *Handler) listProviders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteProvider(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

@@ -23,6 +23,7 @@ type BotEvaluator interface {
 	Evaluate(ctx context.Context, email, ip, ua string)
 }
 
+// Handler serves the sign-in and session HTTP API.
 type Handler struct {
 	Service  *Service
 	Validate *validator.Validate
@@ -57,6 +58,7 @@ func (h *Handler) geoCountry(r *http.Request) string {
 	return r.Header.Get(h.GeoCountryHeader)
 }
 
+// Mount registers the sign-in and session routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/auth/signup", h.signup)
 	r.Post("/auth/login", h.login)

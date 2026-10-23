@@ -1,5 +1,5 @@
-// Package db owns the single pgx pool shared by every module.
-package db
+// Package postgres owns the single pgx pool shared by every module.
+package postgres
 
 import (
 	"context"

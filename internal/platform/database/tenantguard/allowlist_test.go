@@ -60,15 +60,15 @@ internal/access/authentication/queries.sql#UpdateSessionLastSeen  session-scoped
 internal/access/authentication/risksignin.go#Service.newRiskEmailCode  secret-lookup: challenge found by its random MFA token
 internal/access/authentication/risksignin.go#Service.riskEmailChallenge  pre-tenant: sign-in reads the account it just verified
 internal/access/authentication/risksignin.go#Service.sendRiskEmailCode  secret-lookup: challenge found by its random MFA token
-internal/access/authentication/service.go#Service.ChangePassword  session-scoped: locks the caller's own account
-internal/access/authentication/service.go#Service.ListSessionsPageFor  session-scoped: the caller's own sessions
-internal/access/authentication/service.go#Service.deferEnrollment  secret-lookup: challenge found by its random MFA token
-internal/access/authentication/service.go#Service.verifyAndConsumeMFAChallenge  secret-lookup: challenge found by its random MFA token
-internal/access/authentication/service.go#carrySecondFactor  session-scoped: the session issued in the same transaction
+internal/access/authentication/password.go#Service.ChangePassword  session-scoped: locks the caller's own account
+internal/access/authentication/sessions.go#Service.ListSessionsPageFor  session-scoped: the caller's own sessions
+internal/access/authentication/mfachallenge.go#Service.deferEnrollment  secret-lookup: challenge found by its random MFA token
+internal/access/authentication/mfachallenge.go#Service.verifyAndConsumeMFAChallenge  secret-lookup: challenge found by its random MFA token
+internal/access/authentication/switch.go#carrySecondFactor  session-scoped: the session issued in the same transaction
 internal/access/authentication/sessionlimit.go#Service.enforceSessionLimit  parent-scoped: session IDs from the tenant-scoped list above
 internal/access/authentication/signinaudit.go#Service.homeTenant  pre-tenant: files a failed sign-in under the account's home tenant
 internal/access/authorization/rbac/queries.sql#GetRoleTenant  parent-scoped: scopedRole compares the role's tenant to httpx.RequireTenant
-internal/access/mfa/mfa.go#Service.ResetForUser  parent-scoped: the handler checks the user's home tenant first
+internal/access/mfa/totp.go#Service.ResetForUser  parent-scoped: the handler checks the user's home tenant first
 internal/access/mfa/pairing.go#PurgeExpiredPushPairings  background-sweep: cleanup job for expired codes
 internal/access/mfa/pairing.go#Service.ClaimPushPairing  secret-lookup: pairing found by its code hash
 internal/access/mfa/pairing.go#Service.CreatePushPairing  session-scoped: the caller's own pairing codes
@@ -83,7 +83,7 @@ internal/access/recovery/queries.sql#GetResetAccount  secret-lookup: account nam
 internal/access/recovery/queries.sql#MarkMagicLinkUsed  secret-lookup: link found by its token hash
 internal/access/recovery/queries.sql#RevokeUserSessions  pending-review: unused query; delete it or add a tenant condition
 internal/access/recovery/queries.sql#VerifyEmailByReset  secret-lookup: account named by the reset token
-internal/access/recovery/recovery.go#Service.StartPasswordResetFrom  pre-tenant: password reset finds the account by email
+internal/access/recovery/recovery.go#Service.StartPasswordReset  pre-tenant: password reset finds the account by email
 internal/access/threat/risk/history.go#PurgeSignInHistory  background-sweep: retention job
 
 internal/developer/agents/queries.sql#GetAgentForToken  secret-lookup: the agent's secret is verified against this row
@@ -103,7 +103,7 @@ internal/federation/adminportal/queries.sql#TouchAdminPortalLinkUsed  pending-re
 internal/federation/ldap/ldap.go#Service.getFull  parent-scoped: re-encrypts the connection row just read
 internal/federation/ldap/queries.sql#GetUserByEmail  pre-tenant: federated sign-in finds the account by email
 internal/federation/ldap/queries.sql#TouchLdapLastLogin  parent-scoped: connection row read for this sign-in
-internal/federation/oidc/oidc.go#Service.activeTenantPrincipal  parent-scoped: account and tenant named by a verified grant
+internal/federation/oidc/token.go#Service.activeTenantPrincipal  parent-scoped: account and tenant named by a verified grant
 internal/federation/oidc/queries.sql#ApproveCIBARequest  parent-scoped: request locked and checked against the caller
 internal/federation/oidc/queries.sql#ApproveDevice  secret-lookup: request found by its user code
 internal/federation/oidc/queries.sql#ClaimLogoutDeliveries  background-sweep: back-channel logout worker
@@ -190,8 +190,8 @@ internal/identity/verification/queries.sql#UpdateUserEmail  session-scoped: the 
 internal/operations/audit/anomaly/anomaly.go#Service.scoreOne  background-sweep: anomaly scoring job
 internal/operations/audit/anomaly/queries.sql#ListUnscoredAuditEvents  background-sweep: anomaly scoring job
 internal/operations/audit/anomaly/queries.sql#MarkAuditEventScored  background-sweep: anomaly scoring job
-internal/operations/billing/billing.go#Service.StartSignupCheckout  pre-tenant: sign-up checkout runs before the tenant exists
-internal/operations/billing/billing.go#Service.completeSignupCheckout  pre-tenant: completing the checkout creates the tenant
+internal/operations/billing/checkout.go#Service.StartSignupCheckout  pre-tenant: sign-up checkout runs before the tenant exists
+internal/operations/billing/checkout.go#Service.completeSignupCheckout  pre-tenant: completing the checkout creates the tenant
 internal/operations/billing/queries.sql#CompleteCheckout  parent-scoped: checkout named by a signature-verified payment webhook or callback
 internal/operations/billing/queries.sql#UpdateCheckoutFailed  parent-scoped: checkout inserted for the tenant just before
 internal/operations/billing/queries.sql#UpdateCheckoutProviderRef  parent-scoped: checkout inserted for the tenant just before

@@ -8,10 +8,12 @@ VALUES (@tenant_id, @user_id, @title)
 RETURNING id, tenant_id, user_id, title, pinned, created_at, updated_at;
 
 -- name: ListConversations :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, tenant_id, user_id, title, pinned, created_at, updated_at
 FROM qeetai.conversations
 WHERE tenant_id = @tenant_id AND user_id = @user_id
-ORDER BY pinned DESC, updated_at DESC;
+ORDER BY pinned DESC, updated_at DESC
+LIMIT 1001;
 
 -- name: GetConversation :one
 SELECT id, tenant_id, user_id, title, pinned, created_at, updated_at

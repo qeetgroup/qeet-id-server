@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
-	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -52,12 +52,12 @@ func TestPasswordReset(t *testing.T) {
 		t.Fatalf("application grant: %v", err)
 	}
 
-	raw, err := svc.StartPasswordReset(ctx, dbtest.Unique("nobody")+"@example.test")
+	raw, err := svc.StartPasswordReset(ctx, dbtest.Unique("nobody")+"@example.test", ResetOrigin{})
 	svc.deliveries.Wait()
 	if err != nil || raw != "" || mail.Len() != 0 {
 		t.Fatalf("reset for an unknown address: token %q, %v, %d mails; want none", raw, err, mail.Len())
 	}
-	if _, err := svc.StartPasswordReset(ctx, a.Email); err != nil {
+	if _, err := svc.StartPasswordReset(ctx, a.Email, ResetOrigin{}); err != nil {
 		t.Fatalf("start reset: %v", err)
 	}
 	svc.deliveries.Wait()

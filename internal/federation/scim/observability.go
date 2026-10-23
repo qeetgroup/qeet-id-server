@@ -11,10 +11,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// OperationObserver records each provisioning operation.
 type OperationObserver interface {
 	RecordOperation(context.Context, uuid.UUID, string, string, string, string, int, time.Time, time.Duration) error
 }
 
+// SetOperationObserver sets where provisioning operations are recorded.
 func (service *Service) SetOperationObserver(observer OperationObserver) {
 	service.observer = observer
 }

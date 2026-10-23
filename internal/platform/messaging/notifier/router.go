@@ -37,6 +37,7 @@ func (r Router) SendID(ctx context.Context, m Message) (string, error) {
 	return "", r.Send(ctx, m)
 }
 
+// Send implements notifier.Sender.
 func (r Router) Send(ctx context.Context, m Message) error {
 	switch m.Channel {
 	case "sms":

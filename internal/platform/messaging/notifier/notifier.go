@@ -38,6 +38,7 @@ type LogSender struct {
 	Reveal bool // log the message body; development only
 }
 
+// Send implements notifier.Sender.
 func (l LogSender) Send(_ context.Context, m Message) error {
 	attrs := []any{
 		"channel", m.Channel,

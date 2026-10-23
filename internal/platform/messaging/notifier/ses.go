@@ -43,6 +43,7 @@ func NewSESv2Sender(ctx context.Context, region, from, configurationSet string) 
 	return &SESv2Sender{client: sesv2.NewFromConfig(cfg), from: from, configurationSet: configurationSet}, nil
 }
 
+// Send implements notifier.Sender.
 func (s *SESv2Sender) Send(ctx context.Context, m Message) error {
 	_, err := s.SendID(ctx, m)
 	return err

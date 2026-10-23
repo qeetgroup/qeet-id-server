@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
-	db "github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 )
 
 // TestConnectionUpdateRunsOnItsTransaction checks that Update reads the
@@ -14,7 +14,7 @@ import (
 // connection serves it, and reports the stored value.
 func TestConnectionUpdateRunsOnItsTransaction(t *testing.T) {
 	ctx := dbtest.Context(t)
-	pool, err := db.NewPool(ctx, dbtest.DSN(t), 0, 1)
+	pool, err := postgres.NewPool(ctx, dbtest.DSN(t), 0, 1)
 	if err != nil {
 		t.Fatalf("one-connection pool: %v", err)
 	}

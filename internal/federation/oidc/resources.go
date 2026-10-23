@@ -209,7 +209,7 @@ func (h *Handler) deleteResource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) auditResource(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID, id uuid.UUID, action, identifier string) error {
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	return audit.Record(ctx, tx, audit.Event{
 		TenantID: &tenantID, ActorUserID: actorID, ActorType: actorType,
 		Action: action, ResourceType: "oidc_resource", ResourceID: &id,

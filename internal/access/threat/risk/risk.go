@@ -31,6 +31,7 @@ const (
 	High
 )
 
+// String returns the level's name.
 func (l Level) String() string {
 	switch l {
 	case Medium:
@@ -98,6 +99,7 @@ type Service struct {
 	q    *dbgen.Queries
 }
 
+// NewService returns the risk setting service.
 func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool, q: dbgen.New(pool)} }
 
 // Assess returns the risk Level of a sign-in against earlier completed ones,
@@ -163,6 +165,7 @@ func (s *Service) ShouldForceMFA(ctx context.Context, tenantID, userID uuid.UUID
 	return s.ForceMFA(ctx, tenantID, level)
 }
 
+// GetSettings returns the tenant's risk settings.
 func (s *Service) GetSettings(ctx context.Context, tenantID uuid.UUID) (Settings, error) {
 	row, err := s.q.GetRiskSettings(ctx, tenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -184,6 +187,7 @@ func (s *Service) GetSettings(ctx context.Context, tenantID uuid.UUID) (Settings
 // Handler exposes risk settings over HTTP.
 type Handler struct{ Service *Service }
 
+// Mount registers the risk setting routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/security/risk-settings", h.get)
 	r.Put("/tenants/{tenantID}/security/risk-settings", h.put)
@@ -237,6 +241,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, st)
 }
 
+// UpdateSettings stores the tenant's risk settings.
 func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Settings) (Settings, error) {
 	if in.MediumThreshold < 0.1 {
 		in.MediumThreshold = 0.1

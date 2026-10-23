@@ -24,6 +24,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
+// Branding is a tenant's theming, custom domain and email sender.
 type Branding struct {
 	TenantID         uuid.UUID      `json:"tenant_id"`
 	LogoURL          *string        `json:"logo_url"`
@@ -35,12 +36,14 @@ type Branding struct {
 	Settings         map[string]any `json:"settings"`
 }
 
+// Repository reads and writes tenant branding.
 type Repository struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 	gate PlanGate
 }
 
+// NewRepository returns a Repository over pool.
 func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool, q: dbgen.New(pool)}
 }
@@ -54,6 +57,7 @@ type PlanGate interface {
 // SetPlanGate sets the plan-feature gate (nil allows all features).
 func (r *Repository) SetPlanGate(g PlanGate) { r.gate = g }
 
+// Pool returns the connection pool, for handlers that run their own transaction.
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
 func toDomain(tenantID uuid.UUID, row dbgen.GetBrandingRow) *Branding {
@@ -69,6 +73,7 @@ func toDomain(tenantID uuid.UUID, row dbgen.GetBrandingRow) *Branding {
 	}
 }
 
+// Get returns the tenant's branding.
 func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Branding, error) {
 	row, err := r.q.GetBranding(ctx, tenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -204,10 +209,12 @@ func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, b Branding) error {
 	return err
 }
 
+// Handler serves the branding HTTP API.
 type Handler struct {
 	Repo *Repository
 }
 
+// Mount registers the branding routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/branding", h.get)
 	r.Put("/tenants/{tenantID}/branding", h.put)
@@ -225,18 +232,6 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, b)
-}
-
-func auditActor(r *http.Request) (*uuid.UUID, string) {
-	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil {
-		return nil, "system"
-	}
-	at := p.ActorType
-	if at == "" {
-		at = "user"
-	}
-	return p.UserID, at
 }
 
 func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
@@ -262,7 +257,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	target := tid
 	meta := map[string]any{}
 	if in.CustomDomain != nil {

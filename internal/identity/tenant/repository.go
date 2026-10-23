@@ -19,15 +19,18 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
+// Repository reads and writes organisations.
 type Repository struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 }
 
+// NewRepository returns a Repository over pool.
 func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool, q: dbgen.New(pool)}
 }
 
+// Pool returns the connection pool, for handlers that run their own transaction.
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
 // toDomain maps a persistence row to the domain Tenant, decoding JSONB metadata
@@ -151,6 +154,7 @@ func (r *Repository) CreateWithOwnerTx(ctx context.Context, tx pgx.Tx, in Create
 	return t, nil
 }
 
+// Get returns an organisation by id.
 func (r *Repository) Get(ctx context.Context, id uuid.UUID) (*Tenant, error) {
 	row, err := r.q.GetTenant(ctx, id)
 	if err != nil {
@@ -162,6 +166,7 @@ func (r *Repository) Get(ctx context.Context, id uuid.UUID) (*Tenant, error) {
 	return toDomain(row), nil
 }
 
+// GetBySlug returns an organisation by its slug.
 func (r *Repository) GetBySlug(ctx context.Context, slug string) (*Tenant, error) {
 	row, err := r.q.GetTenantBySlug(ctx, slug)
 	if err != nil {

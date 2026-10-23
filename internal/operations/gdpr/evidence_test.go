@@ -60,25 +60,6 @@ func TestControlCatalog_ISO27001(t *testing.T) {
 	}
 }
 
-// TestValidFramework checks that ValidFramework accepts only supported names.
-func TestValidFramework(t *testing.T) {
-	cases := []struct {
-		f  string
-		ok bool
-	}{
-		{"soc2", true},
-		{"iso27001", true},
-		{"", false},
-		{"SOC2", false},
-		{"pci-dss", false},
-	}
-	for _, c := range cases {
-		if got := ValidFramework(c.f); got != c.ok {
-			t.Errorf("ValidFramework(%q) = %v, want %v", c.f, got, c.ok)
-		}
-	}
-}
-
 // TestTallyResults checks that tallyResults counts each status.
 func TestTallyResults(t *testing.T) {
 	results := []ControlResult{
@@ -108,17 +89,12 @@ func TestTallyResults_Empty(t *testing.T) {
 	}
 }
 
-// TestTotalControls checks the count for each framework, and 0 for an unknown
-// one.
-func TestTotalControls(t *testing.T) {
-	if n := TotalControls("soc2"); n != 13 {
-		t.Errorf("TotalControls(soc2) = %d, want 13", n)
-	}
-	if n := TotalControls("iso27001"); n != 12 {
-		t.Errorf("TotalControls(iso27001) = %d, want 12", n)
-	}
-	if n := TotalControls("unknown"); n != 0 {
-		t.Errorf("TotalControls(unknown) = %d, want 0", n)
+// TestFrameworkCatalogs checks how many controls each framework has.
+func TestFrameworkCatalogs(t *testing.T) {
+	for framework, want := range map[string]int{"soc2": 13, "iso27001": 12} {
+		if n := len(controlsByFramework[framework]); n != want {
+			t.Errorf("%s has %d controls, want %d", framework, n, want)
+		}
 	}
 }
 

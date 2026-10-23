@@ -409,14 +409,6 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
       responses:
         '200':
           description: Signed out
@@ -1006,7 +998,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [message]
+                properties:
+                  message:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '422':
@@ -1499,9 +1494,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+              $ref: '#/components/schemas/loginBeginInput'
       description: 'Begins a passkey sign-in ceremony and returns its session_id and the WebAuthn request options. Every ceremony is discoverable: the options carry no allowCredentials, and the answer is the same whether or not the email (optional; an empty body is allowed) has an account or a passkey. With an email, only a passkey of that account can finish the ceremony. The browser that begins it is given an HttpOnly binding cookie (qe_passkey, __Host- prefixed outside dev) naming the ceremony; only that browser can finish it at POST /v1/passkeys/login/session. A body not sent as JSON is refused (415 unsupported_media_type).'
       responses:
         '200':
@@ -1510,7 +1503,13 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [publicKey, session_id]
+                properties:
+                  publicKey:
+                    $ref: '#/components/schemas/PublicKeyCredentialRequestOptions'
+                  session_id:
+                    type: string
+                    format: uuid
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
         '422':
@@ -1529,9 +1528,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+              $ref: '#/components/schemas/loginFinishInput'
       description: 'The token form of passkey sign-in: completes the ceremony with the assertion and returns the token pair, setting no cookie, for a caller that keeps tokens on a server (such as the console''s). A browser signs in to the hosted login with POST /v1/passkeys/login/session instead, so no token pair reaches its script. A body not sent as JSON is refused (415 unsupported_media_type). When the account''s organisation has switched passkeys off, the sign-in is refused with 403 passkey.disabled before the assertion is verified. A refused ceremony or assertion is recorded in the organisation''s audit trail as auth.sign_in_failed (method passkey, reason the error code), naming the account when it was identified.'
       responses:
         '201':
@@ -1539,8 +1536,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/TokenPair'
         '404':
           $ref: '#/components/responses/NotFound'
         '415':
@@ -1604,14 +1600,6 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
         - ssoCookie: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
       description: >-
         Starts adding a passkey for the signed-in user and returns the WebAuthn
         creation options with a single-use ceremony id (valid five minutes,
@@ -1627,7 +1615,13 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [publicKey, session_id]
+                properties:
+                  publicKey:
+                    $ref: '#/components/schemas/PublicKeyCredentialCreationOptions'
+                  session_id:
+                    type: string
+                    format: uuid
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1653,9 +1647,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+              $ref: '#/components/schemas/registerFinishInput'
       description: >-
         Verifies the attestation and stores the passkey. An optional `name` is
         cleaned and checked as in Rename passkey (422 when too long, before the
@@ -1671,13 +1663,8 @@ paths:
         since the ceremony began. Accepts the hosted-login session cookie like
         Register begin, with the same CSRF requirement.
       responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
+        '204':
+          description: 'Created'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1717,7 +1704,13 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [publicKey, session_id]
+                properties:
+                  publicKey:
+                    $ref: '#/components/schemas/PublicKeyCredentialCreationOptions'
+                  session_id:
+                    type: string
+                    format: uuid
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -1755,7 +1748,23 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [access_token, expires_at, refresh_token, session_id, token_type, user_id]
+                properties:
+                  access_token:
+                    type: string
+                  expires_at:
+                    type: string
+                    format: date-time
+                  refresh_token:
+                    type: string
+                  session_id:
+                    type: string
+                    format: uuid
+                  token_type:
+                    type: string
+                  user_id:
+                    type: string
+                    format: uuid
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -1792,7 +1801,13 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [publicKey, session_id]
+                properties:
+                  publicKey:
+                    $ref: '#/components/schemas/PublicKeyCredentialCreationOptions'
+                  session_id:
+                    type: string
+                    format: uuid
         '403':
           $ref: '#/components/responses/Forbidden'
         '422':
@@ -1832,7 +1847,11 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [user_id]
+                properties:
+                  user_id:
+                    type: string
+                    format: uuid
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
         '422':
@@ -1912,7 +1931,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Deletes one of the caller''s passkeys. Needs a recent step-up.'
       responses:
         '204':
           description: No Content
@@ -1935,7 +1954,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the caller''s SMS and email factors.'
       responses:
         '200':
           description: OK
@@ -1943,7 +1962,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OTPFactor'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1986,7 +2010,13 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [factor_id, message]
+                properties:
+                  factor_id:
+                    type: string
+                    format: uuid
+                  message:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2012,7 +2042,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Removes one of the caller''s SMS or email factors. Needs a recent step-up.'
       responses:
         '204':
           description: No Content
@@ -2041,14 +2071,6 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
       description: >-
         Sends a step-up code to one of the caller's confirmed email or SMS factors, to verify at
         /v1/mfa/otp/verify. A code to one factor can be sent at most every 30 seconds, ten an hour to one person and five an hour to one address or number over every account; past that the call answers 429 mfa.code_send_limited with retry_after (seconds). A new code makes the factor's earlier unused code stop working. An SMS code needs an organisation whose plan includes SMS (403 upgrade_required). Each code sent is audited as mfa.otp_sent.
@@ -2059,7 +2081,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [message]
+                properties:
+                  message:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2090,10 +2115,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/verifyInput'
+      description: 'Completes adding an SMS or email factor with the code sent to it.'
       responses:
         '201':
           description: Created
@@ -2101,7 +2124,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [verified]
+                properties:
+                  verified:
+                    type: boolean
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2126,10 +2152,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/verifyInput'
+      description: 'Verifies a code sent to one of the caller''s SMS or email factors, stepping up the session.'
       responses:
         '201':
           description: Created
@@ -2137,7 +2161,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [verified]
+                properties:
+                  verified:
+                    type: boolean
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2157,15 +2184,14 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Reports how many of the caller''s recovery codes are left.'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/RecoveryStatus'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2185,15 +2211,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Replaces the caller''s recovery codes; the new ones are shown only in this answer and the old ones stop working. Needs a recent step-up.'
       responses:
         '201':
           description: Created
@@ -2201,7 +2219,14 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [recovery_codes, warning]
+                properties:
+                  recovery_codes:
+                    type: array
+                    items:
+                      type: string
+                  warning:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2392,7 +2417,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Removes the caller''s authenticator app and recovery codes. Needs a recent step-up.'
       responses:
         '204':
           description: No Content
@@ -2420,10 +2445,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/confirmEnrollInput'
+      description: 'Completes adding an authenticator app with a code from it, and returns the recovery codes.'
       responses:
         '201':
           description: Created
@@ -2431,7 +2454,14 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [recovery_codes, warning]
+                properties:
+                  recovery_codes:
+                    type: array
+                    items:
+                      type: string
+                  warning:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2507,10 +2537,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/verifyInput'
+      description: 'Verifies a code from the caller''s authenticator app, or a recovery code, stepping up the session.'
       responses:
         '201':
           description: Created
@@ -2518,7 +2546,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [verified]
+                properties:
+                  verified:
+                    type: boolean
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2546,7 +2577,13 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [publicKey, session_id]
+                properties:
+                  publicKey:
+                    $ref: '#/components/schemas/PublicKeyCredentialRequestOptions'
+                  session_id:
+                    type: string
+                    format: uuid
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2573,9 +2610,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+              $ref: '#/components/schemas/webauthnVerifyInput'
       description: Verifies a WebAuthn assertion against the user's registered credentials and records a step-up verification on success.
       responses:
         '200':
@@ -2584,7 +2619,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [verified]
+                properties:
+                  verified:
+                    type: boolean
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2613,7 +2651,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PushDevice'
         '401':
           $ref: '#/components/responses/Unauthorized'
     post:
@@ -2642,7 +2685,14 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [device, device_token, warning]
+                properties:
+                  device:
+                    $ref: '#/components/schemas/PushDevice'
+                  device_token:
+                    type: string
+                  warning:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/mfa/push/devices/{id}:
@@ -2835,8 +2885,7 @@ paths:
                 properties:
                   user_id: { type: string, format: uuid }
                   device:
-                    type: object
-                    additionalProperties: true
+                    $ref: '#/components/schemas/PushDevice'
                   device_token: { type: string }
         '400':
           $ref: '#/components/responses/BadRequest'
@@ -2862,8 +2911,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/PushChallenge'
         '404':
           $ref: '#/components/responses/NotFound'
   /v1/mfa/push/challenges/{id}/respond:
@@ -3071,14 +3119,6 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
       responses:
         '204':
           description: Granted
@@ -3375,14 +3415,6 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
       responses:
         '204':
           description: Assigned
@@ -3665,11 +3697,11 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated: {type: boolean, description: 'Present, true, when the list was cut at its limit (1000).'}
                   items:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/Tuple'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -3716,8 +3748,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Tuple'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4156,7 +4187,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the organisation''s address rules and whether they are enforced. Requires policy.read.'
       responses:
         '200':
           description: OK
@@ -4164,7 +4195,14 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [enabled, items]
+                properties:
+                  enabled:
+                    type: boolean
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Rule'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4195,17 +4233,22 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              required: [action, cidr, label]
+              properties:
+                action:
+                  type: string
+                cidr:
+                  type: string
+                label:
+                  type: string
+      description: 'Adds an allow or deny rule for an address range (CIDR). Deny rules win over allow rules. Requires policy.write.'
       responses:
         '201':
           description: Created
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Rule'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4237,8 +4280,10 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+              required: [ip]
+              properties:
+                ip:
+                  type: string
       description: >-
         Says what the address rules make of an address ({"ip": "…"}): enabled,
         allowed, and the reason. The same decision every sign-in gets while the
@@ -4250,7 +4295,14 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [allowed, enabled, reason]
+                properties:
+                  allowed:
+                    type: boolean
+                  enabled:
+                    type: boolean
+                  reason:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4282,8 +4334,10 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
       description: >-
         Turns the organisation's address rules on or off ({"enabled": bool}).
         While they are on, every sign-in to the organisation (password,
@@ -4308,7 +4362,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [enabled]
+                properties:
+                  enabled:
+                    type: boolean
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4339,7 +4396,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Deletes one of the organisation''s address rules. Requires policy.write.'
       responses:
         '204':
           description: No Content
@@ -4376,7 +4433,14 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [recent, stats]
+                properties:
+                  recent:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BotEvent'
+                  stats:
+                    $ref: '#/components/schemas/Stats'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4442,8 +4506,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/RiskSettings'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4472,8 +4535,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/BotSettings'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4506,8 +4568,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/BotSettings'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4568,8 +4629,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/ThreatSummary'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -5528,3 +5588,296 @@ components:
           description: Grant-path trace (present only when ?explain=true).
           items:
             type: string
+    AuthenticatorSelection:
+      type: object
+      properties:
+        authenticatorAttachment:
+          type: string
+        requireResidentKey:
+          type: boolean
+        residentKey:
+          type: string
+        userVerification:
+          type: string
+    BotEvent:
+      type: object
+      required: [created_at, id, score, user_agent, verdict]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        ip:
+          type: string
+        score:
+          type: number
+        user_agent:
+          type: string
+        verdict:
+          type: string
+    BotSettings:
+      type: object
+      required: [captcha, honeypot, score_threshold, signature, ua_check]
+      properties:
+        captcha:
+          type: boolean
+        honeypot:
+          type: boolean
+        score_threshold:
+          type: number
+        signature:
+          type: boolean
+        ua_check:
+          type: boolean
+    CredentialDescriptor:
+      type: object
+      required: [id, type]
+      properties:
+        id: {}
+        transports:
+          type: array
+          items:
+            type: string
+        type:
+          type: string
+    CredentialParameter:
+      type: object
+      required: [alg, type]
+      properties:
+        alg:
+          type: integer
+        type:
+          type: string
+    OTPFactor:
+      type: object
+      required: [channel, created_at, destination, id, verified]
+      properties:
+        channel:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        destination:
+          type: string
+        id:
+          type: string
+          format: uuid
+        verified:
+          type: boolean
+    PublicKeyCredentialCreationOptions:
+      type: object
+      required: [challenge, rp, user]
+      properties:
+        attestation:
+          type: string
+        attestationFormats:
+          type: array
+          items:
+            type: string
+        authenticatorSelection:
+          $ref: '#/components/schemas/AuthenticatorSelection'
+        challenge: {}
+        excludeCredentials:
+          type: array
+          items:
+            $ref: '#/components/schemas/CredentialDescriptor'
+        extensions: {}
+        hints:
+          type: array
+          items:
+            type: string
+        pubKeyCredParams:
+          type: array
+          items:
+            $ref: '#/components/schemas/CredentialParameter'
+        rp:
+          $ref: '#/components/schemas/RelyingPartyEntity'
+        timeout:
+          type: integer
+        user:
+          $ref: '#/components/schemas/UserEntity'
+    PublicKeyCredentialRequestOptions:
+      type: object
+      required: [challenge]
+      properties:
+        allowCredentials:
+          type: array
+          items:
+            $ref: '#/components/schemas/CredentialDescriptor'
+        challenge: {}
+        extensions: {}
+        hints:
+          type: array
+          items:
+            type: string
+        rpId:
+          type: string
+        timeout:
+          type: integer
+        userVerification:
+          type: string
+    PushChallenge:
+      type: object
+      required: [action, context, created_at, expires_at, id, status, user_id]
+      properties:
+        action:
+          type: string
+        context: {}
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+        user_id:
+          type: string
+          format: uuid
+    PushDevice:
+      type: object
+      required: [created_at, id, last_seen_at, name, platform]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        last_seen_at:
+          type: string
+          format: date-time
+        name:
+          type: string
+        platform:
+          type: string
+    RecoveryStatus:
+      type: object
+      required: [enrolled, remaining, total]
+      properties:
+        enrolled:
+          type: boolean
+        remaining:
+          type: integer
+        total:
+          type: integer
+    RelyingPartyEntity:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+    Rule:
+      type: object
+      required: [action, cidr, created_at, id, label, tenant_id]
+      properties:
+        action:
+          type: string
+        cidr:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+    Stats:
+      type: object
+      required: [blocked_24h, challenged_24h, threshold]
+      properties:
+        blocked_24h:
+          type: integer
+        challenged_24h:
+          type: integer
+        threshold:
+          type: number
+    ThreatSummary:
+      type: object
+      required: [affected_accounts, high_severity_24h, open, resolved_24h]
+      properties:
+        affected_accounts:
+          type: integer
+        high_severity_24h:
+          type: integer
+        open:
+          type: integer
+        resolved_24h:
+          type: integer
+    Tuple:
+      type: object
+      required: [id, object, relation, subject]
+      properties:
+        id:
+          type: string
+          format: uuid
+        object:
+          type: string
+        relation:
+          type: string
+        subject:
+          type: string
+    UserEntity:
+      type: object
+      required: [displayName, id, name]
+      properties:
+        displayName:
+          type: string
+        id: {}
+        name:
+          type: string
+    confirmEnrollInput:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+    registerFinishInput:
+      type: object
+      required: [credential, name, session_id]
+      properties:
+        credential: {}
+        name:
+          type: string
+        session_id:
+          type: string
+          format: uuid
+    verifyInput:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+    webauthnVerifyInput:
+      type: object
+      required: [credential, session_id]
+      properties:
+        credential: {}
+        session_id:
+          type: string
+          format: uuid
+    loginBeginInput:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+    loginFinishInput:
+      type: object
+      required: [credential, session_id]
+      properties:
+        credential: {}
+        session_id:
+          type: string
+          format: uuid

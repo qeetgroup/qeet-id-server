@@ -20,6 +20,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // maxDepth bounds userset expansion (defense-in-depth alongside the visited set).
@@ -136,11 +137,13 @@ func resolve(fetch fetcher, objType, objID, relation, userID string, visited map
 	return false, nil, nil
 }
 
+// Service manages the relationship tuples.
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 }
 
+// NewService returns the relationship service.
 func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool, q: dbgen.New(pool)} }
 
 // Tuple is the API/read projection of a stored relationship.
@@ -158,13 +161,9 @@ func subjectString(typ, id, rel string) string {
 	return typ + ":" + id + "#" + rel
 }
 
-// Write upserts a relationship tuple. object = "type:id", subject =
-// "user:<id>" or "type:id#relation".
-func (s *Service) Write(ctx context.Context, tenantID uuid.UUID, object, relation, subject string) (*Tuple, error) {
-	return s.WriteWithActor(ctx, tenantID, object, relation, subject, audit.Actor{Type: "system"})
-}
-
-func (s *Service) WriteWithActor(ctx context.Context, tenantID uuid.UUID, object, relation, subject string, actor audit.Actor) (*Tuple, error) {
+// Write upserts a relationship tuple, recorded as actor's. object = "type:id",
+// subject = "user:<id>" or "type:id#relation".
+func (s *Service) Write(ctx context.Context, tenantID uuid.UUID, object, relation, subject string, actor audit.Actor) (*Tuple, error) {
 	o, ok := parseObject(object)
 	if !ok {
 		return nil, errs.ErrReBACObjectInvalid
@@ -207,11 +206,8 @@ func (s *Service) WriteWithActor(ctx context.Context, tenantID uuid.UUID, object
 	return tuple, nil
 }
 
-func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
-	return s.DeleteWithActor(ctx, id, tenantID, audit.Actor{Type: "system"})
-}
-
-func (s *Service) DeleteWithActor(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+// Delete removes one of the tenant's relationship tuples, recorded as actor's.
+func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -445,17 +441,7 @@ type Handler struct {
 	Decider *decide.Decider
 }
 
-func actorOf(r *http.Request) audit.Actor {
-	actor := audit.Actor{Type: "system", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	if principal := httpx.PrincipalFromCtx(r.Context()); principal != nil {
-		actor.UserID = principal.UserID
-		if principal.ActorType != "" {
-			actor.Type = principal.ActorType
-		}
-	}
-	return actor
-}
-
+// Mount registers the relationship routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/relation-tuples", h.list)
 	r.Post("/tenants/{tenantID}/relation-tuples", h.write)
@@ -464,23 +450,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/relation-tuples/graph", h.graph)
 }
 
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
-	}
-	return scope, nil
-}
-
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -497,21 +468,21 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, r, err)
 			return
 		}
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+		httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 	case subject != "":
 		out, err := h.Service.ListBySubject(r.Context(), tenantID, subject)
 		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+		httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 	default:
 		httpx.WriteError(w, r, errs.ErrReBACObjectOrSubjectRequired)
 	}
 }
 
 func (h *Handler) write(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -525,7 +496,7 @@ func (h *Handler) write(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	t, err := h.Service.WriteWithActor(r.Context(), tenantID, in.Object, in.Relation, in.Subject, actorOf(r))
+	t, err := h.Service.Write(r.Context(), tenantID, in.Object, in.Relation, in.Subject, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -534,7 +505,7 @@ func (h *Handler) write(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -544,7 +515,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.DeleteWithActor(r.Context(), id, tenantID, actorOf(r)); err != nil {
+	if err := h.Service.Delete(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -552,7 +523,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -599,7 +570,7 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 // graph for ?object=<type:id>&relation=<rel>[&depth=<n>]: who or what can reach
 // the resource, and through which relationships.
 func (h *Handler) graph(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

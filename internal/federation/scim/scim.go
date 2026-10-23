@@ -58,6 +58,7 @@ type Service struct {
 // announced.
 func (s *Service) SetSessionSignals(sig *sessionsignal.Signaller) { s.signals = sig }
 
+// NewService returns the SCIM service.
 func NewService(pool *pgxpool.Pool, users *user.Repository) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), users: users}
 }
@@ -71,6 +72,7 @@ type PlanGate interface {
 // SetPlanGate wires the plan-feature gate (nil allows all features).
 func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 
+// Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 // ConfigView is the admin-facing status of a tenant's SCIM endpoint. The
@@ -83,6 +85,7 @@ type ConfigView struct {
 	ProvisionedCount int        `json:"provisioned_count"`
 }
 
+// Config returns the tenant's SCIM settings, without its token.
 func (s *Service) Config(ctx context.Context, tenantID uuid.UUID) (*ConfigView, error) {
 	v := &ConfigView{}
 	tok, err := s.q.GetScimTokenConfig(ctx, tenantID)
@@ -138,6 +141,7 @@ func (s *Service) Rotate(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (fu
 	return full, nil
 }
 
+// Revoke deletes the tenant's SCIM token, which ends provisioning.
 func (s *Service) Revoke(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
 	n, err := s.q.WithTx(tx).DeleteScimToken(ctx, tenantID)
 	if err != nil {
@@ -321,30 +325,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 // --- admin handlers ---
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrSCIMTenantIDInvalid
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrSCIMTenantMismatch
-	}
-	return scope, nil
-}
-
-func auditActor(r *http.Request) (*uuid.UUID, string) {
-	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil {
-		return nil, "system"
-	}
-	at := p.ActorType
-	if at == "" {
-		at = "user"
-	}
-	return p.UserID, at
+	return httpx.PathTenantOr(r, errs.ErrSCIMTenantIDInvalid, errs.ErrSCIMTenantMismatch)
 }
 
 func (h *Handler) config(w http.ResponseWriter, r *http.Request) {
@@ -379,7 +360,7 @@ func (h *Handler) rotate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	tid := tenantID
 	if err := audit.Record(ctx, tx, audit.Event{
 		TenantID:     &tid,
@@ -423,7 +404,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	tid := tenantID
 	if err := audit.Record(ctx, tx, audit.Event{
 		TenantID:     &tid,

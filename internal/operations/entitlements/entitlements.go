@@ -176,12 +176,6 @@ func For(code string) Entitlements {
 	return Catalog[NormalizePlan(code)].clone()
 }
 
-// LimitReached reports whether one more resource would exceed limit, given
-// current. An Unlimited (negative) limit is never reached.
-func LimitReached(limit, current int) bool {
-	return limit >= 0 && current >= limit
-}
-
 // PlanResolver returns a tenant's effective plan code, from its billing
 // subscription or else its plan label. It keeps this package from importing
 // billing and tenant.

@@ -15,14 +15,14 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/migrations"
-	db "github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
-	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo"
-	logger "github.com/qeetgroup/qeet-id-server/internal/platform/observability/logging"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/logging"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/metrics"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/tracing"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/worker"
 )
 
 func parseLogLevel(s string) slog.Level {
@@ -65,11 +65,11 @@ func loadConfig() *config.Config {
 		useText = true
 	}
 	if useText {
-		handler = logger.NewJSONColorHandler(os.Stdout, &logger.Options{Level: level, TimeFormat: "15:04:05"})
+		handler = logging.NewJSONColorHandler(os.Stdout, &logging.Options{Level: level, TimeFormat: "15:04:05"})
 	} else {
 		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
 	}
-	slog.SetDefault(slog.New(logger.NewRedactingHandler(handler)))
+	slog.SetDefault(slog.New(logging.NewRedactingHandler(handler)))
 	return cfg
 }
 
@@ -124,7 +124,7 @@ func Run() {
 	}
 	slog.Info("database schema", "migration", schema.Database, "latest", schema.Latest)
 
-	pool, err := db.NewPool(rootCtx, cfg.DBURL, cfg.DBMinConns, cfg.DBMaxConns)
+	pool, err := postgres.NewPool(rootCtx, cfg.DBURL, cfg.DBMinConns, cfg.DBMaxConns)
 	if err != nil {
 		slog.Error("connect db", "err", err)
 		os.Exit(1)
@@ -139,7 +139,7 @@ func Run() {
 	}
 	defer func() { _ = closeOutboxPub() }()
 	if cfg.NATSURL != "" {
-		slog.Info("outbox publishing to NATS", "url", logger.StripURLCredentials(cfg.NATSURL))
+		slog.Info("outbox publishing to NATS", "url", logging.StripURLCredentials(cfg.NATSURL))
 	}
 
 	deps, workers := buildDeps(rootCtx, cfg, pool, outboxPub)
@@ -184,7 +184,7 @@ func RunWorkers() {
 		slog.Error("refusing to start: " + err.Error())
 		os.Exit(1)
 	}
-	pool, err := db.NewPool(rootCtx, cfg.DBURL, cfg.DBMinConns, cfg.DBMaxConns)
+	pool, err := postgres.NewPool(rootCtx, cfg.DBURL, cfg.DBMinConns, cfg.DBMaxConns)
 	if err != nil {
 		slog.Error("connect db", "err", err)
 		os.Exit(1)

@@ -1079,6 +1079,7 @@ FROM auth.oidc_device_codes d
 LEFT JOIN "user".users u ON u.id = d.user_id
 WHERE d.tenant_id = $1
 ORDER BY d.created_at DESC
+LIMIT 1001
 `
 
 type ListDevicesRow struct {
@@ -1094,6 +1095,7 @@ type ListDevicesRow struct {
 	LastPolledAt pgtype.Timestamptz
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListDevices(ctx context.Context, tenantID uuid.UUID) ([]ListDevicesRow, error) {
 	rows, err := q.db.Query(ctx, listDevices, tenantID)
 	if err != nil {
@@ -1133,6 +1135,7 @@ LEFT JOIN "user".users u ON u.id = t.user_id
 WHERE t.tenant_id = $1
   AND t.revoked_at IS NULL AND t.replaced_by IS NULL AND t.expires_at > NOW()
 ORDER BY t.issued_at DESC
+LIMIT 1001
 `
 
 type ListGrantsRow struct {
@@ -1145,6 +1148,7 @@ type ListGrantsRow struct {
 	ExpiresAt time.Time
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListGrants(ctx context.Context, tenantID uuid.UUID) ([]ListGrantsRow, error) {
 	rows, err := q.db.Query(ctx, listGrants, tenantID)
 	if err != nil {

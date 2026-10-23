@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
+// Tenant is an organisation.
 type Tenant struct {
 	ID        uuid.UUID      `json:"id"`
 	Slug      string         `json:"slug"`
@@ -26,6 +27,7 @@ type Tenant struct {
 	MFAEnabledCount *int64 `json:"mfa_enabled_count,omitempty"`
 }
 
+// CreateInput is what CreateWithOwner takes.
 type CreateInput struct {
 	Slug   string `json:"slug" validate:"required,min=2,max=64"`
 	Name   string `json:"name" validate:"required,min=1,max=200"`

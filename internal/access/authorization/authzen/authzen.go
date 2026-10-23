@@ -63,6 +63,8 @@ type rebacChecker interface {
 	CheckExplain(ctx context.Context, tenantID uuid.UUID, object, relation, userID string) (*rebac.Explanation, error)
 }
 
+// Service answers AuthZEN evaluation requests from the tenant's roles and
+// relationships.
 type Service struct {
 	rbac    rbacChecker
 	rebac   rebacChecker
@@ -141,10 +143,12 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, req Evaluati
 
 // --- HTTP ---
 
+// Handler serves the AuthZEN evaluation HTTP API.
 type Handler struct {
 	Service *Service
 }
 
+// Mount registers the AuthZEN evaluation routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/tenants/{tenantID}/access/v1/evaluation", h.evaluate)
 }

@@ -24,17 +24,19 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/agents/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // EventEmitter enqueues a webhook event for a tenant. Injected (webhook service)
 // so this package needn't import webhooks. nil = no-op.
 type EventEmitter func(ctx context.Context, tenantID uuid.UUID, eventType string, payload any) error
 
+// Service manages the agents.
 type Service struct {
 	pool    *pgxpool.Pool
 	q       *dbgen.Queries
@@ -42,15 +44,13 @@ type Service struct {
 	emitter EventEmitter
 }
 
+// NewService returns the agent service.
 func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer}
 }
 
 // SetEmitter sets the webhook event emitter; nil emits nothing.
 func (s *Service) SetEmitter(e EventEmitter) { s.emitter = e }
-
-// Pool exposes the connection pool for the handler's audit writes.
-func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 func (s *Service) emit(ctx context.Context, tenantID uuid.UUID, eventType string, payload any) {
 	if s.emitter == nil {
@@ -101,10 +101,11 @@ func validateTransition(cur, target string) error {
 	return errs.ErrAgentTransitionInvalid
 }
 
-// transition moves an agent to target after enforcing the allowed source
-// states. Returns the previous status. Emits a webhook event (best-effort) on a
-// real change. disabled_at is kept in sync for legacy readers.
-func (s *Service) transition(ctx context.Context, id, tenantID uuid.UUID, target string, actor audit.Actor) (string, error) {
+// Transition moves an agent to target (active, suspended or decommissioned)
+// after enforcing the allowed source states, recorded as actor's. Returns the
+// previous status. Emits a webhook event (best-effort) on a real change.
+// disabled_at is kept in sync for legacy readers.
+func (s *Service) Transition(ctx context.Context, id, tenantID uuid.UUID, target string, actor audit.Actor) (string, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return "", err
@@ -153,21 +154,6 @@ func (s *Service) transition(ctx context.Context, id, tenantID uuid.UUID, target
 	}
 	s.emit(ctx, tenantID, eventType, payload)
 	return cur, nil
-}
-
-// Suspend, Resume and Decommission are the public lifecycle transitions.
-func (s *Service) Suspend(ctx context.Context, id, tenantID uuid.UUID) (string, error) {
-	return s.transition(ctx, id, tenantID, "suspended", audit.Actor{Type: "system"})
-}
-func (s *Service) Resume(ctx context.Context, id, tenantID uuid.UUID) (string, error) {
-	return s.transition(ctx, id, tenantID, "active", audit.Actor{Type: "system"})
-}
-func (s *Service) Decommission(ctx context.Context, id, tenantID uuid.UUID) (string, error) {
-	return s.transition(ctx, id, tenantID, "decommissioned", audit.Actor{Type: "system"})
-}
-
-func (s *Service) TransitionWithActor(ctx context.Context, id, tenantID uuid.UUID, target string, actor audit.Actor) (string, error) {
-	return s.transition(ctx, id, tenantID, target, actor)
 }
 
 // Agent is an AI-agent identity. Status is active, suspended or decommissioned;
@@ -231,11 +217,10 @@ func (s *Service) sponsorBelongsToTenant(ctx context.Context, tenantID, userID u
 	})
 }
 
-func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name string, scopes []string, ttl int, sponsorUserID uuid.UUID) (*Agent, error) {
-	return s.CreateWithActor(ctx, tenantID, name, scopes, ttl, sponsorUserID, audit.Actor{Type: "system"})
-}
-
-func (s *Service) CreateWithActor(ctx context.Context, tenantID uuid.UUID, name string, scopes []string, ttl int, sponsorUserID uuid.UUID, actor audit.Actor) (*Agent, error) {
+// Create registers an agent in tenantID with its scopes, token lifetime in
+// seconds and sponsor, who must be a tenant member, recorded as actor's. The
+// returned Agent carries its plaintext secret, shown only now.
+func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name string, scopes []string, ttl int, sponsorUserID uuid.UUID, actor audit.Actor) (*Agent, error) {
 	if err := rbac.ValidateMachineScopes(scopes); err != nil {
 		return nil, err
 	}
@@ -307,6 +292,7 @@ func (s *Service) CreateWithActor(ctx context.Context, tenantID uuid.UUID, name 
 	return a, nil
 }
 
+// List returns the tenant's agents.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Agent, error) {
 	// Decommissioned agents are terminal and excluded from listings.
 	rows, err := s.q.ListAgents(ctx, tenantID)
@@ -359,11 +345,7 @@ func (s *Service) AgentsSponsoredBy(ctx context.Context, tenantID, userID uuid.U
 // TransferSponsor reassigns, in one statement, every agent fromUserID sponsors
 // in tenantID to toUserID, who must be a tenant member, and returns how many
 // moved. Run it before removing fromUserID's access when offboarding.
-func (s *Service) TransferSponsor(ctx context.Context, tenantID, fromUserID, toUserID uuid.UUID) (int, error) {
-	return s.TransferSponsorWithActor(ctx, tenantID, fromUserID, toUserID, audit.Actor{Type: "system"})
-}
-
-func (s *Service) TransferSponsorWithActor(ctx context.Context, tenantID, fromUserID, toUserID uuid.UUID, actor audit.Actor) (int, error) {
+func (s *Service) TransferSponsor(ctx context.Context, tenantID, fromUserID, toUserID uuid.UUID, actor audit.Actor) (int, error) {
 	if toUserID == uuid.Nil {
 		return 0, errs.ErrAgentSponsorRequired
 	}
@@ -407,11 +389,8 @@ func (s *Service) TransferSponsorWithActor(ctx context.Context, tenantID, fromUs
 	return count, nil
 }
 
-func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
-	return s.DeleteWithActor(ctx, id, tenantID, audit.Actor{Type: "system"})
-}
-
-func (s *Service) DeleteWithActor(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+// Delete removes one of the tenant's agents, recorded as actor's.
+func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -439,11 +418,7 @@ func (s *Service) DeleteWithActor(ctx context.Context, id, tenantID uuid.UUID, a
 // KillAll suspends every active agent for a tenant in one statement (security
 // incident response). Returns the number suspended and emits a single
 // kill-switch webhook event.
-func (s *Service) KillAll(ctx context.Context, tenantID uuid.UUID) (int, error) {
-	return s.KillAllWithActor(ctx, tenantID, audit.Actor{Type: "system"})
-}
-
-func (s *Service) KillAllWithActor(ctx context.Context, tenantID uuid.UUID, actor audit.Actor) (int, error) {
+func (s *Service) KillAll(ctx context.Context, tenantID uuid.UUID, actor audit.Actor) (int, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, err
@@ -475,6 +450,7 @@ func (s *Service) KillAllWithActor(ctx context.Context, tenantID uuid.UUID, acto
 	return count, nil
 }
 
+// TokenResponse is an agent access token.
 type TokenResponse struct {
 	AccessToken string `json:"access_token"`
 	TokenType   string `json:"token_type"`
@@ -544,19 +520,9 @@ func (s *Service) IssueToken(ctx context.Context, agentID, secret string) (*Toke
 	}, nil
 }
 
+// Handler serves the agent HTTP API.
 type Handler struct {
 	Service *Service
-}
-
-func actorOf(r *http.Request) audit.Actor {
-	actor := audit.Actor{Type: "system", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	if principal := httpx.PrincipalFromCtx(r.Context()); principal != nil {
-		actor.UserID = principal.UserID
-		if principal.ActorType != "" {
-			actor.Type = principal.ActorType
-		}
-	}
-	return actor
 }
 
 // Mount registers tenant-scoped admin endpoints (require a user JWT/API key).
@@ -580,18 +546,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 }
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrAgentInvalidID
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrAgentTenantMismatch
-	}
-	return scope, nil
+	return httpx.PathTenantOr(r, errs.ErrAgentInvalidID, errs.ErrAgentTenantMismatch)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -605,7 +560,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
@@ -624,7 +579,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	a, err := h.Service.CreateWithActor(r.Context(), tenantID, in.Name, in.Scopes, in.TokenTTLSeconds, in.SponsorUserID, actorOf(r))
+	a, err := h.Service.Create(r.Context(), tenantID, in.Name, in.Scopes, in.TokenTTLSeconds, in.SponsorUserID, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -648,7 +603,7 @@ func (h *Handler) sponsoredBy(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }
 
 func (h *Handler) transferSponsor(w http.ResponseWriter, r *http.Request) {
@@ -669,7 +624,7 @@ func (h *Handler) transferSponsor(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	n, err := h.Service.TransferSponsorWithActor(r.Context(), tenantID, fromUserID, in.ToUserID, actorOf(r))
+	n, err := h.Service.TransferSponsor(r.Context(), tenantID, fromUserID, in.ToUserID, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -688,7 +643,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrAgentInvalidID)
 		return
 	}
-	if err := h.Service.DeleteWithActor(r.Context(), id, tenantID, actorOf(r)); err != nil {
+	if err := h.Service.Delete(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -718,7 +673,7 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 	if in.Disabled {
 		target = "suspended"
 	}
-	_, err = h.Service.TransitionWithActor(r.Context(), id, tenantID, target, actorOf(r))
+	_, err = h.Service.Transition(r.Context(), id, tenantID, target, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -748,7 +703,7 @@ func (h *Handler) doTransition(w http.ResponseWriter, r *http.Request, target st
 		httpx.WriteError(w, r, errs.ErrAgentInvalidID)
 		return
 	}
-	_, err = h.Service.TransitionWithActor(r.Context(), id, tenantID, target, actorOf(r))
+	_, err = h.Service.Transition(r.Context(), id, tenantID, target, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -762,7 +717,7 @@ func (h *Handler) killAll(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	n, err := h.Service.KillAllWithActor(r.Context(), tenantID, actorOf(r))
+	n, err := h.Service.KillAll(r.Context(), tenantID, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

@@ -11354,37 +11354,6 @@
           ]
         }
       ]
-    },
-    {
-      "name": "54 Admin / Outbox",
-      "item": [
-        {
-          "name": "01 List DLQ events",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/v1/admin/outbox/dlq?limit=50",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "admin",
-                "outbox",
-                "dlq"
-              ],
-              "query": [
-                {
-                  "key": "limit",
-                  "value": "50"
-                }
-              ]
-            },
-            "description": "Inspects dead-lettered outbox events for ops triage. Requires platform-admin gating in the deployment."
-          }
-        }
-      ]
     }
   ]
 }

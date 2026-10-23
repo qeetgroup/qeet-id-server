@@ -25,11 +25,13 @@ import (
 
 const sweepInterval = time.Hour
 
+// Policy is a tenant's retention policy.
 type Policy struct {
 	DeletedUsersEnabled bool `json:"deleted_users_enabled"`
 	DeletedUsersDays    int  `json:"deleted_users_days"`
 }
 
+// DefaultPolicy is the policy of a tenant that has set none.
 func DefaultPolicy() Policy { return Policy{DeletedUsersEnabled: false, DeletedUsersDays: 30} }
 
 func clampDays(d int) int {
@@ -42,17 +44,21 @@ func clampDays(d int) int {
 	return d
 }
 
+// Service stores each tenant's retention policy and enforces it.
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 }
 
+// NewService returns the retention policy service.
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool)}
 }
 
+// Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
+// Get returns the tenant's retention policy.
 func (s *Service) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, error) {
 	row, err := s.q.GetRetentionPolicy(ctx, tenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -68,6 +74,7 @@ func (s *Service) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, error) 
 	}, nil
 }
 
+// Update stores the tenant's retention policy.
 func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p Policy) (*Policy, error) {
 	p.DeletedUsersDays = clampDays(p.DeletedUsersDays)
 	row, err := s.q.WithTx(tx).UpsertRetentionPolicy(ctx, dbgen.UpsertRetentionPolicyParams{
@@ -142,10 +149,12 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
+// Handler serves the retention policy HTTP API.
 type Handler struct {
 	Service *Service
 }
 
+// Mount registers the retention policy routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/retention", h.get)
 	r.Put("/tenants/{tenantID}/retention", h.update)
@@ -154,30 +163,7 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrRetentionTenantInvalid
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrRetentionTenantMismatch
-	}
-	return scope, nil
-}
-
-func auditActor(r *http.Request) (*uuid.UUID, string) {
-	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil {
-		return nil, "system"
-	}
-	at := p.ActorType
-	if at == "" {
-		at = "user"
-	}
-	return p.UserID, at
+	return httpx.PathTenantOr(r, errs.ErrRetentionTenantInvalid, errs.ErrRetentionTenantMismatch)
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
@@ -217,7 +203,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	tid := tenantID
 	if err := audit.Record(ctx, tx, audit.Event{
 		TenantID: &tid, ActorUserID: actorID, ActorType: actorType,
@@ -275,7 +261,7 @@ func (h *Handler) run(w http.ResponseWriter, r *http.Request) {
 		tx, err := h.Service.Pool().Begin(ctx)
 		if err == nil {
 			defer tx.Rollback(ctx)
-			actorID, actorType := auditActor(r)
+			actorID, actorType := audit.ActorOf(r).Identity()
 			tid := tenantID
 			if aerr := audit.Record(ctx, tx, audit.Event{
 				TenantID: &tid, ActorUserID: actorID, ActorType: actorType,

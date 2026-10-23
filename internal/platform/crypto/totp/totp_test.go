@@ -63,7 +63,7 @@ func TestVerify_CurrentWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Code: %v", err)
 	}
-	if !Verify(fixedSecret, code) {
+	if !verify(fixedSecret, code) {
 		t.Error("a fresh code for the current window must verify")
 	}
 }
@@ -74,10 +74,10 @@ func TestVerify_AcceptsAdjacentSkewWindows(t *testing.T) {
 	now := time.Now().UTC()
 	prev, _ := Code(fixedSecret, now.Add(-period*time.Second))
 	next, _ := Code(fixedSecret, now.Add(period*time.Second))
-	if !Verify(fixedSecret, prev) {
+	if !verify(fixedSecret, prev) {
 		t.Error("previous-window code must verify (skew tolerance)")
 	}
-	if !Verify(fixedSecret, next) {
+	if !verify(fixedSecret, next) {
 		t.Error("next-window code must verify (skew tolerance)")
 	}
 }
@@ -94,7 +94,7 @@ func TestVerify_RejectsOutOfWindowCode(t *testing.T) {
 	if stale == cur || stale == prev || stale == next {
 		t.Skip("rare code collision across windows; skipping")
 	}
-	if Verify(fixedSecret, stale) {
+	if verify(fixedSecret, stale) {
 		t.Error("a code two periods old must be rejected")
 	}
 }
@@ -117,7 +117,7 @@ func TestVerify_RejectsWrongAndMalformedCodes(t *testing.T) {
 			if c.code == cur {
 				t.Skip("test code coincides with the real current code")
 			}
-			if Verify(fixedSecret, c.code) {
+			if verify(fixedSecret, c.code) {
 				t.Errorf("Verify accepted an invalid code %q", c.code)
 			}
 		})
@@ -128,7 +128,7 @@ func TestVerify_LowercaseSecretStillVerifies(t *testing.T) {
 	// Code upper-cases the secret before decoding, so a lower-case stored
 	// secret must still verify a code minted from the canonical secret.
 	code, _ := Code(fixedSecret, time.Now().UTC())
-	if !Verify(strings.ToLower(fixedSecret), code) {
+	if !verify(strings.ToLower(fixedSecret), code) {
 		t.Error("Verify should be case-insensitive about the secret")
 	}
 }
@@ -174,4 +174,11 @@ func TestProvisioningURL_Shape(t *testing.T) {
 	if !strings.Contains(u.Path, "Qeet ID:alice@example.com") {
 		t.Errorf("label not in path: %q", u.Path)
 	}
+}
+
+// verify reports whether code is valid now for secret, ignoring which step
+// matched.
+func verify(secret, code string) bool {
+	_, ok := VerifyStep(secret, code)
+	return ok
 }

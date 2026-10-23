@@ -628,6 +628,8 @@ func validateCondition(raw json.RawMessage) error {
 
 // Service — CRUD + evaluate.
 
+// Service stores each tenant's ABAC policies and evaluates requests against
+// them.
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
@@ -637,6 +639,7 @@ type Service struct {
 	presence   map[uuid.UUID]presenceEntry
 }
 
+// NewService returns the ABAC policy service.
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), presence: map[uuid.UUID]presenceEntry{}}
 }
@@ -1104,39 +1107,12 @@ func combine(policies []candidate, bag AttributeBag) *Decision {
 
 // HTTP handler
 
+// Handler serves the ABAC policy HTTP API.
 type Handler struct {
 	Service *Service
 }
 
-// requirePathTenant validates the tenantID path param against the principal's
-// tenant scope and returns the tenant UUID on success.
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
-	}
-	return scope, nil
-}
-
-// actorOf captures the audit provenance from the principal and request headers.
-func actorOf(r *http.Request) audit.Actor {
-	a := audit.Actor{Type: "user", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
-		a.UserID = p.UserID
-		if p.ActorType != "" {
-			a.Type = p.ActorType
-		}
-	}
-	return a
-}
-
+// Mount registers the ABAC policy routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/abac/policies", h.list)
 	r.Post("/tenants/{tenantID}/abac/policies", h.create)
@@ -1147,7 +1123,7 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1161,7 +1137,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1171,7 +1147,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	p, err := h.Service.Create(r.Context(), tenantID, in, actorOf(r))
+	p, err := h.Service.Create(r.Context(), tenantID, in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1180,7 +1156,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getPolicy(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1199,7 +1175,7 @@ func (h *Handler) getPolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1214,7 +1190,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	p, err := h.Service.Update(r.Context(), id, tenantID, in, actorOf(r))
+	p, err := h.Service.Update(r.Context(), id, tenantID, in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1223,7 +1199,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1233,7 +1209,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.Delete(r.Context(), id, tenantID, actorOf(r)); err != nil {
+	if err := h.Service.Delete(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1241,7 +1217,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) evalHandler(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

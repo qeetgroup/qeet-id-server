@@ -67,12 +67,6 @@ func (s *Service) magicLinkAllowed(ctx context.Context, req MagicLinkRequest) bo
 	return true
 }
 
-// StartMagicLink emails a console sign-in link for email, asked for from
-// tenantID's sign-in page (uuid.Nil: the console's own).
-func (s *Service) StartMagicLink(ctx context.Context, tenantID uuid.UUID, email string) error {
-	return s.RequestMagicLink(ctx, MagicLinkRequest{Email: email, TenantID: tenantID})
-}
-
 // RequestMagicLink emails a sign-in link to the account holding req.Email, if
 // any, storing and sending it after it returns (see afterAnswer), so it answers
 // alike either way. It returns ErrTooManyRequests past the bounds, and
@@ -219,6 +213,7 @@ func (s *Service) ResendMagicLink(ctx context.Context, rawToken, caller string) 
 	return s.RequestMagicLink(ctx, req)
 }
 
+// MagicLinkResult is what consuming a magic link signs in.
 type MagicLinkResult struct {
 	UserID   uuid.UUID
 	TenantID uuid.UUID

@@ -29,16 +29,19 @@ import (
 
 const vcContext = "https://www.w3.org/ns/credentials/v2"
 
+// Service issues, verifies and revokes verifiable credentials.
 type Service struct {
 	pool   *pgxpool.Pool
 	q      *dbgen.Queries
 	issuer *tokens.Issuer
 }
 
+// NewService returns the verifiable credential service.
 func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer}
 }
 
+// Credential is an issued verifiable credential, as recorded.
 type Credential struct {
 	ID        uuid.UUID  `json:"id"`
 	Subject   string     `json:"subject"`
@@ -48,6 +51,7 @@ type Credential struct {
 	Revoked   bool       `json:"revoked"`
 }
 
+// IssueResult is an issued credential and its signed JWT-VC.
 type IssueResult struct {
 	CredentialID uuid.UUID  `json:"credential_id"`
 	JWT          string     `json:"jwt"`
@@ -71,13 +75,9 @@ func tsPtr(p pgtype.Timestamptz) *time.Time {
 	return &t
 }
 
-// Issue records a credential and returns its signed JWT-VC. ttlSeconds <= 0
-// issues a non-expiring credential.
-func (s *Service) Issue(ctx context.Context, tenantID uuid.UUID, subject, credType string, claims map[string]any, ttlSeconds int) (*IssueResult, error) {
-	return s.IssueWithActor(ctx, tenantID, subject, credType, claims, ttlSeconds, audit.Actor{Type: "system"})
-}
-
-func (s *Service) IssueWithActor(ctx context.Context, tenantID uuid.UUID, subject, credType string, claims map[string]any, ttlSeconds int, actor audit.Actor) (*IssueResult, error) {
+// Issue records a credential and returns its signed JWT-VC, recorded as
+// actor's. ttlSeconds <= 0 issues a non-expiring credential.
+func (s *Service) Issue(ctx context.Context, tenantID uuid.UUID, subject, credType string, claims map[string]any, ttlSeconds int, actor audit.Actor) (*IssueResult, error) {
 	subject = strings.TrimSpace(subject)
 	credType = strings.TrimSpace(credType)
 	if subject == "" || credType == "" {
@@ -161,6 +161,7 @@ func (s *Service) IssueWithActor(ctx context.Context, tenantID uuid.UUID, subjec
 	return result, nil
 }
 
+// VerifyResult is whether a presented credential is valid and, if not, why.
 type VerifyResult struct {
 	Valid   bool           `json:"valid"`
 	Reason  string         `json:"reason,omitempty"`
@@ -208,6 +209,7 @@ func (s *Service) Verify(ctx context.Context, raw string) (*VerifyResult, error)
 	return res, nil
 }
 
+// List returns the tenant's credentials.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Credential, error) {
 	rows, err := s.q.ListCredentials(ctx, tenantID)
 	if err != nil {
@@ -227,11 +229,9 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Credential, e
 	return out, nil
 }
 
-func (s *Service) Revoke(ctx context.Context, id, tenantID uuid.UUID) error {
-	return s.RevokeWithActor(ctx, id, tenantID, audit.Actor{Type: "system"})
-}
-
-func (s *Service) RevokeWithActor(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+// Revoke marks one of the tenant's credentials revoked, so Verify refuses it,
+// recorded as actor's.
+func (s *Service) Revoke(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -253,19 +253,9 @@ func (s *Service) RevokeWithActor(ctx context.Context, id, tenantID uuid.UUID, a
 	return tx.Commit(ctx)
 }
 
+// Handler serves the verifiable credential HTTP API.
 type Handler struct {
 	Service *Service
-}
-
-func actorOf(r *http.Request) audit.Actor {
-	actor := audit.Actor{Type: "system", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	if principal := httpx.PrincipalFromCtx(r.Context()); principal != nil {
-		actor.UserID = principal.UserID
-		if principal.ActorType != "" {
-			actor.Type = principal.ActorType
-		}
-	}
-	return actor
 }
 
 // Mount registers tenant-scoped admin endpoints (require a user JWT / API key).
@@ -281,23 +271,8 @@ func (h *Handler) MountPublic(r chi.Router) {
 	r.Post("/credentials/verify", h.verify)
 }
 
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
-	}
-	return scope, nil
-}
-
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -311,7 +286,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) issue(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -326,7 +301,7 @@ func (h *Handler) issue(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	res, err := h.Service.IssueWithActor(r.Context(), tenantID, in.Subject, in.Type, in.Claims, in.TTLSeconds, actorOf(r))
+	res, err := h.Service.Issue(r.Context(), tenantID, in.Subject, in.Type, in.Claims, in.TTLSeconds, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -335,7 +310,7 @@ func (h *Handler) issue(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -345,7 +320,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.RevokeWithActor(r.Context(), id, tenantID, actorOf(r)); err != nil {
+	if err := h.Service.Revoke(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

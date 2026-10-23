@@ -506,15 +506,14 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Returns the organisation''s dashboard figures: sign-ins, failures, active users and their trends. Requires analytics.read.'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Overview'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -665,7 +664,14 @@ paths:
                 next_cursor: 018f2a90-0a1b-7c2d-8e3f-4a5b6c7d8e00
               schema:
                 type: object
-                additionalProperties: true
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Row'
+                  next_cursor:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -723,8 +729,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/AuditVerifyResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -794,8 +799,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Summary'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1026,15 +1030,14 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Returns the organisation''s data-retention policy. Requires policy.read.'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/RetentionPolicy'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1064,18 +1067,15 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/RetentionPolicy'
+      description: 'Replaces the organisation''s data-retention policy. Requires policy.write.'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/RetentionPolicy'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1101,15 +1101,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Reports how many deleted users the retention policy would purge now, without purging them. Requires policy.read.'
       responses:
         '201':
           description: Created
@@ -1117,7 +1109,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [deleted_users_days, ripe_deleted_users]
+                properties:
+                  deleted_users_days:
+                    type: integer
+                  ripe_deleted_users:
+                    type: integer
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1143,15 +1140,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Purges the deleted users the retention policy has made ripe, now rather than at the next scheduled run. Requires policy.write.'
       responses:
         '201':
           description: Created
@@ -1159,7 +1148,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [purged]
+                properties:
+                  purged:
+                    type: integer
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1184,18 +1176,15 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/GdprCreateInput'
+      description: 'Requests erasure of a person''s data in the organisation, carried out after the grace period unless cancelled. Requires gdpr.write.'
       responses:
         '201':
           description: Created
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Request'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1221,7 +1210,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Cancels a scheduled erasure that has not run yet. Requires gdpr.write.'
       responses:
         '204':
           description: No Content
@@ -1250,7 +1239,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the organisation''s erasure requests and their state. Requires gdpr.write.'
       responses:
         '200':
           description: OK
@@ -1258,7 +1247,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Request'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1283,9 +1277,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+              $ref: '#/components/schemas/ExportInput'
       description: Queues an async export job; poll GET .../gdpr/export/{id} for status and payload.
       responses:
         '202':
@@ -1293,8 +1285,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/ExportRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1320,7 +1311,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the organisation''s data-export requests and their state. Requires gdpr.write.'
       responses:
         '200':
           description: OK
@@ -1328,7 +1319,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ExportRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1366,8 +1362,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/ExportRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1389,10 +1384,19 @@ paths:
         - apiKeyAuth: []
       responses:
         '200':
-          description: Portable account data excluding credential material
+          description: The caller's personal data, as a downloadable JSON document.
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                type: object
+                required: [profile, sessions, passkeys, roles, mfa_totp_enabled, generated_at]
+                properties:
+                  profile: {type: object, additionalProperties: true}
+                  sessions: {type: array, items: {type: object, additionalProperties: true}}
+                  passkeys: {type: array, items: {type: object, additionalProperties: true}}
+                  roles: {type: array, items: {type: object, additionalProperties: true}}
+                  mfa_totp_enabled: {type: boolean}
+                  generated_at: {type: string, format: date-time}
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/account/delete:
@@ -1442,8 +1446,7 @@ paths:
                   items:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/Sink'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1487,8 +1490,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Sink'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1584,8 +1586,7 @@ paths:
                   items:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/Notification'
                   unread_count:
                     type: integer
         '401':
@@ -1885,7 +1886,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Deletes the organisation''s version of an email template, so the default is sent again. Requires branding.write.'
       responses:
         '200':
           description: Built-in default after removing the override and its options
@@ -1922,7 +1923,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Returns an email template as the organisation sends it: its own version, or the default. Requires branding.write.'
       responses:
         '200':
           description: OK
@@ -2133,6 +2134,7 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated: {type: boolean, description: 'Present, true, when the list was cut at its limit (1000).'}
                   items:
                     type: array
                     items:
@@ -2364,10 +2366,20 @@ paths:
         - apiKeyAuth: []
       responses:
         '200':
-          description: Masked provider configuration
+          description: The organisation's effective provider configuration, its key masked.
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                type: object
+                required: [source, provider, model, base_url, max_tokens, last4, platform_fallback]
+                properties:
+                  source: {type: string, enum: [tenant, platform, none], description: 'Whose key answers: the organisation''s own, the deployment''s, or none.'}
+                  provider: {type: string}
+                  model: {type: string}
+                  base_url: {type: string}
+                  max_tokens: {type: integer}
+                  last4: {type: string, description: The key's last four characters.}
+                  platform_fallback: {type: boolean, description: Whether the deployment has a key to fall back on.}
         '401':
           $ref: '#/components/responses/Unauthorized'
     put:
@@ -2385,10 +2397,20 @@ paths:
             schema: { type: object, additionalProperties: true }
       responses:
         '200':
-          description: Updated provider configuration
+          description: The organisation's effective provider configuration, its key masked.
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                type: object
+                required: [source, provider, model, base_url, max_tokens, last4, platform_fallback]
+                properties:
+                  source: {type: string, enum: [tenant, platform, none], description: 'Whose key answers: the organisation''s own, the deployment''s, or none.'}
+                  provider: {type: string}
+                  model: {type: string}
+                  base_url: {type: string}
+                  max_tokens: {type: integer}
+                  last4: {type: string, description: The key's last four characters.}
+                  platform_fallback: {type: boolean, description: Whether the deployment has a key to fall back on.}
         '401':
           $ref: '#/components/responses/Unauthorized'
     delete:
@@ -2445,6 +2467,7 @@ paths:
       summary: Start checkout
       description: >-
         Returns a hosted-payment URL to redirect the admin to, or {status:"active"} when the plan is free or no card provider serves the request (direct activation). The provider is chosen by billing country (config-driven; an omitted country falls back to currency-based routing: INR → Razorpay, else the default provider). The provider's webhook later activates the subscription.
+        Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress.
       tags:
         - Billing
       parameters:
@@ -2453,6 +2476,7 @@ paths:
           required: true
           schema:
             type: string
+        - $ref: '#/components/parameters/IdempotencyKey'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2482,13 +2506,13 @@ paths:
                   type: string
                   format: uri
       responses:
+        '409': {description: 'A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly.'}
         '200':
           description: Either a checkout URL ({status:"checkout"}) or {status:"active"}
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/CheckoutResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2564,7 +2588,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the plans on sale, with their prices.'
       responses:
         '200':
           description: OK
@@ -2572,7 +2596,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Plan'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2598,7 +2627,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the organisation''s invoices, newest first. Requires billing.read.'
       responses:
         '200':
           description: OK
@@ -2606,7 +2635,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Invoice'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2632,15 +2666,14 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Returns the organisation''s subscription. Requires billing.read.'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Subscription'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2671,8 +2704,12 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+              required: [currency, plan_code]
+              properties:
+                currency:
+                  type: string
+                plan_code:
+                  type: string
       description: >-
         Puts the tenant on plan_code, priced in currency; no payment is taken here. A free
         plan starts a new period with a zero invoice. A paid plan that costs no more than the
@@ -2688,8 +2725,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Subscription'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '402':
@@ -2717,15 +2753,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Cancels the subscription at the end of the current period; it stays active until then. Requires billing.write.'
       responses:
         '201':
           description: Created
@@ -2733,7 +2761,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [cancel_at_period_end]
+                properties:
+                  cancel_at_period_end:
+                    type: boolean
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2763,7 +2794,8 @@ paths:
           description: Hosted checkout information
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                $ref: '#/components/schemas/CheckoutResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '422':
@@ -2835,7 +2867,8 @@ paths:
           description: Billing profile
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                $ref: '#/components/schemas/BillingProfile'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2863,7 +2896,8 @@ paths:
           description: Updated billing profile
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                $ref: '#/components/schemas/BillingProfile'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2892,7 +2926,8 @@ paths:
           description: Trial subscription
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                $ref: '#/components/schemas/Subscription'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2998,7 +3033,14 @@ paths:
           description: Resource usage by limit key
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                type: object
+                required: [usage]
+                properties:
+                  usage:
+                    type: object
+                    additionalProperties:
+                      type: integer
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3022,6 +3064,13 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: 'A key of the client''s choosing, 1 to 255 printable characters, that makes retrying the request safe. Kept for 24 hours.'
+      schema: {type: string, minLength: 1, maxLength: 255}
   securitySchemes:
     bearerAuth:
       type: http
@@ -3709,3 +3758,441 @@ components:
             request_id:
               type: string
               description: Correlates with the X-Request-Id header
+    ActivityPoint:
+      type: object
+      required: [date, ldap, magic_link, oidc, passkey, password, saml, social]
+      properties:
+        date:
+          type: string
+        ldap:
+          type: integer
+        magic_link:
+          type: integer
+        oidc:
+          type: integer
+        passkey:
+          type: integer
+        password:
+          type: integer
+        saml:
+          type: integer
+        social:
+          type: integer
+    AuditVerifyResult:
+      type: object
+      required: [ok, rows_checked]
+      properties:
+        broken_at_id:
+          type: string
+          format: uuid
+        broken_reason:
+          type: string
+        last_verified_id:
+          type: string
+          format: uuid
+        ok:
+          type: boolean
+        rows_checked:
+          type: integer
+    BillingProfile:
+      type: object
+      required: [address_line1, address_line2, billing_email, city, country, legal_name, postal_code, state, tax_id, tax_id_type]
+      properties:
+        address_line1:
+          type: string
+        address_line2:
+          type: string
+        billing_email:
+          type: string
+        city:
+          type: string
+        country:
+          type: string
+        legal_name:
+          type: string
+        postal_code:
+          type: string
+        state:
+          type: string
+        tax_id:
+          type: string
+        tax_id_type:
+          type: string
+    CheckoutResult:
+      type: object
+      required: [status]
+      properties:
+        checkout_url:
+          type: string
+        provider:
+          type: string
+        status:
+          type: string
+    ExportInput:
+      type: object
+      required: [tenant_id, user_id]
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+    ExportRequest:
+      type: object
+      required: [completed_at, created_at, id, requested_by, status, tenant_id, user_id]
+      properties:
+        completed_at:
+          type: [string, 'null']
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        error:
+          type: string
+        id:
+          type: string
+          format: uuid
+        payload:
+          type: object
+          additionalProperties: true
+        requested_by:
+          type: [string, 'null']
+          format: uuid
+        status:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+    GdprCreateInput:
+      type: object
+      required: [reason, tenant_id, user_id]
+      properties:
+        reason:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+    HourlyPoint:
+      type: object
+      required: [attempts, hour]
+      properties:
+        attempts:
+          type: integer
+        hour:
+          type: string
+    Invoice:
+      type: object
+      required: [amount_minor, currency, id, issued_at, period_end, period_start, place_of_supply, plan_code, status, tax_amount_minor, tax_rate_bps, tax_type, taxable_amount_minor]
+      properties:
+        amount_minor:
+          type: integer
+        currency:
+          type: string
+        id:
+          type: string
+          format: uuid
+        issued_at:
+          type: string
+          format: date-time
+        period_end:
+          type: string
+          format: date-time
+        period_start:
+          type: string
+          format: date-time
+        place_of_supply:
+          type: string
+        plan_code:
+          type: string
+        status:
+          type: string
+        tax_amount_minor:
+          type: integer
+        tax_rate_bps:
+          type: integer
+        tax_type:
+          type: string
+        taxable_amount_minor:
+          type: integer
+    MethodCount:
+      type: object
+      required: [method, users]
+      properties:
+        method:
+          type: string
+        users:
+          type: integer
+    MethodSlice:
+      type: object
+      required: [method, value]
+      properties:
+        method:
+          type: string
+        value:
+          type: number
+    Metric:
+      type: object
+      required: [delta_pct, value]
+      properties:
+        delta_pct:
+          type: number
+        value:
+          type: number
+    Overview:
+      type: object
+      required: [failed_logins_hourly_24h, failed_trend_14d, generated_at, kpis, login_activity_14d, login_methods_mix, login_trend_14d, mfa_methods_adoption, mfa_trend_14d, user_trend_14d, weekly_activity_8w]
+      properties:
+        failed_logins_hourly_24h:
+          type: array
+          items:
+            $ref: '#/components/schemas/HourlyPoint'
+        failed_trend_14d:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrendPoint'
+        generated_at:
+          type: string
+          format: date-time
+        kpis:
+          type: object
+          required: [avg_sessions_per_user, dau, failed_logins_24h, logins_today, mau, mfa_adoption_pct, stickiness_pct, total_users]
+          properties:
+            avg_sessions_per_user:
+              $ref: '#/components/schemas/Metric'
+            dau:
+              $ref: '#/components/schemas/Metric'
+            failed_logins_24h:
+              $ref: '#/components/schemas/Metric'
+            logins_today:
+              $ref: '#/components/schemas/Metric'
+            mau:
+              $ref: '#/components/schemas/Metric'
+            mfa_adoption_pct:
+              $ref: '#/components/schemas/Metric'
+            stickiness_pct:
+              $ref: '#/components/schemas/Metric'
+            total_users:
+              $ref: '#/components/schemas/Metric'
+        login_activity_14d:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActivityPoint'
+        login_methods_mix:
+          type: array
+          items:
+            $ref: '#/components/schemas/MethodSlice'
+        login_trend_14d:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrendPoint'
+        mfa_methods_adoption:
+          type: array
+          items:
+            $ref: '#/components/schemas/MethodCount'
+        mfa_trend_14d:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrendPoint'
+        user_trend_14d:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrendPoint'
+        weekly_activity_8w:
+          type: array
+          items:
+            $ref: '#/components/schemas/WeeklyActivityPoint'
+    Plan:
+      type: object
+      required: [code, description, features, id, interval, name, prices]
+      properties:
+        code:
+          type: string
+        description:
+          type: string
+        features:
+          type: array
+          items:
+            type: string
+        id:
+          type: string
+          format: uuid
+        interval:
+          type: string
+        name:
+          type: string
+        prices:
+          type: object
+          additionalProperties:
+            type: integer
+    Request:
+      type: object
+      required: [completed_at, created_at, grace_until, id, reason, requested_by, status, tenant_id, user_id]
+      properties:
+        completed_at:
+          type: [string, 'null']
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        grace_until:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        reason:
+          type: [string, 'null']
+        requested_by:
+          type: [string, 'null']
+          format: uuid
+        status:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+    RetentionPolicy:
+      type: object
+      required: [deleted_users_days, deleted_users_enabled]
+      properties:
+        deleted_users_days:
+          type: integer
+        deleted_users_enabled:
+          type: boolean
+    Row:
+      type: object
+      required: [action, actor_type, actor_user_id, created_at, id, ip, request_id, resource_id, resource_type, tenant_id, user_agent]
+      properties:
+        action:
+          type: string
+        actor_type:
+          type: string
+        actor_user_id:
+          type: [string, 'null']
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        ip:
+          type: [string, 'null']
+        request_id:
+          type: [string, 'null']
+        resource_id:
+          type: [string, 'null']
+          format: uuid
+        resource_type:
+          type: string
+        tenant_id:
+          type: [string, 'null']
+          format: uuid
+        user_agent:
+          type: [string, 'null']
+    Sink:
+      type: object
+      required: [created_at, enabled, endpoint, id, type]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        enabled:
+          type: boolean
+        endpoint:
+          type: string
+        id:
+          type: string
+          format: uuid
+        last_error:
+          type: string
+        last_forwarded_at:
+          type: string
+          format: date-time
+        type:
+          type: string
+    Subscription:
+      type: object
+      required: [amount_minor, cancel_at_period_end, currency, current_period_end, current_period_start, interval, plan_code, plan_name, status, trial_end]
+      properties:
+        amount_minor:
+          type: integer
+        cancel_at_period_end:
+          type: boolean
+        currency:
+          type: string
+        current_period_end:
+          type: [string, 'null']
+          format: date-time
+        current_period_start:
+          type: [string, 'null']
+          format: date-time
+        interval:
+          type: string
+        plan_code:
+          type: string
+        plan_name:
+          type: string
+        status:
+          type: string
+        trial_end:
+          type: [string, 'null']
+          format: date-time
+    Summary:
+      type: object
+      required: [high_score_open, open, resolved_7d]
+      properties:
+        high_score_open:
+          type: integer
+        open:
+          type: integer
+        resolved_7d:
+          type: integer
+    TrendPoint:
+      type: object
+      required: [date, value]
+      properties:
+        date:
+          type: string
+        value:
+          type: number
+    WeeklyActivityPoint:
+      type: object
+      required: [dau, wau, week]
+      properties:
+        dau:
+          type: integer
+        wau:
+          type: integer
+        week:
+          type: string
+    Notification:
+      type: object
+      required: [created_at, id, kind, title]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        description:
+          type: string
+        href:
+          type: string
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+        read_at:
+          type: string
+          format: date-time
+        title:
+          type: string

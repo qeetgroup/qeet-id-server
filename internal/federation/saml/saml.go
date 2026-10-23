@@ -86,6 +86,7 @@ func sweepDue(next *atomic.Int64) bool {
 	return now >= due && next.CompareAndSwap(due, now+int64(replaySweepInterval.Seconds()))
 }
 
+// NewService returns the SAML service.
 func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string) *Service {
 	return &Service{
 		pool:       pool,
@@ -95,6 +96,7 @@ func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string) *S
 	}
 }
 
+// Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 // toConnection maps a sqlc-generated row to the API-facing Connection type.
@@ -122,6 +124,7 @@ func toConnection(r dbgen.GetSamlConnectionRow) *Connection {
 	}
 }
 
+// CreateInput is what Create takes.
 type CreateInput struct {
 	Name           string `json:"name"`
 	IdpEntityID    string `json:"idp_entity_id"`
@@ -171,6 +174,7 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 	return toConnection(dbgen.GetSamlConnectionRow(row)), nil
 }
 
+// List returns the tenant's SAML connections.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, error) {
 	rows, err := s.q.ListSamlConnections(ctx, tenantID)
 	if err != nil {
@@ -212,6 +216,7 @@ func (s *Service) idpInitiatedFlags(ctx context.Context, tenantID uuid.UUID) (ma
 	return flags, rows.Err()
 }
 
+// Get returns one of the tenant's SAML connections.
 func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Connection, error) {
 	r, err := s.q.GetSamlConnection(ctx, dbgen.GetSamlConnectionParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -329,6 +334,7 @@ func (s *Service) AllowsIdPInitiated(ctx context.Context, connectionID uuid.UUID
 	return allowed, err
 }
 
+// Delete removes one of the tenant's SAML connections.
 func (s *Service) Delete(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID) error {
 	n, err := s.q.WithTx(tx).DeleteSamlConnection(ctx, dbgen.DeleteSamlConnectionParams{ID: id, TenantID: tenantID})
 	if err != nil {
@@ -657,6 +663,7 @@ type Handler struct {
 	PublicBaseURL string
 }
 
+// Mount registers the SAML routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	// SP side: external-IdP connections Qeet consumes.
 	r.Get("/tenants/{tenantID}/saml", h.list)
@@ -692,34 +699,11 @@ func (h *Handler) MountPublic(r chi.Router) {
 }
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrSAMLTenantIDInvalid
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrSAMLTenantMismatch
-	}
-	return scope, nil
-}
-
-func auditActor(r *http.Request) (*uuid.UUID, string) {
-	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil {
-		return nil, "system"
-	}
-	at := p.ActorType
-	if at == "" {
-		at = "user"
-	}
-	return p.UserID, at
+	return httpx.PathTenantOr(r, errs.ErrSAMLTenantIDInvalid, errs.ErrSAMLTenantMismatch)
 }
 
 func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID, resourceID uuid.UUID, action string, meta map[string]any) error {
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	tid := tenantID
 	rid := resourceID
 	return audit.Record(ctx, tx, audit.Event{

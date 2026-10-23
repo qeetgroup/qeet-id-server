@@ -166,6 +166,7 @@ SELECT id, name, scopes, token_ttl_seconds, status, sponsor_user_id, created_at
 FROM auth.agents
 WHERE tenant_id = $1 AND status <> 'decommissioned'
 ORDER BY created_at DESC
+LIMIT 1001
 `
 
 type ListAgentsRow struct {
@@ -178,6 +179,7 @@ type ListAgentsRow struct {
 	CreatedAt       time.Time
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListAgents(ctx context.Context, tenantID uuid.UUID) ([]ListAgentsRow, error) {
 	rows, err := q.db.Query(ctx, listAgents, tenantID)
 	if err != nil {
@@ -211,6 +213,7 @@ SELECT id, name, scopes, token_ttl_seconds, status, sponsor_user_id, created_at
 FROM auth.agents
 WHERE tenant_id = $1 AND sponsor_user_id = $2 AND status <> 'decommissioned'
 ORDER BY created_at DESC
+LIMIT 1001
 `
 
 type ListAgentsSponsoredByParams struct {
@@ -228,6 +231,7 @@ type ListAgentsSponsoredByRow struct {
 	CreatedAt       time.Time
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListAgentsSponsoredBy(ctx context.Context, arg ListAgentsSponsoredByParams) ([]ListAgentsSponsoredByRow, error) {
 	rows, err := q.db.Query(ctx, listAgentsSponsoredBy, arg.TenantID, arg.UserID)
 	if err != nil {

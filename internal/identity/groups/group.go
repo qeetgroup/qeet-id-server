@@ -23,8 +23,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
+// Group is a tenant group.
 type Group struct {
 	ID          uuid.UUID  `json:"id"`
 	TenantID    uuid.UUID  `json:"tenant_id"`
@@ -36,15 +38,18 @@ type Group struct {
 	MemberCount int `json:"member_count"`
 }
 
+// Service manages the groups.
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 }
 
+// NewService returns the group service.
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool)}
 }
 
+// CreateInput is what Create takes.
 type CreateInput struct {
 	TenantID    uuid.UUID  `json:"tenant_id"`
 	ParentID    *uuid.UUID `json:"parent_id"`
@@ -67,6 +72,7 @@ type OptionalUUID struct {
 	ID  *uuid.UUID
 }
 
+// UnmarshalJSON implements json.Unmarshaler.
 func (o *OptionalUUID) UnmarshalJSON(b []byte) error {
 	o.Set = true
 	if string(b) == "null" {
@@ -205,6 +211,8 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Group, error)
 	return out, rows.Err()
 }
 
+// Delete removes one of the tenant's groups and its subgroups, recorded as
+// actor's.
 func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -295,6 +303,7 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 	return &g, tx.Commit(ctx)
 }
 
+// AddMember adds a user to one of the tenant's groups, recorded as actor's.
 func (s *Service) AddMember(ctx context.Context, groupID, userID, tenantID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -330,6 +339,8 @@ func (s *Service) AddMember(ctx context.Context, groupID, userID, tenantID uuid.
 	return tx.Commit(ctx)
 }
 
+// RemoveMember removes a user from one of the tenant's groups, recorded as
+// actor's.
 func (s *Service) RemoveMember(ctx context.Context, groupID, userID, tenantID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -364,6 +375,7 @@ type Member struct {
 	DisplayName *string   `json:"display_name"`
 }
 
+// ListMembers returns the members of one of the tenant's groups.
 func (s *Service) ListMembers(ctx context.Context, groupID, tenantID uuid.UUID) ([]Member, error) {
 	rows, err := s.q.ListGroupMembers(ctx, dbgen.ListGroupMembersParams{GroupID: groupID, TenantID: tenantID})
 	if err != nil {
@@ -380,10 +392,12 @@ func (s *Service) ListMembers(ctx context.Context, groupID, tenantID uuid.UUID) 
 	return out, nil
 }
 
+// Handler serves the group HTTP API.
 type Handler struct {
 	Service *Service
 }
 
+// Mount registers the group routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/groups", h.create)
 	r.Get("/tenants/{tenantID}/groups", h.list)
@@ -392,18 +406,6 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/groups/{id}/members/{userID}", h.addMember)
 	r.Delete("/groups/{id}/members/{userID}", h.removeMember)
 	r.Get("/groups/{id}/members", h.listMembers)
-}
-
-// actorOf captures the request's audit provenance from the principal + headers.
-func actorOf(r *http.Request) audit.Actor {
-	a := audit.Actor{Type: "user", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
-		a.UserID = p.UserID
-		if p.ActorType != "" {
-			a.Type = p.ActorType
-		}
-	}
-	return a
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
@@ -418,7 +420,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.TenantID = tenantID // scope from principal, never the body
-	g, err := h.Service.Create(r.Context(), in, actorOf(r))
+	g, err := h.Service.Create(r.Context(), in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -460,7 +462,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.Delete(r.Context(), id, tenantID, actorOf(r)); err != nil {
+	if err := h.Service.Delete(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -483,7 +485,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	g, err := h.Service.Update(r.Context(), id, tenantID, in, actorOf(r))
+	g, err := h.Service.Update(r.Context(), id, tenantID, in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -507,7 +509,7 @@ func (h *Handler) addMember(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.AddMember(r.Context(), id, uid, tenantID, actorOf(r)); err != nil {
+	if err := h.Service.AddMember(r.Context(), id, uid, tenantID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -530,7 +532,7 @@ func (h *Handler) removeMember(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.RemoveMember(r.Context(), id, uid, tenantID, actorOf(r)); err != nil {
+	if err := h.Service.RemoveMember(r.Context(), id, uid, tenantID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -553,5 +555,5 @@ func (h *Handler) listMembers(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }

@@ -15,8 +15,9 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
-	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/idempotency"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/worker"
 )
 
 // AuditVerifyInterval is how often every audit chain is verified.
@@ -107,6 +108,18 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller) []wor
 					return err
 				}
 				slog.Info("published outbox events cleaned", "deleted", n)
+				return nil
+			},
+		},
+		{
+			Name:     "idempotency-cleanup",
+			Interval: time.Hour,
+			Run: func(ctx context.Context) error {
+				n, err := idempotency.Purge(ctx, pool)
+				if err != nil {
+					return err
+				}
+				slog.Info("idempotency keys cleaned", "deleted", n)
 				return nil
 			},
 		},

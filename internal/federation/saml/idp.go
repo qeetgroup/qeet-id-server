@@ -189,6 +189,8 @@ type PlanGate interface {
 // SetPlanGate wires the plan-feature gate (nil allows all features).
 func (i *IdP) SetPlanGate(g PlanGate) { i.gate = g }
 
+// NewIdP returns the SAML identity provider, signing with the key and
+// certificate given.
 func NewIdP(pool *pgxpool.Pool, keyPEM, certPEM, loginBaseURL string, sessions SessionResolver) (*IdP, error) {
 	signer, err := newIdPSigner(keyPEM, certPEM)
 	if err != nil {
@@ -203,6 +205,7 @@ func NewIdP(pool *pgxpool.Pool, keyPEM, certPEM, loginBaseURL string, sessions S
 	}, nil
 }
 
+// Pool returns the connection pool, for handlers that run their own transaction.
 func (i *IdP) Pool() *pgxpool.Pool { return i.pool }
 
 // toSP maps a sqlc-generated row to the API-facing ServiceProvider type.
@@ -228,6 +231,7 @@ func toSP(r dbgen.TenantSamlServiceProvider) *ServiceProvider {
 	}
 }
 
+// CreateSPInput is what CreateSP takes.
 type CreateSPInput struct {
 	Name            string `json:"name"`
 	EntityID        string `json:"entity_id"`
@@ -321,6 +325,7 @@ func (i *IdP) CreateSP(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in Cr
 	return toSP(r), nil
 }
 
+// ListSP returns the tenant's service providers.
 func (i *IdP) ListSP(ctx context.Context, tenantID uuid.UUID) ([]ServiceProvider, error) {
 	rows, err := i.q.ListSamlSPs(ctx, tenantID)
 	if err != nil {
@@ -333,6 +338,7 @@ func (i *IdP) ListSP(ctx context.Context, tenantID uuid.UUID) ([]ServiceProvider
 	return out, nil
 }
 
+// GetSP returns one of the tenant's service providers.
 func (i *IdP) GetSP(ctx context.Context, id, tenantID uuid.UUID) (*ServiceProvider, error) {
 	r, err := i.q.GetSamlSP(ctx, dbgen.GetSamlSPParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -344,6 +350,7 @@ func (i *IdP) GetSP(ctx context.Context, id, tenantID uuid.UUID) (*ServiceProvid
 	return toSP(r), nil
 }
 
+// UpdateSPInput is what UpdateSP takes.
 type UpdateSPInput struct {
 	Name            *string `json:"name"`
 	EntityID        *string `json:"entity_id"`
@@ -397,6 +404,7 @@ func (i *IdP) UpdateSP(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, i
 	return toSP(r), nil
 }
 
+// DeleteSP removes one of the tenant's service providers.
 func (i *IdP) DeleteSP(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID) error {
 	n, err := i.q.WithTx(tx).DeleteSamlSP(ctx, dbgen.DeleteSamlSPParams{ID: id, TenantID: tenantID})
 	if err != nil {
@@ -1061,7 +1069,7 @@ func (h *Handler) delSP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) recordSPAudit(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID, resourceID uuid.UUID, action string, meta map[string]any) error {
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	tid, rid := tenantID, resourceID
 	return audit.Record(ctx, tx, audit.Event{
 		TenantID:     &tid,

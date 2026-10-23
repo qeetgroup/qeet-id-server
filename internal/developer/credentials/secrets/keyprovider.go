@@ -16,6 +16,7 @@ type KeyProvider interface {
 // manager). Must be 16, 24, or 32 bytes (AES-128/192/256).
 type StaticKeyProvider struct{ Key []byte }
 
+// DataKey returns the configured key.
 func (p StaticKeyProvider) DataKey(_ context.Context) ([]byte, error) {
 	if len(p.Key) == 0 {
 		return nil, errors.New("secret: empty data key")

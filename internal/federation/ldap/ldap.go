@@ -76,10 +76,12 @@ type Service struct {
 	allowSkipVerify bool
 }
 
+// NewService returns the LDAP service.
 func NewService(pool *pgxpool.Pool, authSvc *auth.Service, policies ...*egress.Policy) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), auth: authSvc, egress: egress.PublicPolicy(policies...)}
 }
 
+// SetCipher sets the cipher that encrypts LDAP secrets at rest.
 func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
 
 // SetAllowSkipTLSVerify lets connections turn off verification of the
@@ -105,6 +107,7 @@ type PlanGate interface {
 // SetPlanGate wires the plan-feature gate (nil allows all features).
 func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 
+// Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 // pgLastLogin converts a nullable timestamptz to *time.Time for LastLoginAt.
@@ -138,6 +141,7 @@ func connFields(c *Connection, id, tenantID uuid.UUID, name, serverURL string, s
 	c.LastLoginAt = pgLastLogin(lastLoginAt)
 }
 
+// CreateInput is what Create takes.
 type CreateInput struct {
 	Name           string `json:"name"`
 	ServerURL      string `json:"server_url"`
@@ -159,6 +163,7 @@ func defaulted(v, def string) string {
 	return v
 }
 
+// Create adds an LDAP connection to the tenant.
 func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in CreateInput) (*Connection, error) {
 	if _, err := s.egress.ValidateLDAPURL(in.ServerURL); err != nil {
 		return nil, errs.ErrLDAPServerURLInvalid
@@ -227,6 +232,7 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 	return &c, nil
 }
 
+// List returns the tenant's LDAP connections.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, error) {
 	rows, err := s.q.ListLdapConnections(ctx, tenantID)
 	if err != nil {
@@ -241,6 +247,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, e
 	return out, nil
 }
 
+// Get returns one of the tenant's LDAP connections.
 func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Connection, error) {
 	r, err := s.q.GetLdapConnection(ctx, dbgen.GetLdapConnectionParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -312,6 +319,7 @@ func (s *Service) getFull(ctx context.Context, id, tenantID uuid.UUID) (*connFul
 	return &c, nil
 }
 
+// UpdateInput is what Update takes.
 type UpdateInput struct {
 	Name           *string `json:"name"`
 	ServerURL      *string `json:"server_url"`
@@ -326,6 +334,7 @@ type UpdateInput struct {
 	Status         *string `json:"status"`
 }
 
+// Update changes one of the tenant's LDAP connections.
 func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, in UpdateInput) (*Connection, error) {
 	if in.ServerURL != nil {
 		if _, err := s.egress.ValidateLDAPURL(*in.ServerURL); err != nil {
@@ -387,6 +396,7 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 	return &c, nil
 }
 
+// Delete removes one of the tenant's LDAP connections.
 func (s *Service) Delete(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID) error {
 	n, err := s.q.WithTx(tx).DeleteLdapConnection(ctx, dbgen.DeleteLdapConnectionParams{ID: id, TenantID: tenantID})
 	if err != nil {
@@ -660,10 +670,12 @@ func lockoutName(username string) string {
 	return strings.ToLower(strings.Join(strings.Fields(username), " "))
 }
 
+// Handler serves the LDAP HTTP API.
 type Handler struct {
 	Service *Service
 }
 
+// Mount registers the LDAP routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/ldap", h.list)
 	r.Post("/tenants/{tenantID}/ldap", h.create)
@@ -673,39 +685,13 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/tenants/{tenantID}/ldap/{id}/test", h.test)
 }
 
+// MountPublic registers the LDAP routes that take no user token.
 func (h *Handler) MountPublic(r chi.Router) {
 	r.Post("/ldap/{id}/authenticate", h.authenticateHTTP)
 }
 
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
-	}
-	return scope, nil
-}
-
-func auditActor(r *http.Request) (*uuid.UUID, string) {
-	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil {
-		return nil, "system"
-	}
-	at := p.ActorType
-	if at == "" {
-		at = "user"
-	}
-	return p.UserID, at
-}
-
 func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID, resourceID uuid.UUID, action string, meta map[string]any) error {
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	tid := tenantID
 	rid := resourceID
 	return audit.Record(ctx, tx, audit.Event{
@@ -723,7 +709,7 @@ func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, t
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -737,7 +723,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -782,7 +768,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -801,7 +787,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -844,7 +830,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -877,7 +863,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) test(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

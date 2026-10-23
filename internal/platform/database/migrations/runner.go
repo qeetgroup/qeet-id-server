@@ -73,8 +73,10 @@ type SchemaError struct {
 	Err error
 }
 
+// Unwrap returns the underlying error.
 func (e *SchemaError) Unwrap() error { return e.Err }
 
+// Error describes the schema state and how to recover.
 func (e *SchemaError) Error() string {
 	if errors.Is(e.Err, ErrSchemaDirty) {
 		return fmt.Sprintf("database schema is dirty at migration %d: that migration failed part-way. "+

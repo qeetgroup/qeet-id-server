@@ -81,13 +81,14 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
-	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/idempotency"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/health"
-	logger "github.com/qeetgroup/qeet-id-server/internal/platform/observability/logging"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/logging"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/worker"
 )
 
 type namedWorker struct {
@@ -343,7 +344,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 			os.Exit(1)
 		}
 		activityNATSConn = nc
-		slog.Info("activity hub: connected to NATS", "url", logger.StripURLCredentials(cfg.NATSURL))
+		slog.Info("activity hub: connected to NATS", "url", logging.StripURLCredentials(cfg.NATSURL))
 	}
 	activityHub := activity.NewHub(activityNATSConn)
 
@@ -371,7 +372,6 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	evidenceService := gdpr.NewEvidenceService(pool, auditVerifier, cfg.BreachedPasswordCheck)
 	auditAnomalyService := anomaly.NewService(pool)
 	analyticsReader := analytics.NewReader(pool)
-	outboxReader := outbox.NewReader(pool)
 
 	startedAt := time.Now()
 	healthHandler := health.New(cfg.ServiceName, cfg.ServiceEnv, startedAt)
@@ -633,7 +633,6 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Entitlement:   &entitlements.Handler{Service: entitlementSvc},
 		Sales:         &sales.Handler{Service: salesService},
 		Analytics:     &analytics.Handler{Reader: analyticsReader},
-		Outbox:        &outbox.Handler{Reader: outboxReader},
 		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Methods: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: !cfg.IsDev(), PublicBaseURL: cfg.PublicBaseURL},
 		Passkey:       &passkey.Handler{Service: passkeyService, CookieSecure: !cfg.IsDev()},
 		Social:        &social.Handler{Service: socialService, CookieSecure: !cfg.IsDev(), LoginBaseURL: cfg.LoginBaseURL, PublicBaseURL: cfg.PublicBaseURL},
@@ -676,6 +675,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		TenantLim:        tenantTenantLim,
 		UserLim:          tenantUserLim,
 		APIKeyLim:        tenantAPIKeyLim,
+		Idempotency:      idempotency.NewStore(pool, sharedCipher),
 	}
 	if activityNATSConn != nil {
 		deps.shutdownHooks = append(deps.shutdownHooks, func() { _ = activityNATSConn.Drain() })

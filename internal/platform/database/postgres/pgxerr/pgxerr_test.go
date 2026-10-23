@@ -8,7 +8,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 func TestPredicates(t *testing.T) {
@@ -25,18 +24,5 @@ func TestPredicates(t *testing.T) {
 	// Predicates must see through wrapping.
 	if !pgxerr.IsUnique(fmt.Errorf("insert: %w", uniq)) {
 		t.Error("IsUnique should unwrap")
-	}
-}
-
-func TestTranslate(t *testing.T) {
-	if got := pgxerr.Translate(&pgconn.PgError{Code: "23505"}); !errors.Is(got, errs.ErrConflict) {
-		t.Errorf("23505 -> %v, want ErrConflict", got)
-	}
-	other := errors.New("boom")
-	if got := pgxerr.Translate(other); got != other { //nolint:errorlint // pass-through must return the same value, not a wrapper
-		t.Errorf("non-pg error should pass through, got %v", got)
-	}
-	if got := pgxerr.Translate(nil); got != nil {
-		t.Errorf("nil should pass through, got %v", got)
 	}
 }

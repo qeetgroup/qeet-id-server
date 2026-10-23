@@ -28,17 +28,6 @@ type Limiter interface {
 	GetAll(ctx context.Context, pool *pgxpool.Pool) ([]ratelimit.TenantLimit, error)
 }
 
-func actorOf(r *http.Request) audit.Actor {
-	actor := audit.Actor{Type: "system", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	if principal := httpx.PrincipalFromCtx(r.Context()); principal != nil {
-		actor.UserID = principal.UserID
-		if principal.ActorType != "" {
-			actor.Type = principal.ActorType
-		}
-	}
-	return actor
-}
-
 // Defaults are the platform-level fallback values shown in the UI when no
 // tenant override exists.
 type Defaults struct {
@@ -50,6 +39,7 @@ type Defaults struct {
 	APIKeyCapacity int
 }
 
+// Handler serves the rate-limit override HTTP API.
 type Handler struct {
 	Pool      *pgxpool.Pool
 	TenantLim Limiter
@@ -58,6 +48,7 @@ type Handler struct {
 	Defaults  Defaults
 }
 
+// Mount registers the rate-limit override routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/rate-limits", h.get)
 	r.Put("/tenants/{tenantID}/rate-limits", h.put)
@@ -79,6 +70,7 @@ func requireTenant(r *http.Request) (uuid.UUID, error) {
 	return scope, nil
 }
 
+// LimitConfig is a bucket's rate (requests a second) and capacity (burst).
 type LimitConfig struct {
 	Rate     *float64 `json:"rate"`
 	Capacity *int     `json:"capacity"`
@@ -102,6 +94,7 @@ func (c LimitConfig) check(key string, rate float64, capacity int) error {
 	return nil
 }
 
+// TenantLimits is a tenant's limits per tenant, user and API key.
 type TenantLimits struct {
 	Tenant LimitConfig `json:"tenant"`
 	User   LimitConfig `json:"user"`
@@ -214,7 +207,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := audit.Record(ctx, tx, actorOf(r).Event(tenantID, "rate_limits.updated", "tenant", tenantID, metadata)); err != nil {
+	if err := audit.Record(ctx, tx, audit.ActorOf(r).Event(tenantID, "rate_limits.updated", "tenant", tenantID, metadata)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -254,7 +247,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := audit.Record(ctx, tx, actorOf(r).Event(tenantID, "rate_limits.deleted", "tenant", tenantID, nil)); err != nil {
+	if err := audit.Record(ctx, tx, audit.ActorOf(r).Event(tenantID, "rate_limits.deleted", "tenant", tenantID, nil)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

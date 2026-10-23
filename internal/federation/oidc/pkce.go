@@ -69,6 +69,7 @@ type OptionalTime struct {
 	At  *time.Time
 }
 
+// UnmarshalJSON implements json.Unmarshaler.
 func (o *OptionalTime) UnmarshalJSON(b []byte) error {
 	o.Set = true
 	if string(b) == "null" {

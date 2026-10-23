@@ -187,8 +187,17 @@ SELECT id, tenant_id, actor_user_id, actor_type, action,
 FROM audit.events
 WHERE tenant_id IS NOT DISTINCT FROM $1
   AND row_hash IS NOT NULL
+  AND (created_at, id) > ($2::timestamptz, $3::uuid)
 ORDER BY created_at ASC, id ASC
+LIMIT $4
 `
+
+type ListAuditEventsForVerifyParams struct {
+	TenantID       pgtype.UUID
+	AfterCreatedAt time.Time
+	AfterID        uuid.UUID
+	PageSize       int32
+}
 
 type ListAuditEventsForVerifyRow struct {
 	ID           uuid.UUID
@@ -207,12 +216,18 @@ type ListAuditEventsForVerifyRow struct {
 	RowHash      *string
 }
 
-// Walk the chain in chronological insert order for hash-chain verification.
+// Walk the chain in chronological insert order for hash-chain verification,
+// one page after (after_created_at, after_id) at a time.
 // Only rows with non-NULL hashes (post-hash-chain migration) are returned.
 // COALESCE on optional fields ensures the canonical bytes match what Record
 // wrote at insert time regardless of how Postgres stored the values.
-func (q *Queries) ListAuditEventsForVerify(ctx context.Context, tenantID pgtype.UUID) ([]ListAuditEventsForVerifyRow, error) {
-	rows, err := q.db.Query(ctx, listAuditEventsForVerify, tenantID)
+func (q *Queries) ListAuditEventsForVerify(ctx context.Context, arg ListAuditEventsForVerifyParams) ([]ListAuditEventsForVerifyRow, error) {
+	rows, err := q.db.Query(ctx, listAuditEventsForVerify,
+		arg.TenantID,
+		arg.AfterCreatedAt,
+		arg.AfterID,
+		arg.PageSize,
+	)
 	if err != nil {
 		return nil, err
 	}

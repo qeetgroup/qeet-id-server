@@ -25,6 +25,8 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
+// Service proves a user controls an email address or phone number, by a code
+// sent to it.
 type Service struct {
 	pool   *pgxpool.Pool
 	q      *dbgen.Queries
@@ -53,6 +55,7 @@ const (
 	purposeChangeEmail = "change_email"
 )
 
+// NewService returns the verification service.
 func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration) *Service {
 	if ttl <= 0 {
 		ttl = 10 * time.Minute
@@ -173,6 +176,7 @@ func checkUsable(l latestCode, code string) error {
 	return nil
 }
 
+// StartEmail sends a verification code to the user's email address.
 func (s *Service) StartEmail(ctx context.Context, userID uuid.UUID, email string, who Requester) error {
 	// Default to the address on file so the caller doesn't have to pass their
 	// own email just to verify it (POST .../verify/email/start with no body).
@@ -436,6 +440,7 @@ func (s *Service) noticeEmailChanged(ctx context.Context, userID uuid.UUID, oldE
 	}
 }
 
+// StartPhone sends a verification code to the user's phone number.
 func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string) error {
 	// Default to the number on file when the body omits it.
 	if strings.TrimSpace(phone) == "" {
@@ -470,6 +475,7 @@ func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string
 	})
 }
 
+// ConfirmPhone verifies the user's phone number with the code sent to it.
 func (s *Service) ConfirmPhone(ctx context.Context, userID uuid.UUID, code string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

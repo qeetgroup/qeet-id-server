@@ -62,7 +62,7 @@ and `internal/access/threat/risk` are different things.
 Reuse the established pattern before introducing an abstraction. Every domain package follows the
 same shape: `queries.sql` + `sqlc.yaml` + generated `dbgen/`, plus Go files named after the
 **domain** — `passkey.go`, `agent.go`, `oidc.go`. **The convention is `<domain>.go`, not
-`service.go`/`repository.go`**: only four packages use layered names and only twelve have an
+`service.go`/`repository.go`**: only four packages use layered names and sixteen have an
 `http.go`. Check [docs/llm/subsystems.md](docs/llm/subsystems.md) for the real filenames before
 looking for one.
 
@@ -85,7 +85,21 @@ workers are wired **there**, not in the package that defines them.
 
 `api/openapi/` is the contract, split into five bounded-context documents. **A route added without
 documenting it fails CI** — `internal/bootstrap/openapi_coverage_test.go` asserts every mounted route
-appears in a specification. Update the spec in the same change as the route.
+appears in a specification, and `openapi_valid_test.go` that every document is valid OpenAPI 3.1.
+Update the spec in the same change as the route.
+
+**URLs.** The organisation always comes from the caller's token (`httpx.RequireTenant`). A new
+organisation-administration route also names it in the path, `/v1/tenants/{tenantID}/…`
+(`EnforceTenantScope` checks the two agree); a person's own routes live under `/v1/me/…`. The routes
+that predate this rule and take the organisation from the token alone are frozen in
+`tokenScopedRoutes` (`internal/bootstrap/permissions_test.go`); don't add to that list.
+
+**Compatibility from 1.0.** Changes are additive: a new route, a new optional request field, a new
+response field, a new error code. Never remove or rename a field, change its type or meaning, make
+an optional field required, or change a status code or an error code a client may branch on. To retire
+something, mark it `deprecated: true` in the spec and answer with `Deprecation` (RFC 9745) and
+`Sunset` (RFC 8594) headers for at least six months, then remove it only in a new major version
+(`/v2`). Clients must ignore response fields they don't know.
 
 ### 6. Preserve tenant isolation — the highest-severity rule here
 
@@ -170,7 +184,7 @@ Single test: `go test ./internal/access/authentication/... -run TestName`
 
 | Job | Runs |
 |---|---|
-| `test` | `go build ./...`, `go vet ./...`, `go test -race -count=1 ./...` — includes the OpenAPI route-coverage gate and the static guards: tenant filter (`internal/platform/database/tenantguard`), pool use inside a transaction (`…/txguard`), error-code statuses and `.env.example` completeness; reports coverage |
+| `test` | `go build ./...`, `go vet ./...`, `go test -race -count=1 ./...` — includes the OpenAPI route-coverage and document-validity gates and the static guards: tenant filter (`internal/platform/database/tenantguard`), pool use inside a transaction (`…/txguard`), error-code statuses and `.env.example` completeness; reports coverage |
 | `database` | `go test -tags integration ./...` — tenant-isolation and sign-in tests against PostgreSQL (testcontainers) |
 | `lint` | `golangci-lint` v2.14.0 on the whole tree; `sqlc diff` in every package |
 | `vuln` | `govulncheck ./cmd/... ./internal/...` blocking, plus an advisory full-tree scan |

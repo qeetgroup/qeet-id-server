@@ -6,6 +6,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -44,7 +45,7 @@ func (h *Handler) createTemplate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	t, err := h.Service.CreateTemplate(r.Context(), tenantID, in, actorOf(r))
+	t, err := h.Service.CreateTemplate(r.Context(), tenantID, in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -63,7 +64,7 @@ func (h *Handler) deleteTemplate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.DeleteTemplate(r.Context(), id, tenantID, actorOf(r)); err != nil {
+	if err := h.Service.DeleteTemplate(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -91,7 +92,7 @@ func (h *Handler) applyTemplate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	created, err := h.Service.ApplyTemplate(r.Context(), id, tenantID, in.ParentID, actorOf(r))
+	created, err := h.Service.ApplyTemplate(r.Context(), id, tenantID, in.ParentID, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -114,7 +115,7 @@ func (h *Handler) importGroups(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	res, err := h.Service.ImportGroups(r.Context(), tenantID, in.Groups, actorOf(r))
+	res, err := h.Service.ImportGroups(r.Context(), tenantID, in.Groups, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

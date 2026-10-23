@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -71,6 +71,7 @@ func (h *Handler) hashNewPassword(ctx context.Context, tenantID uuid.UUID, email
 	return password.Hash(plain)
 }
 
+// Mount registers the user routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	// /me is the caller's own account, resolved from the principal, so it needs no
 	// tenant: a user who belongs to no organisation yet can still use it. Its route

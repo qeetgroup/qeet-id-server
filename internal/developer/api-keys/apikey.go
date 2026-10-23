@@ -23,11 +23,12 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/api-keys/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
+// Key is an API key, without its secret.
 type Key struct {
 	ID         uuid.UUID  `json:"id"`
 	TenantID   uuid.UUID  `json:"tenant_id"`
@@ -49,12 +50,14 @@ type PlanLimiter interface {
 	Limit(ctx context.Context, tenantID uuid.UUID, resource string) (int, error)
 }
 
+// Service manages the API keys.
 type Service struct {
 	pool   *pgxpool.Pool
 	q      *dbgen.Queries
 	limits PlanLimiter
 }
 
+// NewService returns the API key service.
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool)}
 }
@@ -136,6 +139,7 @@ func rowToKey(id uuid.UUID, tenantID uuid.UUID, userID pgtype.UUID, name, prefix
 	}
 }
 
+// CreateInput is what Create takes.
 type CreateInput struct {
 	TenantID  uuid.UUID  `json:"tenant_id" validate:"required"`
 	UserID    *uuid.UUID `json:"user_id"`
@@ -147,6 +151,8 @@ type CreateInput struct {
 	Actor audit.Actor `json:"-"`
 }
 
+// Create issues an API key and returns it with its plaintext secret, shown
+// only now.
 func (s *Service) Create(ctx context.Context, in CreateInput) (*Key, string, error) {
 	// A key presents itself as its user on every call, so it may act only for
 	// the person creating it. Naming anyone else, a colleague or someone in
@@ -220,6 +226,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Key, string, err
 	return &k, full, nil
 }
 
+// List returns the tenant's API keys.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Key, error) {
 	rows, err := s.q.ListAPIKeys(ctx, tenantID)
 	if err != nil {
@@ -233,6 +240,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Key, error) {
 	return out, nil
 }
 
+// Revoke revokes one of the tenant's API keys, recorded as actor's.
 func (s *Service) Revoke(ctx context.Context, tenantID, id uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -318,22 +326,12 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 	})
 }
 
+// Handler serves the API key HTTP API.
 type Handler struct {
 	Service *Service
 }
 
-// actorOf is the caller, for the key's owner check and the audit trail.
-func actorOf(r *http.Request) audit.Actor {
-	a := audit.Actor{Type: "user", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
-		a.UserID = p.UserID
-		if p.ActorType != "" {
-			a.Type = p.ActorType
-		}
-	}
-	return a
-}
-
+// Mount registers the API key routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/api-keys", h.create)
 	r.Get("/tenants/{tenantID}/api-keys", h.list)
@@ -352,7 +350,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.TenantID = tid
-	in.Actor = actorOf(r)
+	in.Actor = audit.ActorOf(r)
 	if in.Name == "" {
 		httpx.WriteError(w, r, errs.ErrAPIKeyNameRequired)
 		return
@@ -394,7 +392,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.Revoke(r.Context(), tid, id, actorOf(r)); err != nil {
+	if err := h.Service.Revoke(r.Context(), tid, id, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

@@ -63,10 +63,6 @@ func relayedClientIP(r *http.Request) string {
 	return addr.Unmap().String()
 }
 
-// ViaTrustedRelay reports whether the request came from a trusted relay that
-// named the person's address.
-func ViaTrustedRelay(r *http.Request) bool { return relayedClientIP(r) != "" }
-
 const ctxKeyClientIP ctxKey = "qeet.client_ip"
 
 // ClientIPContext puts the request's client address (ClientIP) in its context,

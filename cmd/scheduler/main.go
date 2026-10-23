@@ -15,11 +15,11 @@ import (
 	webhook "github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/migrations"
-	db "github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
-	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo"
-	logger "github.com/qeetgroup/qeet-id-server/internal/platform/observability/logging"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/logging"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/worker"
 )
 
 func main() {
@@ -34,7 +34,7 @@ func main() {
 	}
 
 	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
-	slog.SetDefault(slog.New(logger.NewRedactingHandler(handler)))
+	slog.SetDefault(slog.New(logging.NewRedactingHandler(handler)))
 
 	bi := buildinfo.Get()
 	slog.Info("scheduler starting",
@@ -53,7 +53,7 @@ func main() {
 		slog.Error("refusing to start: " + err.Error())
 		os.Exit(1)
 	}
-	pool, err := db.NewPool(rootCtx, cfg.DBURL, cfg.DBMinConns, cfg.DBMaxConns)
+	pool, err := postgres.NewPool(rootCtx, cfg.DBURL, cfg.DBMinConns, cfg.DBMaxConns)
 	if err != nil {
 		slog.Error("connect db", "err", err)
 		os.Exit(1)

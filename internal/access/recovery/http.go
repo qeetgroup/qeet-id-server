@@ -34,6 +34,7 @@ type Handler struct {
 	PublicBaseURL string
 }
 
+// Mount registers the password reset and magic link routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/auth/forgot-password", h.forgot)
 	r.Post("/auth/reset-password", h.reset)
@@ -76,7 +77,7 @@ func (h *Handler) forgot(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	raw, err := h.Service.StartPasswordResetFrom(r.Context(), in.Email, ResetOrigin{
+	raw, err := h.Service.StartPasswordReset(r.Context(), in.Email, ResetOrigin{
 		App:      in.App,
 		ReturnTo: h.authorizeReturnTo(r, in.ReturnTo),
 		Audit:    AuditCtx{IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)},

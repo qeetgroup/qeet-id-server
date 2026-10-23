@@ -20,8 +20,8 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/hibp"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -192,6 +192,7 @@ type Service struct {
 	lockout LockoutLimits
 }
 
+// NewService returns the authentication policy service.
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), lockout: DefaultLockoutLimits()}
 }
@@ -203,6 +204,7 @@ func (s *Service) SetLockoutLimits(l LockoutLimits) { s.lockout = l }
 // SetBreachChecker sets the breached-password checker (nil: no check).
 func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
 
+// Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 // toDomain maps a generated TenantAuthPolicy row to the domain Policy model.
@@ -477,32 +479,19 @@ func (s *Service) RememberDevicePolicy(ctx context.Context, tenantID uuid.UUID) 
 	return p.RememberDeviceEnabled, time.Duration(days) * 24 * time.Hour, nil
 }
 
+// Handler serves the authentication policy HTTP API.
 type Handler struct {
 	Service *Service
 }
 
+// Mount registers the authentication policy routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/auth-policy", h.get)
 	r.Put("/tenants/{tenantID}/auth-policy", h.update)
 }
 
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
-	}
-	return scope, nil
-}
-
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -516,7 +505,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

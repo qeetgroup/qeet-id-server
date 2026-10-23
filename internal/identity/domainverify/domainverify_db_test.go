@@ -8,6 +8,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -27,12 +28,12 @@ func TestDomainsStayInTheirTenant(t *testing.T) {
 	tenantA, tenantB := dbtest.Tenant(t), dbtest.Tenant(t)
 	adminB := dbtest.User(t, tenantB, tenantB)
 	name := dbtest.Unique("acme") + ".example.test"
-	domainA, err := svc.Add(ctx, tenantA, name)
+	domainA, err := svc.Add(ctx, tenantA, name, audit.Actor{Type: "system"})
 	if err != nil {
 		t.Fatalf("add domain in A: %v", err)
 	}
 	svc.resolver = txtRecords{domainA.VerificationToken}
-	if _, err := svc.Verify(ctx, domainA.ID, tenantA); err != nil {
+	if _, err := svc.Verify(ctx, domainA.ID, tenantA, audit.Actor{Type: "system"}); err != nil {
 		t.Fatalf("verify domain in A: %v", err)
 	}
 
@@ -57,7 +58,7 @@ func TestDomainsStayInTheirTenant(t *testing.T) {
 	}
 
 	// B may add the same name, but can't verify it while A holds it.
-	domainB, err := svc.Add(ctx, tenantB, name)
+	domainB, err := svc.Add(ctx, tenantB, name, audit.Actor{Type: "system"})
 	if err != nil {
 		t.Fatalf("add the same domain in B: %v", err)
 	}

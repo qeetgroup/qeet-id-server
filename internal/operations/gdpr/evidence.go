@@ -512,12 +512,6 @@ var controlsByFramework = map[string][]control{
 	"iso27001": iso27001Controls,
 }
 
-// ValidFramework reports whether the framework name is supported.
-func ValidFramework(f string) bool {
-	_, ok := controlsByFramework[f]
-	return ok
-}
-
 // Generate runs every control of framework against the tenant's live state and
 // stores the run, with an audit event, in one transaction. It returns the run
 // with its control results.
@@ -528,7 +522,6 @@ func (s *EvidenceService) Generate(ctx context.Context, tenantID uuid.UUID, fram
 	}
 
 	results := make([]ControlResult, 0, len(controls))
-	var passCount, failCount, naCount int
 	for _, c := range controls {
 		status, detail := c.check(ctx, s, tenantID)
 		results = append(results, ControlResult{
@@ -539,15 +532,8 @@ func (s *EvidenceService) Generate(ctx context.Context, tenantID uuid.UUID, fram
 			Status:   status,
 			Detail:   detail,
 		})
-		switch status {
-		case ControlPass:
-			passCount++
-		case ControlFail:
-			failCount++
-		default:
-			naCount++
-		}
 	}
+	passCount, failCount, naCount := tallyResults(results)
 
 	controlsJSON, err := json.Marshal(results)
 	if err != nil {
@@ -565,9 +551,9 @@ func (s *EvidenceService) Generate(ctx context.Context, tenantID uuid.UUID, fram
 		TenantID:    tenantID,
 		Framework:   framework,
 		GeneratedBy: pgUUIDNullable(actor),
-		PassCount:   int32(passCount),
-		FailCount:   int32(failCount),
-		NaCount:     int32(naCount),
+		PassCount:   passCount,
+		FailCount:   failCount,
+		NaCount:     naCount,
 		Controls:    controlsJSON,
 	})
 	if err != nil {
@@ -777,21 +763,8 @@ func (h *Handler) mountEvidence(r chi.Router) {
 	r.Get("/tenants/{tenantID}/compliance/evidence/{id}", h.getEvidence)
 }
 
-// EvidenceRunCount returns the number of evidence runs of a tenant across all
-// frameworks.
-func (s *EvidenceService) EvidenceRunCount(ctx context.Context, tenantID uuid.UUID) (int, error) {
-	n, err := s.q.CountEvidenceRuns(ctx, tenantID)
-	return int(n), err
-}
-
-// TotalControls returns the number of controls in a framework's catalog, or 0
-// for an unknown framework.
-func TotalControls(framework string) int {
-	return len(controlsByFramework[framework])
-}
-
 // tallyResults counts the pass, fail and na results.
-func tallyResults(results []ControlResult) (pass, fail, na int) {
+func tallyResults(results []ControlResult) (pass, fail, na int32) {
 	for _, r := range results {
 		switch r.Status {
 		case ControlPass:

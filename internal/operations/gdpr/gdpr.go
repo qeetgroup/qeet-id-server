@@ -183,12 +183,6 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
-// Sweep runs one purge pass, the work Run does on each tick.
-func (s *Service) Sweep(ctx context.Context) error { return s.tick(ctx) }
-
-// SweepExports claims and builds one batch of pending data exports.
-func (s *Service) SweepExports(ctx context.Context) error { return s.exportSweepTick(ctx) }
-
 func (s *Service) tick(ctx context.Context) error {
 	rows, err := s.pool.Query(ctx, `
 		WITH candidates AS (

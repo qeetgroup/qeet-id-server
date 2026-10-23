@@ -27,6 +27,7 @@ import (
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+// PushDevice is a phone paired to approve sign-ins by push.
 type PushDevice struct {
 	ID         uuid.UUID `json:"id"`
 	Name       string    `json:"name"`
@@ -35,6 +36,8 @@ type PushDevice struct {
 	LastSeenAt time.Time `json:"last_seen_at"`
 }
 
+// PushChallenge is a sign-in or step-up waiting for approval on a paired
+// phone.
 type PushChallenge struct {
 	ID        uuid.UUID       `json:"id"`
 	UserID    uuid.UUID       `json:"user_id"`
@@ -132,6 +135,7 @@ func (s *Service) registerPushDeviceTx(ctx context.Context, tx pgx.Tx, userID uu
 	return d, tok, nil
 }
 
+// ListPushDevices returns the user's paired phones.
 func (s *Service) ListPushDevices(ctx context.Context, userID uuid.UUID) ([]PushDevice, error) {
 	rows, err := s.q.ListPushDevices(ctx, userID)
 	if err != nil {
@@ -150,6 +154,7 @@ func (s *Service) ListPushDevices(ctx context.Context, userID uuid.UUID) ([]Push
 	return out, nil
 }
 
+// RevokePushDevice unpairs one of the user's phones.
 func (s *Service) RevokePushDevice(ctx context.Context, userID, deviceID uuid.UUID) error {
 	n, err := s.q.DeletePushDevice(ctx, dbgen.DeletePushDeviceParams{ID: deviceID, UserID: userID})
 	if err != nil {
@@ -705,7 +710,7 @@ func (s *Service) auditPushDevice(r *http.Request, tenantID *uuid.UUID, owner, d
 	defer tx.Rollback(ctx)
 	actorID, actorType := &owner, "device"
 	if p := httpx.PrincipalFromCtx(ctx); p != nil {
-		actorID, actorType = auditActor(r)
+		actorID, actorType = audit.ActorOf(r).Identity()
 	}
 	if audit.Record(ctx, tx, audit.Event{
 		TenantID: tenantID, ActorUserID: actorID, ActorType: actorType,

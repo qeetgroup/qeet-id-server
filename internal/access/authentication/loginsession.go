@@ -53,10 +53,14 @@ func (s *Service) loginSessionLifetime(ctx context.Context, userID uuid.UUID) (t
 	return min(loginSessionTTL, maxAge, idle), nil
 }
 
-// CreateLoginSession mints a hosted SSO session for a user whose sign-in met
-// no second factor and returns the raw cookie value. Only the hash is
-// persisted (like refresh tokens).
+// CreateLoginSession mints a hosted SSO session, once the login hook of the
+// user's own organisation allows it, for a sign-in that met no second factor,
+// and returns the raw cookie value. Only the hash is persisted (like refresh
+// tokens).
 func (s *Service) CreateLoginSession(ctx context.Context, userID uuid.UUID, ip, ua string) (string, error) {
+	if _, err := s.signInHook(ctx, userID, uuid.Nil); err != nil {
+		return "", err
+	}
 	return s.createLoginSession(ctx, userID, ip, ua, "")
 }
 
@@ -64,6 +68,9 @@ func (s *Service) CreateLoginSession(ctx context.Context, userID uuid.UUID, ip, 
 // passkey is its second factor, so an organisation that requires one is
 // satisfied (see tenantFactorShortfall).
 func (s *Service) CreatePasskeyLoginSession(ctx context.Context, userID uuid.UUID, ip, ua string) (string, error) {
+	if _, err := s.signInHook(ctx, userID, uuid.Nil); err != nil {
+		return "", err
+	}
 	return s.createLoginSession(ctx, userID, ip, ua, secondFactorPasskey)
 }
 

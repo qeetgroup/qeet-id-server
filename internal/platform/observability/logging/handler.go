@@ -1,6 +1,6 @@
-// Package logger provides a coloured slog handler for local development.
+// Package logging provides a coloured slog handler for local development.
 // In non-dev environments callers should fall back to slog.NewJSONHandler.
-package logger
+package logging
 
 import (
 	"context"
@@ -13,11 +13,14 @@ import (
 	"time"
 )
 
+// Options configures a JSONColorHandler.
 type Options struct {
 	Level      slog.Leveler
 	TimeFormat string
 }
 
+// JSONColorHandler is a slog.Handler that writes coloured, readable lines for
+// local development.
 type JSONColorHandler struct {
 	out    io.Writer
 	mu     *sync.Mutex
@@ -27,6 +30,7 @@ type JSONColorHandler struct {
 	groups []string
 }
 
+// NewJSONColorHandler returns a JSONColorHandler writing to w.
 func NewJSONColorHandler(w io.Writer, opts *Options) *JSONColorHandler {
 	if opts == nil {
 		opts = &Options{}
@@ -45,10 +49,12 @@ func NewJSONColorHandler(w io.Writer, opts *Options) *JSONColorHandler {
 	}
 }
 
+// Enabled implements slog.Handler.
 func (h *JSONColorHandler) Enabled(_ context.Context, l slog.Level) bool {
 	return l >= h.level.Level()
 }
 
+// Handle implements slog.Handler.
 func (h *JSONColorHandler) Handle(_ context.Context, r slog.Record) error {
 	const (
 		grey   = "\x1b[90m"
@@ -109,12 +115,14 @@ func writeAttr(sb *strings.Builder, a slog.Attr) {
 	}
 }
 
+// WithAttrs implements slog.Handler.
 func (h *JSONColorHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	cp := *h
 	cp.attrs = append(append([]slog.Attr{}, h.attrs...), attrs...)
 	return &cp
 }
 
+// WithGroup implements slog.Handler.
 func (h *JSONColorHandler) WithGroup(name string) slog.Handler {
 	cp := *h
 	cp.groups = append(append([]string{}, h.groups...), name)

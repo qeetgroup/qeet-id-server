@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // chainSeed is the prev_hash of the first row of a chain.
@@ -47,6 +49,24 @@ type Actor struct {
 	UserAgent string
 	RequestID string
 }
+
+// ActorOf returns who made r, for its audit events: its principal (a user
+// unless the principal names another actor type) or, with none, the system,
+// with r's client address, user agent and request ID.
+func ActorOf(r *http.Request) Actor {
+	a := Actor{Type: "system", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
+	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
+		a.UserID, a.Type = p.UserID, "user"
+		if p.ActorType != "" {
+			a.Type = p.ActorType
+		}
+	}
+	return a
+}
+
+// Identity returns the actor's user, if any, and type: an Event's
+// ActorUserID and ActorType.
+func (a Actor) Identity() (*uuid.UUID, string) { return a.UserID, a.Type }
 
 // Event returns an audit Event of a tenant-scoped action by a.
 func (a Actor) Event(tenantID uuid.UUID, action, resourceType string, resourceID uuid.UUID, metadata map[string]any) Event {

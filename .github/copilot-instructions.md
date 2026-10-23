@@ -31,7 +31,7 @@ Contexts: `access` · `identity` · `federation` · `developer` · `operations`.
 internal/platform/http/httpx/auth.go       tenant scope, principal, RequireAuth
 internal/platform/http/httpx/csrf.go       CSRF
 internal/platform/crypto/tokens/jwt.go     ES256, kid, rotation
-internal/platform/crypto/encryption/       Argon2id, vault crypto
+internal/platform/crypto/password/         Argon2id password hashing
 internal/platform/config/config.go         boot-time production gate
 internal/bootstrap/router.go               middleware order, route tree
 internal/bootstrap/permissions.go          route permissions

@@ -171,6 +171,7 @@ SELECT id, tenant_id, user_id, title, pinned, created_at, updated_at
 FROM qeetai.conversations
 WHERE tenant_id = $1 AND user_id = $2
 ORDER BY pinned DESC, updated_at DESC
+LIMIT 1001
 `
 
 type ListConversationsParams struct {
@@ -178,6 +179,7 @@ type ListConversationsParams struct {
 	UserID   uuid.UUID
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsParams) ([]QeetaiConversation, error) {
 	rows, err := q.db.Query(ctx, listConversations, arg.TenantID, arg.UserID)
 	if err != nil {

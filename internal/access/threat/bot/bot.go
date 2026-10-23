@@ -18,7 +18,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/bot/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
@@ -75,6 +74,7 @@ func DefaultSettings() Settings {
 	return Settings{UACheck: true, Honeypot: true, Captcha: false, Signature: false, ScoreThreshold: 0.70}
 }
 
+// Event is one scored sign-in request and its verdict.
 type Event struct {
 	ID        uuid.UUID `json:"id"`
 	IP        *string   `json:"ip,omitempty"`
@@ -84,17 +84,21 @@ type Event struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Stats counts the tenant's blocked and challenged requests over the last
+// day.
 type Stats struct {
 	Blocked24h    int     `json:"blocked_24h"`
 	Challenged24h int     `json:"challenged_24h"`
 	Threshold     float64 `json:"threshold"`
 }
 
+// Service scores sign-in requests for bot-likeness and records the verdicts.
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 }
 
+// NewService returns the bot detection service.
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool)}
 }
@@ -162,6 +166,7 @@ func (s *Service) Recent(ctx context.Context, tenantID uuid.UUID, limit int) ([]
 	return out, rows.Err()
 }
 
+// Stats returns the tenant's bot-detection counts.
 func (s *Service) Stats(ctx context.Context, tenantID uuid.UUID) (*Stats, error) {
 	row, err := s.q.GetBotEventStats(ctx, tenantID)
 	if err != nil {
@@ -178,6 +183,7 @@ func (s *Service) Stats(ctx context.Context, tenantID uuid.UUID) (*Stats, error)
 	}, nil
 }
 
+// GetSettings returns the tenant's bot-detection settings.
 func (s *Service) GetSettings(ctx context.Context, tenantID uuid.UUID) (Settings, error) {
 	row, err := s.q.GetBotSettings(ctx, tenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -195,6 +201,7 @@ func (s *Service) GetSettings(ctx context.Context, tenantID uuid.UUID) (Settings
 	}, nil
 }
 
+// UpdateSettings stores the tenant's bot-detection settings.
 func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Settings) (Settings, error) {
 	if in.ScoreThreshold < 0.1 {
 		in.ScoreThreshold = 0.1
@@ -215,33 +222,20 @@ func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Set
 	return in, nil
 }
 
+// Handler serves the bot detection HTTP API.
 type Handler struct {
 	Service *Service
 }
 
+// Mount registers the bot detection routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/security/bots", h.overview)
 	r.Get("/tenants/{tenantID}/security/bots/settings", h.getSettings)
 	r.Put("/tenants/{tenantID}/security/bots/settings", h.putSettings)
 }
 
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
-	}
-	return scope, nil
-}
-
 func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -260,7 +254,7 @@ func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -274,7 +268,7 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) putSettings(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

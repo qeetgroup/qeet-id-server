@@ -11,12 +11,14 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
+// Handler serves the verification HTTP API.
 type Handler struct {
 	Service *Service
 	// Throttle, if set, wraps the code-sending routes in a tighter per-user limit.
 	Throttle func(http.Handler) http.Handler
 }
 
+// Mount registers the verification routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	// A code-sending route dispatches an SMS/email to a caller-supplied address,
 	// so it's throttled harder than the generic per-user bucket to prevent

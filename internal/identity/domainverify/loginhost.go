@@ -123,7 +123,7 @@ func (s *Service) LoginDomain(ctx context.Context, tenantID uuid.UUID) (*LoginDo
 }
 
 func (h *Handler) loginDomain(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

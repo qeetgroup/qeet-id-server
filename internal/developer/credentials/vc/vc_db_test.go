@@ -5,6 +5,7 @@ package vc
 import (
 	"testing"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -18,7 +19,7 @@ func TestVerifyChecksTheRegistry(t *testing.T) {
 	tenant := dbtest.Tenant(t)
 	issue := func() *IssueResult {
 		t.Helper()
-		res, err := svc.Issue(ctx, tenant, "did:example:holder", "EmployeeBadge", nil, 3600)
+		res, err := svc.Issue(ctx, tenant, "did:example:holder", "EmployeeBadge", nil, 3600, audit.Actor{Type: "system"})
 		if err != nil {
 			t.Fatalf("issue: %v", err)
 		}
@@ -37,7 +38,7 @@ func TestVerifyChecksTheRegistry(t *testing.T) {
 	if res := verify(revoked.JWT); !res.Valid {
 		t.Fatalf("a standing credential is refused: %+v", res)
 	}
-	if err := svc.Revoke(ctx, revoked.CredentialID, tenant); err != nil {
+	if err := svc.Revoke(ctx, revoked.CredentialID, tenant, audit.Actor{Type: "system"}); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
 	if res := verify(revoked.JWT); res.Valid || res.Reason != "credential revoked" {

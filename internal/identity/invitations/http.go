@@ -37,6 +37,7 @@ func (h *Handler) enterAsSignedIn(w http.ResponseWriter, r *http.Request, p *htt
 	httpx.WriteJSON(w, http.StatusOK, pair)
 }
 
+// Handler serves the invitation HTTP API.
 type Handler struct {
 	Service     *Service
 	AuthService tokenIssuer

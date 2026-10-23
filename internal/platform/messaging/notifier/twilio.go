@@ -20,6 +20,7 @@ type TwilioSender struct {
 	Client     *http.Client // nil uses a client with a 10s timeout
 }
 
+// Send implements notifier.Sender.
 func (s TwilioSender) Send(ctx context.Context, m Message) error {
 	if m.Channel != "sms" {
 		return fmt.Errorf("twilio sender: unsupported channel %q", m.Channel)

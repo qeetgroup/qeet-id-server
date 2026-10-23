@@ -138,3 +138,28 @@ func TestAuditListPagesThroughEveryRow(t *testing.T) {
 		t.Errorf("paged audit list = %v\nwant %v", got, want)
 	}
 }
+
+// TestVerifyReadsTheChainInPages checks that verification walks a chain longer
+// than one page to its end, and still finds a row altered on a later page.
+func TestVerifyReadsTheChainInPages(t *testing.T) {
+	ctx := dbtest.Context(t)
+	tenant := dbtest.Tenant(t)
+	var ids []uuid.UUID
+	for range 7 {
+		ids = append(ids, record(t, tenant, "user.updated"))
+	}
+	verifyPageSize = 2
+	t.Cleanup(func() { verifyPageSize = 5000 })
+
+	res, err := NewVerifier(dbtest.Pool(t)).Verify(ctx, &tenant)
+	if err != nil || !res.OK || res.RowsChecked != 7 {
+		t.Fatalf("verify: %+v, %v; want 7 valid rows", res, err)
+	}
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE audit.events SET action = 'user.deleted' WHERE id = $1 AND tenant_id = $2`, ids[5], tenant); err != nil {
+		t.Fatal(err)
+	}
+	res, err = NewVerifier(dbtest.Pool(t)).Verify(ctx, &tenant)
+	if err != nil || res.OK || res.BrokenAtID == nil || *res.BrokenAtID != ids[5] || res.RowsChecked != 5 {
+		t.Errorf("verify an altered chain: %+v, %v; want broken at %s after 5 rows", res, err, ids[5])
+	}
+}

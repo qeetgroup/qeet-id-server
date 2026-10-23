@@ -22,6 +22,7 @@ type Handler struct {
 	Decider  *decide.Decider
 }
 
+// Mount registers the role and permission routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/permissions", h.listPermissions)
 
@@ -41,24 +42,6 @@ func (h *Handler) Mount(r chi.Router) {
 
 	r.Get("/users/{userID}/tenants/{tenantID}/permissions", h.effective)
 	r.Get("/check", h.check)
-}
-
-// requirePathTenant returns the path's {tenantID} if it is the caller's own
-// tenant and 403 otherwise, so an admin can't reach another tenant's roles and
-// assignments by editing the URL.
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
-	}
-	return scope, nil
 }
 
 // scopedRole returns the path's {roleID} if the role belongs to the caller's
@@ -83,19 +66,6 @@ func (h *Handler) scopedRole(r *http.Request) (uuid.UUID, error) {
 	return roleID, nil
 }
 
-// actorOf captures the request's audit provenance from the principal + headers.
-func actorOf(r *http.Request) audit.Actor {
-	a := audit.Actor{Type: "system", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
-		a.UserID = p.UserID
-		a.Type = "user"
-		if p.ActorType != "" {
-			a.Type = p.ActorType
-		}
-	}
-	return a
-}
-
 func (h *Handler) listPermissions(w http.ResponseWriter, r *http.Request) {
 	out, err := h.Repo.ListPermissions(r.Context())
 	if err != nil {
@@ -106,7 +76,7 @@ func (h *Handler) listPermissions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request) {
-	tid, err := requirePathTenant(r)
+	tid, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -125,7 +95,7 @@ type createRoleInput struct {
 }
 
 func (h *Handler) createRole(w http.ResponseWriter, r *http.Request) {
-	tid, err := requirePathTenant(r)
+	tid, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -139,7 +109,7 @@ func (h *Handler) createRole(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	role, err := h.Service.CreateRole(r.Context(), tid, in.Name, in.Description, actorOf(r))
+	role, err := h.Service.CreateRole(r.Context(), tid, in.Name, in.Description, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -181,7 +151,7 @@ func (h *Handler) grant(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.GrantPermission(r.Context(), roleID, permID, actorOf(r)); err != nil {
+	if err := h.Service.GrantPermission(r.Context(), roleID, permID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -199,7 +169,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid permID"))
 		return
 	}
-	if err := h.Service.RevokePermission(r.Context(), roleID, permID, actorOf(r)); err != nil {
+	if err := h.Service.RevokePermission(r.Context(), roleID, permID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -212,7 +182,7 @@ func (h *Handler) assign(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
 		return
 	}
-	tid, err := requirePathTenant(r)
+	tid, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -226,7 +196,7 @@ func (h *Handler) assign(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actor := actorOf(r)
+	actor := audit.ActorOf(r)
 	if err := h.Service.AssignRole(r.Context(), uid, tid, rid, actor.UserID, actor); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -240,7 +210,7 @@ func (h *Handler) unassign(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
 		return
 	}
-	tid, err := requirePathTenant(r)
+	tid, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -250,7 +220,7 @@ func (h *Handler) unassign(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid roleID"))
 		return
 	}
-	if err := h.Service.UnassignRole(r.Context(), uid, tid, rid, actorOf(r)); err != nil {
+	if err := h.Service.UnassignRole(r.Context(), uid, tid, rid, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -263,7 +233,7 @@ func (h *Handler) effective(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
 		return
 	}
-	tid, err := requirePathTenant(r)
+	tid, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -332,7 +302,7 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listGroupRoles(w http.ResponseWriter, r *http.Request) {
-	tid, err := requirePathTenant(r)
+	tid, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -351,7 +321,7 @@ func (h *Handler) listGroupRoles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) assignGroupRole(w http.ResponseWriter, r *http.Request) {
-	tid, err := requirePathTenant(r)
+	tid, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -370,7 +340,7 @@ func (h *Handler) assignGroupRole(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actor := actorOf(r)
+	actor := audit.ActorOf(r)
 	if err := h.Service.AssignRoleToGroup(r.Context(), gid, tid, rid, actor.UserID, actor); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -379,7 +349,7 @@ func (h *Handler) assignGroupRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) unassignGroupRole(w http.ResponseWriter, r *http.Request) {
-	tid, err := requirePathTenant(r)
+	tid, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -394,7 +364,7 @@ func (h *Handler) unassignGroupRole(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid roleID"))
 		return
 	}
-	if err := h.Service.RemoveRoleFromGroup(r.Context(), gid, tid, rid, actorOf(r)); err != nil {
+	if err := h.Service.RemoveRoleFromGroup(r.Context(), gid, tid, rid, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

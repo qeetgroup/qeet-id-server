@@ -1,4 +1,4 @@
-package logger
+package logging
 
 import (
 	"context"
@@ -122,10 +122,12 @@ func NewRedactingHandler(next slog.Handler) *RedactingHandler {
 	return &RedactingHandler{next: next}
 }
 
+// Enabled implements slog.Handler.
 func (h *RedactingHandler) Enabled(ctx context.Context, l slog.Level) bool {
 	return h.next.Enabled(ctx, l)
 }
 
+// Handle implements slog.Handler.
 func (h *RedactingHandler) Handle(ctx context.Context, r slog.Record) error {
 	clone := slog.NewRecord(r.Time, r.Level, redactString(r.Message), r.PC)
 	r.Attrs(func(a slog.Attr) bool {
@@ -135,6 +137,7 @@ func (h *RedactingHandler) Handle(ctx context.Context, r slog.Record) error {
 	return h.next.Handle(ctx, clone)
 }
 
+// WithAttrs implements slog.Handler.
 func (h *RedactingHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	out := make([]slog.Attr, len(attrs))
 	for i, a := range attrs {
@@ -143,6 +146,7 @@ func (h *RedactingHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	return &RedactingHandler{next: h.next.WithAttrs(out)}
 }
 
+// WithGroup implements slog.Handler.
 func (h *RedactingHandler) WithGroup(name string) slog.Handler {
 	return &RedactingHandler{next: h.next.WithGroup(name)}
 }

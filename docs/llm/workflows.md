@@ -43,7 +43,7 @@ staging or production.
 ```
 
 > **Step 2 matters.** The convention is `<domain>.go`, not a layered `handler/service/repository`
-> split. Only four packages have a `repository.go` and only twelve have an `http.go` — creating one
+> split. Only four packages have a `repository.go` and sixteen have an `http.go` — creating one
 > where the package does not already use that shape breaks the local pattern. Check
 > [subsystems.md](subsystems.md) before adding a file.
 
@@ -167,7 +167,7 @@ its own decision.
 
 ```text
 1  sync or async?                  async if retryable, slow, or must survive the request
-2  existing pattern                internal/platform/jobs/worker.go
+2  existing pattern                internal/platform/worker/worker.go
 3  event-driven?                   write to the outbox in the SAME transaction as the state change
 4  register it                     the workers list in bootstrap/dependencies.go (API and cmd/worker)
 5  scheduled instead?              add it to bootstrap.MaintenanceJobs — once per interval across instances

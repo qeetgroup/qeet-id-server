@@ -17,13 +17,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/invitations/dbgen"
-	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
+// Invite is an invitation, without its token.
 type Invite struct {
 	ID         uuid.UUID  `json:"id"`
 	TenantID   uuid.UUID  `json:"tenant_id"`
@@ -60,6 +61,7 @@ func deliveryOf(err error) *Delivery {
 	return d
 }
 
+// CreateInput is what Create takes.
 type CreateInput struct {
 	TenantID uuid.UUID  `json:"tenant_id" validate:"required"`
 	Email    string     `json:"email" validate:"required,email"`
@@ -80,6 +82,7 @@ type Service struct {
 	methods    AcceptMethods
 }
 
+// NewService returns the invitation service.
 func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, baseAppURL string) *Service {
 	if ttl <= 0 {
 		ttl = 14 * 24 * time.Hour
@@ -279,6 +282,7 @@ func (s *Service) Resend(ctx context.Context, tenantID, id uuid.UUID) (*Invite, 
 	return &iv, raw, nil
 }
 
+// List returns the tenant's invitations.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Invite, error) {
 	rows, err := s.q.ListInvites(ctx, tenantID)
 	if err != nil {
@@ -291,6 +295,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Invite, error
 	return out, nil
 }
 
+// Revoke withdraws one of the tenant's pending invitations.
 func (s *Service) Revoke(ctx context.Context, tenantID, id uuid.UUID) error {
 	n, err := s.q.RevokeInvite(ctx, dbgen.RevokeInviteParams{ID: id, TenantID: tenantID})
 	if err != nil {
@@ -302,17 +307,21 @@ func (s *Service) Revoke(ctx context.Context, tenantID, id uuid.UUID) error {
 	return nil
 }
 
+// AcceptInput is what Accept takes.
 type AcceptInput struct {
 	Token       string `json:"token" validate:"required"`
 	Password    string `json:"password" validate:"required,max=256"`
 	DisplayName string `json:"display_name" validate:"omitempty,max=200"`
 }
 
+// AcceptResult is the account an accepted invitation created.
 type AcceptResult struct {
 	UserID   uuid.UUID
 	TenantID uuid.UUID
 }
 
+// Accept creates the invitee's password account from an invitation's token,
+// under the inviting organisation's sign-in rules.
 func (s *Service) Accept(ctx context.Context, in AcceptInput) (*AcceptResult, error) {
 	if s.rules == nil {
 		return nil, errs.ErrNotImplemented

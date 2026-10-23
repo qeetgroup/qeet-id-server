@@ -24,7 +24,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 |---|---|
 | API server | `cmd/api/main.go` → `bootstrap.Run()` |
 | Background workers | `cmd/worker/main.go` |
-| Scheduled maintenance | `internal/bootstrap/maintenance.go` (jobs) · `internal/platform/jobs/scheduled.go` (runner) |
+| Scheduled maintenance | `internal/bootstrap/maintenance.go` (jobs) · `internal/platform/worker/scheduled.go` (runner) |
 | Migration runner | `cmd/migrate/main.go` |
 | Demo data (dev only) | `cmd/seed/main.go` |
 
@@ -62,9 +62,9 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | **CSRF double-submit** | `internal/platform/http/httpx/csrf.go` |
 | Security headers | `internal/platform/http/httpx/` |
 | **JWT issue/verify, ES256, `kid`, rotation** | `internal/platform/crypto/tokens/jwt.go` |
-| **Password hashing (Argon2id)** | `internal/platform/crypto/encryption/hasher.go` |
-| Encryption, secrets vault crypto | `internal/platform/crypto/encryption/` |
-| TOTP | `internal/platform/crypto/encryption/totp/` |
+| **Password hashing (Argon2id)** | `internal/platform/crypto/password/hasher.go` |
+| Encryption, secrets vault crypto | `internal/platform/crypto/envelope/` |
+| TOTP | `internal/platform/crypto/totp/` |
 | Breached-password check | `internal/platform/crypto/hibp/` |
 | **Boot-time production gate** | `internal/platform/config/config.go` — `Config.Validate()` |
 
@@ -72,12 +72,12 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 
 | Flow | Path |
 |---|---|
-| Password login, sessions, refresh | `internal/access/authentication/service.go` |
+| Password login, sessions, refresh | `internal/access/authentication/` — `password.go`, `issue.go`, `refresh.go`, `sessions.go` |
 | Hosted SSO login session (`qe_ls`) | `internal/access/authentication/loginsession.go` |
 | Trusted device (`qe_td`) | `internal/access/authentication/trusteddevice.go` |
 | Account lockout | `internal/access/authentication/lockout.go` |
 | Passkeys / WebAuthn | `internal/access/passkeys/` |
-| MFA — TOTP, OTP, recovery codes | `internal/access/mfa/mfa.go` |
+| MFA — TOTP, OTP, recovery codes | `internal/access/mfa/` — `totp.go`, `otp.go`, `stepup.go` |
 | MFA — push approval | `internal/access/mfa/push.go` |
 | Magic link, password reset | `internal/access/recovery/` |
 | Adaptive risk, login history | `internal/access/threat/risk/` |
@@ -112,7 +112,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 
 | Protocol | Path |
 |---|---|
-| OIDC/OAuth provider, discovery, JWKS | `internal/federation/oidc/oidc.go` |
+| OIDC/OAuth provider, discovery, JWKS | `internal/federation/oidc/` — `token.go`, `authorize.go`, `discovery.go`, `clients.go` |
 | Device grant | `internal/federation/oidc/device.go` |
 | CIBA | `internal/federation/oidc/ciba.go` |
 | OAuth client administration | `internal/federation/oidc/clients_admin.go` |
@@ -171,7 +171,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 |---|---|
 | Transactional outbox | `internal/platform/events/outbox/outbox.go` |
 | NATS publishing | `internal/platform/events/outbox/nats.go` |
-| Worker pool | `internal/platform/jobs/worker.go` |
+| Worker pool | `internal/platform/worker/worker.go` |
 | Standalone worker | `cmd/worker/main.go` — webhooks, anomaly, gdpr, retention, siem, outbox |
 | Scheduler | `cmd/scheduler/main.go` — runs `bootstrap.MaintenanceJobs` standalone; the API embeds the same |
 

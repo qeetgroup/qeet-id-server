@@ -293,8 +293,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/LoginDomainStatus'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -332,8 +331,7 @@ paths:
                   items:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/Domain'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -370,8 +368,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Domain'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -407,8 +404,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Domain'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -458,8 +454,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Domain'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -562,7 +557,10 @@ paths:
       responses:
         '200':
           description: User reactivated
-          content: {application/json: {schema: {type: object, additionalProperties: true}}}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserUser'
         '401': {description: Authentication required}
         '403': {description: Missing user.write}
         '404': {description: Account not owned by this tenant}
@@ -667,7 +665,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
     post:
       operationId: post_v1_users
-      description: 'Creates a user within the caller''s tenant. An initial password may be supplied, otherwise the account is created without a password credential and the user signs in via passkey, magic link, or an admin-triggered reset. The password must meet the organisation''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). A refused password writes nothing. Requires an existing tenant.'
+      description: 'Creates a user within the caller''s tenant. An initial password may be supplied, otherwise the account is created without a password credential and the user signs in via passkey, magic link, or an admin-triggered reset. The password must meet the organisation''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). A refused password writes nothing. Requires an existing tenant. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress.'
       summary: Create user
       tags:
         - Users
@@ -680,6 +678,8 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/UserCreate'
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '201':
           description: Created
@@ -1578,14 +1578,6 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
       responses:
         '200':
           description: Restored
@@ -1724,7 +1716,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [message]
+                properties:
+                  message:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '422':
@@ -1759,7 +1754,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [email, message]
+                properties:
+                  email:
+                    type: string
+                  message:
+                    type: string
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -1924,18 +1924,17 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: 'Creates a group in the caller''s tenant. A parent_id must name one of the tenant''s own groups; otherwise the call answers 404 group.parent_not_found, the same for a missing id as for another tenant''s group. The name is stored trimmed, and a blank one answers 422 validation_failed. A name another of the organization''s groups already uses, ignoring case and surrounding spaces, answers 409 group.name_exists; groups an identity provider provisions over SCIM with an externalId don''t count.'
+              $ref: '#/components/schemas/GroupCreateInput'
+      description: 'Creates a group in the caller''s tenant. A parent_id must name one of the tenant''s own groups; otherwise the call answers 404 group.parent_not_found, the same for a missing id as for another tenant''s group. The name is stored trimmed, and a blank one answers 422 validation_failed. A name another of the organization''s groups already uses, ignoring case and surrounding spaces, answers 409 group.name_exists; groups an identity provider provisions over SCIM with an externalId don''t count. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress.'
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '201':
           description: Created
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Group'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1968,9 +1967,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+              $ref: '#/components/schemas/GroupUpdateInput'
       description: 'Changes only the fields sent: an omitted name, description or parent_id keeps its value, and "parent_id": null makes the group top-level. A new parent must be one of the tenant''s own groups (404 group.parent_not_found otherwise) and not the group itself or one of its subgroups (400 group.cycle). Renaming to a name another of the organization''s groups uses, ignoring case, answers 409 group.name_exists.'
       responses:
         '200':
@@ -1978,8 +1975,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Group'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -2008,7 +2004,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Deletes one of the organisation''s groups and its subgroups; members keep their accounts. Requires group.write.'
       responses:
         '204':
           description: No Content
@@ -2039,7 +2035,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GroupTemplate'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2081,8 +2082,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/GroupTemplate'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2110,13 +2110,8 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
+        '204':
+          description: 'OK'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2167,7 +2162,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Group'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2221,8 +2221,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/ImportResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2248,7 +2247,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists a group''s members. Requires group.read.'
       responses:
         '200':
           description: OK
@@ -2256,7 +2255,15 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Member'
+                  truncated:
+                    type: boolean
+                    description: 'Present, true, when the list was cut at its limit.'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2287,7 +2294,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Removes a user from a group. Requires group.write.'
       responses:
         '204':
           description: No Content
@@ -2320,14 +2327,6 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
       description: 'Adds a user to one of the caller''s groups. The user must be a live member of the caller''s tenant, or have it as their home tenant; otherwise the call answers 404 group.user_not_found, the same for a missing id as for another tenant''s user. Adding someone already in the group is a no-op.'
       responses:
         '204':
@@ -2357,7 +2356,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the organisation''s groups. Requires group.read.'
       responses:
         '200':
           description: OK
@@ -2365,7 +2364,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Group'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2390,11 +2394,12 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: 'Request body summarized; see the handler for exact fields. An invitation that carries a role follows the same rule as assigning it: The caller must hold every permission the role carries in this organization (403 rbac.grant_exceeds_caller, naming one it lacks), and only an owner gives the owner role (403 rbac.owner_only); an owner may give any role.'
-      description: 'Creates an invitation and emails its accept link. The accept link goes only to the invited address; the response carries the invitation and invite.delivery: status sent when a provider accepted the email, or not_sent with code and message when it did not (email.suppressed: the address bounced or reported spam before; email.provider_unavailable: no provider is configured). The invitation is created either way. A role_id that is not a role of the caller''s organization is refused with 404 not_found, the same answer whether the role does not exist or belongs to another organization, and no invitation is created.'
+              $ref: '#/components/schemas/InviteCreateInput'
+      description: 'Creates an invitation and emails its accept link. The accept link goes only to the invited address; the response carries the invitation and invite.delivery: status sent when a provider accepted the email, or not_sent with code and message when it did not (email.suppressed: the address bounced or reported spam before; email.provider_unavailable: no provider is configured). The invitation is created either way. A role_id that is not a role of the caller''s organization is refused with 404 not_found, the same answer whether the role does not exist or belongs to another organization, and no invitation is created. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress.'
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       responses:
+        '409': {description: 'A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly.'}
         '201':
           description: Created
           content:
@@ -2431,18 +2436,17 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+              $ref: '#/components/schemas/AcceptInput'
       description: 'Creates the invited account and signs it in. Its address is not verified by this: the account proves it later with a code or link sent to it (its invitations inbox stays closed until then). The response is a token pair, or, where the organisation requires a second factor, the sign-in''s challenge instead (mfa_required, mfa_token and, for an account with no factor yet, enrollment_required), met as at sign-in. Where the inviting organisation has password sign-in switched off, accepting with a password is refused with 403 auth.method_disabled and nothing is created.'
       responses:
-        '201':
-          description: Created
+        '200':
+          description: A token pair, or the second-factor challenge to complete first.
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                oneOf:
+                  - $ref: '#/components/schemas/TokenPair'
+                  - $ref: '#/components/schemas/MFAChallenge'
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
@@ -2549,7 +2553,13 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [publicKey, session_id]
+                properties:
+                  publicKey:
+                    $ref: '#/components/schemas/PublicKeyCredentialCreationOptions'
+                  session_id:
+                    type: string
+                    format: uuid
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -2601,8 +2611,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/TokenPair'
         '400':
           $ref: '#/components/responses/BadRequest'
         '403':
@@ -2630,7 +2639,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReceivedInvite'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2664,8 +2678,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/TokenPair'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -2699,8 +2712,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/TokenPair'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -2733,7 +2745,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [message]
+                properties:
+                  message:
+                    type: string
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -2757,7 +2772,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Withdraws a pending invitation; its link stops working. Requires user.write.'
       responses:
         '204':
           description: No Content
@@ -2792,7 +2807,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [invite]
+                properties:
+                  invite:
+                    $ref: '#/components/schemas/Invite'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2814,7 +2832,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the organisation''s invitations, without their tokens. Requires user.read.'
       responses:
         '200':
           description: OK
@@ -2822,7 +2840,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Invite'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2934,6 +2957,12 @@ components:
       name: qe_ls
       description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session and consumed by the OAuth authorize/consent flow.
   parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: 'A key of the client''s choosing, 1 to 255 printable characters, that makes retrying the request safe. Kept for 24 hours.'
+      schema: {type: string, minLength: 1, maxLength: 255}
     Limit:
       name: limit
       in: query
@@ -3473,3 +3502,501 @@ components:
         next_cursor:
           type: string
           nullable: true
+    AcceptInput:
+      type: object
+      required: [display_name, password, token]
+      properties:
+        display_name:
+          type: string
+        password:
+          type: string
+        token:
+          type: string
+    TokenPair:
+      type: object
+      required: [access_token, expires_at, idle_expires_at, refresh_token, session_expires_at, session_id, token_type, user_id]
+      properties:
+        access_token:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        idle_expires_at:
+          type: string
+          format: date-time
+        refresh_token:
+          type: string
+        session_expires_at:
+          type: string
+          format: date-time
+        session_id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        token_type:
+          type: string
+        user_id:
+          type: string
+          format: uuid
+    AuthenticatorSelection:
+      type: object
+      properties:
+        authenticatorAttachment:
+          type: string
+        requireResidentKey:
+          type: boolean
+        residentKey:
+          type: string
+        userVerification:
+          type: string
+    CredentialDescriptor:
+      type: object
+      required: [id, type]
+      properties:
+        id: {}
+        transports:
+          type: array
+          items:
+            type: string
+        type:
+          type: string
+    CredentialParameter:
+      type: object
+      required: [alg, type]
+      properties:
+        alg:
+          type: integer
+        type:
+          type: string
+    DNSRecord:
+      type: object
+      required: [name, type, value]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        value:
+          type: string
+    Delivery:
+      type: object
+      required: [status]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        status:
+          type: string
+    Domain:
+      type: object
+      required: [created_at, dns_record_name, dns_record_type, dns_record_value, domain, id, is_default, jit_enabled, sso_enabled, status, verification_token]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        dns_record_name:
+          type: string
+        dns_record_type:
+          type: string
+        dns_record_value:
+          type: string
+        domain:
+          type: string
+        id:
+          type: string
+          format: uuid
+        is_default:
+          type: boolean
+        jit_enabled:
+          type: boolean
+        last_checked_at:
+          type: string
+          format: date-time
+        last_error:
+          type: string
+        sso_enabled:
+          type: boolean
+        status:
+          type: string
+        verification_token:
+          type: string
+        verified_at:
+          type: string
+          format: date-time
+    Group:
+      type: object
+      required: [created_at, description, id, member_count, name, parent_id, tenant_id]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        description:
+          type: string
+        id:
+          type: string
+          format: uuid
+        member_count:
+          type: integer
+        name:
+          type: string
+        parent_id:
+          type: [string, 'null']
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+    GroupCreateInput:
+      type: object
+      required: [description, name, parent_id, tenant_id]
+      properties:
+        description:
+          type: string
+        name:
+          type: string
+        parent_id:
+          type: [string, 'null']
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+    GroupTemplate:
+      type: object
+      required: [created_at, description, group_count, id, name, nodes, tenant_id, updated_at]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        description:
+          type: string
+        group_count:
+          type: integer
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateNode'
+        tenant_id:
+          type: string
+          format: uuid
+        updated_at:
+          type: string
+          format: date-time
+    GroupUpdateInput:
+      type: object
+      required: [description, name, parent_id]
+      properties:
+        description:
+          type: [string, 'null']
+        name:
+          type: [string, 'null']
+        parent_id:
+          $ref: '#/components/schemas/OptionalUUID'
+    ImportResult:
+      type: object
+      required: [created, failed, rows, skipped]
+      properties:
+        created:
+          type: integer
+        failed:
+          type: integer
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportRowResult'
+        skipped:
+          type: integer
+    ImportRowResult:
+      type: object
+      required: [name, status]
+      properties:
+        name:
+          type: string
+        reason:
+          type: string
+        status:
+          type: string
+    Invite:
+      type: object
+      required: [accepted_at, created_at, email, expires_at, id, role_id, status, tenant_id]
+      properties:
+        accepted_at:
+          type: [string, 'null']
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        delivery:
+          $ref: '#/components/schemas/Delivery'
+        email:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        role_id:
+          type: [string, 'null']
+          format: uuid
+        status:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+    InviteCreateInput:
+      type: object
+      required: [email, role_id, tenant_id]
+      properties:
+        email:
+          type: string
+        role_id:
+          type: [string, 'null']
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+    LoginDomainStatus:
+      type: object
+      required: [dns_detail, dns_verified, endpoint_state, login_domain, records, status, tls_detail, tls_state]
+      properties:
+        dns_checked_at:
+          type: string
+          format: date-time
+        dns_detail:
+          type: string
+        dns_verified:
+          type: boolean
+        endpoint_state:
+          type: string
+        endpoint_url:
+          type: string
+        login_domain:
+          type: string
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/DNSRecord'
+        status:
+          type: string
+        tls_detail:
+          type: string
+        tls_state:
+          type: string
+    Member:
+      type: object
+      required: [display_name, email, user_id]
+      properties:
+        display_name:
+          type: [string, 'null']
+        email:
+          type: string
+        user_id:
+          type: string
+          format: uuid
+    OptionalUUID:
+      type: object
+      required: [ID, Set]
+      properties:
+        ID:
+          type: [string, 'null']
+          format: uuid
+        Set:
+          type: boolean
+    PublicKeyCredentialCreationOptions:
+      type: object
+      required: [challenge, rp, user]
+      properties:
+        attestation:
+          type: string
+        attestationFormats:
+          type: array
+          items:
+            type: string
+        authenticatorSelection:
+          $ref: '#/components/schemas/AuthenticatorSelection'
+        challenge: {}
+        excludeCredentials:
+          type: array
+          items:
+            $ref: '#/components/schemas/CredentialDescriptor'
+        extensions: {}
+        hints:
+          type: array
+          items:
+            type: string
+        pubKeyCredParams:
+          type: array
+          items:
+            $ref: '#/components/schemas/CredentialParameter'
+        rp:
+          $ref: '#/components/schemas/RelyingPartyEntity'
+        timeout:
+          type: integer
+        user:
+          $ref: '#/components/schemas/UserEntity'
+    ReceivedInvite:
+      type: object
+      required: [created_at, email, expires_at, id, role_id, tenant_id, tenant_name, tenant_slug]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        email:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        role_id:
+          type: [string, 'null']
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        tenant_name:
+          type: string
+        tenant_slug:
+          type: string
+    RelyingPartyEntity:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+    TemplateNode:
+      type: object
+      required: [description, name]
+      properties:
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateNode'
+        description:
+          type: string
+        name:
+          type: string
+    UserEntity:
+      type: object
+      required: [displayName, id, name]
+      properties:
+        displayName:
+          type: string
+        id: {}
+        name:
+          type: string
+    UserUser:
+      type: object
+      required: [avatar_url, created_at, display_name, email, email_verified_at, id, metadata, phone, phone_verified_at, status, tenant_id, updated_at]
+      properties:
+        avatar_url:
+          type: [string, 'null']
+        created_at:
+          type: string
+          format: date-time
+        display_name:
+          type: [string, 'null']
+        email:
+          type: string
+        email_verified_at:
+          type: [string, 'null']
+          format: date-time
+        groups_count:
+          type: integer
+        id:
+          type: string
+          format: uuid
+        last_seen_at:
+          type: string
+          format: date-time
+        last_seen_ip:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        mfa_enabled:
+          type: boolean
+        phone:
+          type: [string, 'null']
+        phone_verified_at:
+          type: [string, 'null']
+          format: date-time
+        roles:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+        updated_at:
+          type: string
+          format: date-time
+    MFAChallenge:
+      type: object
+      description: >-
+        A sign-in stopped before its session: the account holds a second factor,
+        or must have one — its organisation requires MFA (of everyone, or of
+        administrators) or it is marked as requiring it. Complete it at POST
+        /v1/auth/mfa (token sign-in) or /v1/auth/session/mfa (hosted login).
+        Each challenge is audited as auth.mfa_challenged with its reason
+        (enrolled, tenant_required, admin_required or user_required) and how
+        the first factor was proven (password, magic_link, social or ldap); meeting it as
+        auth.mfa_verified.
+      properties:
+        mfa_required:
+          type: boolean
+        mfa_token:
+          type: string
+        methods:
+          type: array
+          description: The distinct factor types of factors (["totp"] for an enrolment challenge).
+          items:
+            type: string
+            enum: [totp, recovery_code, email, sms, passkey, push]
+        factors:
+          type: array
+          description: >-
+            Exactly the second factors this person can complete the challenge
+            with — an authenticator app, recovery codes, each confirmed email or
+            SMS factor (with its id and masked destination, for
+            POST /v1/auth/mfa/send), passkeys while the organisation allows them,
+            and push devices. Empty for an enrolment challenge.
+          items:
+            $ref: '#/components/schemas/LoginFactor'
+        enrollment_required:
+          type: boolean
+          description: >-
+            The account must have a second factor and holds none: set up an
+            authenticator app (POST /v1/auth/mfa/enroll) and complete the
+            challenge with a code from it.
+        enrollment_due_at:
+          type: string
+          format: date-time
+          description: >-
+            On an enrolment challenge in the organisation's grace period: when
+            it ends. Until then the setup may be put off (skip: true).
+    LoginFactor:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [totp, recovery_code, email, sms, passkey, push]
+        id:
+          type: string
+          format: uuid
+          description: An email or SMS factor's id.
+        destination:
+          type: string
+          description: An email or SMS factor's masked address or number.

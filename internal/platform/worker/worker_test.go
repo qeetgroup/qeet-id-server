@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/worker"
 )
 
 func TestSupervisorStartsAndStops(t *testing.T) {

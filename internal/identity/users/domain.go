@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
+// User is a user account.
 type User struct {
 	ID              uuid.UUID  `json:"id"`
 	TenantID        uuid.UUID  `json:"tenant_id"`
@@ -53,6 +54,7 @@ type Deletion struct {
 	DeletedBy *uuid.UUID `json:"deleted_by"`
 }
 
+// CreateInput is what CreateWithCredential takes: a new user's profile.
 type CreateInput struct {
 	TenantID    uuid.UUID      `json:"tenant_id" validate:"required"`
 	Email       string         `json:"email" validate:"required,email"`
@@ -98,6 +100,7 @@ type BulkImportResult struct {
 	Errors    []BulkImportError `json:"errors,omitempty"`
 }
 
+// UpdateInput is what Update takes.
 type UpdateInput struct {
 	DisplayName *string `json:"display_name,omitempty" validate:"omitempty,max=200"`
 	// AvatarURL is a small image data-URL (capped/compressed client-side). Empty

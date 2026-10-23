@@ -45,10 +45,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/siem"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
-	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
-	db "github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
@@ -74,6 +74,9 @@ var (
 	}
 )
 
+// seedActor is who the seeded records name as their author.
+var seedActor = audit.Actor{Type: "system"}
+
 func main() {
 	reset := flag.Bool("reset", false, "wipe existing data (dev only) before seeding")
 	flag.Parse()
@@ -82,7 +85,7 @@ func main() {
 	must(err, "load config")
 
 	ctx := context.Background()
-	pool, err := db.NewPool(ctx, cfg.DBURL, cfg.DBMinConns, cfg.DBMaxConns)
+	pool, err := postgres.NewPool(ctx, cfg.DBURL, cfg.DBMinConns, cfg.DBMaxConns)
 	must(err, "connect db")
 	defer pool.Close()
 
@@ -353,7 +356,7 @@ func main() {
 		{"project:qeet-pay-launch", "viewer", "user:" + staff["sneha@qeet.in"].ID.String()},
 	}
 	for _, t := range demoTuples {
-		if _, e := rebacSvc.Write(ctx, qeet.ID, t.object, t.relation, t.subject); e != nil {
+		if _, e := rebacSvc.Write(ctx, qeet.ID, t.object, t.relation, t.subject, seedActor); e != nil {
 			must(e, "rebac tuple "+t.object)
 		}
 	}
@@ -478,16 +481,16 @@ func main() {
 	fmt.Println("  • vault secrets RAZORPAY_KEY_SECRET, AWS_SES_SMTP_PASSWORD")
 
 	// ---- Auth hook (post-login risk policy webhook) ----
-	_, err = authhookSvc.Create(ctx, qeet.ID, "https://api.id.qeet.in/internal/hooks/risk", "whsec_seed_placeholder_authhook", true)
+	_, err = authhookSvc.Create(ctx, qeet.ID, "https://api.id.qeet.in/internal/hooks/risk", "whsec_seed_placeholder_authhook", true, seedActor)
 	must(err, "auth hook")
 
 	// ---- AI agent (ephemeral scoped tokens) ----
-	_, err = agentSvc.Create(ctx, qeet.ID, "Support Assistant", []string{"user.read"}, 3600, founder.ID)
+	_, err = agentSvc.Create(ctx, qeet.ID, "Support Assistant", []string{"user.read"}, 3600, founder.ID, seedActor)
 	must(err, "ai agent")
 
 	// ---- Verifiable credential issued to the founder ----
 	_, err = vcSvc.Issue(ctx, qeet.ID, "user:"+founder.ID.String(), "EmployeeCredential",
-		map[string]any{"name": "Mareedu Saibabu", "title": "Founder & CEO", "org": "Qeet Group"}, 365*24*3600)
+		map[string]any{"name": "Mareedu Saibabu", "title": "Founder & CEO", "org": "Qeet Group"}, 365*24*3600, seedActor)
 	must(err, "verifiable credential")
 
 	// ---- Pending invitation (new hire) ----
@@ -496,7 +499,7 @@ func main() {
 	fmt.Printf("  • invitation    kabir@qeet.in (token: %s)\n", inviteToken)
 
 	// ---- Domain verification (pending DNS TXT for qeet.in) ----
-	_, err = domainSvc.Add(ctx, qeet.ID, "qeet.in")
+	_, err = domainSvc.Add(ctx, qeet.ID, "qeet.in", seedActor)
 	must(err, "domain verification")
 
 	// ---- Email template override ----
@@ -513,7 +516,7 @@ func main() {
 	})
 
 	// ---- SIEM log sink ----
-	_, err = siemSvc.Create(ctx, qeet.ID, "datadog", "https://http-intake.logs.datadoghq.com/api/v2/logs", "dd_seed_placeholder_token")
+	_, err = siemSvc.Create(ctx, qeet.ID, "datadog", "https://http-intake.logs.datadoghq.com/api/v2/logs", "dd_seed_placeholder_token", seedActor)
 	must(err, "siem sink")
 
 	// ---- In-app notifications for the founder ----

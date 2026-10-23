@@ -262,6 +262,7 @@ type Tracker struct {
 	Provider string          // the email transport in records: "ses", "smtp" or "none"
 }
 
+// Send implements notifier.Sender.
 func (t Tracker) Send(ctx context.Context, m notifier.Message) error {
 	if m.Channel != "" && m.Channel != "email" {
 		return t.Next.Send(ctx, m)

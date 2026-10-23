@@ -34,6 +34,7 @@ type UpdateBuilder struct {
 	args []any
 }
 
+// NewUpdate returns an empty UpdateBuilder.
 func NewUpdate() *UpdateBuilder { return &UpdateBuilder{} }
 
 // Set adds "col = $N" bound to val. Column names must be trusted literals.

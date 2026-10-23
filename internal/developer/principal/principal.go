@@ -20,23 +20,26 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/principal/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
+// Service manages the service principals.
 type Service struct {
 	pool   *pgxpool.Pool
 	q      *dbgen.Queries
 	issuer *tokens.Issuer
 }
 
+// NewService returns the service-principal Service.
 func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer}
 }
 
+// Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 // tsPtr converts a pgtype.Timestamptz to *time.Time (nil when not valid).
@@ -48,6 +51,7 @@ func tsPtr(p pgtype.Timestamptz) *time.Time {
 	return &t
 }
 
+// Principal is a service principal, without its secret.
 type Principal struct {
 	ID         uuid.UUID  `json:"id"`
 	TenantID   uuid.UUID  `json:"tenant_id"`
@@ -57,6 +61,7 @@ type Principal struct {
 	CreatedAt  time.Time  `json:"created_at"`
 }
 
+// CreateInput is what Create takes.
 type CreateInput struct {
 	TenantID    uuid.UUID `json:"tenant_id"`
 	Name        string    `json:"name"`
@@ -64,6 +69,8 @@ type CreateInput struct {
 	Scopes      []string  `json:"scopes"`
 }
 
+// Create adds a service principal and returns it with its plaintext secret,
+// shown only now.
 func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Principal, string, error) {
 	if err := rbac.ValidateMachineScopes(in.Scopes); err != nil {
 		return nil, "", err
@@ -93,6 +100,7 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Princ
 	return p, raw, nil
 }
 
+// List returns the tenant's service principals.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Principal, error) {
 	rows, err := s.q.ListServicePrincipals(ctx, tenantID)
 	if err != nil {
@@ -204,10 +212,12 @@ func joinScopes(in []string) string {
 	return out
 }
 
+// Handler serves the service principal HTTP API.
 type Handler struct {
 	Service *Service
 }
 
+// Mount registers the service principal routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/service-principals", h.create)
 	r.Get("/tenants/{tenantID}/service-principals", h.list)
@@ -218,19 +228,6 @@ func (h *Handler) Mount(r chi.Router) {
 // rate-limits as machine traffic.
 func (h *Handler) MountToken(r chi.Router) {
 	r.Post("/oauth/token", h.tokenEndpoint)
-}
-
-// auditActor mirrors the helper used in rbac/mfa.
-func auditActor(r *http.Request) (*uuid.UUID, string) {
-	pp := httpx.PrincipalFromCtx(r.Context())
-	if pp == nil {
-		return nil, "system"
-	}
-	at := pp.ActorType
-	if at == "" {
-		at = "user"
-	}
-	return pp.UserID, at
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
@@ -257,7 +254,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	tenantID := p.TenantID
 	resID := p.ID
 	if err := audit.Record(ctx, tx, audit.Event{
@@ -324,7 +321,7 @@ func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	resID := id
 	if err := audit.Record(ctx, tx, audit.Event{
 		TenantID:     &tenantID,

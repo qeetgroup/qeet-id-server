@@ -13,8 +13,11 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
@@ -281,4 +284,111 @@ func (s *Service) checkLogoutHint(raw, clientID string, sessionID, userID uuid.U
 		}
 	}
 	return h, nil
+}
+
+// endSession is the OIDC RP-Initiated Logout endpoint. It ends the browser's
+// hosted SSO session and what it started, clears the cookie, and redirects to a
+// registered post_logout_redirect_uri or shows the signed-out page. If sign-out
+// fails, the error is shown and the cookie kept.
+func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest)
+		return
+	}
+	redirect := r.Form.Get("post_logout_redirect_uri")
+	clientID := r.Form.Get("client_id")
+	state := r.Form.Get("state")
+	hint := r.Form.Get("id_token_hint")
+	sessionID, userID, _, hasSession := h.loginSessionAt(r)
+
+	switch {
+	case hint != "":
+		// The hint names whose sign-in this is: it must be this one.
+		lh, err := h.Service.checkLogoutHint(hint, clientID, sessionID, userID)
+		if err != nil {
+			var oe *oauthError
+			if errors.As(err, &oe) {
+				writeOAuthError(w, oe)
+				return
+			}
+			httpx.WriteError(w, r, err)
+			return
+		}
+		if clientID == "" {
+			clientID = lh.ClientID
+		}
+	case hasSession && !h.Service.confirmedFor(r.Form.Get("logout_confirmation"), sessionID):
+		// No hint and no confirmation: a plain link or image must not sign
+		// anyone out. The hosted login asks, then comes back with the ticket.
+		ticket, err := h.Service.logoutConfirmation(sessionID)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		q := url.Values{"logout_confirmation": {ticket}}
+		for _, k := range []string{"client_id", "post_logout_redirect_uri", "state"} {
+			if v := r.Form.Get(k); v != "" {
+				q.Set(k, v)
+			}
+		}
+		http.Redirect(w, r, h.LoginBaseURL+"/logout?"+q.Encode(), http.StatusFound)
+		return
+	}
+
+	var frontchannel []string
+	if c, err := r.Cookie(auth.LoginSessionCookie); err == nil {
+		in := auth.EndLoginSessionInput{
+			Cookie: c.Value, InitiatedBy: auth.SignOutByApplication,
+			IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
+		}
+		if clientID != "" && h.Service.RegisteredClient(r.Context(), clientID) {
+			in.ClientID = clientID
+		}
+		ended, err := h.Sessions.EndLoginSession(r.Context(), in)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		frontchannel = ended.FrontChannelLogoutURIs
+	}
+	auth.ClearLoginSessionCookie(w, h.CookieSecure)
+
+	next := ""
+	if redirect != "" && clientID != "" {
+		if ok, err := h.Service.ValidatePostLogoutRedirect(r.Context(), clientID, redirect); err == nil && ok {
+			next = appendQuery(redirect, "state", state)
+		}
+	}
+	if len(frontchannel) == 0 {
+		if next != "" {
+			http.Redirect(w, r, next, http.StatusFound) // #nosec G710 -- post-logout URI matched exactly against the registered list
+			return
+		}
+		http.Redirect(w, r, h.LoginBaseURL+"/logged-out", http.StatusFound)
+		return
+	}
+	// The hosted signed-out page loads each application's front-channel page,
+	// then continues to the validated address through a signed ticket (never
+	// a plain URL it would have to trust).
+	q := url.Values{"frontchannel_logout": frontchannel}
+	if next != "" {
+		ticket, err := h.Service.logoutContinuation(next)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		q.Set("continue", ticket)
+	}
+	http.Redirect(w, r, h.LoginBaseURL+"/logged-out?"+q.Encode(), http.StatusFound)
+}
+
+// endSessionContinue (GET /v1/oauth/logout/continue) sends the browser on to
+// the post-logout address a sign-out validated, from the signed ticket the
+// hosted signed-out page was given; anything else goes to the signed-out page.
+func (h *Handler) endSessionContinue(w http.ResponseWriter, r *http.Request) {
+	if next, ok := h.Service.continuationTarget(r.URL.Query().Get("ticket")); ok {
+		http.Redirect(w, r, next, http.StatusFound) // #nosec G710 -- target from a ticket this server signed
+		return
+	}
+	http.Redirect(w, r, h.LoginBaseURL+"/logged-out", http.StatusFound)
 }

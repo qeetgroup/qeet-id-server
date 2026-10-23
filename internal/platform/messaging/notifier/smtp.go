@@ -28,6 +28,7 @@ type SMTPSender struct {
 	From     string // RFC 5322 From, e.g. `Qeet ID <noreply@qeet.in>`
 }
 
+// Send implements notifier.Sender.
 func (s SMTPSender) Send(ctx context.Context, m Message) error {
 	if m.Channel != "" && m.Channel != "email" {
 		return fmt.Errorf("smtp sender: unsupported channel %q", m.Channel)

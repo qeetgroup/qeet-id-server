@@ -16,25 +16,29 @@ import (
 // (uuid.Nil: the console's own, tenant-less) completed for: a token pair, or a
 // challenge to complete first (at /v1/auth/mfa, as for a password sign-in).
 func (s *Service) BeginSocialSignIn(ctx context.Context, userID, tenantID uuid.UUID, ip, ua string) (*LoginResult, error) {
+	claims, err := s.signInHook(ctx, userID, tenantID)
+	if err != nil {
+		return nil, err
+	}
 	gate, err := s.mfaGate(ctx, userID, tenantID)
 	if err != nil {
 		return nil, err
 	}
 	switch s.nextSignInStep(ctx, userID, tenantID, gate, firstFactorSocial, "", ip, ua, httpx.GeoCountry(ctx)) {
 	case stepChallenge:
-		challenge, err := s.challengeSignIn(ctx, userID, tenantID, nil, gate, firstFactorSocial, ip, ua)
+		challenge, err := s.challengeSignIn(ctx, userID, tenantID, claims, gate, firstFactorSocial, ip, ua)
 		if err != nil {
 			return nil, err
 		}
 		return &LoginResult{MFAChallenge: challenge}, nil
 	case stepRiskEmail:
-		challenge, err := s.riskEmailChallenge(ctx, userID, tenantID, nil, firstFactorSocial, ip, ua)
+		challenge, err := s.riskEmailChallenge(ctx, userID, tenantID, claims, firstFactorSocial, ip, ua)
 		if err != nil {
 			return nil, err
 		}
 		return &LoginResult{MFAChallenge: challenge}, nil
 	}
-	pair, err := s.IssuePair(ctx, userID, tenantID, ip, ua, firstFactorSocial)
+	pair, err := s.IssuePairWithClaims(ctx, userID, tenantID, ip, ua, firstFactorSocial, claims)
 	if err != nil {
 		return nil, err
 	}
@@ -50,19 +54,27 @@ func (s *Service) BeginSocialLoginSession(ctx context.Context, userID, tenantID 
 	if err != nil {
 		return nil, err
 	}
+	hookTenant := tenantID
+	if hookTenant == uuid.Nil {
+		hookTenant = u.TenantID
+	}
+	claims, err := s.hookClaims(ctx, hookTenant, u)
+	if err != nil {
+		return nil, err
+	}
 	gate, err := s.mfaGateFor(ctx, userID, u.TenantID, tenantID)
 	if err != nil {
 		return nil, err
 	}
 	switch s.nextSignInStep(ctx, userID, tenantID, gate, firstFactorSocial, trustedToken, ip, ua, country) {
 	case stepChallenge:
-		challenge, err := s.challengeSignIn(ctx, userID, tenantID, nil, gate, firstFactorSocial, ip, ua)
+		challenge, err := s.challengeSignIn(ctx, userID, tenantID, claims, gate, firstFactorSocial, ip, ua)
 		if err != nil {
 			return nil, err
 		}
 		return &LoginSessionResult{UserID: userID, MFAChallenge: challenge}, nil
 	case stepRiskEmail:
-		challenge, err := s.riskEmailChallenge(ctx, userID, tenantID, nil, firstFactorSocial, ip, ua)
+		challenge, err := s.riskEmailChallenge(ctx, userID, tenantID, claims, firstFactorSocial, ip, ua)
 		if err != nil {
 			return nil, err
 		}

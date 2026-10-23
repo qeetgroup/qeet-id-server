@@ -44,15 +44,18 @@ func parseUserMetadata(raw []byte, userID uuid.UUID) map[string]any {
 	return m
 }
 
+// Repository reads and writes users.
 type Repository struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 }
 
+// NewRepository returns a Repository over pool.
 func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool, q: dbgen.New(pool)}
 }
 
+// Pool returns the connection pool, for handlers that run their own transaction.
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
 // pgtypeToUUIDPtr converts a pgtype.UUID returned by generated code to *uuid.UUID.
@@ -311,6 +314,7 @@ func (r *Repository) RemoveFromTenantTx(ctx context.Context, tx pgx.Tx, userID, 
 	return roles, nil
 }
 
+// GetByEmail returns the tenant's user with this email.
 func (r *Repository) GetByEmail(ctx context.Context, tenantID uuid.UUID, email string) (*User, error) {
 	row, err := r.q.GetUserByEmail(ctx, dbgen.GetUserByEmailParams{
 		TenantID: uuidToPgtype(tenantID),
@@ -627,6 +631,7 @@ func (r *Repository) Purge(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// MarkEmailVerified records that the user has verified their email address.
 func (r *Repository) MarkEmailVerified(ctx context.Context, id uuid.UUID) error {
 	return r.q.MarkEmailVerified(ctx, id)
 }
@@ -641,6 +646,7 @@ func (r *Repository) PasswordHash(ctx context.Context, id uuid.UUID) (string, er
 	return h, err
 }
 
+// SetPassword stores the user's password hash.
 func (r *Repository) SetPassword(ctx context.Context, id uuid.UUID, hash string) error {
 	return r.q.SetPassword(ctx, dbgen.SetPasswordParams{UserID: id, PasswordHash: hash})
 }

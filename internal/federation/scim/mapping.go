@@ -9,11 +9,13 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// ProfileMapper maps directory attributes to a profile.
 type ProfileMapper interface {
 	MapProfile(context.Context, uuid.UUID, string, map[string]any, bool) (map[string]any, error)
 	StoreProfile(context.Context, pgx.Tx, uuid.UUID, uuid.UUID, string, map[string]any) error
 }
 
+// SetProfileMapper sets the mapper applied to provisioned users.
 func (service *Service) SetProfileMapper(mapper ProfileMapper) { service.mapper = mapper }
 
 func (payload *scimUserPayload) UnmarshalJSON(raw []byte) error {

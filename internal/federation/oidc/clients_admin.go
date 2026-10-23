@@ -13,7 +13,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -214,22 +214,6 @@ func (s *Service) RotateClientSecret(ctx context.Context, tx pgx.Tx, tenantID, i
 	return secret, &c, nil
 }
 
-// auditActor resolves the (actorID, actorType) for an audit row from the
-// request principal, mirroring registerClient/revokeGrant.
-func auditActor(r *http.Request) (*uuid.UUID, string) {
-	actorType := "system"
-	var actorID *uuid.UUID
-	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
-		actorID = p.UserID
-		if p.ActorType != "" {
-			actorType = p.ActorType
-		} else {
-			actorType = "user"
-		}
-	}
-	return actorID, actorType
-}
-
 func pathID(r *http.Request) (uuid.UUID, error) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -269,7 +253,7 @@ func (h *Handler) createTenantClient(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	tid := c.TenantID
 	resourceID := c.ID
 	if err := audit.Record(ctx, tx, audit.Event{
@@ -378,7 +362,7 @@ func (h *Handler) patchClient(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	tid := c.TenantID
 	resourceID := c.ID
 	if err := audit.Record(ctx, tx, audit.Event{
@@ -443,7 +427,7 @@ func (h *Handler) deleteClientInTenant(w http.ResponseWriter, r *http.Request, t
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	tid := tenantID
 	resourceID := id
 	if err := audit.Record(ctx, tx, audit.Event{
@@ -485,7 +469,7 @@ func (h *Handler) rotateClientSecret(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	tid := c.TenantID
 	resourceID := c.ID
 	if err := audit.Record(ctx, tx, audit.Event{

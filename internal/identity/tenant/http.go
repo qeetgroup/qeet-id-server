@@ -34,6 +34,7 @@ type Handler struct {
 	Signals     *sessionsignal.Signaller
 }
 
+// Mount registers the organisation routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants", h.list)
 	r.Get("/me/organizations", h.eligibleOrganizations)

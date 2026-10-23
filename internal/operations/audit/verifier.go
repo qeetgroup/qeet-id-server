@@ -22,6 +22,9 @@ type VerifyResult struct {
 	BrokenReason   string     `json:"broken_reason,omitempty"`
 }
 
+// verifyPageSize is how many rows of a chain each verification query reads.
+var verifyPageSize int32 = 5000
+
 // Verifier verifies audit hash chains.
 type Verifier struct {
 	pool *pgxpool.Pool
@@ -37,80 +40,87 @@ func NewVerifier(pool *pgxpool.Pool) *Verifier {
 // of the platform chain when tenantID is nil. At the first row that fails it
 // returns OK=false with BrokenAtID set. Rows without a hash are skipped.
 func (v *Verifier) Verify(ctx context.Context, tenantID *uuid.UUID) (VerifyResult, error) {
-	rows, err := v.q.ListAuditEventsForVerify(ctx, pgUUIDNullable(tenantID))
-	if err != nil {
-		return VerifyResult{}, err
-	}
-
 	expectedPrev := chainSeed
 	var (
 		rowsChecked int
 		lastID      *uuid.UUID
 	)
-	for _, row := range rows {
-		tid := toUUIDPtr(row.TenantID)
-		actor := toUUIDPtr(row.ActorUserID)
-		resID := toUUIDPtr(row.ResourceID)
-
-		// ip is COALESCE(host(ip), ''), which sqlc types as interface{}.
-		ip, _ := row.Ip.(string)
-
-		prevHashDB := ""
-		if row.PrevHash != nil {
-			prevHashDB = strings.TrimSpace(*row.PrevHash)
-		}
-		rowHashDB := ""
-		if row.RowHash != nil {
-			rowHashDB = strings.TrimSpace(*row.RowHash)
-		}
-
-		if prevHashDB != expectedPrev {
-			brokenID := row.ID
-			return VerifyResult{
-				OK:             false,
-				RowsChecked:    rowsChecked,
-				LastVerifiedID: lastID,
-				BrokenAtID:     &brokenID,
-				BrokenReason:   "prev_hash does not match preceding row_hash",
-			}, nil
-		}
-
-		metaJSON, err := normaliseMetadata(row.Metadata)
+	// The chain is read a page at a time, so memory doesn't grow with it.
+	page := dbgen.ListAuditEventsForVerifyParams{TenantID: pgUUIDNullable(tenantID), PageSize: verifyPageSize}
+	for {
+		rows, err := v.q.ListAuditEventsForVerify(ctx, page)
 		if err != nil {
 			return VerifyResult{}, err
 		}
-		canonical, err := canonicalize(Event{
-			TenantID:     tid,
-			ActorUserID:  actor,
-			ActorType:    row.ActorType,
-			Action:       row.Action,
-			ResourceType: row.ResourceType,
-			ResourceID:   resID,
-			IP:           ip,
-			UserAgent:    row.UserAgent, // already COALESCE'd to ""
-			RequestID:    row.RequestID, // already COALESCE'd to ""
-		}, row.ID, row.CreatedAt, metaJSON, prevHashDB)
-		if err != nil {
-			return VerifyResult{}, err
-		}
-		expectedRowHash := hashHex(canonical)
-		if expectedRowHash != rowHashDB {
-			brokenID := row.ID
-			return VerifyResult{
-				OK:             false,
-				RowsChecked:    rowsChecked,
-				LastVerifiedID: lastID,
-				BrokenAtID:     &brokenID,
-				BrokenReason:   "row_hash does not match recomputed hash",
-			}, nil
-		}
+		for _, row := range rows {
+			tid := toUUIDPtr(row.TenantID)
+			actor := toUUIDPtr(row.ActorUserID)
+			resID := toUUIDPtr(row.ResourceID)
 
-		expectedPrev = rowHashDB
-		rowsChecked++
-		idCopy := row.ID
-		lastID = &idCopy
+			// ip is COALESCE(host(ip), ''), which sqlc types as interface{}.
+			ip, _ := row.Ip.(string)
+
+			prevHashDB := ""
+			if row.PrevHash != nil {
+				prevHashDB = strings.TrimSpace(*row.PrevHash)
+			}
+			rowHashDB := ""
+			if row.RowHash != nil {
+				rowHashDB = strings.TrimSpace(*row.RowHash)
+			}
+
+			if prevHashDB != expectedPrev {
+				brokenID := row.ID
+				return VerifyResult{
+					OK:             false,
+					RowsChecked:    rowsChecked,
+					LastVerifiedID: lastID,
+					BrokenAtID:     &brokenID,
+					BrokenReason:   "prev_hash does not match preceding row_hash",
+				}, nil
+			}
+
+			metaJSON, err := normaliseMetadata(row.Metadata)
+			if err != nil {
+				return VerifyResult{}, err
+			}
+			canonical, err := canonicalize(Event{
+				TenantID:     tid,
+				ActorUserID:  actor,
+				ActorType:    row.ActorType,
+				Action:       row.Action,
+				ResourceType: row.ResourceType,
+				ResourceID:   resID,
+				IP:           ip,
+				UserAgent:    row.UserAgent, // already COALESCE'd to ""
+				RequestID:    row.RequestID, // already COALESCE'd to ""
+			}, row.ID, row.CreatedAt, metaJSON, prevHashDB)
+			if err != nil {
+				return VerifyResult{}, err
+			}
+			expectedRowHash := hashHex(canonical)
+			if expectedRowHash != rowHashDB {
+				brokenID := row.ID
+				return VerifyResult{
+					OK:             false,
+					RowsChecked:    rowsChecked,
+					LastVerifiedID: lastID,
+					BrokenAtID:     &brokenID,
+					BrokenReason:   "row_hash does not match recomputed hash",
+				}, nil
+			}
+
+			expectedPrev = rowHashDB
+			rowsChecked++
+			idCopy := row.ID
+			lastID = &idCopy
+		}
+		if len(rows) < int(page.PageSize) {
+			return VerifyResult{OK: true, RowsChecked: rowsChecked, LastVerifiedID: lastID}, nil
+		}
+		last := rows[len(rows)-1]
+		page.AfterCreatedAt, page.AfterID = last.CreatedAt, last.ID
 	}
-	return VerifyResult{OK: true, RowsChecked: rowsChecked, LastVerifiedID: lastID}, nil
 }
 
 // toUUIDPtr converts a nullable pgtype.UUID to a *uuid.UUID; NULL becomes nil.

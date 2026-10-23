@@ -14,6 +14,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // Handler serves the Qeet AI routes. A tenant with its own provider key (BYOK)
@@ -147,7 +148,7 @@ func (h *Handler) listConversations(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []Conversation{}
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(items))
 }
 
 // getConversation returns a conversation with its full message history.

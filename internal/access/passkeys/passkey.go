@@ -33,6 +33,7 @@ import (
 
 const sessionTTL = 5 * time.Minute
 
+// Credential is one of a person's registered passkeys.
 type Credential struct {
 	ID         uuid.UUID  `json:"id"`
 	UserID     uuid.UUID  `json:"user_id"`
@@ -54,6 +55,7 @@ type Service struct {
 	invitations InvitationAcceptor
 }
 
+// NewService returns the passkey service.
 func NewService(pool *pgxpool.Pool, wa *webauthn.WebAuthn, authSvc *auth.Service) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), wa: wa, auth: authSvc}
 }
@@ -104,6 +106,7 @@ func (s *Service) EnrolmentAllowed(ctx context.Context, userID uuid.UUID) (bool,
 	return err == nil, err
 }
 
+// List returns the user's passkeys.
 func (s *Service) List(ctx context.Context, userID uuid.UUID) ([]Credential, error) {
 	rows, err := s.q.ListPasskeyCredentials(ctx, userID)
 	if err != nil {

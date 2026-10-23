@@ -22,7 +22,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
-	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -102,6 +102,7 @@ func (s *Service) magicLinkTTL(ctx context.Context, tenantID uuid.UUID) (time.Du
 	return ttl, nil
 }
 
+// NewService returns the password reset and magic link service.
 func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, baseAppURL string) *Service {
 	if ttl <= 0 {
 		ttl = time.Hour
@@ -148,16 +149,11 @@ func (s *Service) resetLink(raw string, from ResetOrigin) string {
 }
 
 // StartPasswordReset emails a reset link to the account with this email, if
-// any (email is globally unique). It answers alike either way, storing and
-// sending the link after it returns (see afterAnswer), and returns the raw
-// token for dev-mode handlers, empty when no account matched.
-func (s *Service) StartPasswordReset(ctx context.Context, email string) (string, error) {
-	return s.StartPasswordResetFrom(ctx, email, ResetOrigin{})
-}
-
-// StartPasswordResetFrom is StartPasswordReset for a reset requested from a
-// given application: the emailed link lands back there (see resetLink).
-func (s *Service) StartPasswordResetFrom(ctx context.Context, email string, from ResetOrigin) (string, error) {
+// any (email is globally unique), landing back on the application from names
+// (see resetLink). It answers alike either way, storing and sending the link
+// after it returns (see afterAnswer), and returns the raw token for dev-mode
+// handlers, empty when no account matched.
+func (s *Service) StartPasswordReset(ctx context.Context, email string, from ResetOrigin) (string, error) {
 	var userID uuid.UUID
 	var tenantID *uuid.UUID
 	err := s.pool.QueryRow(ctx,

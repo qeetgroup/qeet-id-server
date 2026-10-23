@@ -93,15 +93,10 @@ func validType(t string) bool {
 	return t == typeSplunkHEC || t == typeDatadog || t == typeHTTP
 }
 
-// Create is CreateWithActor with the system as actor.
-func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, typ, endpoint, token string) (*Sink, error) {
-	return s.CreateWithActor(ctx, tenantID, typ, endpoint, token, audit.Actor{Type: "system"})
-}
-
-// CreateWithActor registers a sink with its token encrypted, recording it in
+// Create registers a sink with its token encrypted, recording it in
 // the audit log and the outbox. The sink streams from now, so it never receives
 // the existing audit history.
-func (s *Service) CreateWithActor(ctx context.Context, tenantID uuid.UUID, typ, endpoint, token string, actor audit.Actor) (*Sink, error) {
+func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, typ, endpoint, token string, actor audit.Actor) (*Sink, error) {
 	if !validType(typ) {
 		return nil, errs.ErrSIEMSinkTypeInvalid
 	}
@@ -187,14 +182,9 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Sink, error) 
 	return out, nil
 }
 
-// SetEnabled is SetEnabledWithActor with the system as actor.
-func (s *Service) SetEnabled(ctx context.Context, id, tenantID uuid.UUID, enabled bool) error {
-	return s.SetEnabledWithActor(ctx, id, tenantID, enabled, audit.Actor{Type: "system"})
-}
-
-// SetEnabledWithActor enables or disables one of the tenant's sinks. It returns
+// SetEnabled enables or disables one of the tenant's sinks. It returns
 // errs.ErrNotFound if there is no such sink.
-func (s *Service) SetEnabledWithActor(ctx context.Context, id, tenantID uuid.UUID, enabled bool, actor audit.Actor) error {
+func (s *Service) SetEnabled(ctx context.Context, id, tenantID uuid.UUID, enabled bool, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -219,14 +209,9 @@ func (s *Service) SetEnabledWithActor(ctx context.Context, id, tenantID uuid.UUI
 	return tx.Commit(ctx)
 }
 
-// Delete is DeleteWithActor with the system as actor.
-func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
-	return s.DeleteWithActor(ctx, id, tenantID, audit.Actor{Type: "system"})
-}
-
-// DeleteWithActor deletes one of the tenant's sinks. It returns
+// Delete deletes one of the tenant's sinks. It returns
 // errs.ErrNotFound if there is no such sink.
-func (s *Service) DeleteWithActor(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -531,17 +516,6 @@ type Handler struct {
 	Service *Service
 }
 
-func actorOf(r *http.Request) audit.Actor {
-	actor := audit.Actor{Type: "system", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	if principal := httpx.PrincipalFromCtx(r.Context()); principal != nil {
-		actor.UserID = principal.UserID
-		if principal.ActorType != "" {
-			actor.Type = principal.ActorType
-		}
-	}
-	return actor
-}
-
 // Mount registers the log-sink routes.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/log-sinks", h.list)
@@ -551,18 +525,7 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrSIEMTenantInvalid
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrSIEMTenantMismatch
-	}
-	return scope, nil
+	return httpx.PathTenantOr(r, errs.ErrSIEMTenantInvalid, errs.ErrSIEMTenantMismatch)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -594,7 +557,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	sk, err := h.Service.CreateWithActor(r.Context(), tenantID, in.Type, in.Endpoint, in.Token, actorOf(r))
+	sk, err := h.Service.Create(r.Context(), tenantID, in.Type, in.Endpoint, in.Token, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -620,7 +583,7 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.SetEnabledWithActor(r.Context(), id, tenantID, in.Enabled, actorOf(r)); err != nil {
+	if err := h.Service.SetEnabled(r.Context(), id, tenantID, in.Enabled, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -638,7 +601,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSIEMIDInvalid)
 		return
 	}
-	if err := h.Service.DeleteWithActor(r.Context(), id, tenantID, actorOf(r)); err != nil {
+	if err := h.Service.Delete(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

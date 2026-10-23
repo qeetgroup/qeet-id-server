@@ -32,6 +32,7 @@ type TemplateNode struct {
 	Children    []TemplateNode `json:"children,omitempty"`
 }
 
+// GroupTemplate is a stored tree of groups the tenant can apply.
 type GroupTemplate struct {
 	ID          uuid.UUID      `json:"id"`
 	TenantID    uuid.UUID      `json:"tenant_id"`
@@ -44,6 +45,7 @@ type GroupTemplate struct {
 	GroupCount int `json:"group_count"`
 }
 
+// TemplateInput is what CreateTemplate takes.
 type TemplateInput struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
@@ -115,6 +117,7 @@ func validateTemplate(in TemplateInput) (int, error) {
 
 // The template queries below are hand-written SQL, not sqlc.
 
+// ListTemplates returns the tenant's group templates.
 func (s *Service) ListTemplates(ctx context.Context, tenantID uuid.UUID) ([]GroupTemplate, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, tenant_id, name, description, nodes, created_at, updated_at
@@ -144,6 +147,7 @@ func (s *Service) ListTemplates(ctx context.Context, tenantID uuid.UUID) ([]Grou
 	return out, rows.Err()
 }
 
+// CreateTemplate stores a group template for the tenant.
 func (s *Service) CreateTemplate(
 	ctx context.Context, tenantID uuid.UUID, in TemplateInput, actor audit.Actor,
 ) (*GroupTemplate, error) {
@@ -187,6 +191,7 @@ func (s *Service) CreateTemplate(
 	return &t, nil
 }
 
+// DeleteTemplate removes one of the tenant's group templates.
 func (s *Service) DeleteTemplate(
 	ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor,
 ) error {

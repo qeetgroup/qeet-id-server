@@ -105,7 +105,7 @@ security:
   authorization: internal/access/authorization/
   permission_map: internal/bootstrap/permissions.go
   tokens: internal/platform/crypto/tokens/jwt.go   # ES256, RFC 7638 kid
-  password_hash: argon2id                          # internal/platform/crypto/encryption/hasher.go
+  password_hash: argon2id                          # internal/platform/crypto/password/hasher.go
   csrf: internal/platform/http/httpx/csrf.go
   boot_gate: internal/platform/config/config.go    # Config.Validate()
 

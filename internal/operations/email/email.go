@@ -264,18 +264,7 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrEmailTenantInvalid
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrEmailTenantMismatch
-	}
-	return scope, nil
+	return httpx.PathTenantOr(r, errs.ErrEmailTenantInvalid, errs.ErrEmailTenantMismatch)
 }
 
 func (h *Handler) audit(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID uuid.UUID, action, key string) error {

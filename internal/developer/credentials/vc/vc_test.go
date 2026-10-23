@@ -8,6 +8,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	tokens "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -40,7 +41,7 @@ func TestIssue_RequiresSubjectAndType(t *testing.T) {
 		{"did:example:123", "  "},
 	}
 	for _, c := range cases {
-		res, err := s.Issue(context.Background(), [16]byte{}, c.subject, c.credType, nil, 0)
+		res, err := s.Issue(context.Background(), [16]byte{}, c.subject, c.credType, nil, 0, audit.Actor{Type: "system"})
 		if res != nil {
 			t.Errorf("subject=%q type=%q: expected nil result", c.subject, c.credType)
 		}

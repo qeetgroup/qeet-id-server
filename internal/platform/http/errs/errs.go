@@ -16,6 +16,8 @@ type FieldError struct {
 	Message string `json:"message"`
 }
 
+// Error is a transport-agnostic error: a stable code, a safe message, and
+// optional detail, metadata and cause.
 type Error struct {
 	Code    string // stable machine identifier, e.g. "mfa.code_invalid"
 	Message string // human-facing text shown to the end user
@@ -136,6 +138,7 @@ func New(code, msg string) *Error {
 	return &Error{Code: code, Message: msg, TranslationKey: code}
 }
 
+// As returns the *Error in err's chain, or nil.
 func As(err error) *Error {
 	var e *Error
 	if errors.As(err, &e) {

@@ -33,6 +33,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
+// Provider is a tenant's social identity provider, without its secret.
 type Provider struct {
 	ID           uuid.UUID `json:"id"`
 	TenantID     uuid.UUID `json:"tenant_id"`
@@ -43,6 +44,7 @@ type Provider struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+// ExternalIdentity is a social account linked to a user.
 type ExternalIdentity struct {
 	ID       uuid.UUID `json:"id"`
 	UserID   uuid.UUID `json:"user_id"`
@@ -122,8 +124,10 @@ func (s *Service) validateReturnTo(returnTo string) error {
 	return nil
 }
 
+// SetCipher sets the cipher that encrypts social sign-in secrets at rest.
 func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
 
+// NewService returns the social sign-in service.
 func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string, policies ...*egress.Policy) *Service {
 	policy := egress.PublicPolicy(policies...)
 	return &Service{
@@ -149,6 +153,7 @@ type CreateProviderInput struct {
 	ChangedBy    ChangedBy `json:"-"`
 }
 
+// UpsertProvider adds or updates one of the tenant's social providers.
 func (s *Service) UpsertProvider(ctx context.Context, in CreateProviderInput) (*Provider, error) {
 	if _, err := s.egress.ValidateHTTPURL(in.DiscoveryURL); err != nil {
 		return nil, errs.ErrSocialProviderNoDiscovery
@@ -250,6 +255,7 @@ func (s *Service) UpsertProvider(ctx context.Context, in CreateProviderInput) (*
 	return &p, nil
 }
 
+// ListProviders returns the tenant's social providers.
 func (s *Service) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]Provider, error) {
 	rows, err := s.q.ListSocialProviders(ctx, tenantID)
 	if err != nil {
@@ -270,6 +276,7 @@ func (s *Service) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]Prov
 	return out, nil
 }
 
+// ListIdentities returns the social accounts linked to the user in the tenant.
 func (s *Service) ListIdentities(ctx context.Context, userID, tenantID uuid.UUID) ([]ExternalIdentity, error) {
 	// Tenant-scoped so one tenant can't read another's linked identities;
 	// the deleted_at join keeps soft-deleted users out of admin lookups.
@@ -847,6 +854,7 @@ type Handler struct {
 	PublicBaseURL string
 }
 
+// Mount registers the social sign-in routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/social/providers", h.upsertProvider)
 	r.Patch("/social/providers/{provider}", h.updateProvider)

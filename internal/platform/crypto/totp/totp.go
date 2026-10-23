@@ -63,15 +63,6 @@ func Code(secret string, t time.Time) (string, error) {
 	return fmt.Sprintf("%0*d", digits, bin%mod), nil
 }
 
-// Verify reports whether code matches the current 30s window or an adjacent
-// one. It does not prevent replay: a code stays valid for about 90s, so callers
-// that authenticate with it must use VerifyStep and refuse a step already used
-// (RFC 6238 §5.2).
-func Verify(secret, code string) bool {
-	_, ok := VerifyStep(secret, code)
-	return ok
-}
-
 // VerifyStep verifies the code and reports WHICH time-step matched, so the
 // caller can enforce single use by refusing a step it has already accepted.
 // The step is the RFC 6238 counter (Unix seconds / period), which increases
