@@ -327,7 +327,7 @@ func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) er
 		return err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{
-		AggregateID: in.UserID, Topic: "auth", EventType: "auth.password.changed",
+		AggregateID: in.UserID, Topic: "user.events", EventType: "auth.password_changed",
 		Payload: map[string]any{
 			"user_id": in.UserID, "tenant_id": in.TenantID,
 			"kept_session_id": in.KeepSessionID, "revoked_sessions": revoked, "revoked_login_sessions": ended.LoginSessions,

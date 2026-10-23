@@ -69,17 +69,26 @@ func PurgePublished(ctx context.Context, pool *pgxpool.Pool, retention time.Dura
 	}
 }
 
+// Message is a committed event as a Publisher receives it.
+type Message struct {
+	ID         uuid.UUID
+	Topic      string
+	EventType  string
+	Payload    []byte    // the event's JSON payload
+	OccurredAt time.Time // when the enqueuing transaction wrote it
+}
+
 // Publisher delivers an event. A nil error marks the row published; an error
-// makes the Dispatcher retry it.
+// makes the Dispatcher retry it, so a Publisher may see an event again.
 type Publisher interface {
-	Publish(ctx context.Context, eventID uuid.UUID, topic, eventType string, payload []byte) error
+	Publish(ctx context.Context, m Message) error
 }
 
 // LogPublisher logs each event instead of delivering it. It never fails.
 type LogPublisher struct{}
 
-func (LogPublisher) Publish(_ context.Context, eventID uuid.UUID, topic, eventType string, payload []byte) error {
-	slog.Info("outbox publish", "event_id", eventID, "topic", topic, "event", eventType, "payload_bytes", len(payload))
+func (LogPublisher) Publish(_ context.Context, m Message) error {
+	slog.Info("outbox publish", "event_id", m.ID, "topic", m.Topic, "event", m.EventType, "payload_bytes", len(m.Payload))
 	return nil
 }
 
@@ -150,22 +159,19 @@ func (d *Dispatcher) tick(ctx context.Context) error {
 		SET lease_owner = $2, lease_until = $3
 		FROM candidates
 		WHERE event.id = candidates.id
-		RETURNING event.id, event.topic, event.event_type, event.payload, event.attempts
+		RETURNING event.id, event.topic, event.event_type, event.payload, event.created_at, event.attempts
 	`, d.batchSize, d.workerID, time.Now().UTC().Add(d.lease))
 	if err != nil {
 		return err
 	}
 	type row struct {
-		ID        uuid.UUID
-		Topic     string
-		EventType string
-		Payload   []byte
-		Attempts  int
+		Message
+		Attempts int
 	}
 	var batch []row
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.ID, &r.Topic, &r.EventType, &r.Payload, &r.Attempts); err != nil {
+		if err := rows.Scan(&r.ID, &r.Topic, &r.EventType, &r.Payload, &r.OccurredAt, &r.Attempts); err != nil {
 			rows.Close()
 			return err
 		}
@@ -183,7 +189,7 @@ func (d *Dispatcher) tick(ctx context.Context) error {
 		return nil
 	}
 	for _, r := range batch {
-		if err := d.pub.Publish(ctx, r.ID, r.Topic, r.EventType, r.Payload); err != nil {
+		if err := d.pub.Publish(ctx, r.Message); err != nil {
 			d.recordFailure(ctx, r.ID, r.Attempts+1, err)
 			continue
 		}

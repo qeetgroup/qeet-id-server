@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 )
 
@@ -34,17 +33,17 @@ func NewNATSPublisher(url string) (*NATSPublisher, error) {
 // Publish sends one event to its topic subject and flushes, so a delivery
 // failure is returned to the dispatcher (which retries) rather than silently
 // buffered on a dead connection.
-func (p *NATSPublisher) Publish(ctx context.Context, eventID uuid.UUID, topic, eventType string, payload []byte) error {
+func (p *NATSPublisher) Publish(ctx context.Context, m Message) error {
 	msg := &nats.Msg{
-		Subject: topic,
-		Data:    payload,
+		Subject: m.Topic,
+		Data:    m.Payload,
 		Header: nats.Header{
-			"Qeet-Event-ID":   []string{eventID.String()},
-			"Qeet-Event-Type": []string{eventType},
+			"Qeet-Event-ID":   []string{m.ID.String()},
+			"Qeet-Event-Type": []string{m.EventType},
 		},
 	}
 	if err := p.nc.PublishMsg(msg); err != nil {
-		return fmt.Errorf("nats publish %q: %w", topic, err)
+		return fmt.Errorf("nats publish %q: %w", m.Topic, err)
 	}
 	timeout := p.flushTimeout
 	if dl, ok := ctx.Deadline(); ok {
@@ -53,7 +52,7 @@ func (p *NATSPublisher) Publish(ctx context.Context, eventID uuid.UUID, topic, e
 		}
 	}
 	if err := p.nc.FlushTimeout(timeout); err != nil {
-		return fmt.Errorf("nats flush %q: %w", topic, err)
+		return fmt.Errorf("nats flush %q: %w", m.Topic, err)
 	}
 	return nil
 }

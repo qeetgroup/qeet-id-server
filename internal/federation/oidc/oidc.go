@@ -45,11 +45,21 @@ type Service struct {
 	// agentStatus returns an AI agent's lifecycle status, so introspection
 	// reports a suspended agent's tokens inactive (nil: not checked).
 	agentStatus func(ctx context.Context, agentID uuid.UUID) (string, error)
+	// sessionLive reports whether a user's own session has not ended, so its
+	// access tokens introspect inactive and can't be exchanged once it has
+	// (nil: not checked).
+	sessionLive func(ctx context.Context, sessionID, userID uuid.UUID) (bool, error)
 }
 
 // SetAgentStatus wires the agent lifecycle lookup introspection consults.
 func (s *Service) SetAgentStatus(f func(ctx context.Context, agentID uuid.UUID) (string, error)) {
 	s.agentStatus = f
+}
+
+// SetSessionLive wires the session lookup introspection and token exchange
+// consult.
+func (s *Service) SetSessionLive(f func(ctx context.Context, sessionID, userID uuid.UUID) (bool, error)) {
+	s.sessionLive = f
 }
 
 // NewService returns the OIDC provider service.

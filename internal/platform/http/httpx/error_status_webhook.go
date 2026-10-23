@@ -14,5 +14,7 @@ func init() {
 		errs.CodeWebhookURLRequired:      http.StatusUnprocessableEntity,
 		errs.CodeWebhookInvalidID:        http.StatusBadRequest,
 		errs.CodeWebhookTenantMismatch:   http.StatusForbidden,
+		errs.CodeWebhookEventsRequired:   http.StatusUnprocessableEntity,
+		errs.CodeWebhookEventUnknown:     http.StatusUnprocessableEntity,
 	})
 }

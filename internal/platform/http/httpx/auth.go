@@ -25,6 +25,10 @@ type AuthVerifier struct {
 	// token of one of the user's own sessions (not an application's token),
 	// so the session's last use is known. Best effort; nil skips it.
 	SessionUsed func(ctx context.Context, sessionID uuid.UUID)
+	// SessionLive, when set, reports whether the session of a user's own
+	// access token has not ended, so a signed-out, revoked or timed-out
+	// session's tokens are refused at once rather than when they expire.
+	SessionLive func(ctx context.Context, sessionID, userID uuid.UUID) (bool, error)
 }
 
 // RequireAuth wraps a handler so it only sees authenticated requests.
@@ -90,8 +94,22 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 				p.SessionID = &sid
 			}
 			p.ClientID = claims.ClientID
-			if v.SessionUsed != nil && p.SessionID != nil && p.ClientID == "" && p.ActorType == "user" {
-				v.SessionUsed(r.Context(), *p.SessionID)
+			if p.SessionID != nil && p.UserID != nil && p.ClientID == "" && p.ActorType == "user" {
+				if v.SessionLive != nil {
+					live, err := v.SessionLive(r.Context(), *p.SessionID, *p.UserID)
+					if err != nil {
+						WriteError(w, r, errs.ErrInternalServer.Wrap(err))
+						return
+					}
+					if !live {
+						w.Header().Set("WWW-Authenticate", `Bearer realm="qeet", error="invalid_token"`)
+						WriteError(w, r, errs.ErrAuthSessionRevoked)
+						return
+					}
+				}
+				if v.SessionUsed != nil {
+					v.SessionUsed(r.Context(), *p.SessionID)
+				}
 			}
 			// AI-agent token: capture the agent id and enforce the agent's
 			// current lifecycle status, so a suspended/decommissioned agent's

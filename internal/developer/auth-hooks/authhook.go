@@ -398,7 +398,8 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, enabled, f
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "auth_hook.updated", "auth_hook", id, metadata)); err != nil {
 		return err
 	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "auth-hook.events", EventType: "auth_hook.updated", Payload: metadata}); err != nil {
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "auth-hook.events", EventType: "auth_hook.updated",
+		Payload: map[string]any{"hook_id": id, "tenant_id": tenantID, "enabled": enabled, "fail_open": failOpen}}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

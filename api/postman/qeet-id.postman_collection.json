@@ -7883,7 +7883,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"url\": \"https://example.com/webhook/{{$timestamp}}\",\n  \"events\": [\"user.created\", \"user.updated\", \"tenant.created\"]\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"url\": \"https://example.com/webhook/{{$timestamp}}\",\n  \"events\": [\"user.created\", \"user.updated\", \"session.revoked\"]\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/v1/webhooks",
@@ -8040,6 +8040,26 @@
                 "deliveries",
                 "{{deliveryId}}",
                 "retry"
+              ]
+            }
+          }
+        },
+        {
+          "name": "08 List webhook events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/webhooks/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "webhooks",
+                "events"
               ]
             }
           }

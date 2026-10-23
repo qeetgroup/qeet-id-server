@@ -453,7 +453,7 @@ func (h *Handler) createWithEvidence(r *http.Request, in CreateInput, passwordHa
 		AggregateID: u.ID,
 		Topic:       "user.events",
 		EventType:   "user.created",
-		Payload:     u,
+		Payload:     map[string]any{"user_id": u.ID, "tenant_id": u.TenantID, "email": u.Email, "source": "admin"},
 	}); err != nil {
 		return nil, err
 	}

@@ -101,7 +101,7 @@ HTTP request
         └─ authenticated group
                ↓  API-key middleware
                ↓  LoginSessionAuth       qe_ls cookie, on LoginSessionRoutes() only (no Authorization header)
-               ↓  RequireAuth            verify JWT: kid, signature, expiry → principal
+               ↓  RequireAuth            verify JWT: kid, signature, expiry; the session not ended → principal
                ↓  EnforceTenantScope     {tenantID} must equal the caller's tenant
                ↓  rate limiters          per tenant · per user · per API key
                ↓  rbac.Enforce           route permission from permissions.go
@@ -462,6 +462,12 @@ webhook delivery  /  NATS publish
    ↓  exhausted
 dead-letter
 ```
+
+The dispatcher hands every committed event to `webhook.Relay`, which queues the events named in
+the catalogue (`webhook.Events`, `internal/developer/webhooks/events.go`) for the subscriptions of
+the organisation the payload's `tenant_id` names, then publishes it to NATS. A subscription may name
+only catalogue events, so an outbox event a customer should receive needs a catalogue entry and a
+`tenant_id` in its payload. An event's name is its version: change a payload incompatibly under a new name.
 
 **Evidence:** `internal/platform/events/outbox/`, `internal/platform/worker/worker.go`
 

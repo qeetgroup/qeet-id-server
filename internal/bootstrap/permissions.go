@@ -187,6 +187,7 @@ func userPermissionMap() map[string]string {
 
 		// Webhooks.
 		"GET /v1/tenants/{tenantID}/webhooks":                  "webhook.read",
+		"GET /v1/tenants/{tenantID}/webhooks/events":           "webhook.read",
 		"GET /v1/webhooks/{id}":                                "webhook.read",
 		"GET /v1/webhooks/{id}/deliveries":                     "webhook.read",
 		"POST /v1/webhooks":                                    "webhook.write",

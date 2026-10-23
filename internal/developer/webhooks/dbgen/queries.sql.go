@@ -65,7 +65,7 @@ func (q *Queries) DisableWebhookSubscription(ctx context.Context, arg DisableWeb
 const getSubscriptionsForEvent = `-- name: GetSubscriptionsForEvent :many
 SELECT id FROM tenant.webhook_subscriptions
 WHERE tenant_id = $1 AND disabled_at IS NULL
-  AND ($2::text = ANY(events) OR events = '{}'::text[])
+  AND $2::text = ANY(events)
 `
 
 type GetSubscriptionsForEventParams struct {
@@ -73,8 +73,8 @@ type GetSubscriptionsForEventParams struct {
 	EventType string
 }
 
-// GetSubscriptionsForEvent returns subscription IDs for Enqueue: active
-// subscriptions matching the event type (or subscribed to all events).
+// GetSubscriptionsForEvent returns subscription IDs for Enqueue: the active
+// subscriptions that name the event type.
 func (q *Queries) GetSubscriptionsForEvent(ctx context.Context, arg GetSubscriptionsForEventParams) ([]uuid.UUID, error) {
 	rows, err := q.db.Query(ctx, getSubscriptionsForEvent, arg.TenantID, arg.EventType)
 	if err != nil {
@@ -129,18 +129,27 @@ func (q *Queries) GetWebhookSubscription(ctx context.Context, arg GetWebhookSubs
 }
 
 const insertDelivery = `-- name: InsertDelivery :exec
-INSERT INTO tenant.webhook_deliveries (subscription_id, event_type, payload, next_attempt_at)
-VALUES ($1, $2, $3, NOW())
+INSERT INTO tenant.webhook_deliveries (subscription_id, event_id, event_type, payload, next_attempt_at)
+VALUES ($1, $2, $3, $4, NOW())
+ON CONFLICT (subscription_id, event_id) DO NOTHING
 `
 
 type InsertDeliveryParams struct {
 	SubscriptionID uuid.UUID
+	EventID        uuid.UUID
 	EventType      string
 	Payload        []byte
 }
 
+// InsertDelivery queues an event for a subscription, once: the same event
+// again is a no-op.
 func (q *Queries) InsertDelivery(ctx context.Context, arg InsertDeliveryParams) error {
-	_, err := q.db.Exec(ctx, insertDelivery, arg.SubscriptionID, arg.EventType, arg.Payload)
+	_, err := q.db.Exec(ctx, insertDelivery,
+		arg.SubscriptionID,
+		arg.EventID,
+		arg.EventType,
+		arg.Payload,
+	)
 	return err
 }
 

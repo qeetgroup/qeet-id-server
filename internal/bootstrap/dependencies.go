@@ -353,9 +353,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	searchService := search.NewService(pool, rbacRepo)
 	webhookService := webhook.NewService(pool, outboundPolicy)
 	webhookService.SetCipher(sharedCipher)
-	// Agent lifecycle: emit webhook events on transitions, and let the auth
-	// middleware deny suspended/decommissioned agents' tokens per request.
-	agentService.SetEmitter(webhookService.Enqueue)
+	// Let the auth middleware deny suspended/decommissioned agents' tokens per
+	// request.
 	verifier.AgentStatus = agentService.AgentStatus
 	// Session and role-change signals over the webhook dispatcher, so subscribers
 	// can react before access tokens expire.
@@ -363,6 +362,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	authService.SetSessionSignals(sessionSignals)
 	authService.SetSessionLifetime(cfg.SessionMaxAge, cfg.SessionIdleTimeout) // session bounds where the organisation sets none
 	verifier.SessionUsed = authService.SessionUsed                            // a session's last use, for its idle timeout and the session list
+	verifier.SessionLive = authService.SessionLive                            // an ended session's access tokens are refused at once
 	recoveryService.SetSessionSignals(sessionSignals)
 	rbacService.SetEmitter(webhookService.Enqueue)
 	gdprService := gdpr.NewService(pool, 30*24*time.Hour)
@@ -381,6 +381,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	inFlight := httpx.NewInFlight()
 	oidcService := oidc.NewService(pool, issuer)
 	oidcService.SetAgentStatus(agentService.AgentStatus)            // a suspended agent's tokens introspect inactive
+	oidcService.SetSessionLive(authService.SessionLive)             // an ended session's tokens introspect inactive and can't be exchanged
 	oidcService.SetGrantMaxAge(cfg.SessionMaxAge)                   // grant bound where the organisation sets none
 	oidcService.SetTokenExchangeMaxDepth(cfg.TokenExchangeMaxDepth) // bound a chain of exchanges
 	oidcService.SetClientLockout(oidc.ClientLockout{                // wrong application secrets
@@ -681,7 +682,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		deps.shutdownHooks = append(deps.shutdownHooks, func() { _ = activityNATSConn.Drain() })
 	}
 
-	outboxDispatcher := outbox.NewDispatcher(pool, outboxPub, 2*time.Second, 50)
+	// Committed events reach the organisation's webhook subscriptions as well
+	// as the event stream.
+	outboxDispatcher := outbox.NewDispatcher(pool, webhookService.Relay(outboxPub), 2*time.Second, 50)
 	workers := []namedWorker{
 		{name: "jwt-keyring", run: func(ctx context.Context) { signingKeyRegistry.Run(ctx, issuer, cfg.JWTSigningKeyRefreshInterval) }, always: true},
 		// Each instance enforces the overrides from its own cache.

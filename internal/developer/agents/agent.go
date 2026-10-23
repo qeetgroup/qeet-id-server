@@ -32,31 +32,17 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
-// EventEmitter enqueues a webhook event for a tenant. Injected (webhook service)
-// so this package needn't import webhooks. nil = no-op.
-type EventEmitter func(ctx context.Context, tenantID uuid.UUID, eventType string, payload any) error
-
-// Service manages the agents.
+// Service manages the agents. Its events go out through the outbox, and so
+// reach webhooks too.
 type Service struct {
-	pool    *pgxpool.Pool
-	q       *dbgen.Queries
-	issuer  *tokens.Issuer
-	emitter EventEmitter
+	pool   *pgxpool.Pool
+	q      *dbgen.Queries
+	issuer *tokens.Issuer
 }
 
 // NewService returns the agent service.
 func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer}
-}
-
-// SetEmitter sets the webhook event emitter; nil emits nothing.
-func (s *Service) SetEmitter(e EventEmitter) { s.emitter = e }
-
-func (s *Service) emit(ctx context.Context, tenantID uuid.UUID, eventType string, payload any) {
-	if s.emitter == nil {
-		return
-	}
-	_ = s.emitter(ctx, tenantID, eventType, payload) // best-effort
 }
 
 // AgentStatus returns an agent's current lifecycle status, or ErrAgentNotFound.
@@ -152,7 +138,6 @@ func (s *Service) Transition(ctx context.Context, id, tenantID uuid.UUID, target
 	if err := tx.Commit(ctx); err != nil {
 		return cur, err
 	}
-	s.emit(ctx, tenantID, eventType, payload)
 	return cur, nil
 }
 
@@ -381,11 +366,6 @@ func (s *Service) TransferSponsor(ctx context.Context, tenantID, fromUserID, toU
 	if err := tx.Commit(ctx); err != nil {
 		return 0, err
 	}
-	if count > 0 {
-		s.emit(ctx, tenantID, "agent.sponsor_transferred", map[string]any{
-			"tenant_id": tenantID.String(), "from_user_id": fromUserID.String(), "to_user_id": toUserID.String(), "count": count,
-		})
-	}
 	return count, nil
 }
 
@@ -441,11 +421,6 @@ func (s *Service) KillAll(ctx context.Context, tenantID uuid.UUID, actor audit.A
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, err
-	}
-	if count > 0 {
-		s.emit(ctx, tenantID, "agent.kill_switch", map[string]any{
-			"tenant_id": tenantID.String(), "suspended": count,
-		})
 	}
 	return count, nil
 }

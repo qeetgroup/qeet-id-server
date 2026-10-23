@@ -49,7 +49,23 @@ tags:
   - name: Auth Hooks
     description: 'Custom authentication hooks (actions) invoked during authentication flows.'
   - name: Webhooks
-    description: Outbound webhook endpoint management.
+    description: >-
+      Outbound webhook endpoint management. A subscription names the events it
+      receives, from the event catalogue; an event's name is its version, so an
+      incompatible payload change comes as a new name, while new fields may be
+      added to any payload. Each delivery is a POST whose JSON body is the
+      envelope {id, type, tenant_id, occurred_at, data}: id is the same in
+      every delivery of one event, retries included, so deduplicate on it, and
+      data is the event's own payload. Deliveries are at least once and in no
+      guaranteed order. Headers: X-Qeet-Event (the type), X-Qeet-Delivery-ID,
+      X-Qeet-Timestamp (Unix seconds) and X-Qeet-Signature, "sha256=" and the
+      hex HMAC-SHA256, keyed by the subscription's secret, of the timestamp, a
+      ".", and the raw body. Verify the signature in constant time before
+      parsing, and refuse a timestamp more than a few minutes old. Answer 2xx
+      quickly: a network error, a 5xx, 408 or 429 is retried with jittered
+      backoff from 30 seconds up to an hour, for 60 attempts; any other 4xx
+      dead-letters the delivery at once. A dead-lettered delivery stays in the
+      delivery list and can be sent again.
   - name: Secrets
     description: Per-tenant encrypted secrets vault.
   - name: Token Vault
@@ -928,6 +944,43 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/webhooks/events:
+    get:
+      operationId: get_v1_tenants_ByTenantID_webhooks_events
+      summary: List webhook events
+      tags:
+        - Webhooks
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: 'Lists the event catalogue: every event a webhook subscription can name, with what it reports. Requires webhook.read.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WebhookEventType'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/webhooks:
     post:
       operationId: post_v1_webhooks
@@ -938,12 +991,12 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/WebhookCreateInput'
-      description: 'Subscribes an endpoint to the organisation''s events. The endpoint must be an allowed outbound destination; the signing secret is shown only in this answer. Requires webhook.write. Needs a recent step-up. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress.'
+      description: 'Subscribes an endpoint to the organisation''s events it names. The endpoint must be an allowed outbound destination; the signing secret is shown only in this answer. events must name at least one event (422 webhook.events_required), each from the event catalogue (422 webhook.event_unknown); a repeated name counts once. Requires webhook.write. Needs a recent step-up. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress.'
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
@@ -1098,10 +1151,10 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Sends a test event to the subscription''s endpoint and answers once it is queued. Requires webhook.write.'
+      description: 'Queues a test.ping event for this subscription alone, whichever events it names, and answers once it is queued. Its data is {subscription_id}. Requires webhook.write.'
       responses:
-        '201':
-          description: Created
+        '202':
+          description: Accepted
           content:
             application/json:
               schema:
@@ -1975,16 +2028,27 @@ components:
           additionalProperties: true
     WebhookCreateInput:
       type: object
-      required: [events, tenant_id, url]
+      required: [events, url]
       properties:
         events:
           type: array
+          minItems: 1
+          description: Event names from the event catalogue.
           items:
             type: string
         tenant_id:
           type: string
           format: uuid
+          description: Ignored; the organisation is the caller's.
         url:
+          type: string
+    WebhookEventType:
+      type: object
+      required: [description, name]
+      properties:
+        description:
+          type: string
+        name:
           type: string
     WebhookSubscription:
       type: object

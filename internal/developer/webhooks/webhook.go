@@ -1,19 +1,27 @@
-// Package webhook lets tenants subscribe to domain events and receive a
-// signed POST. Deliveries are persisted before send so retries survive
-// process restarts; a background dispatcher walks the queue.
+// Package webhook lets tenants subscribe to the events in its catalogue and
+// receive each as a signed POST. Deliveries are persisted before send so
+// retries survive process restarts; a background dispatcher walks the queue.
+//
+// A delivery's body is an Event. X-Qeet-Signature is "sha256=" and the hex
+// HMAC-SHA256, keyed by the subscription's secret, of X-Qeet-Timestamp (Unix
+// seconds), a ".", and the body, so a receiver can refuse a stale or replayed
+// delivery as well as a forged one.
 package webhook
 
 import (
 	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"math/big"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -110,18 +118,25 @@ func strPtr(s string) *string {
 	return &s
 }
 
-// CreateInput is what Create takes.
+// CreateInput is what Create takes. TenantID is set from the caller's token;
+// one sent in the body is ignored.
 type CreateInput struct {
 	TenantID uuid.UUID `json:"tenant_id"`
 	URL      string    `json:"url"`
 	Events   []string  `json:"events"`
 }
 
-// Create subscribes an endpoint to the tenant's events.
+// Create subscribes an endpoint to the events in.Events, which must name at
+// least one and only events in the catalogue.
 func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Subscription, error) {
 	if _, err := s.egress.ValidateHTTPURL(in.URL); err != nil {
 		return nil, errs.ErrBadRequest.WithDetail("webhook URL is not an allowed outbound destination")
 	}
+	events, err := subscribableEvents(in.Events)
+	if err != nil {
+		return nil, err
+	}
+	in.Events = events
 	// Plan gate: webhooks are a paid feature (not included on Free).
 	if s.gate != nil {
 		ok, err := s.gate.FeatureAllowed(ctx, in.TenantID, "webhooks")
@@ -309,27 +324,25 @@ func (s *Service) EnqueueTx(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, 
 }
 
 func (s *Service) enqueue(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, eventType string, payload any) error {
-	body, err := json.Marshal(payload)
+	data, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	ids, err := q.GetSubscriptionsForEvent(ctx, dbgen.GetSubscriptionsForEventParams{
-		TenantID:  tenantID,
-		EventType: eventType,
-	})
+	return s.queue(ctx, q, Event{ID: uuid.New(), Type: eventType, TenantID: tenantID, OccurredAt: time.Now().UTC(), Data: data})
+}
+
+// SendTest queues a TestEvent for sub alone, whichever events it names.
+func (s *Service) SendTest(ctx context.Context, sub *Subscription) error {
+	data, err := json.Marshal(map[string]any{"subscription_id": sub.ID})
 	if err != nil {
 		return err
 	}
-	for _, id := range ids {
-		if err := q.InsertDelivery(ctx, dbgen.InsertDeliveryParams{
-			SubscriptionID: id,
-			EventType:      eventType,
-			Payload:        body,
-		}); err != nil {
-			return err
-		}
+	e := Event{ID: uuid.New(), Type: TestEvent, TenantID: sub.TenantID, OccurredAt: time.Now().UTC(), Data: data}
+	body, err := json.Marshal(e)
+	if err != nil {
+		return err
 	}
-	return nil
+	return s.q.InsertDelivery(ctx, dbgen.InsertDeliveryParams{SubscriptionID: sub.ID, EventID: e.ID, EventType: e.Type, Payload: body})
 }
 
 // RunDispatcher loops, picking due deliveries and posting them with an
@@ -438,11 +451,12 @@ func (s *Service) tick(ctx context.Context) error {
 		if derr != nil {
 			errStr = derr.Error()
 		}
-		// Give up after maxDeliveryAttempts: a permanently-failing endpoint
-		// (dead domain, 404, decommissioned integration) would otherwise retry
-		// forever at the 1h backoff ceiling. dead_at marks it dead-lettered;
-		// RetryDelivery clears it for a manual re-send.
-		if int(it.Attempt)+1 >= maxDeliveryAttempts {
+		// Give up after maxDeliveryAttempts, or at once when the endpoint
+		// refused the delivery itself: a permanently-failing endpoint (dead
+		// domain, decommissioned integration) would otherwise retry forever at
+		// the 1h backoff ceiling. dead_at marks it dead-lettered; RetryDelivery
+		// clears it for a manual re-send.
+		if int(it.Attempt)+1 >= maxDeliveryAttempts || !retryable(status) {
 			if _, err := s.pool.Exec(ctx, `
 				UPDATE tenant.webhook_deliveries
 				SET attempt = attempt + 1, status_code = $3, response_body = $4,
@@ -457,6 +471,7 @@ func (s *Service) tick(ctx context.Context) error {
 		if backoff > time.Hour {
 			backoff = time.Hour
 		}
+		backoff = jittered(backoff)
 		if _, err := s.pool.Exec(ctx, `
 			UPDATE tenant.webhook_deliveries
 			SET attempt = attempt + 1, status_code = $3, response_body = $4,
@@ -476,15 +491,37 @@ func (s *Service) tick(ctx context.Context) error {
 // before giving up — in line with common webhook-retry conventions.
 const maxDeliveryAttempts = 60
 
+// retryable reports whether a delivery answered status (0: no answer) may
+// succeed if sent again. A 4xx other than 408 and 429 is the endpoint refusing
+// the delivery itself, and would be refused again.
+func retryable(status int) bool {
+	if status < 400 || status >= 500 {
+		return true
+	}
+	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests
+}
+
+// jittered returns d less a random part of up to half of it, so deliveries
+// that failed together don't all retry together.
+func jittered(d time.Duration) time.Duration {
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(d/2)+1))
+	if err != nil {
+		return d
+	}
+	return d - time.Duration(n.Int64())
+}
+
 func (s *Service) deliver(ctx context.Context, deliveryID uuid.UUID, url, secret, eventType string, body []byte) (int, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return 0, "", err
 	}
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Qeet-Event", eventType)
 	req.Header.Set("X-Qeet-Delivery-ID", deliveryID.String())
-	req.Header.Set("X-Qeet-Signature", "sha256="+sign(secret, body))
+	req.Header.Set("X-Qeet-Timestamp", timestamp)
+	req.Header.Set("X-Qeet-Signature", "sha256="+sign(secret, timestamp, body))
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return 0, "", err
@@ -497,8 +534,11 @@ func (s *Service) deliver(ctx context.Context, deliveryID uuid.UUID, url, secret
 	return resp.StatusCode, string(rb), nil
 }
 
-func sign(secret string, body []byte) string {
+// sign returns the hex HMAC-SHA256 of timestamp, ".", and body, keyed by
+// secret.
+func sign(secret, timestamp string, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(timestamp + "."))
 	mac.Write(body)
 	return hex.EncodeToString(mac.Sum(nil))
 }
@@ -519,6 +559,7 @@ type Handler struct {
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/webhooks", h.create)
 	r.Get("/tenants/{tenantID}/webhooks", h.list)
+	r.Get("/tenants/{tenantID}/webhooks/events", h.events)
 	r.Get("/webhooks/{id}", h.get)
 	r.Delete("/webhooks/{id}", h.disable)
 	r.Post("/webhooks/{id}/test", h.test)
@@ -721,14 +762,20 @@ func (h *Handler) test(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.Enqueue(r.Context(), sub.TenantID, "test.ping", map[string]any{
-		"hello": "world",
-		"at":    time.Now().UTC(),
-	}); err != nil {
+	if err := h.Service.SendTest(r.Context(), sub); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"queued": true, "subscription": sub.ID})
+}
+
+// events lists the event catalogue.
+func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
+	if _, err := httpx.PathTenantOr(r, errs.ErrWebhookInvalidID, errs.ErrWebhookTenantMismatch); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": Events})
 }
 
 // EventBus is satisfied by webhook.Service so other modules can publish

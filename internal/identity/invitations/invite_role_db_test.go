@@ -3,10 +3,12 @@
 package invite
 
 import (
+	"errors"
 	"net/http"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
@@ -15,7 +17,7 @@ import (
 
 // TestInviteRoleMustBelongToTheTenant checks that an invitation can carry only
 // a role of the inviting tenant, answering another tenant's role as a missing
-// one, and that accepting an invitation never grants another tenant's role.
+// one, and that the database refuses to store one carrying another tenant's.
 func TestInviteRoleMustBelongToTheTenant(t *testing.T) {
 	ctx := dbtest.Context(t)
 	h, _ := newHandler(t)
@@ -52,25 +54,17 @@ func TestInviteRoleMustBelongToTheTenant(t *testing.T) {
 		t.Errorf("another tenant's role is answered %+v, a missing one %+v", answers["another tenant's role"], answers["a missing role"])
 	}
 
-	// An invitation stored with another tenant's role: accepting it creates the
-	// account but grants no role.
-	raw, hash, err := codes.URLToken()
+	// Below the service too: the database won't store such an invitation.
+	_, hash, err := codes.URLToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	email := dbtest.Unique("invitee") + "@example.test"
-	if _, err := dbtest.Pool(t).Exec(ctx, `
+	_, err = dbtest.Pool(t).Exec(ctx, `
 		INSERT INTO tenant.invites (tenant_id, email, role_id, token_hash, expires_at)
 		VALUES ($1, $2, $3, $4, NOW() + INTERVAL '1 day')
-	`, tenantB, email, roleA, hash); err != nil {
-		t.Fatalf("store invitation: %v", err)
-	}
-	public := dbtest.Serve(nil, h.MountPublic)
-	dbtest.Do(t, public, http.MethodPost, "/invites/accept", map[string]any{"token": raw, "password": testPassword})
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, email); n != 1 {
-		t.Fatalf("accept created %d accounts, want 1", n)
-	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.user_roles WHERE role_id = $1 AND tenant_id = $2`, roleA, tenantB); n != 0 {
-		t.Errorf("an account in tenant B holds tenant A's role (%d rows)", n)
+	`, tenantB, dbtest.Unique("invitee")+"@example.test", roleA, hash)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23503" {
+		t.Errorf("an invitation carrying another tenant's role was stored: %v, want a foreign key violation", err)
 	}
 }

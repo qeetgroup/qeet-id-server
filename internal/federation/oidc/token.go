@@ -177,6 +177,14 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 	if !live {
 		return nil, errs.ErrAuthAccountSuspended
 	}
+	// Nor does the token of a session that has ended.
+	sessionLive, err := s.tokenSessionLive(ctx, claims)
+	if err != nil {
+		return nil, err
+	}
+	if !sessionLive {
+		return nil, errs.ErrOIDCSubjectTokenInvalid
+	}
 	// A chain of exchanges is bounded.
 	if claims.ExchangeDepth >= s.exchangeMaxDepth {
 		return nil, errs.ErrOIDCExchangeDepthExceeded
@@ -708,8 +716,12 @@ func (s *Service) signIDToken(ctx context.Context, in idToken) (string, error) {
 
 // tokenSubjectLive reports whether what an access token acts for still holds:
 // its user active, not deleted and a member of its organisation (itself
-// active), and its agent, if any, active.
+// active), its session, if it is the user's own token, not ended, and its
+// agent, if any, active.
 func (s *Service) tokenSubjectLive(ctx context.Context, claims *tokens.Claims) (bool, error) {
+	if live, err := s.tokenSessionLive(ctx, claims); err != nil || !live {
+		return false, err
+	}
 	if claims.UserID != uuid.Nil {
 		var member bool
 		if err := s.pool.QueryRow(ctx, `
@@ -740,6 +752,17 @@ func (s *Service) tokenSubjectLive(ctx context.Context, claims *tokens.Claims) (
 		}
 	}
 	return true, nil
+}
+
+// tokenSessionLive reports whether the session of a user's own access token
+// (one issued to no application) has not ended. Other tokens have no session
+// of their own to end and pass.
+func (s *Service) tokenSessionLive(ctx context.Context, claims *tokens.Claims) (bool, error) {
+	own := claims.ClientID == "" && (claims.ActorType == "" || claims.ActorType == "user")
+	if !own || claims.SessionID == uuid.Nil || claims.UserID == uuid.Nil || s.sessionLive == nil {
+		return true, nil
+	}
+	return s.sessionLive(ctx, claims.SessionID, claims.UserID)
 }
 
 // activeTenantPrincipal reports whether userID and tenantID are both active and

@@ -7,6 +7,8 @@ const (
 	CodeWebhookURLRequired      = "webhook.url_required"
 	CodeWebhookInvalidID        = "webhook.invalid_id"
 	CodeWebhookTenantMismatch   = "webhook.tenant_mismatch"
+	CodeWebhookEventsRequired   = "webhook.events_required"
+	CodeWebhookEventUnknown     = "webhook.event_unknown"
 )
 
 // Webhook errors. The Message is what the end user sees — edit wording here, in
@@ -18,4 +20,6 @@ var (
 	ErrWebhookURLRequired      = New(CodeWebhookURLRequired, "Enter a URL for the webhook.")
 	ErrWebhookInvalidID        = New(CodeWebhookInvalidID, "That identifier isn't valid.")
 	ErrWebhookTenantMismatch   = New(CodeWebhookTenantMismatch, "You can only manage webhooks in your own tenant.")
+	ErrWebhookEventsRequired   = New(CodeWebhookEventsRequired, "Choose at least one event for the webhook.")
+	ErrWebhookEventUnknown     = New(CodeWebhookEventUnknown, "That isn't an event a webhook can receive.")
 )

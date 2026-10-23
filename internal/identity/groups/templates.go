@@ -268,7 +268,7 @@ func (s *Service) ApplyTemplate(
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{
 		AggregateID: id, Topic: "group.events", EventType: "group_template.applied",
-		Payload: map[string]any{"template_id": id, "groups": created},
+		Payload: map[string]any{"template_id": id, "tenant_id": tenantID, "groups": created},
 	}); err != nil {
 		return nil, err
 	}

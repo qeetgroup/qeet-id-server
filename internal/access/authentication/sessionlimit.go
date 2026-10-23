@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -148,4 +149,12 @@ func (s *Service) SessionUsed(ctx context.Context, sessionID uuid.UUID) {
 	if err := s.q.TouchSession(ctx, sessionID); err != nil {
 		slog.Warn("session use not recorded", "session_id", sessionID, "err", err)
 	}
+}
+
+// SessionLive reports whether sessionID is one of userID's sessions that has
+// not ended: not revoked, expired or idle past its timeout. Wired as
+// httpx.AuthVerifier.SessionLive, so an ended session's access tokens stop
+// working at once.
+func (s *Service) SessionLive(ctx context.Context, sessionID, userID uuid.UUID) (bool, error) {
+	return s.q.IsSessionLiveForUser(ctx, dbgen.IsSessionLiveForUserParams{SessionID: sessionID, UserID: userID})
 }

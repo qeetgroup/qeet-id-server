@@ -248,7 +248,8 @@ agents/agent.go              lifecycle, sponsor, kill switch, ephemeral tokens
 api-keys/apikey.go           qk_ keys — "<prefix>.<secret>", bcrypt hash stored
 principal/principal.go       client_credentials, /v1/oauth/token
 auth-hooks/authhook.go       post-login hooks — DEFAULT FAIL-OPEN (ADR-0011)
-webhooks/webhook.go          HMAC-SHA256 delivery + dead-letter
+webhooks/webhook.go          HMAC-SHA256 delivery (timestamp + body) + dead-letter
+webhooks/events.go           event catalogue, delivery envelope, outbox relay
 credentials/secrets/secret.go · keyprovider.go · kms.go
 credentials/tokenvault/tokenvault.go
 credentials/vc/vc.go         W3C JWT-VC

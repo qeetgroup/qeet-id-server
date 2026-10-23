@@ -1,6 +1,7 @@
 package oidc
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -460,5 +461,40 @@ func TestWriteTokenError(t *testing.T) {
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusInternalServerError || body.Error.Code != errs.CodeInternal {
 		t.Errorf("internal error = %d %s, want the generic 500", rec.Code, rec.Body.String())
+	}
+}
+
+// TestTokenSessionLive checks that only a user's own access token is checked
+// against its session, and that an ended session or a failed lookup makes it
+// not live.
+func TestTokenSessionLive(t *testing.T) {
+	liveSession, failingSession, lookupErr := uuid.New(), uuid.New(), errors.New("lookup failed")
+	s := &Service{sessionLive: func(_ context.Context, sessionID, _ uuid.UUID) (bool, error) {
+		switch sessionID {
+		case liveSession:
+			return true, nil
+		case failingSession:
+			return false, lookupErr
+		}
+		return false, nil
+	}}
+	user := uuid.New()
+	cases := map[string]struct {
+		claims  tokens.Claims
+		want    bool
+		wantErr error
+	}{
+		"own token, live session":  {tokens.Claims{UserID: user, SessionID: liveSession}, true, nil},
+		"own token, ended session": {tokens.Claims{UserID: user, SessionID: uuid.New()}, false, nil},
+		"own token, failed lookup": {tokens.Claims{UserID: user, SessionID: failingSession}, false, lookupErr},
+		"an application's token":   {tokens.Claims{UserID: user, SessionID: uuid.New(), ClientID: "app"}, true, nil},
+		"an agent's token":         {tokens.Claims{UserID: user, SessionID: uuid.New(), ActorType: "agent"}, true, nil},
+		"a token with no session":  {tokens.Claims{UserID: user}, true, nil},
+	}
+	for name, tc := range cases {
+		live, err := s.tokenSessionLive(context.Background(), &tc.claims)
+		if live != tc.want || !errors.Is(err, tc.wantErr) {
+			t.Errorf("%s: live %v, %v; want %v, %v", name, live, err, tc.want, tc.wantErr)
+		}
 	}
 }

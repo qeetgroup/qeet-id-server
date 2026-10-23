@@ -165,8 +165,8 @@ func TestRefreshRotation(t *testing.T) {
 	}
 }
 
-// TestSignOut checks that signing out ends only that session, and that no one
-// else can end it.
+// TestSignOut checks that signing out ends only that session, and its access
+// tokens with it, and that no one else can end it.
 func TestSignOut(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := newService(t)
@@ -188,6 +188,20 @@ func TestSignOut(t *testing.T) {
 	}
 	if _, err := svc.Refresh(ctx, RefreshInput{RefreshToken: kept.RefreshToken}); err != nil {
 		t.Errorf("the other session stopped renewing: %v", err)
+	}
+	for _, tc := range []struct {
+		name    string
+		session uuid.UUID
+		user    uuid.UUID
+		want    bool
+	}{
+		{"the ended session", ended.SessionID, a.ID, false},
+		{"the kept session", kept.SessionID, a.ID, true},
+		{"the kept session as someone else", kept.SessionID, stranger.ID, false},
+	} {
+		if live, err := svc.SessionLive(ctx, tc.session, tc.user); err != nil || live != tc.want {
+			t.Errorf("%s: live %v, %v; want %v", tc.name, live, err, tc.want)
+		}
 	}
 	sessions, err := svc.ListSessions(ctx, a.ID)
 	if err != nil {

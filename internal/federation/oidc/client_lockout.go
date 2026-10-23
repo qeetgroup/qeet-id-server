@@ -44,8 +44,8 @@ func (s *Service) clientLocked(ctx context.Context, rowID uuid.UUID) (bool, erro
 
 // clientAuthFailed counts a wrong secret against the application and records
 // it (the application and the caller's address, never the secret). Crossing
-// the threshold starts a lockout, recorded as oidc.client_locked_out and
-// announced as the oidc.client.locked_out event, once per lockout.
+// the threshold starts a lockout, recorded and announced as
+// oidc.client_locked_out, once per lockout.
 func (s *Service) clientAuthFailed(ctx context.Context, c authedClient) {
 	s.auditClientAuthFailure(ctx, c, "invalid_secret")
 	l := s.lockout
@@ -79,7 +79,7 @@ func (s *Service) clientAuthFailed(ctx context.Context, c authedClient) {
 		return
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{
-		AggregateID: c.ID, Topic: "oidc", EventType: "oidc.client.locked_out",
+		AggregateID: c.ID, Topic: "oidc", EventType: "oidc.client_locked_out",
 		Payload: map[string]any{
 			"tenant_id": c.TenantID, "client_id": c.ClientID, "failures": failures, "locked_until": until.Time,
 		},
