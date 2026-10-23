@@ -1,9 +1,7 @@
-// Package scim implements SCIM 2.0 (RFC 7643/7644) user + group provisioning so
-// IdPs like Okta, Entra ID and Google Workspace can push and deprovision users
-// automatically. Two surfaces: an admin API (under /v1, user-JWT) to manage the
-// per-tenant bearer token the IdP authenticates with, and the SCIM protocol
-// itself (at /scim/v2, bearer-token auth). SCIM writes reuse user.Repository, so
-// provisioned users are ordinary tenant users tagged provisioned_via='scim'.
+// Package scim implements SCIM 2.0 (RFC 7643/7644) provisioning, so IdPs such
+// as Okta and Entra ID can push and deprovision users and groups. The protocol
+// is served at /scim/v2 behind a per-tenant bearer token managed under /v1.
+// Provisioned users are ordinary tenant users tagged provisioned_via='scim'.
 package scim
 
 import (
@@ -34,7 +32,7 @@ import (
 )
 
 const (
-	tokenPrefix      = "qf_scim_"
+	tokenPrefix      = "qf_scim_" // #nosec G101 -- token prefix, not a secret
 	provisionedScim  = "scim"
 	schemaUser       = "urn:ietf:params:scim:schemas:core:2.0:User"
 	schemaListResp   = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
@@ -44,30 +42,29 @@ const (
 	maxPageCount     = 200
 )
 
+// Service manages SCIM tokens and provisioned users and groups. A nil signals
+// announces no ended sessions; a nil gate leaves token rotation ungated.
 type Service struct {
-	// signals announces the sessions a deprovisioning ends (nil = announces
-	// nothing). Set via SetSessionSignals.
 	signals  *sessionsignal.Signaller
 	pool     *pgxpool.Pool
 	q        *dbgen.Queries
 	users    *user.Repository
 	observer OperationObserver
 	mapper   ProfileMapper
-	// gate enforces the plan SCIM feature on token provisioning (nil = off).
-	gate PlanGate
+	gate     PlanGate
 }
 
-// SetSessionSignals wires the announcement of ended sessions. Called from
-// internal/bootstrap/dependencies.go.
+// SetSessionSignals sets where the sessions ended by a SCIM suspension are
+// announced.
 func (s *Service) SetSessionSignals(sig *sessionsignal.Signaller) { s.signals = sig }
 
+// NewService returns the SCIM service.
 func NewService(pool *pgxpool.Pool, users *user.Repository) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), users: users}
 }
 
 // PlanGate reports whether a plan-gated boolean feature is included in the
-// tenant's plan. Satisfied by operations/entitlements.Service, injected via
-// SetPlanGate.
+// tenant's plan. Satisfied by *entitlements.Service.
 type PlanGate interface {
 	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
 }
@@ -75,6 +72,7 @@ type PlanGate interface {
 // SetPlanGate wires the plan-feature gate (nil allows all features).
 func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 
+// Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 // ConfigView is the admin-facing status of a tenant's SCIM endpoint. The
@@ -87,6 +85,7 @@ type ConfigView struct {
 	ProvisionedCount int        `json:"provisioned_count"`
 }
 
+// Config returns the tenant's SCIM settings, without its token.
 func (s *Service) Config(ctx context.Context, tenantID uuid.UUID) (*ConfigView, error) {
 	v := &ConfigView{}
 	tok, err := s.q.GetScimTokenConfig(ctx, tenantID)
@@ -125,12 +124,12 @@ func (s *Service) Rotate(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (fu
 			return "", errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "scim"})
 		}
 	}
-	raw, hash, err := codes.URLToken()
+	raw, _, err := codes.URLToken()
 	if err != nil {
 		return "", err
 	}
 	full = tokenPrefix + raw
-	hash = codes.Hash(full)
+	hash := codes.Hash(full)
 	display := tokenPrefix + raw[:6]
 	if err := s.q.WithTx(tx).UpsertScimToken(ctx, dbgen.UpsertScimTokenParams{
 		TenantID:    tenantID,
@@ -142,6 +141,7 @@ func (s *Service) Rotate(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (fu
 	return full, nil
 }
 
+// Revoke deletes the tenant's SCIM token, which ends provisioning.
 func (s *Service) Revoke(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
 	n, err := s.q.WithTx(tx).DeleteScimToken(ctx, tenantID)
 	if err != nil {
@@ -247,8 +247,12 @@ func (s *Service) tagProvisionedTx(ctx context.Context, tx pgx.Tx, id uuid.UUID,
 	})
 }
 
+// Handler serves the SCIM admin endpoints and the /scim/v2 protocol.
+// PublicBaseURL is this API's public origin, or "" to build resource locations
+// from the request's Host.
 type Handler struct {
-	Service *Service
+	Service       *Service
+	PublicBaseURL string
 }
 
 // Mount registers the admin endpoints under the authenticated /v1 group.
@@ -321,30 +325,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 // --- admin handlers ---
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrSCIMTenantIDInvalid
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrSCIMTenantMismatch
-	}
-	return scope, nil
-}
-
-func auditActor(r *http.Request) (*uuid.UUID, string) {
-	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil {
-		return nil, "system"
-	}
-	at := p.ActorType
-	if at == "" {
-		at = "user"
-	}
-	return p.UserID, at
+	return httpx.PathTenantOr(r, errs.ErrSCIMTenantIDInvalid, errs.ErrSCIMTenantMismatch)
 }
 
 func (h *Handler) config(w http.ResponseWriter, r *http.Request) {
@@ -379,7 +360,7 @@ func (h *Handler) rotate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	tid := tenantID
 	if err := audit.Record(ctx, tx, audit.Event{
 		TenantID:     &tid,
@@ -423,7 +404,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	tid := tenantID
 	if err := audit.Record(ctx, tx, audit.Event{
 		TenantID:     &tid,
@@ -499,16 +480,14 @@ func writeSCIMTypedErr(w http.ResponseWriter, status int, scimType, detail strin
 	})
 }
 
-func scimLocation(r *http.Request, suffix string) string {
-	scheme := "https"
-	if r.TLS == nil && (strings.HasPrefix(r.Host, "localhost") || strings.HasPrefix(r.Host, "127.0.0.1")) {
-		scheme = "http"
-	}
-	return scheme + "://" + r.Host + "/scim/v2" + suffix
+// location returns the absolute URL of the SCIM endpoint at suffix, a path
+// under /scim/v2.
+func (h *Handler) location(r *http.Request, suffix string) string {
+	return httpx.PublicOrigin(r, h.PublicBaseURL) + "/scim/v2" + suffix
 }
 
 // toResource renders a user row as a SCIM core User.
-func toResource(r *http.Request, u *userRow) map[string]any {
+func (h *Handler) toResource(r *http.Request, u *userRow) map[string]any {
 	display := ""
 	if u.DisplayName != nil {
 		display = *u.DisplayName
@@ -523,7 +502,7 @@ func toResource(r *http.Request, u *userRow) map[string]any {
 			"resourceType": "User",
 			"created":      u.CreatedAt.UTC().Format(time.RFC3339),
 			"lastModified": u.UpdatedAt.UTC().Format(time.RFC3339),
-			"location":     scimLocation(r, "/Users/"+u.ID.String()),
+			"location":     h.location(r, "/Users/"+u.ID.String()),
 		},
 	}
 	if display != "" {
@@ -593,7 +572,7 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	resources := make([]map[string]any, 0, len(rows))
 	for i := range rows {
-		resources = append(resources, toResource(r, &rows[i]))
+		resources = append(resources, h.toResource(r, &rows[i]))
 	}
 	writeSCIM(w, http.StatusOK, map[string]any{
 		"schemas":      []string{schemaListResp},
@@ -713,8 +692,7 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// IdP can create a user already deactivated. Previously this ignored its
-	// own error, so the response could claim a state the database never had.
+	// An IdP can create a user already deactivated.
 	active := true
 	if p.Active != nil && !*p.Active {
 		active = false
@@ -742,7 +720,7 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		writeSCIMErr(w, http.StatusInternalServerError, "reload failed")
 		return
 	}
-	writeSCIM(w, http.StatusCreated, toResource(r, row))
+	writeSCIM(w, http.StatusCreated, h.toResource(r, row))
 }
 
 func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
@@ -755,7 +733,7 @@ func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return
 	}
-	writeSCIM(w, http.StatusOK, toResource(r, row))
+	writeSCIM(w, http.StatusOK, h.toResource(r, row))
 }
 
 func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request) {
@@ -788,7 +766,7 @@ func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request) {
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return
 	}
-	writeSCIM(w, http.StatusOK, toResource(r, row))
+	writeSCIM(w, http.StatusOK, h.toResource(r, row))
 }
 
 type patchBody struct {
@@ -862,7 +840,7 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return
 	}
-	writeSCIM(w, http.StatusOK, toResource(r, row))
+	writeSCIM(w, http.StatusOK, h.toResource(r, row))
 }
 
 func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
@@ -915,7 +893,7 @@ func statusFromActive(active *bool) string {
 func (h *Handler) serviceProviderConfig(w http.ResponseWriter, r *http.Request) {
 	writeSCIM(w, http.StatusOK, map[string]any{
 		"schemas":          []string{"urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"},
-		"documentationUri": scimLocation(r, ""),
+		"documentationUri": h.location(r, ""),
 		"patch":            map[string]any{"supported": true},
 		"bulk":             map[string]any{"supported": false, "maxOperations": 0, "maxPayloadSize": 0},
 		"filter":           map[string]any{"supported": true, "maxResults": maxPageCount},
@@ -928,7 +906,7 @@ func (h *Handler) serviceProviderConfig(w http.ResponseWriter, r *http.Request) 
 			"description": "Authentication via the tenant SCIM bearer token.",
 			"primary":     true,
 		}},
-		"meta": map[string]any{"resourceType": "ServiceProviderConfig", "location": scimLocation(r, "/ServiceProviderConfig")},
+		"meta": map[string]any{"resourceType": "ServiceProviderConfig", "location": h.location(r, "/ServiceProviderConfig")},
 	})
 }
 
@@ -940,7 +918,7 @@ func (h *Handler) resourceTypes(w http.ResponseWriter, r *http.Request) {
 		"endpoint":    "/Users",
 		"description": "User Account",
 		"schema":      schemaUser,
-		"meta":        map[string]any{"resourceType": "ResourceType", "location": scimLocation(r, "/ResourceTypes/User")},
+		"meta":        map[string]any{"resourceType": "ResourceType", "location": h.location(r, "/ResourceTypes/User")},
 	}
 	groupType := map[string]any{
 		"schemas":     []string{"urn:ietf:params:scim:schemas:core:2.0:ResourceType"},
@@ -949,7 +927,7 @@ func (h *Handler) resourceTypes(w http.ResponseWriter, r *http.Request) {
 		"endpoint":    "/Groups",
 		"description": "Group",
 		"schema":      schemaGroup,
-		"meta":        map[string]any{"resourceType": "ResourceType", "location": scimLocation(r, "/ResourceTypes/Group")},
+		"meta":        map[string]any{"resourceType": "ResourceType", "location": h.location(r, "/ResourceTypes/Group")},
 	}
 	writeSCIM(w, http.StatusOK, map[string]any{
 		"schemas":      []string{schemaListResp},
@@ -971,7 +949,7 @@ func (h *Handler) schemas(w http.ResponseWriter, r *http.Request) {
 			{"name": "active", "type": "boolean", "required": false, "mutability": "readWrite"},
 			{"name": "externalId", "type": "string", "required": false, "mutability": "readWrite"},
 		},
-		"meta": map[string]any{"resourceType": "Schema", "location": scimLocation(r, "/Schemas/"+schemaUser)},
+		"meta": map[string]any{"resourceType": "Schema", "location": h.location(r, "/Schemas/"+schemaUser)},
 	}
 	groupSchema := map[string]any{
 		"id":          schemaGroup,
@@ -993,7 +971,7 @@ func (h *Handler) schemas(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 		},
-		"meta": map[string]any{"resourceType": "Schema", "location": scimLocation(r, "/Schemas/"+schemaGroup)},
+		"meta": map[string]any{"resourceType": "Schema", "location": h.location(r, "/Schemas/"+schemaGroup)},
 	}
 	writeSCIM(w, http.StatusOK, map[string]any{
 		"schemas":      []string{schemaListResp},
@@ -1004,12 +982,9 @@ func (h *Handler) schemas(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// decodeSCIMBody bounds a SCIM request body before decoding it.
-//
-// SCIM does not go through httpx.DecodeJSON — it needs SCIM-shaped errors, not
-// the platform envelope — so the body caps applied elsewhere were skipped here
-// entirely, leaving the highest-volume provisioning surface reading unbounded
-// JSON straight off the wire. Same ceiling as httpx.MaxJSONBodyBytes.
+// decodeSCIMBody decodes a request body capped at httpx.MaxJSONBodyBytes,
+// writing a SCIM error and returning false on failure. SCIM can't use
+// httpx.DecodeJSON because it needs SCIM-shaped errors.
 func decodeSCIMBody(w http.ResponseWriter, r *http.Request, out any) bool {
 	if r.ContentLength > httpx.MaxJSONBodyBytes {
 		writeSCIMTypedErr(w, http.StatusRequestEntityTooLarge, "tooLarge", "Request body is too large.")
@@ -1028,14 +1003,9 @@ func decodeSCIMBody(w http.ResponseWriter, r *http.Request, out any) bool {
 	return true
 }
 
-// recordUserEvidence writes the audit row and domain event for a SCIM user
-// mutation inside the caller's transaction.
-//
-// SCIM is the highest-volume user-mutation surface in the product — an IdP can
-// create, suspend and deprovision people all day — and it previously wrote no
-// audit row and emitted no outbox event for any of it, leaving that activity
-// invisible to incident response and to every downstream consumer. The actor is
-// the tenant's SCIM credential rather than a user, so it is attributed as such.
+// recordUserEvidence writes the audit row and outbox event for a SCIM user
+// change inside the caller's transaction. The actor is the tenant's SCIM
+// credential, recorded as actor type "scim".
 func recordUserEvidence(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID, userID uuid.UUID, action string, metadata map[string]any) error {
 	tenant := tenantID
 	target := userID
@@ -1068,15 +1038,8 @@ func recordUserEvidence(ctx context.Context, tx pgx.Tx, r *http.Request, tenantI
 // transaction, so a provisioning change is never durable without a record of it.
 func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenantID, userID uuid.UUID, in user.UpdateInput, action string, profiles ...map[string]any) bool {
 	ctx := r.Context()
-	// Confirm the user belongs to this tenant before writing.
-	//
-	// user.Repository.UpdateTx keys on the user id alone (`WHERE id = $n AND
-	// deleted_at IS NULL`) — it carries no tenant predicate and there is no RLS
-	// to catch that. Without this check a SCIM token issued to one tenant could
-	// PATCH /scim/v2/Users/{id} for a user in *any* tenant and flip `active`
-	// (suspending them, which then blocks their refresh) or rewrite their
-	// display name. deleteUser already guards this way; both write paths that
-	// reach here (replaceUser, patchUser) now funnel through the same check.
+	// UpdateTx matches on the user ID alone, so without this check one tenant's
+	// SCIM token could suspend or rename a user in any tenant.
 	if _, err := h.Service.getProvisioned(ctx, tenantID, userID); err != nil {
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return false
@@ -1128,8 +1091,7 @@ func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenant
 }
 
 // deprovision soft-deletes a SCIM-managed user and records it in the same
-// transaction. Deprovisioning is the single most incident-relevant thing an IdP
-// does here, and it was previously the least observable.
+// transaction.
 func (h *Handler) deprovision(r *http.Request, tenantID, userID uuid.UUID) error {
 	ctx := r.Context()
 	tx, err := h.Service.users.Pool().Begin(ctx)

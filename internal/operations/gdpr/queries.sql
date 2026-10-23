@@ -36,10 +36,6 @@ SELECT id, tenant_id, framework, generated_at, generated_by,
 FROM tenant.compliance_evidence_runs
 WHERE id = @id AND tenant_id = @tenant_id;
 
--- name: CountEvidenceRuns :one
--- Count total evidence runs for a tenant (used in tests to verify persistence).
-SELECT count(*) FROM tenant.compliance_evidence_runs WHERE tenant_id = @tenant_id;
-
 -- -----------------------------------------------------------------------
 -- Control check queries — each check function has one query here.
 -- -----------------------------------------------------------------------

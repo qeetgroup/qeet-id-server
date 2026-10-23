@@ -8,9 +8,8 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Regression for P2-06: /v1/passkeys/login/begin must accept a JSON body with
-// an "email" field (username-first flow). A stale build without this field
-// rejected it as an unknown field; this locks the contract in.
+// TestLoginBeginAcceptsEmail checks that the /v1/passkeys/login/begin body
+// accepts an "email" field, for the username-first flow.
 func TestLoginBeginAcceptsEmail(t *testing.T) {
 	r := httptest.NewRequest("POST", "/v1/passkeys/login/begin", strings.NewReader(`{"email":"owner@acme.test"}`))
 	var in loginBeginInput

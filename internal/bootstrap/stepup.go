@@ -2,23 +2,10 @@ package bootstrap
 
 import "github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 
-// StepUpRoutes is the catalogue of authenticated routes that need a step-up
-// of the calling session, consumed by mfa.Service.StepUpGate. A stolen access
-// token alone must not be able to add or remove a factor, mint or revoke a
-// machine credential, read or change a secret, weaken sign-in or security
-// policy, reconfigure single sign-on, change retention or audit streaming,
-// hand out authority (permissions, roles, invitations, relationship rules,
-// attribute policies), bring an account back, move an account's email
-// address, or destroy an account or organisation.
-//
-// StepUpWhenFactorHeld covers a person's own factors and sign-in methods: a
-// first factor can be set up with nothing to step up with. Everything else is
-// StepUpAlways, which machine principals (API keys, service principals,
-// agents) can never meet, as they hold no session.
-//
-// Keys MUST match the composed route pattern ("/v1" included).
-// TestSensitiveRoutesNeedStepUp fails when a route that looks sensitive is
-// neither listed here nor in stepUpExempt.
+// StepUpRoutes lists the authenticated routes that need a recent step-up, so a
+// stolen access token alone can't change factors, credentials, secrets, policy or
+// authority. StepUpWhenFactorHeld applies to a person's own factors; everything
+// else is StepUpAlways, which machine principals can never meet.
 func StepUpRoutes() map[string]mfa.StepUpRule {
 	routes := map[string]mfa.StepUpRule{}
 	for _, route := range []string{
@@ -158,69 +145,4 @@ func StepUpRoutes() map[string]mfa.StepUpRule {
 		routes[route] = mfa.StepUpAlways
 	}
 	return routes
-}
-
-// stepUpExempt lists the routes that look sensitive by path but deliberately
-// need no step-up, each with the reason. TestSensitiveRoutesNeedStepUp reads
-// it so a new sensitive-looking route has to be classified one way or the
-// other.
-func stepUpExempt() map[string]string {
-	return map[string]string{
-		"POST /v1/mfa/totp/enroll/confirm":                                                  "completes a setup its start already gated, with a code from the app",
-		"DELETE /v1/mfa/push/pairing/{id}":                                                  "withdraws an unused pairing code; asking for one is gated",
-		"POST /v1/mfa/totp/verify":                                                          "is how a session steps up",
-		"POST /v1/mfa/otp/verify":                                                           "is how a session steps up",
-		"POST /v1/mfa/otp/factors/{id}/confirm":                                             "completes a setup its start already gated, with a code sent to it",
-		"POST /v1/mfa/otp/factors/{id}/challenge":                                           "sends a step-up code",
-		"POST /v1/mfa/webauthn/challenge":                                                   "is how a session steps up",
-		"POST /v1/mfa/webauthn/verify":                                                      "is how a session steps up",
-		"POST /v1/mfa/push/step-up":                                                         "is how a session steps up",
-		"POST /v1/mfa/push/step-up/{id}/complete":                                           "is how a session steps up",
-		"POST /v1/passkeys/register/finish":                                                 "completes a ceremony its begin already gated",
-		"PATCH /v1/passkeys/{id}":                                                           "renames a passkey",
-		"POST /v1/social/link/complete":                                                     "completes a link its start already gated, for the account that began it",
-		"DELETE /v1/me/social/identities/{id}":                                              "removes a way in; adding one is gated",
-		"DELETE /v1/social/identities/{id}":                                                 "removes a way in; adding one is gated",
-		"PATCH /v1/users/{id}":                                                              "edits profile fields; suspending must stay instant in an incident",
-		"POST /v1/tenants/{tenantID}/agents/kill-all":                                       "stops agents; must stay instant in an incident",
-		"POST /v1/tenants/{tenantID}/agents/{id}/suspend":                                   "stops an agent; must stay instant in an incident",
-		"POST /v1/tenants/{tenantID}/agents/{id}/decommission":                              "stops an agent for good; must stay instant in an incident",
-		"POST /v1/tenants/{tenantID}/oidc/clients/{id}/review":                              "records a review decision without changing the client",
-		"POST /v1/tenants/{tenantID}/ip-rules/check":                                        "evaluates an address against the rules",
-		"POST /v1/tenants/{tenantID}/retention/preview":                                     "reports what a run would remove",
-		"POST /v1/tenants/{tenantID}/saml/{id}/test":                                        "tests a connection",
-		"POST /v1/tenants/{tenantID}/ldap/{id}/test":                                        "tests a connection",
-		"POST /v1/tenants/{tenantID}/domains/{id}/verify":                                   "checks DNS proof the organisation already published",
-		"POST /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings/preview": "previews a mapping",
-		"POST /v1/tenants/{tenantID}/email-templates/{key}/preview":                         "renders a template",
-		"POST /v1/tenants/{tenantID}/email-templates/{key}/test":                            "sends a template to the caller",
-		"POST /v1/qeetai/provider-config/test":                                              "tests the saved configuration",
-		"POST /v1/webhooks/{id}/test":                                                       "sends a test event to the endpoint already configured",
-		"POST /v1/webhooks/{id}/deliveries/{deliveryID}/retry":                              "redelivers an event already sent",
-		"POST /v1/auth/sessions/revoke-all":                                                 "ends sessions; must stay instant in an incident",
-		"POST /v1/auth/sessions/revoke-others":                                              "ends sessions; must stay instant in an incident",
-		"DELETE /v1/auth/sessions/{id}":                                                     "ends a session; must stay instant in an incident",
-		"POST /v1/users/{id}/sessions/revoke-all":                                           "ends sessions; must stay instant in an incident",
-		"POST /v1/auth/password":                                                            "needs the current password",
-		"POST /v1/account/export":                                                           "exports the caller's own data to the caller",
-		"POST /v1/gdpr/export":                                                              "exports a person's data for a subject-access request",
-		"DELETE /v1/gdpr/purge/{id}":                                                        "cancels a scheduled purge",
-		"DELETE /v1/vault/tokens/{provider}":                                                "removes the caller's own stored token",
-		"DELETE /v1/tenants/{tenantID}/oauth/grants/{id}":                                   "revokes an application's access",
-		"DELETE /v1/tenants/{tenantID}/oauth/devices/{id}":                                  "revokes a device's access",
-		"POST /v1/tenants/{tenantID}/audit/anomalies/{id}/resolve":                          "records a triage decision",
-		"POST /v1/tenants/{tenantID}/roles":                                                 "creates an empty role; granting it permissions is gated",
-		"DELETE /v1/invites/{id}":                                                           "withdraws an invitation",
-		"POST /v1/invites/{id}/resend":                                                      "re-sends an invitation whose creation was gated",
-		"POST /v1/me/invites/accept":                                                        "joins an organisation that invited the caller; entering it follows its second-factor rule",
-		"POST /v1/me/invites/{id}/accept":                                                   "joins an organisation that invited the caller; entering it follows its second-factor rule",
-		"POST /v1/me/invites/{id}/decline":                                                  "declines an invitation",
-		"POST /v1/tenants/{tenantID}/abac/evaluate":                                         "evaluates a request against the policies",
-		"POST /v1/tenants/{tenantID}/relation-tuples/check":                                 "checks a relationship",
-		"POST /v1/me/email/change/confirm":                                                  "completes a change its start already gated, with a code sent to the new address",
-		"POST /v1/users/{id}/verify/email/start":                                            "sends a verification code to the account's own address",
-		"POST /v1/users/{id}/verify/email/confirm":                                          "confirms the account's own address with the code sent to it",
-		"DELETE /v1/tenants/{tenantID}/email/suppressions/{id}":                             "lets email reach an address again after a bounce",
-		"POST /v1/tenants/{tenantID}/security/anomalies/{id}/resolve":                       "records a triage decision",
-	}
 }

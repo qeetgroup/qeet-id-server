@@ -15,7 +15,7 @@ import (
 
 const emailTakenByOther = `-- name: EmailTakenByOther :one
 SELECT EXISTS(
-    SELECT 1 FROM "user".users WHERE email = $1 AND id <> $2
+    SELECT 1 FROM "user".users WHERE lower(email) = lower($1) AND id <> $2
 )::boolean
 `
 
@@ -25,7 +25,8 @@ type EmailTakenByOtherParams struct {
 }
 
 // EmailTakenByOther reports whether an email already belongs to a *different*
-// account (email is globally unique) — the pre-check for an email change.
+// account (email is unique platform-wide, ignoring case) — the pre-check for an
+// email change.
 func (q *Queries) EmailTakenByOther(ctx context.Context, arg EmailTakenByOtherParams) (bool, error) {
 	row := q.db.QueryRow(ctx, emailTakenByOther, arg.Email, arg.UserID)
 	var column_1 bool

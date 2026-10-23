@@ -1,9 +1,6 @@
 package errs
 
-// MFA error codes — stable, namespaced machine identifiers. Clients branch and
-// localize on these (never on the message text). Once shipped, a code MUST NOT
-// change. Using constants gives autocomplete, compile-time safety, and lets
-// tests reference the exact code without string literals.
+// MFA error codes.
 const (
 	CodeMFATOTPCodeInvalid     = "mfa.totp_code_invalid"
 	CodeMFAOTPCodeInvalid      = "mfa.otp_code_invalid"
@@ -32,9 +29,8 @@ const (
 	CodeMFAPushDeliveryFailed   = "mfa.push_delivery_failed"
 )
 
-// MFA errors. The Message is what the end user sees — edit wording here, in one
-// place. Handlers just `return errs.ErrMFACodeInvalid`, attaching a wrapped
-// cause with `.Wrap(err)` when there's an underlying error worth logging.
+// MFA errors. ErrMFACodeSendLimited carries retry_after (seconds) in its
+// metadata, and ErrMFAPushPending doesn't count as a failed attempt.
 var (
 	ErrMFATOTPCodeInvalid     = New(CodeMFATOTPCodeInvalid, "That code is incorrect or has expired. Check your authenticator app and try again.")
 	ErrMFAOTPCodeInvalid      = New(CodeMFAOTPCodeInvalid, "That code is invalid or has expired. Request a new code and try again.")
@@ -47,34 +43,18 @@ var (
 	ErrMFANotEnrolled         = New(CodeMFANotEnrolled, "Set up multi-factor authentication first.")
 	ErrMFAFactorNotConfirmed  = New(CodeMFAFactorNotConfirmed, "Confirm this factor before requesting a code.")
 	ErrMFAAttemptsExceeded    = New(CodeMFAAttemptsExceeded, "Too many verification attempts. Start again or wait before retrying.").AsRetryable()
-	// ErrMFAEnrollmentRequired: the account must set up a second factor
-	// before it can sign in — its organisation's grace period has ended.
-	ErrMFAEnrollmentRequired = New(CodeMFAEnrollmentRequired, "Your organisation requires two-step verification. Set up an authenticator app to continue.")
-	// ErrMFACodeSendLimited: a code was sent too recently, or too many were sent
-	// in the last hour; metadata retry_after says in how many seconds another
-	// may be asked for.
-	ErrMFACodeSendLimited = New(CodeMFACodeSendLimited, "A code was sent recently. Wait a moment before asking for another.").AsRetryable()
-	// ErrMFADeliveryUnavailable: this deployment has no way to send codes by
-	// that channel; nothing was stored or sent.
+	ErrMFAEnrollmentRequired  = New(CodeMFAEnrollmentRequired, "Your organisation requires two-step verification. Set up an authenticator app to continue.")
+	ErrMFACodeSendLimited     = New(CodeMFACodeSendLimited, "A code was sent recently. Wait a moment before asking for another.").AsRetryable()
 	ErrMFADeliveryUnavailable = New(CodeMFADeliveryUnavailable, "Codes can't be sent this way right now. Use another way to verify, or ask your administrator.")
-	// ErrMFADeliveryFailed: the provider refused or failed to take the code.
-	ErrMFADeliveryFailed = New(CodeMFADeliveryFailed, "We couldn't send your code. Try again in a moment, or use another way to verify.").AsRetryable()
-	// ErrMFAFactorLimit: the person holds as many email and SMS factors as one
-	// account may.
-	ErrMFAFactorLimit = New(CodeMFAFactorLimit, "You have set up as many email and SMS codes as an account can have. Remove one to add another.")
+	ErrMFADeliveryFailed      = New(CodeMFADeliveryFailed, "We couldn't send your code. Try again in a moment, or use another way to verify.").AsRetryable()
+	ErrMFAFactorLimit         = New(CodeMFAFactorLimit, "You have set up as many email and SMS codes as an account can have. Remove one to add another.")
 
 	// Push MFA
 	ErrMFAPushDeviceNotFound   = New(CodeMFAPushDeviceNotFound, "Push device not found.")
 	ErrMFAPushChallengeExpired = New(CodeMFAPushChallengeExpired, "This push challenge has expired. Try signing in again.")
 	ErrMFAPushChallengeInvalid = New(CodeMFAPushChallengeInvalid, "This push challenge is no longer pending.")
 	ErrMFAPushUnauthorized     = New(CodeMFAPushUnauthorized, "Invalid device token.")
-	// ErrMFAPushPending: the sign-in's push request has not been answered
-	// yet. Ask again shortly; it does not count as a failed attempt.
-	ErrMFAPushPending = New(CodeMFAPushPending, "Approve the sign-in on your phone to continue.").AsRetryable()
-	// ErrMFAPairingCodeInvalid: no pairing code matches — wrong, already used
-	// or expired, which are not told apart.
-	ErrMFAPairingCodeInvalid = New(CodeMFAPairingCodeInvalid, "That pairing code is wrong, already used or expired. Ask for a new one on your account's security page.")
-	// ErrMFAPushDeliveryFailed: the approval request reached none of the
-	// person's phones; the request is closed.
-	ErrMFAPushDeliveryFailed = New(CodeMFAPushDeliveryFailed, "We couldn't reach your phone. Try again, or use another way to verify.").AsRetryable()
+	ErrMFAPushPending          = New(CodeMFAPushPending, "Approve the sign-in on your phone to continue.").AsRetryable()
+	ErrMFAPairingCodeInvalid   = New(CodeMFAPairingCodeInvalid, "That pairing code is wrong, already used or expired. Ask for a new one on your account's security page.")
+	ErrMFAPushDeliveryFailed   = New(CodeMFAPushDeliveryFailed, "We couldn't reach your phone. Try again, or use another way to verify.").AsRetryable()
 )

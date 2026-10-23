@@ -12,16 +12,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// An account must keep at least one way to sign in. Its ways are its password
-// and each of its passkeys — while its organisation allows that method — and
-// each identity linked to it that can still sign in:
-// a SAML or directory (LDAP) link, a link through a social provider its
-// organisation has switched on, or a social account connected to the console
-// account. Resetting a password by email is recovery, not a way in, and is not
-// counted. Every route that removes a way — the person's own passkey or
-// connected account, or an administrator unlinking one — counts and removes in
-// one transaction holding the account's lock, so two removals at once cannot
-// each see the other's method and both succeed.
+// An account must keep at least one way to sign in: its password and passkeys
+// (while its organisation allows each method) and each linked identity that can
+// still sign in. A removal counts and removes in one transaction holding the
+// account's lock (LockSignInMethods), so two at once can't both succeed.
 
 // SignInMethods is how many ways an account can sign in.
 type SignInMethods struct {

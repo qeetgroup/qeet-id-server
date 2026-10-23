@@ -414,6 +414,24 @@ func (q *Queries) SetTenantPlan(ctx context.Context, arg SetTenantPlanParams) er
 	return err
 }
 
+const switchSubscriptionPlan = `-- name: SwitchSubscriptionPlan :exec
+UPDATE tenant.subscriptions
+SET plan_id = $1, cancel_at_period_end = FALSE, updated_at = NOW()
+WHERE tenant_id = $2
+`
+
+type SwitchSubscriptionPlanParams struct {
+	PlanID   uuid.UUID
+	TenantID uuid.UUID
+}
+
+// Move the tenant's subscription to another plan within the period it has paid
+// for: the period and currency stay, and no invoice is issued.
+func (q *Queries) SwitchSubscriptionPlan(ctx context.Context, arg SwitchSubscriptionPlanParams) error {
+	_, err := q.db.Exec(ctx, switchSubscriptionPlan, arg.PlanID, arg.TenantID)
+	return err
+}
+
 const updateCheckoutFailed = `-- name: UpdateCheckoutFailed :exec
 UPDATE tenant.billing_checkouts
 SET status = 'failed'

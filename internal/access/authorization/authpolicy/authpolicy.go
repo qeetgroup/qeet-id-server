@@ -1,17 +1,7 @@
-// Package authpolicy stores a tenant's authentication policy — password
-// complexity rules and which login methods are permitted — and owns the one
-// check every path that sets or replaces a password runs (ValidateForTenant).
-//
-// The rules that apply are those of the organisation the account belongs to
-// (its home tenant). An account with no organisation — console sign-up is
-// tenant-less — gets the platform baseline, DefaultPolicy. The login-method
-// toggles are persisted configuration the auth flows consult as they are
-// hardened per tenant.
-//
-// It also stores a tenant's sign-in lockout settings (threshold, window and
-// lock duration), which the password sign-in reads through SignInLockout. The
-// platform defaults and the bounds a tenant may choose within are platform
-// configuration (LOGIN_LOCKOUT_*); a write outside the bounds is refused.
+// Package authpolicy stores a tenant's authentication policy (password rules,
+// permitted sign-in methods and sign-in lockout) and owns the password check
+// every path that sets a password runs (ValidateForTenant). An account with no
+// organisation gets the platform baseline, DefaultPolicy.
 package authpolicy
 
 import (
@@ -30,8 +20,8 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/hibp"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -41,6 +31,10 @@ import (
 // count so we don't reveal breach-corpus details to the end user.
 const BreachedPasswordDetail = "This password has appeared in known data breaches — choose a different one."
 
+// Policy is a tenant's authentication policy. Self-registration (hosted
+// end-user signup) and remembering devices (skipping MFA on one for
+// RememberDeviceDays, 1–90; 0 on update means 30) are off by default.
+// LockoutLimits is read-only: returned by Get, ignored by Update.
 type Policy struct {
 	PasswordEnabled          bool `json:"password_enabled"`
 	PasswordMinLength        int  `json:"password_min_length"`
@@ -52,31 +46,20 @@ type Policy struct {
 	PasskeyEnabled           bool `json:"passkey_enabled"`
 	OTPEmailEnabled          bool `json:"otp_email_enabled"`
 	OTPSMSEnabled            bool `json:"otp_sms_enabled"`
-	// SelfRegistrationEnabled gates the hosted end-user signup flow (B2C). Off by
-	// default so tenants stay invite-only unless they opt in.
-	SelfRegistrationEnabled bool `json:"self_registration_enabled"`
-	// RememberDeviceEnabled gates adaptive MFA: when on, an enrolled user may
-	// skip the second factor on a previously-trusted device. Off by default so
-	// MFA stays always-on unless a tenant opts in.
-	RememberDeviceEnabled bool `json:"remember_device_enabled"`
-	// RememberDeviceDays is how long a device stays remembered after the
-	// sign-in that remembered it, 1–90 days (0 on update: 30). Applies to
-	// devices remembered after it is set.
-	RememberDeviceDays int `json:"remember_device_days"`
-	// Sign-in lockout. After LockoutThreshold failed password sign-ins to one
-	// account from one network, each within LockoutWindowMinutes of the last,
-	// the account is locked for that network for LockoutDurationMinutes. nil
-	// (JSON null) = the platform default. A value outside LockoutLimits is
-	// refused.
-	LockoutThreshold       *int `json:"lockout_threshold"`
-	LockoutWindowMinutes   *int `json:"lockout_window_minutes"`
-	LockoutDurationMinutes *int `json:"lockout_duration_minutes"`
-	// LockoutLimits documents the platform defaults and the bounds for the
-	// three settings above. Read-only: returned by Get, ignored by Update.
-	LockoutLimits *LockoutLimitsView `json:"lockout_limits,omitempty"`
+	SelfRegistrationEnabled  bool `json:"self_registration_enabled"`
+	RememberDeviceEnabled    bool `json:"remember_device_enabled"`
+	RememberDeviceDays       int  `json:"remember_device_days"`
+
+	// Sign-in lockout (see Lockout); nil takes the platform default.
+	LockoutThreshold       *int               `json:"lockout_threshold"`
+	LockoutWindowMinutes   *int               `json:"lockout_window_minutes"`
+	LockoutDurationMinutes *int               `json:"lockout_duration_minutes"`
+	LockoutLimits          *LockoutLimitsView `json:"lockout_limits,omitempty"`
 }
 
-// Lockout is the sign-in lockout a tenant applies (see Policy.LockoutThreshold).
+// Lockout is the sign-in lockout a tenant applies: after Threshold failed
+// password sign-ins to one account from one network, each within Window of the
+// last, the account is locked for that network for Duration.
 type Lockout struct {
 	Threshold int
 	Window    time.Duration
@@ -199,32 +182,29 @@ func ValidatePassword(p Policy, pw string) error {
 
 func isSymbol(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsSpace(r) }
 
+// Service stores tenants' authentication policies. breach (nil: off) checks
+// new passwords against known breaches and fails open when the provider is
+// unreachable; lockout holds the platform lockout defaults and bounds.
 type Service struct {
-	pool *pgxpool.Pool
-	q    *dbgen.Queries
-	// breach is the optional breached-password checker. Nil disables the check
-	// (a no-op), so dev/CI/offline deploys are unaffected; when set it is
-	// consulted by ValidateForTenant — so on every path that sets a password —
-	// and is itself fail-open (a HIBP outage allows the password). Set via
-	// SetBreachChecker.
-	breach *hibp.Checker
-	// lockout holds the platform lockout defaults and the bounds a tenant's
-	// settings must stay within. Set via SetLockoutLimits.
+	pool    *pgxpool.Pool
+	q       *dbgen.Queries
+	breach  *hibp.Checker
 	lockout LockoutLimits
 }
 
+// NewService returns the authentication policy service.
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), lockout: DefaultLockoutLimits()}
 }
 
 // SetLockoutLimits sets the platform lockout defaults and bounds (from
-// LOGIN_LOCKOUT_*). Called from internal/bootstrap/dependencies.go.
+// LOGIN_LOCKOUT_*).
 func (s *Service) SetLockoutLimits(l LockoutLimits) { s.lockout = l }
 
-// SetBreachChecker wires (or clears, with nil) the breached-password checker.
-// Called from internal/bootstrap/dependencies.go only when BREACHED_PASSWORD_CHECK is enabled.
+// SetBreachChecker sets the breached-password checker (nil: no check).
 func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
 
+// Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 // toDomain maps a generated TenantAuthPolicy row to the domain Policy model.
@@ -261,7 +241,7 @@ func int32OrNil(v *int) *int32 {
 	if v == nil {
 		return nil
 	}
-	n := int32(*v)
+	n := int32(*v) // #nosec G115 -- lockout fields, range-checked by CheckLockout
 	return &n
 }
 
@@ -307,9 +287,9 @@ func (s *Service) SignInLockout(ctx context.Context, tenantID uuid.UUID) (Lockou
 	return l, nil
 }
 
-// Update stores a tenant's whole policy. Lockout settings outside the bounds
-// are refused with a validation error naming each field, before anything is
-// written; the password length and magic-link lifetime are clamped as before.
+// Update stores a tenant's whole policy. Invalid settings are refused, each
+// named in the validation error, before anything is written; the password
+// length (8–128) and magic-link lifetime (5–1440 minutes) are clamped instead.
 func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p Policy) (*Policy, error) {
 	if p.RememberDeviceDays == 0 {
 		p.RememberDeviceDays = defaultRememberDeviceDays
@@ -338,18 +318,18 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 	row, err := s.q.WithTx(tx).UpsertAuthPolicy(ctx, dbgen.UpsertAuthPolicyParams{
 		TenantID:                 tenantID,
 		PasswordEnabled:          p.PasswordEnabled,
-		PasswordMinLength:        int32(p.PasswordMinLength),
+		PasswordMinLength:        int32(p.PasswordMinLength), // #nosec G115 -- clamped to 8–128 above
 		PasswordRequireUppercase: p.PasswordRequireUppercase,
 		PasswordRequireNumber:    p.PasswordRequireNumber,
 		PasswordRequireSymbol:    p.PasswordRequireSymbol,
 		MagicLinkEnabled:         p.MagicLinkEnabled,
-		MagicLinkTtlMinutes:      int32(p.MagicLinkTTLMinutes),
+		MagicLinkTtlMinutes:      int32(p.MagicLinkTTLMinutes), // #nosec G115 -- clamped to 5–1440 above
 		PasskeyEnabled:           p.PasskeyEnabled,
 		OtpEmailEnabled:          p.OTPEmailEnabled,
 		OtpSmsEnabled:            p.OTPSMSEnabled,
 		SelfRegistrationEnabled:  p.SelfRegistrationEnabled,
 		RememberDeviceEnabled:    p.RememberDeviceEnabled,
-		RememberDeviceDays:       int32(p.RememberDeviceDays),
+		RememberDeviceDays:       int32(p.RememberDeviceDays), // #nosec G115 -- checked 1–90 above
 		LockoutThreshold:         int32OrNil(p.LockoutThreshold),
 		LockoutWindowMinutes:     int32OrNil(p.LockoutWindowMinutes),
 		LockoutDurationMinutes:   int32OrNil(p.LockoutDurationMinutes),
@@ -383,22 +363,10 @@ func checkSignInMethods(p Policy) []errs.FieldError {
 	return out
 }
 
-// ValidateForTenant is the one check every path that sets or replaces a
-// password runs — sign-up (in a tenant and tenant-less), self-service change,
-// reset, invitation acceptance, admin set-password, admin create and bulk
-// import — so a password is judged the same way whichever path it takes:
-//
-//  1. the rules of the organisation the account belongs to (tenantID), or the
-//     platform baseline DefaultPolicy when it belongs to none (uuid.Nil);
-//  2. the always-on offline strength baseline (common passwords, the account's
-//     email, trivial sequences); email may be empty;
-//  3. the breached-password check, when enabled — fail-open: an unreachable
-//     provider allows the password (counted in a metric, see hibp).
-//
-// The first failure is returned. Each names the requirement that was not met
-// (authpolicy.password_* or auth.password_weak), and none echoes the password
-// or says anything about the account's current credential. Callers take it
-// through a consumer-declared interface so they needn't import this package.
+// ValidateForTenant is the check every path that sets a password runs, so a
+// password is judged the same everywhere: tenantID's rules (DefaultPolicy for
+// uuid.Nil), the offline strength baseline (email may be empty), then the
+// breach check, which fails open. It returns the first failure, never echoing pw.
 func (s *Service) ValidateForTenant(ctx context.Context, tenantID uuid.UUID, email, pw string) error {
 	p := DefaultPolicy()
 	if tenantID != uuid.Nil {
@@ -423,7 +391,7 @@ func (s *Service) ValidateForTenant(ctx context.Context, tenantID uuid.UUID, ema
 }
 
 // SelfRegistrationEnabled reports whether the tenant permits hosted end-user
-// self-registration. Gates POST /v1/auth/register and the hosted /signup page.
+// self-registration.
 func (s *Service) SelfRegistrationEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error) {
 	p, err := s.Get(ctx, tenantID)
 	if err != nil {
@@ -453,9 +421,8 @@ func (s *Service) SignInMethodsFor(ctx context.Context, tenantID uuid.UUID) (Sig
 	return SignInMethods{Password: p.PasswordEnabled, Passkey: p.PasskeyEnabled, MagicLink: p.MagicLinkEnabled}, nil
 }
 
-// AllowedSignInMethods is SignInMethodsFor as plain values, for consumers in
-// other contexts (the hosted login's login-context) that take it through an
-// interface of their own.
+// AllowedSignInMethods is SignInMethodsFor as plain values, for an interface
+// declared where SignInMethods can't be named.
 func (s *Service) AllowedSignInMethods(ctx context.Context, tenantID uuid.UUID) (password, passkey, magicLink bool, err error) {
 	m, err := s.SignInMethodsFor(ctx, tenantID)
 	return m.Password, m.Passkey, m.MagicLink, err
@@ -478,9 +445,8 @@ func (s *Service) MagicLinkPolicy(ctx context.Context, tenantID uuid.UUID) (bool
 	return p.MagicLinkEnabled, time.Duration(p.MagicLinkTTLMinutes) * time.Minute, nil
 }
 
-// PasskeyEnabled reports whether the tenant permits passkeys (passkey_enabled).
-// Gates adding a passkey: the passkey service consults it when offering
-// enrolment and when beginning and finishing the ceremony.
+// PasskeyEnabled reports whether the tenant permits passkeys (passkey_enabled)
+// for enrolment and sign-in.
 func (s *Service) PasskeyEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error) {
 	p, err := s.Get(ctx, tenantID)
 	if err != nil {
@@ -489,9 +455,8 @@ func (s *Service) PasskeyEnabled(ctx context.Context, tenantID uuid.UUID) (bool,
 	return p.PasskeyEnabled, nil
 }
 
-// RememberDeviceEnabled reports whether the tenant allows adaptive MFA (skipping
-// the second factor on a previously-trusted device). Gates the trusted-device
-// skip and the "remember this device" option on the hosted MFA step.
+// RememberDeviceEnabled reports whether the tenant lets an enrolled user skip
+// the second factor on a remembered device.
 func (s *Service) RememberDeviceEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error) {
 	p, err := s.Get(ctx, tenantID)
 	if err != nil {
@@ -514,32 +479,19 @@ func (s *Service) RememberDevicePolicy(ctx context.Context, tenantID uuid.UUID) 
 	return p.RememberDeviceEnabled, time.Duration(days) * 24 * time.Hour, nil
 }
 
+// Handler serves the authentication policy HTTP API.
 type Handler struct {
 	Service *Service
 }
 
+// Mount registers the authentication policy routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/auth-policy", h.get)
 	r.Put("/tenants/{tenantID}/auth-policy", h.update)
 }
 
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
-	}
-	return scope, nil
-}
-
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -553,7 +505,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

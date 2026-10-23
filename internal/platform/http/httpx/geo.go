@@ -35,15 +35,6 @@ func GeoCountryContext(next http.Handler) http.Handler {
 	})
 }
 
-// WithGeoCountry returns ctx carrying country as GeoCountryContext would
-// have read it from the trusted header.
-func WithGeoCountry(ctx context.Context, country string) context.Context {
-	if !isCountryCode(country) {
-		return ctx
-	}
-	return context.WithValue(ctx, ctxKeyGeoCountry, country)
-}
-
 // GeoCountry is the request's approximate country, or "" when unknown.
 func GeoCountry(ctx context.Context) string {
 	c, _ := ctx.Value(ctxKeyGeoCountry).(string)

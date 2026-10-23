@@ -8,34 +8,28 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai"
 )
 
-// changeToolsEnabled is whether the model is offered tools that change
-// anything. Off for 1.0: the assistant only reads and explains, and the console
-// runs no change tool either (its ASSISTANT_CHANGE_TOOLS_ENABLED). The change
-// tools stay in the manifest for when a server-side boundary for assistant
-// actions exists.
+// changeToolsEnabled controls whether the model is offered tools that change
+// anything. It is off: the assistant only reads and explains. Change tools stay
+// in the manifest until assistant actions have a server-side boundary.
 const changeToolsEnabled = false
 
-// toolManifestEntry is the JSON shape of one tool entry in tools.manifest.json.
+// toolManifestEntry is one tool in tools.manifest.json. Every tool must set
+// Mutates; a missing value is a manifest error, not a tool silently offered.
 type toolManifestEntry struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"input_schema"`
-	// Mutates is whether the tool changes anything. Every tool must say; one
-	// that doesn't is a manifest error rather than a tool silently offered.
-	Mutates *bool `json:"mutates"`
+	Mutates     *bool           `json:"mutates"`
 }
 
 type toolManifest struct {
 	Tools []toolManifestEntry `json:"tools"`
 }
 
-// loadToolDefs parses the embedded tools.manifest.json and returns the tools
-// the model is offered, as neutral ai.ToolDef values. Both the Anthropic and
-// OpenAI provider wrappers accept this format and convert to their own wire
-// representation. While changeToolsEnabled is off, a tool that changes
-// anything is left out, so the model can't ask for one. The server NEVER
-// provides a run() implementation — tools execute client-side under the user's
-// own token (RBAC/audit inherited, never bypassed).
+// loadToolDefs parses the embedded tool manifest into the ai.ToolDef values
+// offered to the model, leaving out change tools while changeToolsEnabled is
+// off. Tools never run on the server; the browser runs them under the user's
+// own token.
 func loadToolDefs() ([]ai.ToolDef, error) {
 	var m toolManifest
 	if err := json.Unmarshal(qeetaimanifest.ToolsManifestJSON, &m); err != nil {

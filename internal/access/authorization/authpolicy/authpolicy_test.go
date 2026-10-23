@@ -75,8 +75,8 @@ func TestIsSymbol(t *testing.T) {
 	}
 }
 
-// A length refusal names the organisation's actual minimum, so the
-// user knows what to fix.
+// TestValidatePassword_TooShortNamesTheMinimum checks that a length refusal
+// names the organisation's actual minimum.
 func TestValidatePassword_TooShortNamesTheMinimum(t *testing.T) {
 	err := ValidatePassword(Policy{PasswordMinLength: 14}, "Short-Pass-9!")
 	e := errs.As(err)
@@ -91,8 +91,9 @@ func TestValidatePassword_TooShortNamesTheMinimum(t *testing.T) {
 	}
 }
 
-// With no organisation (uuid.Nil) the platform baseline applies — no
-// database read — then the offline strength baseline, then the breach check.
+// TestValidateForTenant_NoOrganisationUsesThePlatformBaseline checks that with
+// no organisation the platform baseline applies without a database read, then
+// the offline strength baseline, then the breach check.
 func TestValidateForTenant_NoOrganisationUsesThePlatformBaseline(t *testing.T) {
 	breached := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sum := sha1.Sum([]byte("Zq7#xLm2-breached")) // #nosec G401 -- HIBP protocol.

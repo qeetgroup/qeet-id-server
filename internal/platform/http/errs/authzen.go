@@ -1,9 +1,6 @@
 package errs
 
-// AuthZEN error codes — stable, namespaced machine identifiers for the OpenID
-// AuthZEN evaluation request validation (the Policy Decision Point facade).
-// Clients branch and localize on these, never on the message text. Once
-// shipped, a code MUST NOT change.
+// AuthZEN evaluation request error codes.
 const (
 	CodeAuthZENSubjectIDRequired  = "authzen.subject_id_required"
 	CodeAuthZENActionNameRequired = "authzen.action_name_required"

@@ -13,7 +13,7 @@ import (
 )
 
 type fakeRoles struct {
-	grants map[string]bool // permission → granted
+	grants map[string]bool
 	err    error
 	calls  int
 }
@@ -71,9 +71,9 @@ var (
 	ctx    = context.Background()
 )
 
-// TestDenyRefusesAtEveryQuestion: one ABAC deny for doc/write refuses the
-// permission check, the relationship check and the route guard, although a
-// role and a tuple both allow, and the decision names ABAC and the policy.
+// TestDenyRefusesAtEveryQuestion checks that one ABAC deny refuses the
+// permission check, the relationship check and the route guard even though a
+// role and a tuple allow, and that the decision names ABAC and the policy.
 func TestDenyRefusesAtEveryQuestion(t *testing.T) {
 	roles := &fakeRoles{grants: map[string]bool{"doc:write": true}}
 	rels := &fakeRelations{allow: true}
@@ -95,8 +95,8 @@ func TestDenyRefusesAtEveryQuestion(t *testing.T) {
 	}
 }
 
-// TestRoleGrantCountsAtTheRelationshipCheck: roles and relationships are a
-// union, so a role granting doc:write allows doc:42#write with no tuple.
+// TestRoleGrantCountsAtTheRelationshipCheck checks that a role granting
+// doc:write allows doc:42#write with no tuple.
 func TestRoleGrantCountsAtTheRelationshipCheck(t *testing.T) {
 	d := New(&fakeRoles{grants: map[string]bool{"doc:write": true}}, &fakeRelations{}, &fakeAttributes{})
 	dec, err := d.Relation(ctx, tenant, uma.String(), "doc:42", "write")
@@ -110,8 +110,8 @@ func TestRoleGrantCountsAtTheRelationshipCheck(t *testing.T) {
 	}
 }
 
-// TestAnyAllowPermitsWithoutDeny: with no deny anywhere, any one engine
-// allowing is enough, and the decision names which.
+// TestAnyAllowPermitsWithoutDeny checks that with no deny, any one engine
+// allowing is enough and the decision names which.
 func TestAnyAllowPermitsWithoutDeny(t *testing.T) {
 	d := New(&fakeRoles{}, &fakeRelations{allow: true}, &fakeAttributes{})
 	if dec, _ := d.Relation(ctx, tenant, uma.String(), "doc:42", "write"); !dec.Allow || dec.Model != ModelReBAC || dec.Rule != "write on doc:42" {
@@ -127,8 +127,8 @@ func TestAnyAllowPermitsWithoutDeny(t *testing.T) {
 	}
 }
 
-// TestRouteGuardIgnoresAttributeAllow: on Qeet ID's own management API an
-// ABAC allow narrows nothing and widens nothing; only a role allows.
+// TestRouteGuardIgnoresAttributeAllow checks that an ABAC allow does not widen
+// the route guard: only a role allows.
 func TestRouteGuardIgnoresAttributeAllow(t *testing.T) {
 	attrs := &fakeAttributes{allow: map[string]bool{"user/write": true}}
 	d := New(&fakeRoles{}, &fakeRelations{}, attrs)
@@ -140,8 +140,8 @@ func TestRouteGuardIgnoresAttributeAllow(t *testing.T) {
 	}
 }
 
-// TestNoPoliciesSkipsABAC keeps the hot path: a tenant with no ABAC policy is
-// decided by its roles with no policy evaluation.
+// TestNoPoliciesSkipsABAC checks that a tenant with no ABAC policy is decided
+// by its roles without any policy evaluation.
 func TestNoPoliciesSkipsABAC(t *testing.T) {
 	attrs := &fakeAttributes{}
 	d := New(&fakeRoles{grants: map[string]bool{"user.read": true}}, &fakeRelations{}, attrs)
@@ -156,8 +156,8 @@ func TestNoPoliciesSkipsABAC(t *testing.T) {
 	}
 }
 
-// TestNoTenantRefusesBeforeAnyEngine: a question with no organisation is
-// refused before any engine is consulted.
+// TestNoTenantRefusesBeforeAnyEngine checks that a question with no
+// organisation is refused before any engine is consulted.
 func TestNoTenantRefusesBeforeAnyEngine(t *testing.T) {
 	roles, rels, attrs := &fakeRoles{grants: map[string]bool{"doc:write": true}}, &fakeRelations{allow: true}, &fakeAttributes{}
 	d := New(roles, rels, attrs)
@@ -170,8 +170,8 @@ func TestNoTenantRefusesBeforeAnyEngine(t *testing.T) {
 	}
 }
 
-// TestEngineErrorRefuses: an error from any engine refuses, and the error is
-// returned with the refusal, never an allow.
+// TestEngineErrorRefuses checks that an error from any engine refuses and is
+// returned with the refusal, never with an allow.
 func TestEngineErrorRefuses(t *testing.T) {
 	boom := errors.New("boom")
 	for name, d := range map[string]*Decider{
@@ -192,8 +192,8 @@ func TestEngineErrorRefuses(t *testing.T) {
 	}
 }
 
-// TestTraceNamesEachModel: the trace walks tenant, abac, rbac, rebac in order
-// and names the step that decided.
+// TestTraceNamesEachModel checks that the trace walks tenant, abac, rbac and
+// rebac in order and names the step that decided.
 func TestTraceNamesEachModel(t *testing.T) {
 	d := New(&fakeRoles{}, &fakeRelations{allow: true}, &fakeAttributes{allow: map[string]bool{"x/y": true}})
 	dec, _ := d.Relation(ctx, tenant, uma.String(), "doc:42", "write")
@@ -208,8 +208,8 @@ func TestTraceNamesEachModel(t *testing.T) {
 	}
 }
 
-// TestSubjectIsWhoTheServerKnows: ABAC is told who the subject is by the
-// platform (its id and organisation), so a deny on subject.id binds.
+// TestSubjectIsWhoTheServerKnows checks that ABAC gets the subject's id and
+// organisation from the platform, so a deny on subject.id binds.
 func TestSubjectIsWhoTheServerKnows(t *testing.T) {
 	attrs := &fakeAttributes{deny: map[string]bool{"doc/write": true}}
 	d := New(&fakeRoles{}, &fakeRelations{}, attrs)
@@ -233,8 +233,8 @@ func TestSplitPermission(t *testing.T) {
 	}
 }
 
-// TestForViewerHidesPolicies: who may not read policies learns that an
-// attribute policy decided, not which one or what the policies said.
+// TestForViewerHidesPolicies checks that a caller who may not read policies
+// learns that an attribute policy decided, not which one or what it said.
 func TestForViewerHidesPolicies(t *testing.T) {
 	d := New(&fakeRoles{}, &fakeRelations{}, &fakeAttributes{deny: map[string]bool{"doc/write": true}})
 	dec, _ := d.Permission(ctx, tenant, uma, "doc:write")

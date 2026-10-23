@@ -15,6 +15,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
+// Event is one recorded provisioning operation.
 type Event struct {
 	ID           uuid.UUID  `json:"id"`
 	ConnectionID string     `json:"connection_id"`
@@ -38,6 +39,7 @@ type Event struct {
 	Retryable    bool       `json:"retryable"`
 }
 
+// EventSummary counts the events on a page's filter by outcome.
 type EventSummary struct {
 	Total             int    `json:"total"`
 	Successful        int    `json:"successful"`
@@ -46,12 +48,14 @@ type EventSummary struct {
 	AverageDurationMS *int64 `json:"average_duration_ms"`
 }
 
+// VolumePoint is a day's count of user and group operations.
 type VolumePoint struct {
 	Date   string `json:"date"`
 	Users  int    `json:"users"`
 	Groups int    `json:"groups"`
 }
 
+// EventPage is one page of events with their summary.
 type EventPage struct {
 	Items   []Event       `json:"items"`
 	Total   int           `json:"total"`
@@ -70,6 +74,7 @@ type eventFilter struct {
 	Offset       int
 }
 
+// SetEventStore sets the pool that events are recorded to and read from.
 func (service *Service) SetEventStore(pool *pgxpool.Pool) {
 	service.pool = pool
 }
@@ -96,6 +101,7 @@ func classifyOperation(status int) (outcome, category, code, message, severity s
 	return outcome, category, "DIR-" + strconv.Itoa(status), message, severity
 }
 
+// RecordOperation records one provisioning operation of a connection.
 func (service *Service) RecordOperation(ctx context.Context, tenantID uuid.UUID, connectionID, operation, resourceType, resourceID string, status int, started time.Time, duration time.Duration) error {
 	if service.pool == nil {
 		return nil
@@ -186,6 +192,7 @@ func scanEvent(row pgx.Row) (Event, error) {
 	return event, err
 }
 
+// Events returns one page of the tenant's provisioning events.
 func (service *Service) Events(ctx context.Context, tenantID uuid.UUID, filter eventFilter) (EventPage, error) {
 	page := EventPage{Items: []Event{}, Volume: []VolumePoint{}, Limit: filter.Limit, Offset: filter.Offset}
 	if tenantID == uuid.Nil || service.pool == nil {
@@ -247,6 +254,7 @@ func (handler *Handler) events(response http.ResponseWriter, request *http.Reque
 	httpx.WriteJSON(response, http.StatusOK, page)
 }
 
+// Alert is a threshold on a connection's failures.
 type Alert struct {
 	ID           uuid.UUID `json:"id"`
 	Name         string    `json:"name"`

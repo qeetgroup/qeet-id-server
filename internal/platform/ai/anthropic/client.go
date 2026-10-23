@@ -1,6 +1,5 @@
 // Package anthropic is a thin streaming client for the Anthropic Messages API
-// (transport only: base URL, auth header, SSE parsing). It imports nothing from
-// domains/* — the qeetai domain imports this, not the reverse (arch rule R1).
+// (base URL, auth headers, SSE parsing) and its ai.Provider adapter.
 package anthropic
 
 import (
@@ -15,14 +14,9 @@ import (
 )
 
 const (
-	// DefaultBaseURL is the Anthropic API base URL.
-	DefaultBaseURL = "https://api.anthropic.com"
-
-	// DefaultModel is the default model used when none is specified.
-	DefaultModel = "claude-sonnet-5"
-
-	// apiVersion is the Anthropic API version header value.
-	apiVersion = "2023-06-01"
+	DefaultBaseURL = "https://api.anthropic.com" // the Anthropic API base URL
+	DefaultModel   = "claude-sonnet-5"           // used when no model is given
+	apiVersion     = "2023-06-01"                // the anthropic-version header
 )
 
 // Client is a streaming Anthropic Messages API client. Inject a custom
@@ -35,7 +29,8 @@ type Client struct {
 	HTTPClient *http.Client
 }
 
-// New returns a Client with the given API key and defaults.
+// New returns a Client. Empty or zero arguments get the defaults:
+// DefaultBaseURL, DefaultModel, 4096 max tokens and http.DefaultClient.
 func New(apiKey, baseURL, model string, maxTokens int, httpClient *http.Client) *Client {
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
@@ -47,7 +42,7 @@ func New(apiKey, baseURL, model string, maxTokens int, httpClient *http.Client) 
 		maxTokens = 4096
 	}
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = http.DefaultClient //nolint:forbidigo // documented nil default; qeetai always passes an egress-bounded client
 	}
 	return &Client{
 		APIKey:     apiKey,
@@ -68,8 +63,8 @@ type ToolDef struct {
 // ContentBlock represents a single content element in a message.
 // Anthropic supports text, tool_use, and tool_result block types.
 type ContentBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
+	Type      string          `json:"type"`                  // "text", "tool_use" or "tool_result"
+	Text      string          `json:"text,omitempty"`        // for text
 	ID        string          `json:"id,omitempty"`          // tool_use: tool call id
 	Name      string          `json:"name,omitempty"`        // tool_use / tool_result
 	Input     json.RawMessage `json:"input,omitempty"`       // tool_use input
@@ -115,9 +110,9 @@ type StreamEvent struct {
 
 // deltaPayload is embedded in content_block_delta events.
 type deltaPayload struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`         // text_delta
-	JSON string `json:"partial_json,omitempty"` // input_json_delta
+	Type string `json:"type"`                   // "text_delta" or "input_json_delta"
+	Text string `json:"text,omitempty"`         // for text_delta
+	JSON string `json:"partial_json,omitempty"` // for input_json_delta
 }
 
 // contentBlockDeltaEvent is the data payload for content_block_delta events.
@@ -161,12 +156,9 @@ type ParsedEvent struct {
 	ErrorMessage string
 }
 
-// Stream sends a Messages request to the Anthropic API and returns a channel
-// of ParsedEvents. The channel is closed when the stream ends (message_stop)
-// or on error; the final error (if any) is returned via the errC channel.
-//
-// The caller owns closing ctx to abort the request. Errors during reading are
-// emitted as EventError events and then the events channel is closed.
+// Stream posts req with streaming on and returns its parsed events and an error
+// channel (capacity 1); both close when the stream ends. A transport, status or
+// read error is sent on the error channel. Cancelling ctx aborts the request.
 func (c *Client) Stream(ctx context.Context, req MessagesRequest) (<-chan ParsedEvent, <-chan error) {
 	req.Model = c.Model
 	req.MaxTokens = c.MaxTokens

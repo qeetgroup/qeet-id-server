@@ -8,9 +8,9 @@ import (
 
 const testRelayKey = "relay-key-for-tests-0123456789abcdef"
 
-// A relay presenting a valid key names the person's address; anything else
-// (no key, a wrong key, no keys configured, an unreadable address) is judged
-// by the usual rules, so a direct caller can't pick the address it is judged by.
+// TestClientIPTrustsOnlyAKeyedRelay checks that only a relay with a valid key
+// can name the client address; no key, a wrong key, no configured keys or an
+// unreadable address fall back to the usual rules.
 func TestClientIPTrustsOnlyAKeyedRelay(t *testing.T) {
 	t.Cleanup(func() { SetRelayKeys(nil); SetTrustedProxyHops(0) })
 	request := func(key, claimed string) *http.Request {

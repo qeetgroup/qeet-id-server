@@ -180,6 +180,7 @@ func (q *Queries) ListGrants(ctx context.Context, arg ListGrantsParams) ([]ListG
 }
 
 const listProviders = `-- name: ListProviders :many
+
 SELECT id, provider, client_id, authorize_url, token_url, scopes, created_at, updated_at
 FROM tenant.token_vault_providers WHERE tenant_id = $1 ORDER BY provider
 `
@@ -195,6 +196,9 @@ type ListProvidersRow struct {
 	UpdatedAt    time.Time
 }
 
+// Queries for the token-vault domain.
+// storeGrant (upsert with nullable []byte params) is converted below using
+// pointer types; the encrypt/decrypt/HTTP-exchange logic stays in the Service.
 func (q *Queries) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]ListProvidersRow, error) {
 	rows, err := q.db.Query(ctx, listProviders, tenantID)
 	if err != nil {

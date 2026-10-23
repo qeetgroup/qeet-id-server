@@ -1,10 +1,16 @@
 package ldap
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	goldap "github.com/go-ldap/ldap/v3"
+	"github.com/google/uuid"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 func TestDefaulted(t *testing.T) {
@@ -35,22 +41,52 @@ func TestHostOnly(t *testing.T) {
 
 func TestTLSConfig(t *testing.T) {
 	c := &connFull{Connection: Connection{ServerURL: "ldaps://ad.example.org:636", SkipTLSVerify: true}}
-	cfg := c.tlsConfig()
-	if !cfg.InsecureSkipVerify {
-		t.Error("SkipTLSVerify should propagate to InsecureSkipVerify")
+	if !c.tlsConfig(true).InsecureSkipVerify {
+		t.Error("SkipTLSVerify should propagate to InsecureSkipVerify where it is allowed")
+	}
+	cfg := c.tlsConfig(false)
+	if cfg.InsecureSkipVerify {
+		t.Error("SkipTLSVerify must not turn verification off where it is not allowed")
 	}
 	if cfg.ServerName != "ad.example.org" {
 		t.Errorf("ServerName = %q, want ad.example.org", cfg.ServerName)
 	}
 
 	c2 := &connFull{Connection: Connection{ServerURL: "ldaps://ad.example.org:636"}}
-	if c2.tlsConfig().InsecureSkipVerify {
+	if c2.tlsConfig(true).InsecureSkipVerify {
 		t.Error("verification should be on by default")
 	}
 }
 
-// Guards the user-search filter substitution: the supplied username must be
-// LDAP-escaped before being interpolated into the filter (injection defence).
+// TestSkipTLSVerifyRefused checks that a connection which turns certificate
+// verification off is refused, when saved and when it binds, unless that is
+// allowed.
+func TestSkipTLSVerifyRefused(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(nil, nil, egress.DevelopmentPolicy())
+	skip := true
+	if _, err := svc.Create(ctx, nil, uuid.New(), CreateInput{ServerURL: "ldaps://ad.example.org:636", SkipTLSVerify: true}); !errors.Is(err, errs.ErrLDAPTLSVerifyRequired) {
+		t.Errorf("create: %v, want %v", err, errs.ErrLDAPTLSVerifyRequired)
+	}
+	if _, err := svc.Update(ctx, nil, uuid.New(), uuid.New(), UpdateInput{SkipTLSVerify: &skip}); !errors.Is(err, errs.ErrLDAPTLSVerifyRequired) {
+		t.Errorf("update: %v, want %v", err, errs.ErrLDAPTLSVerifyRequired)
+	}
+	c := &connFull{Connection: Connection{ServerURL: "ldaps://127.0.0.1:1", SkipTLSVerify: true}}
+	if err := svc.TestBind(ctx, c); !errors.Is(err, errs.ErrLDAPTLSVerifyRequired) {
+		t.Errorf("test bind: %v, want %v", err, errs.ErrLDAPTLSVerifyRequired)
+	}
+	if _, err := svc.authenticate(ctx, c, "alice", "secret"); !errors.Is(err, errs.ErrLDAPTLSVerifyRequired) {
+		t.Errorf("sign-in bind: %v, want %v", err, errs.ErrLDAPTLSVerifyRequired)
+	}
+
+	svc.SetAllowSkipTLSVerify(true)
+	if err := svc.checkTLSVerify(true); err != nil {
+		t.Errorf("allowed: %v", err)
+	}
+}
+
+// TestUserFilterEscaping checks that the username is LDAP-escaped before it is
+// put into the user-search filter, so it can't inject filter syntax.
 func TestUserFilterEscaping(t *testing.T) {
 	filter := "(uid=%s)"
 	malicious := "*)(uid=*"

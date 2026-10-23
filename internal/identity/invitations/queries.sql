@@ -3,9 +3,14 @@
 -- The cross-context writes inside Accept (user.users, auth.password_credentials,
 -- rbac.user_roles) also go through sqlc — run on the same pgx.Tx via q.WithTx(tx).
 
+-- InsertInvite creates an invitation. One that carries a role is created only
+-- when the role is the tenant's: pgx.ErrNoRows otherwise, for a missing and a
+-- foreign role alike.
 -- name: InsertInvite :one
 INSERT INTO tenant.invites (tenant_id, email, role_id, invited_by, token_hash, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6)
+SELECT @tenant_id, @email, @role_id, @invited_by, @token_hash, @expires_at
+WHERE @role_id::uuid IS NULL
+   OR EXISTS (SELECT 1 FROM rbac.roles ro WHERE ro.id = @role_id AND ro.tenant_id = @tenant_id)
 RETURNING id, tenant_id, email, role_id, status, expires_at, accepted_at, created_at;
 
 -- CountSeats returns the tenant's seats in use = distinct members (users holding
@@ -109,10 +114,12 @@ RETURNING id;
 INSERT INTO auth.password_credentials (user_id, password_hash) VALUES (@user_id, @password_hash);
 
 -- GrantUserRole attaches a tenant membership idempotently: re-accepting or a
--- duplicate role grant is a no-op rather than a PK violation.
+-- duplicate role grant is a no-op rather than a PK violation. It writes only a
+-- role of @tenant_id.
 -- name: GrantUserRole :exec
 INSERT INTO rbac.user_roles (user_id, tenant_id, role_id)
-VALUES (@user_id, @tenant_id, @role_id)
+SELECT @user_id, @tenant_id, @role_id
+WHERE EXISTS (SELECT 1 FROM rbac.roles ro WHERE ro.id = @role_id AND ro.tenant_id = @tenant_id)
 ON CONFLICT (user_id, tenant_id, role_id) DO NOTHING;
 
 -- LookupInvite reads the invitation a link names for the acceptance screen:

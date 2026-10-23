@@ -4,61 +4,31 @@ package directory
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/testcontainers/testcontainers-go"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-func directoryDatabase(test *testing.T) *pgxpool.Pool {
-	test.Helper()
-	testcontainers.SkipIfProviderIsNotHealthy(test)
-	ctx := context.Background()
-	_, source, _, _ := runtime.Caller(0)
-	scripts, err := filepath.Glob(filepath.Join(filepath.Dir(source), "..", "..", "platform", "database", "migrations", "*.up.sql"))
-	if err != nil {
-		test.Fatal(err)
-	}
-	container, err := tcpostgres.Run(ctx, "postgres:16-alpine",
-		tcpostgres.WithDatabase("directory_test"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword("postgres"),
-		tcpostgres.WithInitScripts(scripts...),
-		testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(90*time.Second)),
-	)
-	if err != nil {
-		test.Fatal(err)
-	}
-	test.Cleanup(func() { _ = container.Terminate(ctx) })
-	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		test.Fatal(err)
-	}
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		test.Fatal(err)
-	}
-	test.Cleanup(pool.Close)
-	return pool
-}
+func TestMain(m *testing.M) { dbtest.Main(m) }
 
 func TestDirectoryMigrationsRoundTrip(test *testing.T) {
-	pool := directoryDatabase(test)
-	ctx := context.Background()
+	pool := dbtest.Pool(test)
+	ctx := dbtest.Context(test)
 	_, source, _, _ := runtime.Caller(0)
 	directory := filepath.Join(filepath.Dir(source), "..", "..", "platform", "database", "migrations")
 	for _, migration := range []string{
@@ -90,8 +60,8 @@ func TestDirectoryMigrationsRoundTrip(test *testing.T) {
 }
 
 func TestEventStoreTenantIsolationAndAlerts(test *testing.T) {
-	pool := directoryDatabase(test)
-	ctx := context.Background()
+	pool := dbtest.Pool(test)
+	ctx := dbtest.Context(test)
 	tenantID, foreignTenant, userID := uuid.New(), uuid.New(), uuid.New()
 	for _, tenant := range []uuid.UUID{tenantID, foreignTenant} {
 		if _, err := pool.Exec(ctx, `INSERT INTO tenant.tenants(id,slug,name) VALUES($1,$2,'Directory test')`, tenant, tenant.String()); err != nil {
@@ -189,8 +159,8 @@ func TestEventStoreTenantIsolationAndAlerts(test *testing.T) {
 }
 
 func TestSavedMappingAppliesToSCIMAndRejectsStaleOrForeignWrites(test *testing.T) {
-	pool := directoryDatabase(test)
-	ctx := context.Background()
+	pool := dbtest.Pool(test)
+	ctx := dbtest.Context(test)
 	tenantID, actorID := uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `INSERT INTO tenant.tenants(id,slug,name) VALUES($1,$2,'Mapping test')`, tenantID, tenantID.String()); err != nil {
 		test.Fatal(err)
@@ -277,8 +247,8 @@ func TestSavedMappingAppliesToSCIMAndRejectsStaleOrForeignWrites(test *testing.T
 }
 
 func TestSuspendedDirectoryPrivacyReviewAndReactivation(test *testing.T) {
-	pool := directoryDatabase(test)
-	ctx := context.Background()
+	pool := dbtest.Pool(test)
+	ctx := dbtest.Context(test)
 	tenantID, foreignTenant, actorID, ownedID, foreignID, roleID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	for _, tenant := range []uuid.UUID{tenantID, foreignTenant} {
 		if _, err := pool.Exec(ctx, `INSERT INTO tenant.tenants(id,slug,name) VALUES($1,$2,'Suspension test')`, tenant, tenant.String()); err != nil {
@@ -333,8 +303,9 @@ func TestSuspendedDirectoryPrivacyReviewAndReactivation(test *testing.T) {
 	if selfResponse.Code != http.StatusForbidden {
 		test.Fatalf("self reactivation accepted: %d", selfResponse.Code)
 	}
-	if response := call(http.MethodPost, "/users/"+foreignID.String()+"/reactivate", nil); response.Code != http.StatusNotFound {
-		test.Fatalf("foreign reactivation accepted: %d", response.Code)
+	// foreignID's home is another tenant, so this one may not manage the account.
+	if response := call(http.MethodPost, "/users/"+foreignID.String()+"/reactivate", nil); response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), errs.CodeUserManagedElsewhere) {
+		test.Fatalf("foreign reactivation: %d %s, want 403 %s", response.Code, response.Body.String(), errs.CodeUserManagedElsewhere)
 	}
 	if response := call(http.MethodPut, "/users/"+ownedID.String()+"/suspension", map[string]string{"reason": "offboarding", "risk": "low", "review": "reviewed"}); response.Code != http.StatusNoContent {
 		test.Fatalf("review failed: %d %s", response.Code, response.Body.String())

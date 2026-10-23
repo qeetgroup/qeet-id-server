@@ -10,17 +10,10 @@ import (
 	"sync/atomic"
 )
 
-// A trusted relay is a first-party server that calls the API on a person's
-// behalf: the console's server side, the hosted login's server. The API sees
-// the relay's own address, so every person behind it would share one address
-// for rate limits, sign-in lockout, risk, address rules and audit. A relay that
-// proves itself with a relay key may say whose address it is relaying:
-//
-//	X-Qeet-Relay-Key: <one of RELAY_KEYS>
-//	X-Qeet-Client-IP: <the person's address, as the relay derived it>
-//
-// Without a matching key the claim is ignored, so a direct caller can't choose
-// the address it is judged by.
+// RelayKeyHeader and RelayClientIPHeader let a trusted first-party relay (the
+// console's or hosted login's server) name the address of the person it calls
+// for; otherwise everyone behind it shares its address for rate limits,
+// lockout, risk and audit. Without a key from RELAY_KEYS the claim is ignored.
 const (
 	RelayKeyHeader      = "X-Qeet-Relay-Key"
 	RelayClientIPHeader = "X-Qeet-Client-IP"
@@ -69,10 +62,6 @@ func relayedClientIP(r *http.Request) string {
 	}
 	return addr.Unmap().String()
 }
-
-// ViaTrustedRelay reports whether the request came from a trusted relay that
-// named the person's address.
-func ViaTrustedRelay(r *http.Request) bool { return relayedClientIP(r) != "" }
 
 const ctxKeyClientIP ctxKey = "qeet.client_ip"
 

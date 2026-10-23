@@ -1,8 +1,7 @@
-// Package search is the universal cross-resource search for the admin console.
-// It fans out read-only ILIKE queries across the supported resource types (user,
-// organization, group, role, oidc_client, audit_event), merges and scores rows in
-// Go, and returns a cursor-paginated set. Tenant isolation (from the principal,
-// never the URL/body — QID-18) and per-type RBAC gating are enforced in Search.
+// Package search is the admin console's search across users, organizations,
+// groups, roles, OIDC clients and audit events. It runs a read-only ILIKE query
+// per type, scores and merges the rows in Go, and returns a cursor-paginated
+// page, scoped to one tenant and to the types the user may read.
 package search
 
 import (
@@ -23,14 +22,13 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// permissionChecker is a narrow read-only interface over rbac.Repository.
-// Declared here so the search package does not import the rbac concrete
-// package — the composition root wires the concrete repo at boot.
+// permissionChecker reports whether a user holds a permission in a tenant.
+// *rbac.Repository satisfies it.
 type permissionChecker interface {
 	Check(ctx context.Context, userID, tenantID uuid.UUID, permKey string) (bool, error)
 }
 
-// Resource-type constants for the search result envelope.
+// Resource types a Result can have.
 const (
 	TypeUser         = "user"
 	TypeOrganization = "organization"
@@ -40,9 +38,8 @@ const (
 	TypeAuditEvent   = "audit_event"
 )
 
-// supportedTypes is the fixed, ordered list of resource types the search
-// service queries. Order governs the fan-out sequence but not the returned
-// order (results are sorted by score after merging).
+// supportedTypes lists the searchable resource types in query order; results
+// are sorted by score afterwards.
 var supportedTypes = []string{
 	TypeUser,
 	TypeOrganization,
@@ -52,9 +49,8 @@ var supportedTypes = []string{
 	TypeAuditEvent,
 }
 
-// typePermission maps each resource type to the RBAC permission key required
-// to read it. Matches the platform-wide permission vocabulary seeded by
-// rbac.SeedBuiltins.
+// typePermission maps each resource type to the permission a user needs to see
+// it in results.
 var typePermission = map[string]string{
 	TypeUser:         "user.read",
 	TypeOrganization: "tenant.read",
@@ -64,8 +60,8 @@ var typePermission = map[string]string{
 	TypeAuditEvent:   "audit.read",
 }
 
-// perTypeLimit is the maximum rows fetched per resource type per request.
-// With 6 types, worst-case in-memory set is 300 rows — well within bounds.
+// perTypeLimit is the most rows fetched per resource type per request, so one
+// search holds at most 300 rows in memory.
 const perTypeLimit = 50
 
 // Result is one item in a search response.
@@ -81,28 +77,22 @@ type Result struct {
 	Metadata  map[string]any `json:"metadata"`
 }
 
-// Service executes the per-type queries and assembles the merged result set.
+// Service runs the per-type queries and merges their results.
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 	rbac permissionChecker
 }
 
-// NewService constructs a Service. checker is typically *rbac.Repository from
-// the identity/access domain; the interface keeps the dependency one-way.
+// NewService returns a Service that checks per-type permissions with checker.
 func NewService(pool *pgxpool.Pool, checker permissionChecker) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), rbac: checker}
 }
 
-// Search is the main entry point. It returns at most limit results (capped at
-// 50) and an opaque cursor string for the next page (empty when exhausted).
-//
-//   - tenantID is derived from the principal; never from the request body.
-//   - userID, when non-nil, triggers per-type RBAC checks; nil skips them
-//     (API-key / service-principal callers are already tenant-scoped by their
-//     credential).
-//   - types is an optional filter list; empty means all permitted types.
-//   - cursor is an opaque base64url token from a previous response.
+// Search returns up to limit results in tenantID (20 if limit is not in 1..50),
+// best score first, and the next page's cursor, or "" on the last page. types
+// narrows the search and unknown types are ignored. With a non-nil userID, types
+// the user may not read are skipped; a nil userID skips the checks.
 func (s *Service) Search(
 	ctx context.Context,
 	tenantID uuid.UUID,
@@ -115,12 +105,10 @@ func (s *Service) Search(
 	if limit <= 0 || limit > 50 {
 		limit = 20
 	}
-	// Build the ILIKE pattern. The parameter is safe — it is passed as a
-	// bind variable to pgx and never concatenated into the query string.
+	// pattern is passed as a bind variable, never concatenated into SQL.
 	pattern := "%" + q + "%"
 
-	// Resolve which types to fan out against, respecting the caller's filter
-	// and silently dropping any unknown type strings.
+	// Honour the caller's type filter, dropping unknown types.
 	candidates := supportedTypes
 	if len(types) > 0 {
 		candidates = make([]string, 0, len(types))
@@ -131,11 +119,8 @@ func (s *Service) Search(
 		}
 	}
 
-	// Per-type RBAC gate. User principals are checked against their role
-	// assignments; non-user callers (API keys, service accounts) skip the
-	// check — they are already scoped to the tenant by their credential. A
-	// checker error is surfaced as a hard failure so the caller never silently
-	// receives an over-broad result set.
+	// Skip types the user may not read. A checker error fails the request rather
+	// than return an over-broad result.
 	var all []Result
 	for _, t := range candidates {
 		if userID != nil {
@@ -162,8 +147,8 @@ func (s *Service) Search(
 		return bytes.Compare(all[i].ID[:], all[j].ID[:]) < 0
 	})
 
-	// Apply the cursor: skip to the item that follows the last item returned
-	// on the previous page. The cursor encodes (score, id) of that last item.
+	// The cursor holds the (score, id) of the previous page's last item; the next
+	// page starts after it.
 	if cursor != "" {
 		curScore, curID, err := decodeCursor(cursor)
 		if err != nil {
@@ -176,8 +161,8 @@ func (s *Service) Search(
 				newStart = i + 1
 				break
 			}
-			// Cursor item absent (deleted since previous request); fall back
-			// to the first item that sorts strictly after the cursor position.
+			// The cursor item is gone (deleted since); start at the first item that
+			// sorts after its position.
 			if r.Score < curScore || (r.Score == curScore && bytes.Compare(r.ID[:], curID[:]) > 0) {
 				newStart = i
 				break
@@ -359,8 +344,8 @@ func (s *Service) fetchOIDCClients(ctx context.Context, tenantID uuid.UUID, patt
 
 func (s *Service) fetchAuditEvents(ctx context.Context, tenantID uuid.UUID, pattern, rawQ string) ([]Result, error) {
 	rows, err := s.q.SearchAuditEvents(ctx, dbgen.SearchAuditEventsParams{
-		// audit.events.tenant_id is nullable (platform-level rows have NULL);
-		// tenant-scoped search always passes a valid non-nil tenant.
+		// audit.events.tenant_id is NULL for platform rows; search always passes a
+		// tenant.
 		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
 		Q:        pattern,
 		RowLimit: perTypeLimit,
@@ -392,13 +377,9 @@ func (s *Service) fetchAuditEvents(ctx context.Context, tenantID uuid.UUID, patt
 
 // --- scoring helpers ---
 
-// scoreText computes a relevance score for a single field against the raw
-// (unmodified) search query. Comparison is case-insensitive. Since pg_trgm
-// is not enabled, scoring is rule-based:
-//
-//	1.0  exact match
-//	0.75 prefix match (field starts with query)
-//	0.5  substring match (ILIKE '%q%' caught it)
+// scoreText scores field against the query, ignoring case: 1.0 for an exact
+// match, 0.75 for a prefix match, otherwise 0.5 (the ILIKE matched a
+// substring).
 func scoreText(field, q string) float64 {
 	f := strings.ToLower(strings.TrimSpace(field))
 	ql := strings.ToLower(strings.TrimSpace(q))
@@ -425,15 +406,15 @@ func maxScore(a, b float64) float64 {
 // --- cursor helpers ---
 
 // encodeCursor packs (score, id) into an opaque base64url token. The score is
-// stored as the IEEE 754 binary representation so it round-trips losslessly.
+// stored as its IEEE 754 bits, so it round-trips exactly.
 func encodeCursor(score float64, id uuid.UUID) string {
 	bits := math.Float64bits(score)
 	raw := fmt.Sprintf("%016x|%s", bits, id.String())
 	return base64.RawURLEncoding.EncodeToString([]byte(raw))
 }
 
-// decodeCursor is the inverse of encodeCursor. Returns ErrBadRequest on any
-// malformed input so the handler can pass it straight to WriteError.
+// decodeCursor is the inverse of encodeCursor. It returns errs.ErrBadRequest
+// for malformed input.
 func decodeCursor(cursor string) (float64, uuid.UUID, error) {
 	b, err := base64.RawURLEncoding.DecodeString(cursor)
 	if err != nil {

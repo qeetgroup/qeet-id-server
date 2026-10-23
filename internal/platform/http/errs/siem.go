@@ -1,9 +1,6 @@
 package errs
 
-// SIEM / log-sink error codes — stable, namespaced machine identifiers for the
-// operations/siem context (streaming audit logs to external SIEM sinks like
-// Splunk HEC, Datadog, or a generic HTTP endpoint). Clients branch and localize
-// on these codes, never on the message text.
+// SIEM log sink error codes.
 const (
 	CodeSIEMSinkTypeInvalid = "siem.sink_type_invalid"
 	CodeSIEMEndpointInvalid = "siem.endpoint_invalid"

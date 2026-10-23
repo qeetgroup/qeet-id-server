@@ -116,6 +116,7 @@ SELECT id, relation, subject_type, subject_id, subject_relation
 FROM auth.relation_tuples
 WHERE tenant_id = $1 AND object_type = $2 AND object_id = $3
 ORDER BY relation, subject_type, subject_id
+LIMIT 1001
 `
 
 type ListRelationTuplesByObjectParams struct {
@@ -132,6 +133,7 @@ type ListRelationTuplesByObjectRow struct {
 	SubjectRelation string
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListRelationTuplesByObject(ctx context.Context, arg ListRelationTuplesByObjectParams) ([]ListRelationTuplesByObjectRow, error) {
 	rows, err := q.db.Query(ctx, listRelationTuplesByObject, arg.TenantID, arg.ObjectType, arg.ObjectID)
 	if err != nil {
@@ -163,6 +165,7 @@ SELECT id, object_type, object_id, relation, subject_relation
 FROM auth.relation_tuples
 WHERE tenant_id = $1 AND subject_type = $2 AND subject_id = $3
 ORDER BY object_type, object_id, relation
+LIMIT 1001
 `
 
 type ListRelationTuplesBySubjectParams struct {
@@ -179,6 +182,7 @@ type ListRelationTuplesBySubjectRow struct {
 	SubjectRelation string
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListRelationTuplesBySubject(ctx context.Context, arg ListRelationTuplesBySubjectParams) ([]ListRelationTuplesBySubjectRow, error) {
 	rows, err := q.db.Query(ctx, listRelationTuplesBySubject, arg.TenantID, arg.SubjectType, arg.SubjectID)
 	if err != nil {

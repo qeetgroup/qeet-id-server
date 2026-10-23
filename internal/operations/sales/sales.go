@@ -1,8 +1,7 @@
-// Package sales captures in-app "Contact sales" leads (the Enterprise CTA that
-// used to be a mailto: link). A lead is persisted for follow-up and, best-effort,
-// emailed to the configured sales inbox. Available to any authenticated user —
-// tenant/user are recorded when known, but a lead can be submitted during
-// onboarding before an org exists.
+// Package sales captures in-app "Contact sales" leads. A lead is saved for
+// follow-up and, best-effort, emailed to the sales inbox. Any signed-in user may
+// submit one: tenant and user are recorded when known, since a lead can come
+// before an organization exists.
 package sales
 
 import (
@@ -30,15 +29,18 @@ type Lead struct {
 	Company  string `json:"company"`
 	TeamSize string `json:"team_size"`
 	Message  string `json:"message"`
-	Source   string `json:"source"` // e.g. "onboarding" | "billing"
+	Source   string `json:"source"`
 }
 
+// Service records sales leads.
 type Service struct {
 	q          *dbgen.Queries
 	sender     notifier.Sender
 	salesInbox string
 }
 
+// NewService returns a Service that emails leads to salesInbox through sender;
+// an empty salesInbox or nil sender only saves them.
 func NewService(pool *pgxpool.Pool, sender notifier.Sender, salesInbox string) *Service {
 	return &Service{q: dbgen.New(pool), sender: sender, salesInbox: salesInbox}
 }
@@ -50,7 +52,8 @@ func pgUUID(id *uuid.UUID) pgtype.UUID {
 	return pgtype.UUID{Bytes: *id, Valid: true}
 }
 
-// Submit persists the lead and, best-effort, notifies the sales inbox.
+// Submit saves the lead and, best-effort, emails the sales inbox. The email
+// address is required.
 func (s *Service) Submit(ctx context.Context, tenantID, userID *uuid.UUID, in Lead) error {
 	email := strings.TrimSpace(in.Email)
 	if email == "" {
@@ -72,8 +75,8 @@ func (s *Service) Submit(ctx context.Context, tenantID, userID *uuid.UUID, in Le
 	return nil
 }
 
-// notify emails the sales inbox. Best-effort: a delivery failure must not fail
-// the submission (the lead is already persisted).
+// notify emails the lead to the sales inbox, if one is configured. A failure is
+// only logged: the lead is already saved.
 func (s *Service) notify(ctx context.Context, in Lead, email string) {
 	if s.sender == nil || s.salesInbox == "" {
 		return
@@ -101,6 +104,7 @@ type Handler struct {
 	Service *Service
 }
 
+// Mount registers POST /sales/leads.
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/sales/leads", h.submit)
 }

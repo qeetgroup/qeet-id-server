@@ -1,6 +1,6 @@
-// Package domainverify lets a tenant claim and prove ownership of an email domain
-// (B2B SSO onboarding) via a DNS TXT record, checked only on an explicit admin
-// action. A verified domain can later gate org SSO / JIT provisioning.
+// Package domainverify lets a tenant prove it owns an email domain with a DNS
+// TXT record, checked only when an admin asks, and reports the DNS state of its
+// custom login hostname.
 package domainverify
 
 import (
@@ -30,6 +30,7 @@ import (
 // never clobbers a tenant's apex TXT records (SPF, etc.).
 const dnsHostPrefix = "_qeet-verification."
 
+// Service manages the domains.
 type Service struct {
 	pool     *pgxpool.Pool
 	q        *dbgen.Queries
@@ -39,20 +40,21 @@ type Service struct {
 	gate PlanGate
 }
 
+// NewService returns the domain verification service.
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), resolver: net.DefaultResolver}
 }
 
-// PlanGate reports whether a plan-gated boolean feature is included in the
-// tenant's plan. Satisfied by operations/entitlements.Service, injected via
-// SetPlanGate.
+// PlanGate reports whether a boolean plan feature is in the tenant's plan.
+// Satisfied by *entitlements.Service.
 type PlanGate interface {
 	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
 }
 
-// SetPlanGate wires the plan-feature gate (nil allows all features).
+// SetPlanGate sets the plan-feature gate (nil allows all features).
 func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 
+// Domain is a domain a tenant has claimed, and whether it is verified.
 type Domain struct {
 	ID                uuid.UUID  `json:"id"`
 	Domain            string     `json:"domain"`
@@ -113,7 +115,7 @@ func validDomain(d string) bool {
 		return false
 	}
 	for _, r := range d {
-		if !(r == '.' || r == '-' || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')) {
+		if r != '.' && r != '-' && (r < 'a' || r > 'z') && (r < '0' || r > '9') {
 			return false
 		}
 	}
@@ -137,10 +139,8 @@ func pgtypeToTimePtr(p pgtype.Timestamptz) *time.Time {
 	return &t
 }
 
-// rowToDomain maps the common columns (id, domain, verification_token,
-// verified_at, created_at) to the domain Domain struct. This signature matches
-// the InsertDomainRow, GetDomainForVerifyRow, ListDomainsRow, and MarkDomainVerifiedRow
-// generated types, which all have identical fields.
+// rowToDomain builds a Domain from the columns the generated InsertDomain,
+// GetDomainForVerify and MarkDomainVerified rows share.
 func rowToDomain(id uuid.UUID, domain, token string, verifiedAt pgtype.Timestamptz, createdAt time.Time) Domain {
 	d := Domain{
 		ID:                id,
@@ -154,12 +154,9 @@ func rowToDomain(id uuid.UUID, domain, token string, verifiedAt pgtype.Timestamp
 	return d
 }
 
-// Add registers a domain for a tenant and returns the DNS record to publish.
-func (s *Service) Add(ctx context.Context, tenantID uuid.UUID, raw string) (*Domain, error) {
-	return s.AddWithActor(ctx, tenantID, raw, audit.Actor{Type: "system"})
-}
-
-func (s *Service) AddWithActor(ctx context.Context, tenantID uuid.UUID, raw string, actor audit.Actor) (*Domain, error) {
+// Add registers a domain for a tenant and returns the DNS record to publish,
+// recorded as actor's.
+func (s *Service) Add(ctx context.Context, tenantID uuid.UUID, raw string, actor audit.Actor) (*Domain, error) {
 	// Plan gate: custom (verified) domains are a paid feature.
 	if s.gate != nil {
 		ok, err := s.gate.FeatureAllowed(ctx, tenantID, "custom_domain")
@@ -207,11 +204,9 @@ func (s *Service) AddWithActor(ctx context.Context, tenantID uuid.UUID, raw stri
 	return &d, nil
 }
 
-// List returns the tenant's domains with their per-domain settings and the
-// outcome of the last verification attempt.
-//
-// Raw SQL because sqlc isn't wired into the build here; fold into queries.sql
-// (replacing ListDomains) at the next `sqlc generate`.
+// List returns the tenant's domains with their settings and the outcome of the
+// last verification attempt. It is hand-written SQL because the generated
+// ListDomains doesn't select those columns.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Domain, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, domain, verification_token, verified_at, created_at,
@@ -296,14 +291,11 @@ func (s *Service) UpdateSettings(
 	return &d, nil
 }
 
-// Verify looks up the DNS TXT record and, if the token is present, marks the
-// domain verified. A missing record returns a friendly 422 (DNS may still be
-// propagating); an already-verified-by-another-tenant collision returns 409.
-func (s *Service) Verify(ctx context.Context, id, tenantID uuid.UUID) (*Domain, error) {
-	return s.VerifyWithActor(ctx, id, tenantID, audit.Actor{Type: "system"})
-}
-
-func (s *Service) VerifyWithActor(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) (*Domain, error) {
+// Verify marks the domain verified if its DNS TXT record holds the token. A
+// failed check is recorded and returns the retryable
+// ErrDomainVerifyDNSRecordMissing; a domain another tenant has verified returns
+// ErrDomainVerifyClaimedByOther.
+func (s *Service) Verify(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) (*Domain, error) {
 	row, err := s.q.GetDomainForVerify(ctx, dbgen.GetDomainForVerifyParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrDomainVerifyNotFound
@@ -372,11 +364,8 @@ func (s *Service) VerifyWithActor(ctx context.Context, id, tenantID uuid.UUID, a
 	return &verified, nil
 }
 
-func (s *Service) Remove(ctx context.Context, id, tenantID uuid.UUID) error {
-	return s.RemoveWithActor(ctx, id, tenantID, audit.Actor{Type: "system"})
-}
-
-func (s *Service) RemoveWithActor(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+// Remove deletes one of the tenant's domains, recorded as actor's.
+func (s *Service) Remove(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -398,21 +387,12 @@ func (s *Service) RemoveWithActor(ctx context.Context, id, tenantID uuid.UUID, a
 	return tx.Commit(ctx)
 }
 
+// Handler serves the domain verification HTTP API.
 type Handler struct {
 	Service *Service
 }
 
-func actorOf(r *http.Request) audit.Actor {
-	actor := audit.Actor{Type: "system", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	if principal := httpx.PrincipalFromCtx(r.Context()); principal != nil {
-		actor.UserID = principal.UserID
-		if principal.ActorType != "" {
-			actor.Type = principal.ActorType
-		}
-	}
-	return actor
-}
-
+// Mount registers the domain verification routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/domains", h.list)
 	r.Post("/tenants/{tenantID}/domains", h.add)
@@ -422,23 +402,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Delete("/tenants/{tenantID}/domains/{id}", h.remove)
 }
 
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
-	}
-	return scope, nil
-}
-
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -456,7 +421,7 @@ type addInput struct {
 }
 
 func (h *Handler) add(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -466,7 +431,7 @@ func (h *Handler) add(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	d, err := h.Service.AddWithActor(r.Context(), tenantID, in.Domain, actorOf(r))
+	d, err := h.Service.Add(r.Context(), tenantID, in.Domain, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -475,7 +440,7 @@ func (h *Handler) add(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -485,7 +450,7 @@ func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	d, err := h.Service.VerifyWithActor(r.Context(), id, tenantID, actorOf(r))
+	d, err := h.Service.Verify(r.Context(), id, tenantID, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -494,7 +459,7 @@ func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) remove(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -504,7 +469,7 @@ func (h *Handler) remove(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.RemoveWithActor(r.Context(), id, tenantID, actorOf(r)); err != nil {
+	if err := h.Service.Remove(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -518,7 +483,7 @@ type updateSettingsInput struct {
 }
 
 func (h *Handler) updateSettings(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -534,7 +499,7 @@ func (h *Handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d, err := h.Service.UpdateSettings(r.Context(), id, tenantID, in.SSOEnabled, in.JITEnabled,
-		in.IsDefault, actorOf(r))
+		in.IsDefault, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

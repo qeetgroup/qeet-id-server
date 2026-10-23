@@ -7,8 +7,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// newTestEvent is a helper that returns an ActivityEvent with the given type and
-// severity, using a fresh random ID. The At field is set to now.
+// newTestEvent returns an ActivityEvent of the given type and severity, with a
+// fresh ID and At set to now.
 func newTestEvent(evType, severity string) ActivityEvent {
 	return ActivityEvent{
 		ID:       uuid.New(),
@@ -20,9 +20,8 @@ func newTestEvent(evType, severity string) ActivityEvent {
 	}
 }
 
-// TestHubTenantIsolation is the critical security test: verifies that an event
-// fan-out to tenantA is NOT delivered to tenantB's subscriber, and vice versa.
-// A cross-tenant delivery would be a security incident.
+// TestHubTenantIsolation checks that an event for one tenant never reaches
+// another tenant's subscriber.
 func TestHubTenantIsolation(t *testing.T) {
 	h := NewHub(nil) // no NATS — we drive fanOut directly
 
@@ -77,9 +76,8 @@ func TestHubTenantIsolation(t *testing.T) {
 	}
 }
 
-// TestHubSlowConsumerDropOldest verifies the drop-oldest policy: when a
-// subscriber's channel is full, the hub drops the oldest buffered event to
-// make room for the new one, rather than blocking or dropping the new event.
+// TestHubSlowConsumerDropOldest checks that a full subscriber channel drops its
+// oldest event to make room for the new one, without blocking.
 func TestHubSlowConsumerDropOldest(t *testing.T) {
 	h := NewHub(nil)
 	tenant := uuid.New()
@@ -127,9 +125,8 @@ loop:
 	}
 }
 
-// TestHubUnsubscribeCleanup verifies that after unsubscribing, the hub's
-// internal map removes the subscriber (no leak) and subsequent events to that
-// tenant are not delivered to the closed channel.
+// TestHubUnsubscribeCleanup checks that unsubscribing removes the subscriber
+// from the hub, and that a later fan-out to the tenant does not block.
 func TestHubUnsubscribeCleanup(t *testing.T) {
 	h := NewHub(nil)
 	tenant := uuid.New()
@@ -158,8 +155,8 @@ func TestHubUnsubscribeCleanup(t *testing.T) {
 	h.fanOut(tenant, newTestEvent("user.created", SeveritySuccess))
 }
 
-// TestHubMultipleSubscribersSameTenant verifies that two concurrent SSE
-// connections for the same tenant both receive each event.
+// TestHubMultipleSubscribersSameTenant checks that every connection of a tenant
+// receives each event.
 func TestHubMultipleSubscribersSameTenant(t *testing.T) {
 	h := NewHub(nil)
 	tenant := uuid.New()
@@ -184,8 +181,8 @@ func TestHubMultipleSubscribersSameTenant(t *testing.T) {
 	}
 }
 
-// TestMapOutboxEventTenantID verifies that mapOutboxEvent populates
-// ActivityEvent.TenantID from the tenantID argument, not from the payload.
+// TestMapOutboxEventTenantID checks that mapOutboxEvent takes TenantID from its
+// argument, not from the payload.
 func TestMapOutboxEventTenantID(t *testing.T) {
 	tenantID := uuid.New()
 	otherID := uuid.New() // another UUID present in the payload — must not win
@@ -198,8 +195,7 @@ func TestMapOutboxEventTenantID(t *testing.T) {
 	}
 }
 
-// TestMapAuditRowTenantID verifies that mapAuditRow populates
-// ActivityEvent.TenantID from the scanned auditRow.TenantID field.
+// TestMapAuditRowTenantID checks that mapAuditRow copies the row's TenantID.
 func TestMapAuditRowTenantID(t *testing.T) {
 	tenantID := uuid.New()
 	row := auditRow{
@@ -213,14 +209,9 @@ func TestMapAuditRowTenantID(t *testing.T) {
 	}
 }
 
-// TestHubMisroutedEventDroppedAtWriteBoundary simulates the defense-in-depth
-// scenario where the hub theoretically mis-routes an event (tenantB's event
-// ends up in tenantA's subscriber channel). The SSE stream handler's guard
-// checks ev.TenantID != connectionTenant and drops such events before writing
-// to the SSE stream. This test proves:
-//  1. fanOut can deliver an event with any TenantID to any subscriber (hub
-//     routing is by channel key, TenantID is in the payload).
-//  2. The guard condition ev.TenantID != connectionTenant would catch it.
+// TestHubMisroutedEventDroppedAtWriteBoundary checks that an event forced into
+// another tenant's channel keeps its own TenantID, so the stream handler's
+// tenant check would drop it.
 func TestHubMisroutedEventDroppedAtWriteBoundary(t *testing.T) {
 	h := NewHub(nil) // no NATS — drive fanOut directly
 
@@ -265,8 +256,7 @@ func TestHubMisroutedEventDroppedAtWriteBoundary(t *testing.T) {
 	// The assertions above confirm the condition would be triggered correctly.
 }
 
-// TestCategoryOf exercises the mapping table for a representative sample of
-// event types. Failures here break the severity/category columns in the UI.
+// TestCategoryOf checks categoryOf and severityOf against a sample of actions.
 func TestCategoryOf(t *testing.T) {
 	cases := []struct {
 		action  string
@@ -297,4 +287,41 @@ func TestCategoryOf(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestHubFanOutDuringUnsubscribe checks that fanning out while other
+// connections of the tenant subscribe and unsubscribe is free of data races.
+// It is meaningful under the race detector.
+func TestHubFanOutDuringUnsubscribe(t *testing.T) {
+	h := NewHub(nil)
+	tenant := uuid.New()
+	for i := 0; i < 3; i++ {
+		_, unsub := h.Subscribe(tenant)
+		defer unsub()
+	}
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			// Removing the earlier of two subscribers shifts the later one down
+			// in the slice fanOut reads.
+			_, unsubFirst := h.Subscribe(tenant)
+			_, unsubSecond := h.Subscribe(tenant)
+			unsubFirst()
+			unsubSecond()
+		}
+	}()
+	ev := newTestEvent("user.created", SeveritySuccess)
+	for i := 0; i < 2000; i++ {
+		h.fanOut(tenant, ev)
+	}
+	close(stop)
+	<-done
 }

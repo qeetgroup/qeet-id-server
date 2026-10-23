@@ -19,16 +19,20 @@ VALUES (@tenant_id, @name, @secret_hash, @scopes, @token_ttl_seconds, @sponsor_u
 RETURNING id, name, scopes, token_ttl_seconds, sponsor_user_id, created_at;
 
 -- name: ListAgents :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, name, scopes, token_ttl_seconds, status, sponsor_user_id, created_at
 FROM auth.agents
 WHERE tenant_id = $1 AND status <> 'decommissioned'
-ORDER BY created_at DESC;
+ORDER BY created_at DESC
+LIMIT 1001;
 
 -- name: ListAgentsSponsoredBy :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, name, scopes, token_ttl_seconds, status, sponsor_user_id, created_at
 FROM auth.agents
 WHERE tenant_id = @tenant_id AND sponsor_user_id = @user_id AND status <> 'decommissioned'
-ORDER BY created_at DESC;
+ORDER BY created_at DESC
+LIMIT 1001;
 
 -- name: TransferAgentSponsor :execrows
 UPDATE auth.agents SET sponsor_user_id = @to_user_id

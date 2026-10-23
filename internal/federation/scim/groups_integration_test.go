@@ -1,111 +1,30 @@
 //go:build integration
 
-// DB-backed lifecycle tests for SCIM 2.0 Groups, driving the real HTTP
-// handlers through MountPublic against an ephemeral Postgres (testcontainers),
-// migrated with the repo's own migration files. Gated behind the `integration`
-// build tag so the default `go test ./...` stays Docker-free; skips cleanly if
-// Docker is unavailable.
 package scim
+
+// Database tests for SCIM groups and users, driving the real handlers through
+// MountPublic against a migrated PostgreSQL (see dbtest).
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/testcontainers/testcontainers-go"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 )
 
-var testPool *pgxpool.Pool
-
-func TestMain(m *testing.M) {
-	os.Exit(run(m))
-}
-
-func run(m *testing.M) int {
-	ctx := context.Background()
-	if os.Getenv("TESTCONTAINERS_RYUK_DISABLED") == "" {
-		_ = os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true")
-	}
-	scripts, err := upMigrations()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "scim integration: cannot locate migrations: %v\n", err)
-		return 1
-	}
-	ctr, err := tcpostgres.Run(ctx, "postgres:16-alpine",
-		tcpostgres.WithDatabase("qeet_id_test"),
-		tcpostgres.WithUsername("postgres"),
-		tcpostgres.WithPassword("postgres"),
-		tcpostgres.WithInitScripts(scripts...),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).WithStartupTimeout(90*time.Second)),
-	)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "scim integration: skipping (container start failed): %v\n", err)
-		return 0
-	}
-	defer func() { _ = ctr.Terminate(ctx) }()
-
-	dsn, err := ctr.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "scim integration: connection string: %v\n", err)
-		return 1
-	}
-	testPool, err = pgxpool.New(ctx, dsn)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "scim integration: pool: %v\n", err)
-		return 1
-	}
-	defer testPool.Close()
-	return m.Run()
-}
-
-func upMigrations() ([]string, error) {
-	_, thisFile, _, _ := runtime.Caller(0)
-	// scim is at internal/federation/scim → climb two levels to internal/.
-	dir := filepath.Join(filepath.Dir(thisFile), "..", "..", "platform", "database", "migrations")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-	var ups []string
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".up.sql") {
-			ups = append(ups, filepath.Join(dir, e.Name()))
-		}
-	}
-	if len(ups) == 0 {
-		return nil, fmt.Errorf("no .up.sql files in %s", dir)
-	}
-	sort.Strings(ups)
-	return ups, nil
-}
-
-func requireDB(t *testing.T) {
-	t.Helper()
-	if testPool == nil {
-		t.Skip("scim integration: no database (Docker unavailable)")
-	}
-}
+func TestMain(m *testing.M) { dbtest.Main(m) }
 
 // scimFixture sets up a tenant, a SCIM bearer token, two users, and a mounted
 // SCIM router driving the real handlers.
@@ -117,25 +36,18 @@ type scimFixture struct {
 
 func newSCIMFixture(t *testing.T, ctx context.Context) *scimFixture {
 	t.Helper()
-	var tid uuid.UUID
-	slug := "scim-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:10]
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO tenant.tenants (slug, name, plan, region)
-		VALUES ($1, $2, 'free', 'us-east-1') RETURNING id
-	`, slug, slug).Scan(&tid); err != nil {
-		t.Fatalf("create tenant: %v", err)
-	}
+	tid := dbtest.Tenant(t)
 
 	// Seed a SCIM bearer token for this tenant (hash scheme matches Rotate).
 	token := tokenPrefix + uuid.NewString()
-	if _, err := testPool.Exec(ctx, `
+	if _, err := dbtest.Pool(t).Exec(ctx, `
 		INSERT INTO tenant.scim_tokens (tenant_id, token_hash, token_prefix)
 		VALUES ($1, $2, $3)
 	`, tid, codes.Hash(token), tokenPrefix+"seed"); err != nil {
 		t.Fatalf("seed token: %v", err)
 	}
 
-	svc := NewService(testPool, user.NewRepository(testPool))
+	svc := NewService(dbtest.Pool(t), user.NewRepository(dbtest.Pool(t)))
 	h := &Handler{Service: svc}
 	r := chi.NewRouter()
 	h.MountPublic(r)
@@ -145,7 +57,7 @@ func newSCIMFixture(t *testing.T, ctx context.Context) *scimFixture {
 // seedUser creates a tenant user and returns its id.
 func (f *scimFixture) seedUser(t *testing.T, ctx context.Context, email string) uuid.UUID {
 	t.Helper()
-	repo := user.NewRepository(testPool)
+	repo := user.NewRepository(dbtest.Pool(t))
 	u, err := repo.CreateWithCredential(ctx, user.CreateInput{TenantID: f.tenantID, Email: email}, "")
 	if err != nil {
 		t.Fatalf("seed user %s: %v", email, err)
@@ -200,8 +112,7 @@ func memberValues(res map[string]any) []string {
 // TestSCIMGroupLifecycle walks create → get → list → PATCH add member →
 // PATCH remove member → delete, plus the displayName filter.
 func TestSCIMGroupLifecycle(t *testing.T) {
-	requireDB(t)
-	ctx := context.Background()
+	ctx := dbtest.Context(t)
 	f := newSCIMFixture(t, ctx)
 	alice := f.seedUser(t, ctx, "alice-"+uuid.NewString()+"@acme.test")
 	bob := f.seedUser(t, ctx, "bob-"+uuid.NewString()+"@acme.test")
@@ -309,8 +220,7 @@ func TestSCIMGroupLifecycle(t *testing.T) {
 }
 
 func TestSCIMUserFilterAndUnfilteredPagination(t *testing.T) {
-	requireDB(t)
-	ctx := context.Background()
+	ctx := dbtest.Context(t)
 	fixture := newSCIMFixture(t, ctx)
 	firstEmail := "first-" + uuid.NewString() + "@acme.test"
 	secondEmail := "second-" + uuid.NewString() + "@acme.test"
@@ -351,11 +261,64 @@ func TestSCIMUserFilterAndUnfilteredPagination(t *testing.T) {
 	}
 }
 
+// TestSCIMGroupNameUniqueness checks that groups with an externalId may share
+// a displayName, and that a group without one which takes an existing name,
+// ignoring case, is refused with 409 uniqueness on create, replace and patch.
+func TestSCIMGroupNameUniqueness(t *testing.T) {
+	ctx := dbtest.Context(t)
+	f := newSCIMFixture(t, ctx)
+	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Support')`, f.tenantID); err != nil {
+		t.Fatalf("seed console group: %v", err)
+	}
+	create := func(name, externalID string) *httptest.ResponseRecorder {
+		body := map[string]any{"schemas": []string{schemaGroup}, "displayName": name}
+		if externalID != "" {
+			body["externalId"] = externalID
+		}
+		return f.do(t, http.MethodPost, "/scim/v2/Groups", body)
+	}
+	isUniqueness := func(rec *httptest.ResponseRecorder) bool {
+		return rec.Code == http.StatusConflict && decodeBody(t, rec)["scimType"] == "uniqueness"
+	}
+
+	var ids []string
+	for _, ext := range []string{"ext-1", "ext-2"} {
+		rec := create("Marketing", ext)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create Marketing %s: status %d body %s", ext, rec.Code, rec.Body)
+		}
+		id, _ := decodeBody(t, rec)["id"].(string)
+		ids = append(ids, id)
+	}
+	if rec := create("support", ""); !isUniqueness(rec) {
+		t.Errorf("create support without externalId: status %d body %s, want 409 uniqueness", rec.Code, rec.Body)
+	}
+
+	rec := f.do(t, http.MethodPut, "/scim/v2/Groups/"+ids[0], map[string]any{
+		"schemas": []string{schemaGroup}, "displayName": "SUPPORT",
+	})
+	if !isUniqueness(rec) {
+		t.Errorf("replace as SUPPORT without externalId: status %d body %s, want 409 uniqueness", rec.Code, rec.Body)
+	}
+
+	clearExternalID := func(id string) *httptest.ResponseRecorder {
+		return f.do(t, http.MethodPatch, "/scim/v2/Groups/"+id, map[string]any{
+			"schemas":    []string{schemaPatchOp},
+			"Operations": []map[string]any{{"op": "replace", "path": "externalId", "value": ""}},
+		})
+	}
+	if rec := clearExternalID(ids[0]); rec.Code != http.StatusOK {
+		t.Fatalf("clear the first Marketing's externalId: status %d body %s", rec.Code, rec.Body)
+	}
+	if rec := clearExternalID(ids[1]); !isUniqueness(rec) {
+		t.Errorf("clear the second Marketing's externalId: status %d body %s, want 409 uniqueness", rec.Code, rec.Body)
+	}
+}
+
 // TestSCIMGroupTenantIsolation proves one tenant can never read or mutate
 // another tenant's group via the SCIM surface.
 func TestSCIMGroupTenantIsolation(t *testing.T) {
-	requireDB(t)
-	ctx := context.Background()
+	ctx := dbtest.Context(t)
 	a := newSCIMFixture(t, ctx)
 	b := newSCIMFixture(t, ctx)
 
@@ -393,14 +356,10 @@ func urlFilter(name string) string {
 
 const schemaPatchOp = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
 
-// TestSCIMUserMutationsEmitAtomicEvidence covers the residual half of
-// QID-AUD-018: SCIM is the highest-volume user-mutation surface in the product
-// and previously wrote no audit row and emitted no domain event for create,
-// replace, patch or delete — leaving IdP-driven provisioning and, more
-// importantly, deprovisioning invisible to incident response.
+// TestSCIMUserMutationsEmitAtomicEvidence checks that SCIM user create,
+// replace, patch and delete each write an audit row and a domain event.
 func TestSCIMUserMutationsEmitAtomicEvidence(t *testing.T) {
-	requireDB(t)
-	ctx := context.Background()
+	ctx := dbtest.Context(t)
 	f := newSCIMFixture(t, ctx)
 
 	email := "evidence-" + uuid.NewString()[:8] + "@example.com"
@@ -467,11 +426,10 @@ func TestSCIMUserMutationsEmitAtomicEvidence(t *testing.T) {
 // merely accompanied: with the audit table refusing inserts, the user must not
 // exist afterwards.
 func TestSCIMCreateRollsBackWithoutEvidence(t *testing.T) {
-	requireDB(t)
-	ctx := context.Background()
+	ctx := dbtest.Context(t)
 	f := newSCIMFixture(t, ctx)
 
-	if _, err := testPool.Exec(ctx, `
+	if _, err := dbtest.Pool(t).Exec(ctx, `
 		CREATE OR REPLACE FUNCTION scim_audit_block() RETURNS trigger AS $$
 		BEGIN RAISE EXCEPTION 'audit write blocked'; END; $$ LANGUAGE plpgsql;
 		CREATE TRIGGER scim_audit_block_trg BEFORE INSERT ON audit.events
@@ -480,7 +438,7 @@ func TestSCIMCreateRollsBackWithoutEvidence(t *testing.T) {
 		t.Fatalf("install audit trigger: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DROP TRIGGER IF EXISTS scim_audit_block_trg ON audit.events`)
+		_, _ = dbtest.Pool(t).Exec(context.Background(), `DROP TRIGGER IF EXISTS scim_audit_block_trg ON audit.events`)
 	})
 
 	email := "rollback-" + uuid.NewString()[:8] + "@example.com"
@@ -489,7 +447,7 @@ func TestSCIMCreateRollsBackWithoutEvidence(t *testing.T) {
 		t.Fatalf("create with blocked audit = %d, want 500", rec.Code)
 	}
 	var users int
-	if err := testPool.QueryRow(ctx,
+	if err := dbtest.Pool(t).QueryRow(ctx,
 		`SELECT count(*) FROM "user".users WHERE email = $1`, email).Scan(&users); err != nil {
 		t.Fatalf("count users: %v", err)
 	}
@@ -500,7 +458,7 @@ func TestSCIMCreateRollsBackWithoutEvidence(t *testing.T) {
 
 func collectColumn(t *testing.T, ctx context.Context, sql string, args ...any) []string {
 	t.Helper()
-	rows, err := testPool.Query(ctx, sql, args...)
+	rows, err := dbtest.Pool(t).Query(ctx, sql, args...)
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}
@@ -528,19 +486,11 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
-// TestSCIMUserWriteTenantIsolation is the regression test for the cross-tenant
-// user-write hole: user.Repository.UpdateTx keys on the user id alone and
-// carries no tenant predicate, so before applyUserUpdate re-checked ownership,
-// tenant B's SCIM token could suspend or rename any user in tenant A.
-//
-// Suspending is the damaging half — status "suspended" blocks the victim's
-// refresh in access/authentication, so a cross-tenant PATCH is an account
-// lockout. Both write verbs (PUT replace, PATCH) must 404, and — crucially —
-// the victim's row must be unchanged afterwards, because the pre-fix bug
-// committed the write and only *then* failed to reload it.
+// TestSCIMUserWriteTenantIsolation checks that one tenant's SCIM token can't
+// suspend or rename another tenant's user: PUT and PATCH both return 404 and
+// leave the victim's row unchanged.
 func TestSCIMUserWriteTenantIsolation(t *testing.T) {
-	requireDB(t)
-	ctx := context.Background()
+	ctx := dbtest.Context(t)
 	a := newSCIMFixture(t, ctx)
 	b := newSCIMFixture(t, ctx)
 
@@ -548,7 +498,7 @@ func TestSCIMUserWriteTenantIsolation(t *testing.T) {
 
 	statusOf := func() string {
 		var s string
-		if err := testPool.QueryRow(ctx,
+		if err := dbtest.Pool(t).QueryRow(ctx,
 			`SELECT status FROM "user".users WHERE id = $1`, victim).Scan(&s); err != nil {
 			t.Fatalf("read victim status: %v", err)
 		}
@@ -585,7 +535,7 @@ func TestSCIMUserWriteTenantIsolation(t *testing.T) {
 	}
 
 	var displayName *string
-	if err := testPool.QueryRow(ctx,
+	if err := dbtest.Pool(t).QueryRow(ctx,
 		`SELECT display_name FROM "user".users WHERE id = $1`, victim).Scan(&displayName); err != nil {
 		t.Fatalf("read victim display_name: %v", err)
 	}

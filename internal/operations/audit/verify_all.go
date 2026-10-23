@@ -32,26 +32,23 @@ type BrokenChain struct {
 }
 
 // VerificationRun is one verification of every chain, as VerifyAll stores it
-// in platform.audit_verification_runs.
+// in platform.audit_verification_runs. Outcome is "intact", "broken" (a chain
+// does not verify) or "error" (a chain could not be read, which stops the run).
 type VerificationRun struct {
 	ID            uuid.UUID
 	StartedAt     time.Time
 	FinishedAt    time.Time
 	TenantsWalked int
 	RowsChecked   int
-	// Outcome is intact, broken (a chain doesn't verify) or error (a chain
-	// couldn't be read; the run stops there).
-	Outcome string
-	Broken  []BrokenChain
-	Err     string
+	Outcome       string
+	Broken        []BrokenChain
+	Err           string
 }
 
-// VerifyAll verifies the platform chain and every organisation's chain
-// (Verify(ctx, nil) alone is the platform chain only) and stores the
-// run. Each broken chain is logged at ERROR with its organisation and row; the
-// stored run names the first. A broken or failed run counts toward
-// audit_verify_failures_total and returns an error, so the scheduled job
-// records a failure.
+// VerifyAll verifies the platform chain and every organisation's chain, and
+// stores the run. Each broken chain is logged at ERROR; the stored run names the
+// first. A broken or failed run counts toward audit_verify_failures_total and
+// returns an error, so the scheduled job records a failure.
 func (v *Verifier) VerifyAll(ctx context.Context) (VerificationRun, error) {
 	run := VerificationRun{ID: uuid.New(), StartedAt: time.Now(), Outcome: "intact"}
 	var runErr error
@@ -120,9 +117,9 @@ func scopeLabel(tenantID *uuid.UUID) string {
 	return tenantID.String()
 }
 
-// VerificationMetrics reports audit_verify_last_success_timestamp_seconds:
-// when a scheduled verification last found every chain intact, on any
-// instance (0: never), so an alert can fire when none has for an interval.
+// VerificationMetrics returns the audit_verify_last_success_timestamp_seconds
+// gauge: when a scheduled verification on any instance last found every chain
+// intact (0 if never), for alerting.
 func VerificationMetrics(pool *pgxpool.Pool) prometheus.Collector {
 	q := dbgen.New(pool)
 	return prometheus.NewGaugeFunc(prometheus.GaugeOpts{

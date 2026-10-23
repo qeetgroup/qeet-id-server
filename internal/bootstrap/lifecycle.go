@@ -12,9 +12,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 )
 
-// Shutdown phase budgets. These are spent sequentially, so the worst-case
-// shutdown is their sum — keep that under the orchestrator's termination grace
-// period (Kubernetes terminationGracePeriodSeconds, ECS stopTimeout).
+// Shutdown phase budgets. These are spent sequentially, after
+// SHUTDOWN_DRAIN_DELAY, so the worst-case shutdown is their sum plus the drain
+// delay — keep that under the orchestrator's termination grace period
+// (Kubernetes terminationGracePeriodSeconds, ECS stopTimeout, docker stop -t).
 const (
 	httpDrainTimeout   = 15 * time.Second
 	workerDrainTimeout = 15 * time.Second
@@ -37,15 +38,23 @@ func gracefulShutdown(
 	inFlightAtSignal := deps.InFlight.Count()
 	slog.Info("shutdown initiated", "in_flight", inFlightAtSignal)
 
-	// Each phase gets its OWN budget. Sharing one deadline across all three ran
-	// them serially against a single clock: a busy HTTP drain could consume the
-	// whole window, after which the worker drain saw an already-expired context
-	// and gave up with zero grace, and the tracer flush silently dropped every
-	// buffered span.
+	// Answer not ready first, so the load balancer stops sending requests
+	// before the listener closes.
+	deps.Health.Drain()
+	if d := cfg.ShutdownDrainDelay; d > 0 {
+		slog.Info("draining: readiness answers 503", "for", d)
+		time.Sleep(d)
+	}
+
+	// Each phase gets its own timeout, so a slow HTTP drain can't use up the time
+	// for the worker drain and the tracer flush.
 	httpCtx, cancelHTTP := context.WithTimeout(context.Background(), httpDrainTimeout)
 	defer cancelHTTP()
 	if err := srv.Shutdown(httpCtx); err != nil {
 		slog.Error("http shutdown", "err", err)
+	}
+	for _, hook := range deps.shutdownHooks {
+		hook()
 	}
 
 	workerCtx, cancelWorkers := context.WithTimeout(context.Background(), workerDrainTimeout)
@@ -53,6 +62,10 @@ func gracefulShutdown(
 	workerDone := make(chan struct{})
 	go func() {
 		waitWorkers()
+		// Links already answered as sent finish storing and sending.
+		if deps.Recovery != nil {
+			deps.Recovery.Service.Wait()
+		}
 		close(workerDone)
 	}()
 	select {

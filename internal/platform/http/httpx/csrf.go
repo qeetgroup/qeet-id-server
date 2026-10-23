@@ -11,27 +11,6 @@ import (
 	"strings"
 )
 
-// CSRF protects mutation routes from cross-site request forgery. The
-// strategy is **double-submit cookie + strict origin check**:
-//
-//   1. On any unauthenticated GET we issue a `qe_csrf` cookie carrying
-//      a random 32-byte token (SameSite=Strict, Secure outside dev).
-//   2. Mutation requests (POST/PUT/PATCH/DELETE) must echo the same
-//      token in the `X-CSRF-Token` header. The middleware compares
-//      header and cookie under constant-time equality and rejects on
-//      mismatch.
-//   3. If an `Origin` (or `Referer` fallback) header is present we
-//      additionally require it to match one of the configured
-//      allow-listed origins. This stops drive-by POSTs entirely on
-//      modern browsers.
-//
-// We deliberately keep the middleware *additive*: requests that
-// authenticate via `Authorization: Bearer …` or `Authorization: ApiKey …`
-// (how the server libraries call) are skipped because they aren't
-// browser-attackable in the cookie sense. The hooks land now so the day cookie-bearing sessions ship
-// (IMPROVEMENTS §1.1 done-when), the wiring is already on every
-// mutation route.
-
 const (
 	csrfCookieName = "qe_csrf"
 	csrfHeaderName = "X-CSRF-Token"
@@ -72,23 +51,17 @@ type CSRFConfig struct {
 	// sub-domains (e.g. admin.id.qeet.in / api.id.qeet.in). Leave empty
 	// to scope strictly to the issuing host.
 	CookieDomain string
-	// ExemptPaths are URL paths the double-submit/origin check is skipped for.
-	// Reserved for endpoints that are authenticated by another mechanism and
-	// are legitimately invoked cross-site by a third party — e.g. a SAML
-	// Assertion Consumer Service, which the IdP form-POSTs to and which is
-	// protected by XML-signature validation, not a CSRF cookie.
-	//
-	// An entry ending in "/" is a prefix; "*" matches exactly one path segment;
-	// anything else must match the whole path. Prefer the narrowest form that
-	// works. A prefix covering a whole feature area will sooner or later also
-	// cover an authenticated mutation added to it later, and that mutation is
-	// then silently CSRF-exempt.
+	// ExemptPaths skip the check, for routes another mechanism authenticates and a
+	// third party posts to cross-site, such as a SAML ACS. An entry ending in "/" is
+	// a prefix and "*" matches one segment; prefer exact paths, since a prefix also
+	// exempts any mutation added under it later.
 	ExemptPaths []string
 }
 
-// CSRF returns a chi-compatible middleware enforcing the rules above.
-// It is safe to mount globally — read-only methods short-circuit
-// without touching cookies, and bearer-token requests bypass entirely.
+// CSRF returns middleware that guards against cross-site request forgery. GET,
+// HEAD and OPTIONS pass, setting the qe_csrf cookie if missing. Other methods
+// need an allow-listed Origin (or Referer) and the cookie echoed in X-CSRF-Token,
+// unless they carry a Bearer or ApiKey credential or match ExemptPaths.
 func CSRF(cfg CSRFConfig) func(http.Handler) http.Handler {
 	allowed := normaliseOrigins(cfg.AllowedOrigins)
 	return func(next http.Handler) http.Handler {
@@ -103,13 +76,10 @@ func CSRF(cfg CSRFConfig) func(http.Handler) http.Handler {
 				return
 			}
 
-			// A request authorised by a credential a browser never sends
-			// on its own — a bearer token or an API key — can't be forged
-			// cross-site: a page on another site can't add an
-			// Authorization header without a CORS preflight, which only
-			// an allowed origin passes. Skip the check so server-side
-			// callers, which send no Origin, aren't refused. Basic
-			// credentials don't count: a browser replays those itself.
+			// A browser never sends a bearer token or API key on its own, and
+			// a cross-site page can't add an Authorization header without a
+			// CORS preflight, so these can't be forged; server-side callers
+			// send no Origin. Basic doesn't count: browsers replay it.
 			if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") || strings.HasPrefix(h, "ApiKey ") {
 				next.ServeHTTP(w, r)
 				return
@@ -158,7 +128,7 @@ func ensureCSRFCookie(w http.ResponseWriter, r *http.Request, cfg CSRFConfig) {
 	if err != nil {
 		return // best-effort; failure to seed leaves later POSTs to retry
 	}
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- double-submit token, JS-readable by design
 		Name:     csrfCookieName,
 		Value:    tok,
 		Path:     "/",
@@ -224,10 +194,8 @@ func newCSRFToken() (string, error) {
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	// Bind to a server-side static keyed hash so we can identify
-	// tampered tokens deterministically later (e.g. for a /csrf/rotate
-	// flow). The mac itself isn't security-critical here — the random
-	// half already is — it just gives us a versionable shape.
+	// The MAC suffix only gives tokens a versioned shape; the random bytes carry
+	// the security.
 	mac := hmac.New(sha256.New, []byte("qeet-csrf-v1"))
 	mac.Write(b)
 	suffix := mac.Sum(nil)[:8]

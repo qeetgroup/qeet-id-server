@@ -15,19 +15,20 @@ import (
 )
 
 // TestCallbackURL_SchemeAndPath builds the public redirect_uri that must match
-// between BeginLogin and the upstream token exchange. https is selected via TLS
-// or the X-Forwarded-Proto header (behind a proxy), http otherwise.
+// between BeginLogin and the upstream token exchange: on PublicBaseURL when
+// set, else on the Host with the scheme from X-Forwarded-Proto.
 func TestCallbackURL_SchemeAndPath(t *testing.T) {
 	cases := []struct {
-		name     string
-		host     string
-		fwdProto string
-		tls      bool
-		want     string
+		name       string
+		host       string
+		fwdProto   string
+		configured string
+		want       string
 	}{
-		{"plain http", "api.local", "", false, "http://api.local/v1/social/google/callback"},
-		{"forwarded https", "api.qeet.com", "https", false, "https://api.qeet.com/v1/social/google/callback"},
-		{"forwarded http stays http", "api.local", "http", false, "http://api.local/v1/social/google/callback"},
+		{"configured origin", "evil.example", "", "https://api.qeet.com", "https://api.qeet.com/v1/social/google/callback"},
+		{"plain localhost", "localhost:8080", "", "", "http://localhost:8080/v1/social/google/callback"},
+		{"forwarded https", "api.qeet.com", "https", "", "https://api.qeet.com/v1/social/google/callback"},
+		{"forwarded http stays http", "api.local", "http", "", "http://api.local/v1/social/google/callback"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -36,7 +37,8 @@ func TestCallbackURL_SchemeAndPath(t *testing.T) {
 			if c.fwdProto != "" {
 				req.Header.Set("X-Forwarded-Proto", c.fwdProto)
 			}
-			if got := callbackURL(req, "google"); got != c.want {
+			h := &Handler{PublicBaseURL: c.configured}
+			if got := h.callbackURL(req, "google"); got != c.want {
 				t.Errorf("callbackURL = %q, want %q", got, c.want)
 			}
 		})
@@ -108,6 +110,50 @@ func githubTestClient(t *testing.T, emails string) *oauthClient {
 	return &oauthClient{http: &http.Client{Transport: transport}}
 }
 
+// TestDiscoveryChecksAuthorizationEndpoint checks that a discovery document is
+// used, and cached, only when its authorization_endpoint is an absolute https
+// URL with a host and no userinfo or fragment.
+func TestDiscoveryChecksAuthorizationEndpoint(t *testing.T) {
+	for _, c := range []struct {
+		endpoint string
+		ok       bool
+	}{
+		{"https://idp.example.com/authorize", true},
+		{"https://idp.example.com:8443/oauth2/v1/authorize?tenant=a", true},
+		{"http://idp.example.com/authorize", false},
+		{"javascript:alert(1)", false},
+		{"data:text/html,hi", false},
+		{"//idp.example.com/authorize", false},
+		{"/authorize", false},
+		{"https:///authorize", false},
+		{"https:idp.example.com/authorize", false},
+		{"https://user:pass@idp.example.com/authorize", false},
+		{"https://idp.example.com/authorize#frag", false},
+		{"https://idp.example.com/authorize#", false},
+		{"https://idp.example.com/\tauthorize", false},
+	} {
+		t.Run(c.endpoint, func(t *testing.T) {
+			doc, _ := json.Marshal(discoveryDoc{AuthorizationEndpoint: c.endpoint, TokenEndpoint: "https://idp.example.com/token"})
+			client := &oauthClient{cache: map[string]cachedDoc{}, http: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(doc))), Request: r}, nil
+			})}}
+			const discoveryURL = "https://idp.example.com/.well-known/openid-configuration"
+			got, err := client.discovery(context.Background(), discoveryURL)
+			if c.ok && (err != nil || got.AuthorizationEndpoint != c.endpoint) {
+				t.Fatalf("discovery = (%+v, %v), want the document", got, err)
+			}
+			if !c.ok {
+				if err == nil {
+					t.Fatalf("discovery = (%+v, nil), want an error", got)
+				}
+				if _, cached := client.cache[discoveryURL]; cached {
+					t.Fatal("refused document was cached")
+				}
+			}
+		})
+	}
+}
+
 func TestGitHubUserinfoUsesOnlyVerifiedEmail(t *testing.T) {
 	client := githubTestClient(t, `[
 		{"email":"unverified-profile@example.com","primary":true,"verified":false},
@@ -142,41 +188,61 @@ func TestNewService_TrimsTrailingSlash(t *testing.T) {
 	}
 }
 
-// TestValidateReturnTo covers the open-redirect guard on the hosted flow.
-//
-// The social callback sets the hosted-login SSO cookie and then redirects to
-// return_to, so an unvalidated value hands an attacker a redirect from a
-// first-party, just-authenticated origin — high-credibility phishing.
+// TestValidateReturnTo checks that return_to accepts only "", a path with a
+// single leading "/", and URLs on an allowed origin.
 func TestValidateReturnTo(t *testing.T) {
 	s := &Service{}
 	s.SetAllowedReturnOrigins("https://login.qeet.in", "https://console.qeet.in/")
 
-	allowed := []string{
-		"",                               // non-hosted flow
-		"/oauth/authorize?client_id=abc", // root-relative
-		"https://login.qeet.in/oauth/authorize",
-		"https://LOGIN.QEET.IN/oauth/authorize", // host compare is case-insensitive
-		"https://console.qeet.in/",
-	}
-	for _, rt := range allowed {
-		if err := s.validateReturnTo(rt); err != nil {
-			t.Errorf("validateReturnTo(%q) = %v, want nil", rt, err)
-		}
-	}
+	for _, c := range []struct {
+		name     string
+		returnTo string
+		ok       bool
+	}{
+		{"empty", "", true},
+		{"path", "/oauth/authorize?client_id=abc&scope=openid+email", true},
+		{"root", "/", true},
+		{"encoded query", "/oauth/authorize?redirect_uri=https%3A%2F%2Fapp.example%2Fcb", true},
+		{"allowed origin", "https://login.qeet.in/oauth/authorize", true},
+		{"allowed origin, upper case", "https://LOGIN.QEET.IN/oauth/authorize", true},
+		{"allowed origin, root", "https://console.qeet.in/", true},
 
-	rejected := []string{
-		"https://evil.example/",                // wholly foreign origin
-		"http://login.qeet.in/oauth/authorize", // scheme downgrade is a different origin
-		"https://login.qeet.in.evil.example/",  // suffix-confusion host
-		"//evil.example/path",                  // protocol-relative: looks relative, is not
-		`/\evil.example/path`,                  // backslash variant some parsers fold to //
-		"javascript:alert(1)",                  // no host
-		"https://evil.example/?next=https://login.qeet.in",
-	}
-	for _, rt := range rejected {
-		if err := s.validateReturnTo(rt); err == nil {
-			t.Errorf("validateReturnTo(%q) = nil, want rejection", rt)
-		}
+		{"other origin", "https://other.example/", false},
+		{"other scheme", "http://login.qeet.in/oauth/authorize", false},
+		{"longer host", "https://login.qeet.in.other.example/", false},
+		{"other origin with allowed query", "https://other.example/?next=https://login.qeet.in", false},
+		{"userinfo on allowed origin", "https://user@login.qeet.in/", false},
+		{"userinfo host", "https://login.qeet.in@other.example/", false},
+		{"no host", "javascript:alert(1)", false},
+		{"opaque", "https:login.qeet.in/x", false},
+		{"relative without slash", "oauth/authorize", false},
+		{"double slash", "//other.example/path", false},
+		{"slash backslash", `/\other.example/path`, false},
+		{"backslash later", `/a\b`, false},
+		{"tab after slash", "/\t/other.example/path", false},
+		{"newline after slash", "/\n/other.example/path", false},
+		{"carriage return after slash", "/\r/other.example/path", false},
+		{"leading space", " //other.example/path", false},
+		{"leading tab", "\t//other.example/path", false},
+		{"space in path", "/a b", false},
+		{"trailing newline", "/oauth/authorize\n", false},
+		{"nul", "/a\x00b", false},
+		{"delete", "/a\x7fb", false},
+		{"C1 control", "/a\u0085b", false},
+		{"no-break space", "/ /other.example", false},
+		{"ideographic space", "/　/other.example", false},
+		{"invalid utf-8", "/a\xffb", false},
+		{"tab in allowed origin", "https://login.qeet.in/\t/x", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			err := s.validateReturnTo(c.returnTo)
+			if c.ok && err != nil {
+				t.Errorf("validateReturnTo(%q) = %v, want nil", c.returnTo, err)
+			}
+			if !c.ok && err == nil {
+				t.Errorf("validateReturnTo(%q) = nil, want rejection", c.returnTo)
+			}
+		})
 	}
 }
 

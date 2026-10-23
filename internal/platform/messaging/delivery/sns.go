@@ -27,24 +27,15 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Webhook receives Amazon SES events through Amazon SNS
-// (POST /v1/webhooks/ses): it verifies each SNS message's signature, confirms
-// the subscription, and applies bounces, complaints and deliveries to the
-// records.
-//
-// Anyone can create an SNS topic, and SNS signs its messages too, so a valid
-// signature alone proves nothing: a message is accepted only from a topic in
-// TopicARNs. With none configured the endpoint is off (404). Only
-// SignatureVersion 2 (SHA256withRSA) is accepted: the topic is created with it
-// (qeet-id-deploy), and version 1 is SHA-1.
+// Webhook receives SES events through SNS (POST /v1/webhooks/ses). Anyone can
+// create a signed SNS topic, so a message must come from one of TopicARNs and
+// carry a valid SignatureVersion 2 signature (version 1 is SHA-1). With no
+// topics the endpoint is off (404).
 type Webhook struct {
-	Store     *Store
-	TopicARNs []string
-	// Client fetches signing certificates and confirms subscriptions; nil uses
-	// a client with a 5 s timeout.
-	Client *http.Client
-	// Now is the clock (tests); nil uses time.Now.
-	Now func() time.Time
+	Store     *Store           // where events are applied
+	TopicARNs []string         // the accepted SNS topics; none disables the endpoint
+	Client    *http.Client     // fetches certificates and confirms subscriptions; nil uses a 5s timeout
+	Now       func() time.Time // the clock; nil uses time.Now
 
 	certMu sync.Mutex
 	certs  map[string]*x509.Certificate

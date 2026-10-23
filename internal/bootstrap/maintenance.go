@@ -13,19 +13,20 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/risk"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
-	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/idempotency"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/worker"
 )
 
 // AuditVerifyInterval is how often every audit chain is verified.
 const AuditVerifyInterval = 6 * time.Hour
 
-// MaintenanceJobs is the scheduled housekeeping. The API runs it as
-// its embedded "scheduler" worker and cmd/scheduler or cmd/worker can run it
-// standalone; either way each job runs once per interval across every
-// instance (worker.RunScheduled). Sessions the cleanup removes that were never
-// ended are announced through signals (session.revoked, reason expired).
+// MaintenanceJobs returns the scheduled housekeeping jobs. Each runs once per
+// interval across all instances. Expired sessions the cleanup removes are
+// announced through signals as session.revoked (reason expired).
 func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller) []worker.Scheduled {
 	verifier := audit.NewVerifier(pool)
 	return []worker.Scheduled{
@@ -50,6 +51,19 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller) []wor
 				}
 				slog.Info("sessions cleaned", "sessions", purged.Sessions, "login_sessions", purged.LoginSessions,
 					"ceremonies", purged.Ceremonies, "trusted_devices", purged.TrustedDevices)
+				return nil
+			},
+		},
+		{
+			// A rotation's kept pair is needed only for the refresh reuse grace.
+			Name:     "refresh-retry-cleanup",
+			Interval: 5 * time.Minute,
+			Run: func(ctx context.Context) error {
+				n, err := auth.ClearRefreshRetries(ctx, pool)
+				if err != nil {
+					return err
+				}
+				slog.Info("kept refresh rotations cleared", "cleared", n)
 				return nil
 			},
 		},
@@ -87,6 +101,30 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller) []wor
 			},
 		},
 		{
+			Name:     "outbox-cleanup",
+			Interval: time.Hour,
+			Run: func(ctx context.Context) error {
+				n, err := outbox.PurgePublished(ctx, pool, outbox.PublishedRetention)
+				if err != nil {
+					return err
+				}
+				slog.Info("published outbox events cleaned", "deleted", n)
+				return nil
+			},
+		},
+		{
+			Name:     "idempotency-cleanup",
+			Interval: time.Hour,
+			Run: func(ctx context.Context) error {
+				n, err := idempotency.Purge(ctx, pool)
+				if err != nil {
+					return err
+				}
+				slog.Info("idempotency keys cleaned", "deleted", n)
+				return nil
+			},
+		},
+		{
 			Name:     "outbox-dlq-cleanup",
 			Interval: time.Hour,
 			Run: func(ctx context.Context) error {
@@ -118,9 +156,13 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller) []wor
 
 // RegisterMaintenanceMetrics exposes when each scheduled job, and the audit
 // verification, last succeeded (read from the database at scrape time, so it
-// holds whichever instance ran them). Registering twice is a no-op.
+// holds whichever instance ran them), the outbox backlog and this instance's
+// connection pool. Registering twice is a no-op.
 func RegisterMaintenanceMetrics(pool *pgxpool.Pool) {
-	for _, c := range []prometheus.Collector{worker.LastSuccessCollector(pool), audit.VerificationMetrics(pool)} {
+	for _, c := range []prometheus.Collector{
+		worker.LastSuccessCollector(pool), audit.VerificationMetrics(pool),
+		outbox.LagCollector(pool), postgres.PoolCollector(pool),
+	} {
 		var dup prometheus.AlreadyRegisteredError
 		if err := prometheus.Register(c); err != nil && !errors.As(err, &dup) {
 			slog.Warn("register maintenance metrics", "err", err)

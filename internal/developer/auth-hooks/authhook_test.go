@@ -53,17 +53,9 @@ func TestSignDeterministic(t *testing.T) {
 	}
 }
 
-// TestDecideUnparseableBodyHonoursFailClosed is the regression test for a
-// fail-closed bypass.
-//
-// The hook answering 2xx with a body we cannot parse has told us nothing. The
-// unmarshal error used to be discarded, leaving decision == "" and allowing the
-// sign-in — even for a tenant that had explicitly configured fail_open=false,
-// whose entire reason for setting it is to block sign-in when the hook cannot
-// give an answer.
-//
-// Fail-open on unreachability remains the documented default; this only makes
-// the opt-out enforceable.
+// TestDecideUnparseableBodyHonoursFailClosed checks that a 2xx answer with an
+// unparseable body counts as no answer: denied for a fail-closed hook, allowed
+// for a fail-open one.
 func TestDecideUnparseableBodyHonoursFailClosed(t *testing.T) {
 	bodies := map[string][]byte{
 		"empty":           {},

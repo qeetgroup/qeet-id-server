@@ -77,10 +77,9 @@ func TestEnforce_UserAllowedAndDenied(t *testing.T) {
 	}
 }
 
-// TestEnforce_ApplicationTokenNeedsScopeAndPermission: a token issued to an
-// application acts for its user only where both agree, the user's role
-// granting the permission and the user having approved the route's scope. The
-// user's own token (no client_id) is decided by the role alone, as before.
+// TestEnforce_ApplicationTokenNeedsScopeAndPermission checks that an
+// application's token needs both the route's scope and its user's permission,
+// while the user's own token is decided by the role alone.
 func TestEnforce_ApplicationTokenNeedsScopeAndPermission(t *testing.T) {
 	app := func(scopes ...string) *httpx.Principal {
 		p := userPrincipal()
@@ -131,8 +130,8 @@ func TestEnforce_ApplicationTokenNeedsScopeAndPermission(t *testing.T) {
 	}
 }
 
-// TestEnforce_UnscopedPolicyRefusesApplications: a policy that names no
-// application scope is closed to applications, not open to them.
+// TestEnforce_UnscopedPolicyRefusesApplications checks that a policy naming no
+// application scope is closed to applications.
 func TestEnforce_UnscopedPolicyRefusesApplications(t *testing.T) {
 	policies := map[string]RoutePolicy{"GET /v1/me": {AllowUser: true}}
 	p := userPrincipal()
@@ -221,10 +220,9 @@ func TestValidateMachineScopes(t *testing.T) {
 	}
 }
 
-// TestEnforce_MostLiteralPolicyWins pins the resolution order for overlapping
-// patterns. "/v1/vault/{name}" also matches "/v1/vault/tokens", which carries a
-// different policy; ranging over a map would decide the winner by iteration
-// order, so the same request could be classified differently between processes.
+// TestEnforce_MostLiteralPolicyWins checks that the most literal pattern wins
+// when patterns overlap ("/v1/vault/{name}" and "/v1/vault/tokens"), so map
+// order never decides a request's policy.
 func TestEnforce_MostLiteralPolicyWins(t *testing.T) {
 	policies := map[string]RoutePolicy{
 		"GET /v1/vault/tokens": UserOnlyPolicy("account.read"),

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,29 +17,24 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
-// Every sign-in that proves its first factor is assessed for risk, once, on
-// every path (the API, the hosted login, a magic link): the assessment also
-// records the sign-in's country and device for the next one to be compared
-// against. A risky sign-in may not skip the second factor on a remembered
-// device; and one by a person who holds no second factor is confirmed with a
-// code sent to their verified email address instead of going straight in (a
-// magic link has proved that mailbox already, so it goes in).
+// Every sign-in that proves its first factor is risk-assessed against earlier
+// ones that got their session; only those are recorded. A risky sign-in can't
+// skip MFA on a remembered device, and one without a second factor confirms a
+// code sent to the verified email (a magic link has already proved it).
 
 // nextStep is what a sign-in that proved its first factor does next.
 type nextStep int
 
 const (
-	// stepSession: issue the session.
-	stepSession nextStep = iota
-	// stepChallenge: the gate's challenge — a factor held, or the setting up
-	// of one that is required.
-	stepChallenge
-	// stepRiskEmail: confirm the sign-in with a code sent to the verified email.
-	stepRiskEmail
+	stepSession   nextStep = iota // issue the session
+	stepChallenge                 // ask for a held factor, or set up a required one
+	stepRiskEmail                 // confirm with a code sent to the verified email
 )
 
 // nextSignInStep decides a sign-in's next step. trustedToken is the request's
-// remembered-device cookie ("" where there is none, as on the API).
+// remembered-device cookie ("" where there is none, as on the API). A sign-in
+// that goes on to stepSession is recorded, by recordSignIn, once its session
+// is issued.
 func (s *Service) nextSignInStep(ctx context.Context, userID, tenantID uuid.UUID, gate mfaGate, firstFactor,
 	trustedToken, ip, ua, country string) nextStep {
 	risky := s.riskAssessor != nil && s.riskAssessor.ShouldForceMFA(ctx, tenantID, userID, ip, ua, country)
@@ -56,6 +52,14 @@ func (s *Service) nextSignInStep(ctx context.Context, userID, tenantID uuid.UUID
 	return stepSession
 }
 
+// recordSignIn records, for later risk assessments, a sign-in whose session
+// (or hosted-login session) has been issued.
+func (s *Service) recordSignIn(ctx context.Context, userID, tenantID uuid.UUID, ua, country string) {
+	if s.riskAssessor != nil {
+		s.riskAssessor.RecordSignIn(ctx, tenantID, userID, ua, country)
+	}
+}
+
 // trustedDeviceSkips reports whether a remembered device may skip the second
 // factor: the organisation allows it and the request carries a live
 // remembered-device token of the person's, for that organisation. Any failure
@@ -71,12 +75,9 @@ func (s *Service) trustedDeviceSkips(ctx context.Context, userID, tenantID uuid.
 	return s.IsTrustedDevice(ctx, userID, tenantID, trustedToken)
 }
 
-// riskEmailChallenge records a challenge met by a code sent to the person's
-// verified email address, for a risky sign-in with no second factor to ask
-// for, and audits it. The challenge offers that address as its one factor,
-// named by the challenge's own id, so a client asks for the code and submits
-// it as for any email factor. Refused with ErrAuthRiskVerificationUnavailable
-// when the account has no verified email address.
+// riskEmailChallenge records a challenge met by a code sent to the verified
+// email, for a risky sign-in with no second factor, and audits it. It returns
+// ErrAuthRiskVerificationUnavailable when the account has no verified email.
 func (s *Service) riskEmailChallenge(ctx context.Context, userID, tenantID uuid.UUID, claims map[string]any,
 	firstFactor, ip, ua string) (MFAChallenge, error) {
 	var email string
@@ -143,44 +144,67 @@ const riskEmailResendAfter = 30 * time.Second
 // riskEmailCodeTTL is how long a risk challenge's emailed code works.
 const riskEmailCodeTTL = 10 * time.Minute
 
-// sendRiskEmailCode sends the code that meets a risk challenge to the
-// person's verified email, inside the challenge transaction: the latest code
-// replaces any earlier one, at most one every riskEmailResendAfter.
-func (s *Service) sendRiskEmailCode(ctx context.Context, tx pgx.Tx, id uuid.UUID, c pendingMFAChallenge) error {
+// riskEmailCode is a risk challenge's code and the verified email it goes to.
+type riskEmailCode struct {
+	email, code string
+}
+
+// newRiskEmailCode issues, inside the challenge transaction, the code that
+// meets a risk challenge: it replaces any earlier one, at most one every
+// riskEmailResendAfter. sendRiskEmailCode sends it once tx has committed.
+func (s *Service) newRiskEmailCode(ctx context.Context, tx pgx.Tx, id uuid.UUID, c pendingMFAChallenge) (riskEmailCode, error) {
 	if c.emailCodeSentAt != nil {
 		if wait := riskEmailResendAfter - time.Since(*c.emailCodeSentAt); wait > 0 {
-			return errs.ErrMFACodeSendLimited.WithMetadata(map[string]any{"retry_after": int(wait.Round(time.Second).Seconds()) + 1})
+			return riskEmailCode{}, errs.ErrMFACodeSendLimited.WithMetadata(map[string]any{"retry_after": int(wait.Round(time.Second).Seconds()) + 1})
 		}
 	}
-	var email string
+	var out riskEmailCode
 	if err := tx.QueryRow(ctx, `SELECT email FROM "user".users WHERE id = $1 AND email_verified_at IS NOT NULL`, c.userID).
-		Scan(&email); err != nil {
+		Scan(&out.email); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return errs.ErrAuthRiskVerificationUnavailable
+			return riskEmailCode{}, errs.ErrAuthRiskVerificationUnavailable
 		}
-		return err
+		return riskEmailCode{}, err
 	}
-	code, err := codes.Numeric(6)
-	if err != nil {
-		return err
+	var err error
+	if out.code, err = codes.Numeric(6); err != nil {
+		return riskEmailCode{}, err
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE auth.mfa_login_challenges
 		SET email_code_hash = $2, email_code_expires_at = $3, email_code_sent_at = NOW(), codes_sent = codes_sent + 1
 		WHERE id = $1
-	`, id, codes.Hash(code), time.Now().UTC().Add(riskEmailCodeTTL)); err != nil {
-		return err
+	`, id, codes.Hash(out.code), time.Now().UTC().Add(riskEmailCodeTTL)); err != nil {
+		return riskEmailCode{}, err
 	}
-	if err := s.sender.Send(ctx, notifier.Message{
+	return out, nil
+}
+
+// sendRiskEmailCode emails the code newRiskEmailCode issued for challenge id,
+// loaded as c. If it fails to go, the challenge's earlier code, pacing and
+// count are put back, and the failure is ErrMFADeliveryFailed.
+func (s *Service) sendRiskEmailCode(ctx context.Context, id uuid.UUID, c pendingMFAChallenge, code riskEmailCode) error {
+	err := s.sender.Send(ctx, notifier.Message{
 		Channel: "email",
-		To:      email,
+		To:      code.email,
 		Subject: "Confirm it's you signing in",
 		Body: fmt.Sprintf("Someone is signing in to your account from a device or place we don't recognise. "+
-			"If it's you, enter this code: %s. It expires in %s. If it isn't you, change your password.", code, riskEmailCodeTTL),
-	}); err != nil {
-		return errs.ErrMFADeliveryFailed.Wrap(err)
+			"If it's you, enter this code: %s. It expires in %s. If it isn't you, change your password.", code.code, riskEmailCodeTTL),
+	})
+	if err == nil {
+		return nil
 	}
-	return nil
+	// On a context of its own, so a send that failed as ctx ended is undone too.
+	uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if _, uerr := s.pool.Exec(uctx, `
+		UPDATE auth.mfa_login_challenges
+		SET email_code_hash = $3, email_code_expires_at = $4, email_code_sent_at = $5, codes_sent = codes_sent - 1
+		WHERE id = $1 AND email_code_hash = $2
+	`, id, codes.Hash(code.code), c.emailCodeHash, c.emailCodeExpiresAt, c.emailCodeSentAt); uerr != nil {
+		slog.Warn("undelivered risk email code not withdrawn", "err", uerr)
+	}
+	return errs.ErrMFADeliveryFailed.Wrap(err)
 }
 
 // auditTx records one audit event in its own transaction.

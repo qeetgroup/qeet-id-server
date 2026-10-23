@@ -14,32 +14,22 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
-// Handler owns the HTTP surface for the Qeet AI assistant.
-//
-// Whether the assistant is usable is resolved per-tenant (Resolver): a tenant
-// that has brought its own provider key (BYOK) is configured on any plan; a
-// tenant without one falls back to the deployment-level platform key, gated by
-// plan. When neither is present, conversation CRUD still works but …/messages
+// Handler serves the Qeet AI routes. A tenant with its own provider key (BYOK)
+// may use the assistant on any plan; otherwise the platform key applies, gated
+// by Plan. With neither, conversation CRUD still works but posting a message
 // returns qeetai_unconfigured.
 type Handler struct {
-	Service      serviceStore
-	Orchestrator *Orchestrator
-	// Resolver resolves the tenant's effective provider for status + gating
-	// (BYOK key → platform fallback → none). An interface so unit tests can stub
-	// it without a database.
-	Resolver ProviderResolver
-	// Config backs the BYOK admin endpoints (get/set/test/remove). May be nil in
-	// unit tests that don't exercise those endpoints.
-	Config *ProviderConfig
-	// Plan gates the assistant by plan (nil = no plan gate) for tenants on the
-	// platform fallback. BYOK bypasses this gate entirely.
-	Plan PlanGate
+	Service      serviceStore     // conversations and messages
+	Orchestrator *Orchestrator    // runs one streamed turn
+	Resolver     ProviderResolver // the tenant's effective provider, for status and gating
+	Config       *ProviderConfig  // backs the BYOK admin endpoints; may be nil in tests
+	Plan         PlanGate         // plan gate for the platform key; nil means no gate
 }
 
-// PlanGate reports whether a plan-gated boolean feature is included in the
-// tenant's plan. Satisfied by operations/entitlements.Service.
+// PlanGate reports whether a boolean feature is included in a tenant's plan.
 type PlanGate interface {
 	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
 }
@@ -73,14 +63,10 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/qeetai/provider-config/test", h.testProviderConfig)
 }
 
-// status returns the per-tenant Qeet AI configuration state. Never returns key
-// material — only the effective provider/model and a source discriminator.
+// status reports the tenant's Qeet AI state, never key material. source is
+// "tenant" (BYOK), "platform" or "none"; only the platform key is plan-gated.
 //
 //	GET /v1/qeetai/status → { configured, available, provider, model, source }
-//
-// source is "tenant" (BYOK), "platform" (deployment fallback), or "none".
-// available folds in the plan gate for the platform fallback, but BYOK
-// (source=tenant) is available on any plan.
 func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{"configured": false, "available": false, "source": string(SourceNone)}
 	tid, err := httpx.RequireTenant(r)
@@ -162,7 +148,7 @@ func (h *Handler) listConversations(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []Conversation{}
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(items))
 }
 
 // getConversation returns a conversation with its full message history.
@@ -238,10 +224,8 @@ func (h *Handler) deleteConversation(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// streamMessages handles a new turn of the conversation, streaming the
-// Anthropic response over SSE. The write deadline is extended well beyond the
-// server default (HTTP_WRITE_TIMEOUT 30s) so a long streamed turn does not
-// time out. X-Accel-Buffering: no is set to prevent Nginx/Caddy buffering.
+// streamMessages runs one conversation turn and streams the reply over SSE,
+// raising the write deadline to 10 minutes so long turns don't time out.
 //
 //	POST /v1/qeetai/conversations/{conversationID}/messages
 func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
@@ -259,7 +243,7 @@ func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
 	// to stream; conversation CRUD still works without one.
 	source, allowed := h.qeetaiAllowed(r, tenantID)
 	if source == SourceNone {
-		httpx.WriteError(w, r, errs.New("qeetai_unconfigured",
+		httpx.WriteError(w, r, errs.ErrQeetAIUnconfigured.WithMessage(
 			"Qeet AI is not configured — add your organization's AI provider key in Settings → Qeet AI (or set QEETAI_PROVIDER/QEETAI_API_KEY)"))
 		return
 	}
@@ -269,11 +253,9 @@ func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Security: verify ownership BEFORE any write. GetConversation scopes by
-	// tenant AND user — a request from user A with a conversation owned by user B
-	// returns ErrNotFound here, preventing stored-prompt injection across users in
-	// the same tenant. This check precedes body parsing, SSE headers, and all DB
-	// writes so no side effect occurs on an unauthorized request.
+	// Verify ownership before any write or SSE header. GetConversation is scoped
+	// to tenant and user, so another user's conversation returns ErrNotFound and
+	// can't have a prompt injected into it.
 	if _, _, err := h.Service.GetConversation(r.Context(), tenantID, userID, convID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -504,9 +486,8 @@ func (h *Handler) deleteProviderConfig(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// testProviderConfig validates a provider key + endpoint with a minimal live
-// request, WITHOUT saving. Returns { ok: true } on success; a 4xx error
-// envelope (qeetai_provider_key_invalid, …) on failure.
+// testProviderConfig checks a provider key and endpoint with a minimal live
+// request, without saving, and returns { ok: true } or a 4xx error.
 //
 //	POST /v1/qeetai/provider-config/test { provider, model, api_key, base_url? }
 func (h *Handler) testProviderConfig(w http.ResponseWriter, r *http.Request) {

@@ -17,11 +17,14 @@ import (
 
 var versionPrefix = []byte{'Q', 'E', 'V', 1}
 
+// Cipher encrypts with keys derived from the data key per tenant, purpose and
+// resource.
 type Cipher struct {
 	master []byte
 	legacy cipher.AEAD
 }
 
+// New returns a Cipher over master, a 16, 24 or 32 byte data key.
 func New(master []byte) (*Cipher, error) {
 	switch len(master) {
 	case 16, 24, 32:
@@ -40,6 +43,8 @@ func New(master []byte) (*Cipher, error) {
 	return &Cipher{master: key, legacy: legacy}, nil
 }
 
+// Seal encrypts plaintext under the key for tenantID, purpose and resource,
+// and returns the ciphertext and its nonce.
 func (c *Cipher) Seal(tenantID uuid.UUID, purpose, resource string, plaintext []byte) ([]byte, []byte, error) {
 	aead, aad, err := c.contextAEAD(tenantID, purpose, resource)
 	if err != nil {
@@ -60,6 +65,8 @@ func (c *Cipher) Seal(tenantID uuid.UUID, purpose, resource string, plaintext []
 // the AEAD would otherwise panic on.
 var errNonceSize = errors.New("envelope: nonce has the wrong length")
 
+// Open decrypts what Seal returned for the same tenantID, purpose and
+// resource, or a ciphertext of the older single-key scheme.
 func (c *Cipher) Open(tenantID uuid.UUID, purpose, resource string, ciphertext, nonce []byte) ([]byte, error) {
 	if len(ciphertext) >= len(versionPrefix) && hmac.Equal(ciphertext[:len(versionPrefix)], versionPrefix) {
 		aead, aad, err := c.contextAEAD(tenantID, purpose, resource)
@@ -77,6 +84,8 @@ func (c *Cipher) Open(tenantID uuid.UUID, purpose, resource string, ciphertext, 
 	return c.legacy.Open(nil, nonce, ciphertext, nil)
 }
 
+// IsCurrent reports whether ciphertext uses the current scheme, so an older
+// one can be re-sealed.
 func (c *Cipher) IsCurrent(ciphertext []byte) bool {
 	return len(ciphertext) >= len(versionPrefix) && hmac.Equal(ciphertext[:len(versionPrefix)], versionPrefix)
 }

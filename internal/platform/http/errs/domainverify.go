@@ -1,11 +1,7 @@
 package errs
 
-// Domain-verification error codes — stable, namespaced machine identifiers for
-// the internal/identity/domainverify domain (claim + prove ownership of an email
-// domain via a DNS TXT record). Clients branch and localize on these (never on
-// the message text). Once shipped, a code MUST NOT change. Every identifier is
-// prefixed with the `domainverify` domain so it never collides with another
-// bounded context.
+// Domain verification error codes: proving ownership of an email domain with a
+// DNS TXT record.
 const (
 	CodeDomainVerifyInvalidDomain    = "domainverify.invalid_domain"
 	CodeDomainVerifyExists           = "domainverify.exists"

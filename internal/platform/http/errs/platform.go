@@ -21,11 +21,8 @@ const (
 	CodeNotImplemented      = "not_implemented"
 )
 
-// Default user-facing messages for each generic error — the fallback shown when
-// a handler doesn't attach a more specific WithMessage. Keep them friendly and
-// safe to show any end user. Change wording here; it's the single source of
-// truth for the generic case. HTTP status for these codes lives in
-// internal/platform/http.
+// Default messages for the generic errors, shown when a handler doesn't set a
+// more specific one with WithMessage. They must be safe to show any user.
 var (
 	ErrBadRequest          = New(CodeBadRequest, "The request was invalid.")
 	ErrUnauthorized        = New(CodeUnauthorized, "Please sign in to continue.")

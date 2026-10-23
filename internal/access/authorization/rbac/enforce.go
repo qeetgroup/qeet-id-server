@@ -15,8 +15,7 @@ import (
 )
 
 // Checker decides whether a user holds a permission in a tenant. *Repository
-// satisfies it; kept as an interface so the HTTP layer depends on the behaviour,
-// not the concrete repo.
+// and decide.Decider satisfy it.
 type Checker interface {
 	Check(ctx context.Context, userID, tenantID uuid.UUID, permKey string) (bool, error)
 }
@@ -29,26 +28,18 @@ type compiledRoute struct {
 }
 
 // RoutePolicy is the complete authorization contract for one authenticated
-// route. Administrative routes use PermissionPolicy; self-service routes must
-// opt in with UserOnlyPolicy. Absence from the policy table always denies.
+// route; a route absent from the policy table is denied. An application's
+// token needs ApplicationScope as well as its user's UserPermission, so it
+// holds only the overlap of what the user may do and what the user approved.
 type RoutePolicy struct {
-	UserPermission string
-	// ApplicationScope is the OAuth scope a token issued to an application
-	// (Principal.ClientID set) must carry to act on this route for its user,
-	// on top of the user's own UserPermission: an application holds the
-	// overlap of what the user may do and what the user approved. Every policy
-	// names one; a token without it is refused with 403 insufficient_scope.
-	// Whether a route accepts application tokens at all is decided before this
-	// (httpx.RefuseApplicationTokens).
-	ApplicationScope string
-	MachineScopes    []string
-	AllowUser        bool
-	AllowAPIKey      bool
-	AllowService     bool
-	AllowAgent       bool
-	// HandlerAuthorizedMachine is reserved for routes whose machine scope is
-	// resource-derived (for example vault:<name>) and is checked by the handler.
-	HandlerAuthorizedMachine bool
+	UserPermission           string   // permission a user's role must grant ("" = none)
+	ApplicationScope         string   // scope an application's token must carry ("" = refused)
+	MachineScopes            []string // a machine principal needs one of these
+	AllowUser                bool     // users may call the route
+	AllowAPIKey              bool     // API keys may call it
+	AllowService             bool     // service principals may call it
+	AllowAgent               bool     // agents may call it
+	HandlerAuthorizedMachine bool     // the handler checks a resource-derived machine scope (vault:<name>)
 }
 
 // PermissionPolicy gates a route on one permission: a user's role must grant
@@ -73,6 +64,8 @@ func UserOnlyPolicy(scope string) RoutePolicy {
 	return RoutePolicy{AllowUser: true, ApplicationScope: scope}
 }
 
+// HandlerAuthorizedPolicy admits every machine principal and leaves its scope
+// check to the handler; users are admitted when allowUser is set.
 func HandlerAuthorizedPolicy(allowUser bool, scope string) RoutePolicy {
 	return RoutePolicy{
 		AllowUser:                allowUser,
@@ -99,15 +92,10 @@ func patternToRegex(pattern string) *regexp.Regexp {
 	return regexp.MustCompile("^" + strings.Join(parts, "/") + "$")
 }
 
-// Enforce gates authenticated routes against a route→permission map keyed by
-// "METHOD /chi/route/pattern" (e.g. "POST /v1/users"). Mount it once on the
-// authenticated router group, after RequireAuth.
-//
-// It matches the request's method + concrete path against the patterns itself
-// (rather than chi's RoutePattern(), which isn't reliably resolved inside group
-// middleware). Every authenticated route must be explicitly classified; an
-// unknown route is denied. Users are checked through RBAC, while machine
-// principals must carry one of the policy's exact scopes.
+// Enforce gates authenticated routes by a policy map keyed "METHOD /pattern"
+// in chi syntax (e.g. "POST /v1/users"); an unlisted route is denied. Mount it
+// once on the authenticated group, after RequireAuth. It matches the concrete
+// path itself, as chi's RoutePattern isn't reliably resolved in group middleware.
 func Enforce(c Checker, policies map[string]RoutePolicy) func(http.Handler) http.Handler {
 	byMethod := map[string][]compiledRoute{}
 	for key, policy := range policies {
@@ -122,11 +110,9 @@ func Enforce(c Checker, policies map[string]RoutePolicy) func(http.Handler) http
 			policy:    policy,
 		})
 	}
-	// Two patterns can match one concrete path — "/v1/vault/{name}" also matches
-	// "/v1/vault/tokens", which is separately classified. Ranging over a Go map
-	// would pick a winner by iteration order, so the policy applied to such a
-	// path could differ between processes. Sort literal-first (chi's own
-	// precedence), then by pattern for a total order.
+	// Two patterns can match one path ("/v1/vault/{name}" and "/v1/vault/tokens").
+	// Sort literal-first, as chi does, then by pattern, so every process applies
+	// the same policy rather than whichever map order picked.
 	for method := range byMethod {
 		routes := byMethod[method]
 		sort.SliceStable(routes, func(i, j int) bool {

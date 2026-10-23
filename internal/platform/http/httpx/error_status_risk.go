@@ -6,9 +6,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// Risk (adaptive-access) code→status mappings. Registered from init() so the
-// risk bounded context owns its own transport mapping without editing the base
-// error_status.go table.
+// init registers the HTTP statuses of the adaptive-risk error codes.
 func init() {
 	registerStatuses(map[string]int{
 		errs.CodeRiskCIDRInvalid:        http.StatusUnprocessableEntity,

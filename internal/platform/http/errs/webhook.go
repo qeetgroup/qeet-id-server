@@ -1,16 +1,14 @@
 package errs
 
-// Webhook error codes — stable, namespaced machine identifiers for the
-// internal/developer/webhooks domain. Clients branch and localize on these
-// (never on the message text). Once shipped, a code MUST NOT change. Every
-// identifier is prefixed with the `webhook` domain so it never collides with
-// another bounded context.
+// Webhook error codes.
 const (
 	CodeWebhookNotFound         = "webhook.not_found"
 	CodeWebhookDeliveryNotFound = "webhook.delivery_not_found"
 	CodeWebhookURLRequired      = "webhook.url_required"
 	CodeWebhookInvalidID        = "webhook.invalid_id"
 	CodeWebhookTenantMismatch   = "webhook.tenant_mismatch"
+	CodeWebhookEventsRequired   = "webhook.events_required"
+	CodeWebhookEventUnknown     = "webhook.event_unknown"
 )
 
 // Webhook errors. The Message is what the end user sees — edit wording here, in
@@ -22,4 +20,6 @@ var (
 	ErrWebhookURLRequired      = New(CodeWebhookURLRequired, "Enter a URL for the webhook.")
 	ErrWebhookInvalidID        = New(CodeWebhookInvalidID, "That identifier isn't valid.")
 	ErrWebhookTenantMismatch   = New(CodeWebhookTenantMismatch, "You can only manage webhooks in your own tenant.")
+	ErrWebhookEventsRequired   = New(CodeWebhookEventsRequired, "Choose at least one event for the webhook.")
+	ErrWebhookEventUnknown     = New(CodeWebhookEventUnknown, "That isn't an event a webhook can receive.")
 )

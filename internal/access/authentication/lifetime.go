@@ -11,12 +11,9 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 )
 
-// A session ends by itself: at its expires_at, fixed when it opens from its
-// organisation's maximum session age, however active it is; and once it goes
-// longer than its idle_timeout without being renewed (last_seen_at advances on
-// every renewal). Both are enforced where a session is used to get a new
-// access token, which is renewal; an access token already issued lasts at most
-// its own short lifetime beyond the end, as it does after a revocation.
+// A session ends at its expires_at (the organisation's maximum session age) or
+// after idle_timeout without renewal. Both are checked at renewal, so an issued
+// access token lasts at most its own short lifetime beyond the end.
 
 // The bounds of a session whose organisation sets none, or that has no
 // organisation, until SetSessionLifetime is called — the defaults of
@@ -26,9 +23,8 @@ const (
 	defaultSessionIdleTimeout = 24 * time.Hour
 )
 
-// SetSessionLifetime sets the bounds of a session whose organisation's
-// security policy sets none, or that has no organisation. Called from
-// internal/bootstrap/dependencies.go.
+// SetSessionLifetime sets the bounds of a session whose organisation's security
+// policy sets none, or that has no organisation.
 func (s *Service) SetSessionLifetime(maxAge, idle time.Duration) {
 	s.sessionMaxAge, s.sessionIdle = maxAge, idle
 }

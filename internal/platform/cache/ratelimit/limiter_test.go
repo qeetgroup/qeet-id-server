@@ -129,9 +129,8 @@ func TestMiddlewareBy_429HasRetryAfter(t *testing.T) {
 	}
 }
 
-// A 429 must carry the same {"error":{"code":...}} envelope as every other
-// error response. It used to be a bare status with an empty body, so clients
-// had no code to branch on and could only show a generic failure message.
+// TestMiddlewareBy_429CarriesErrorEnvelope checks that a 429 carries the
+// standard error envelope with retry_after metadata and a Retry-After header.
 func TestMiddlewareBy_429CarriesErrorEnvelope(t *testing.T) {
 	l := New(1, 1)
 	h := l.MiddlewareBy("ip", func(*http.Request) string { return "5.6.7.8" })(
@@ -174,14 +173,9 @@ func TestMiddlewareBy_429CarriesErrorEnvelope(t *testing.T) {
 	}
 }
 
-// TestPerIP_IgnoresXForwardedForWithoutTrustedProxy pins the security property
-// that makes the per-IP login limiter meaningful.
-//
-// This test previously asserted the OPPOSITE — that PerIP returns the
-// X-Forwarded-For value — which codified a rate-limit bypass: the header is
-// caller-supplied, so an attacker rotating it got a fresh token bucket per
-// request and could brute-force logins without limit. With no trusted proxy
-// declared, the header must be ignored entirely.
+// TestPerIP_IgnoresXForwardedForWithoutTrustedProxy checks that PerIP ignores
+// X-Forwarded-For when no proxy is trusted: the header is caller-supplied, so
+// honouring it would give every spoofed value a fresh login bucket.
 func TestPerIP_IgnoresXForwardedForWithoutTrustedProxy(t *testing.T) {
 	httpx.SetTrustedProxyHops(0)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -192,9 +186,8 @@ func TestPerIP_IgnoresXForwardedForWithoutTrustedProxy(t *testing.T) {
 	}
 }
 
-// TestPerIP_SpoofedXForwardedForCannotSplitBuckets is the regression test for
-// the bypass itself: with one trusted proxy appending the real peer, a caller
-// who forges the left-hand side of the chain must still land in ONE bucket.
+// TestPerIP_SpoofedXForwardedForCannotSplitBuckets checks that, behind one
+// trusted proxy, forging the left of the chain still lands in one bucket.
 func TestPerIP_SpoofedXForwardedForCannotSplitBuckets(t *testing.T) {
 	httpx.SetTrustedProxyHops(1)
 	t.Cleanup(func() { httpx.SetTrustedProxyHops(0) })

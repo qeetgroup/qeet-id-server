@@ -101,7 +101,7 @@ HTTP request
         └─ authenticated group
                ↓  API-key middleware
                ↓  LoginSessionAuth       qe_ls cookie, on LoginSessionRoutes() only (no Authorization header)
-               ↓  RequireAuth            verify JWT: kid, signature, expiry → principal
+               ↓  RequireAuth            verify JWT: kid, signature, expiry; the session not ended → principal
                ↓  EnforceTenantScope     {tenantID} must equal the caller's tenant
                ↓  rate limiters          per tenant · per user · per API key
                ↓  rbac.Enforce           route permission from permissions.go
@@ -168,14 +168,14 @@ internal/platform      shared kernel — pure infrastructure
 
 **File-naming convention — `<domain>.go`, not layered file names.** Domain logic, persistence and
 HTTP handlers usually live in **one file named after the package**; additional files split by
-**feature**, not by layer. Only four packages use `service.go`/`repository.go` naming and only twelve
+**feature**, not by layer. Only four packages use `service.go`/`repository.go` naming and sixteen
 have a dedicated `http.go`.
 
 ```text
 access/passkeys/     passkey.go                          ← everything in one file
 developer/agents/    agent.go                            ← everything in one file
-access/mfa/          mfa.go  push.go                     ← split by FEATURE
-federation/oidc/     oidc.go  device.go  ciba.go  clients_admin.go
+access/mfa/          mfa.go  totp.go  otp.go  push.go    ← split by FEATURE
+federation/oidc/     oidc.go  token.go  authorize.go  device.go  ciba.go
 identity/users/      domain.go  http.go  repository.go   ← one of the four layered packages
 ```
 
@@ -187,8 +187,7 @@ Every leaf package additionally carries `queries.sql` + `sqlc.yaml` + a generate
 
 ## Dependency rules
 
-**Status:** verified · **Evidence:** `tests/architecture/arch_test.go` — shells out to `go list` and
-walks the real import graph
+**Status:** enforced by `depguard` in `.golangci.yml` (lint fails on a violation)
 
 ```text
 cmd/*  →  internal/bootstrap  →  internal/<context>  →  internal/platform
@@ -353,7 +352,7 @@ self-scope in-handler; other tenant-scoped resources rely entirely on the middle
 ## Authentication
 
 **Status:** verified
-**Evidence:** `internal/platform/crypto/encryption/hasher.go`, `internal/access/authentication/`
+**Evidence:** `internal/platform/crypto/password/hasher.go`, `internal/access/authentication/`
 
 Password hashing is **Argon2id** (`m=19456,t=2,p=1`) with transparent upgrade of legacy bcrypt on
 successful login. bcrypt remains in use for MFA recovery codes and API-key secrets — a different
@@ -414,7 +413,7 @@ The **route → permission map** lives in `internal/bootstrap/permissions.go` an
 | Vault | AES-256-GCM, per-tenant HKDF-derived key, static or AWS KMS provider |
 | Randomness | `crypto/rand` only |
 
-**Evidence:** `internal/platform/crypto/tokens/{jwt,registry}.go`, `internal/platform/crypto/encryption/`
+**Evidence:** `internal/platform/crypto/tokens/{jwt,registry}.go`, `internal/platform/crypto/envelope/`
 
 > There is no signing-key mutation API. `JWT_SIGNING_KEY` stages encrypted key
 > material in PostgreSQL; `JWT_ACTIVATE_SIGNING_KEY=true` performs the explicit
@@ -464,15 +463,22 @@ webhook delivery  /  NATS publish
 dead-letter
 ```
 
-**Evidence:** `internal/platform/events/outbox/`, `internal/platform/jobs/worker.go`
+The dispatcher hands every committed event to `webhook.Relay`, which queues the events named in
+the catalogue (`webhook.Events`, `internal/developer/webhooks/events.go`) for the subscriptions of
+the organisation the payload's `tenant_id` names, then publishes it to NATS. A subscription may name
+only catalogue events, so an outbox event a customer should receive needs a catalogue entry and a
+`tenant_id` in its payload. An event's name is its version: change a payload incompatibly under a new name.
+
+**Evidence:** `internal/platform/events/outbox/`, `internal/platform/worker/worker.go`
 
 Workers run **embedded in `cmd/api` by default**; set `EMBEDDED_WORKERS=false` when `cmd/worker`
 runs them standalone. Webhook, outbox, and GDPR queues use durable PostgreSQL leases with
-owner-conditional finalization; retries retain stable event/delivery IDs. Registered workers:
-webhooks, audit anomaly, GDPR, retention, SIEM, outbox dispatch.
+owner-conditional finalization; retries retain stable event/delivery IDs. Registered workers, one
+list in `bootstrap/dependencies.go` that both binaries run: signing-key refresh, outbox dispatch,
+OIDC back-channel logout, webhooks, GDPR, retention, SIEM, audit anomaly, scheduler.
 
 Scheduled maintenance (audit-chain verification of every organisation, session, MFA, sign-in
-history and dead-letter cleanup) is `bootstrap.MaintenanceJobs`, run by `worker.RunScheduled`: the
+history, published-outbox and dead-letter cleanup) is `bootstrap.MaintenanceJobs`, run by `worker.RunScheduled`: the
 API runs it as its embedded `scheduler` worker, and `cmd/scheduler` or `cmd/worker` can run it
 standalone. Each job is claimed in `platform.scheduled_job_runs` before it runs, so it runs once per
 interval however many instances run it; each verification is stored in
@@ -499,7 +505,7 @@ caller needs the result or the operation must be atomic with the response.
 `api/openapi/` — **five OpenAPI 3.1 documents**, split by bounded context, `info.version 0.2.0`.
 There is deliberately no monolithic spec.
 
-**The coverage gate is the important part:** `tests/integration/coverage_test.go` fails the build if
+**The coverage gate is the important part:** `internal/bootstrap/openapi_coverage_test.go` fails the build if
 any mounted route is undocumented. A route cannot silently appear.
 
 **A route change and its spec change belong in the same commit.**
@@ -512,12 +518,7 @@ any mounted route is undocumented. A route cannot silently appear.
 | Suite | Path | Runs |
 |---|---|---|
 | Unit | alongside source | `go test ./...` |
-| **Architecture fitness** | `tests/architecture/` | with unit tests — enforces R1/R2 |
-| Integration | `tests/integration/` (18 files) | `-tags integration`, Testcontainers |
-| **OpenAPI coverage gate** | `tests/integration/coverage_test.go` | integration tag |
-| Security regression | `tests/security/` | auth bypass, CSRF, headers |
-| Semgrep rule | `tests/security/semgrep/no-raw-sql-fmt.yaml` | no `fmt`-built SQL |
-| Performance | `tests/performance/` | k6, not CI-wired |
+| **OpenAPI coverage gate** | `internal/bootstrap/openapi_coverage_test.go` | with unit tests |
 
 CI runs unit tests with `-race`. Unit tests are **colocated** (`_test.go` beside the source,
 in-package) — 69 of them. There is no `testdata/` or `mocks/` directory.
@@ -526,33 +527,30 @@ in-package) — 69 of them. There is no `testdata/` or `mocks/` directory.
 
 | Package | Unit tests |
 |---|---|
-| **`internal/bootstrap`** | **none** — the router, permission map and wiring are covered *only* by `tests/integration/` |
-| `identity/{tenant,groups,invitations,verification}` | none — integration only |
-| `access/recovery`, `access/authorization/authzen` | none — integration only |
-| `developer/principal`, `operations/notifications` | none — integration only |
+| `identity/{tenant,groups,invitations,verification}` | none |
+| `access/recovery`, `access/authorization/authzen` | none |
+| `developer/principal`, `operations/notifications` | none |
 
 `internal/bootstrap/permissions_test.go` walks the exact authenticated production mounts and
 requires an explicit route policy. `internal/bootstrap/openapi_coverage_test.go` walks all three
 production mount helpers and compares them bidirectionally with the union of the five OpenAPI
-documents, including API-auth security classification. Integration tests remain the cross-cutting
-behavioral and database layer — see [subsystems.md](subsystems.md).
+documents, including API-auth security classification.
 
 ## CI/CD
 
 | Job | What it runs |
 |---|---|
 | `test` | `go build ./...` · `go vet ./...` · `go test -race -count=1 ./...` |
-| `lint` | `golangci-lint` v2.14.0 — new code only |
-| `integration` | `go test -tags integration -timeout 10m ./tests/integration/...` |
+| `database` | `go test -tags integration ./...` against PostgreSQL (testcontainers) |
+| `lint` | `golangci-lint` v2.14.0 on the whole tree · `sqlc diff` in every package |
 | `vuln` | `govulncheck ./cmd/... ./internal/...` blocking · advisory full-tree scan |
-| `sast` | `gosec` — advisory |
+| `sast` | `gosec` — blocking; `#nosec` needs a rule and a reason |
 | `deploy` | On push to `main`: build, deploy to AWS via GitHub OIDC, then tag |
 
-`.golangci.yml` enables `errcheck`, `govet`, `staticcheck`, `misspell` plus `gofmt`/`goimports`;
-`dbgen` packages are excluded.
-
-**`make lint` runs `go vet` only** — it is not the CI lint. Passing it locally does not mean CI
-lint passes.
+`.golangci.yml` enables `errcheck`, `govet`, `staticcheck`, `misspell`, `unused`, `ineffassign`,
+`errorlint`, `nilerr`, `bodyclose`, `sqlclosecheck`, `rowserrcheck`, `nolintlint`, `forbidigo` and
+`depguard` (R1/R2), plus `gofmt`/`goimports`; `dbgen` packages are excluded. `make lint` runs the
+same lint as CI.
 
 ## Deployment
 
@@ -577,7 +575,7 @@ make seed             # demo data
 make dev              # API on :4001
 ```
 
-Then `make test`, `make test-integration`, `make lint`, `make build`.
+Then `make test`, `make lint`, `make build`.
 **Do not invent Make targets** — the list in `AGENTS.md` is complete.
 
 ## Security-critical areas
@@ -592,7 +590,7 @@ Then `make test`, `make test-integration`, `make lint`, `make build`.
 | **Authorization** | `internal/access/authorization/` | **Critical** | Security review |
 | **Authentication, sessions** | `internal/access/authentication/` | **Critical** | Security review |
 | **Tokens, signing, rotation** | `internal/platform/crypto/tokens/jwt.go` | **Critical** | Security review · cross-repo |
-| **Hashing, vault crypto** | `internal/platform/crypto/encryption/` | **Critical** | Security review |
+| **Hashing, vault crypto** | `internal/platform/crypto/{password,envelope}/` | **Critical** | Security review |
 | **CSRF** | `internal/platform/http/httpx/csrf.go` | **Critical** | Security review |
 | **Boot gate** | `internal/platform/config/config.go` | **Critical** | Security review |
 | MFA, passkeys, recovery | `internal/access/{mfa,passkeys,recovery}/` | High | Security review |
@@ -646,20 +644,7 @@ Repository-local documentation inconsistencies found on this revision. Product-l
 
 | Issue | Detail |
 |---|---|
-| `ROADMAP.md` SDK count | Claims 6 SDK packages; three repositories exist (QID-008) |
-| `ROADMAP.md` ✅ rows in the planned table | Two shipped items sit under "Planned" (QID-018) |
-| Old `CLAUDE.md` Make targets | Claimed a "complete" set that omitted `dev-secrets`, `test-integration`, `bench` |
 | Old `CLAUDE.md` `.claude/` agents | Referenced `.claude/agents/*` — **no `.claude/` directory exists** (QID-020) |
-
-## Current vs planned
-
-**Current:** everything described above. **Planned, per `ROADMAP.md`** — auth-hook claims in the
-OIDC ID-token path, remaining i18n, WCAG 2.2 AA on legacy screens, published benchmarks,
-device-bound agent credentials, a `qeetid` CLI, FGA permissions index, Rust SDK, SCIM agent
-extension, Kubernetes + Helm, multi-environment staging, a bundled observability stack.
-
-**A roadmap entry is not implementation evidence.** Verify against source before relying on any
-capability.
 
 ## Documentation authority
 
@@ -667,7 +652,6 @@ capability.
 |---|---|
 | What does the code do? | The source |
 | What is the API contract? | `api/openapi/` |
-| What is shipped vs planned? | `ROADMAP.md` — with the staleness caveats above |
 | What is the security policy? | `SECURITY.md`, then L0 `qeet-context/SECURITY.md` |
 | How does the product work? | L1 `qeet-id-context` |
 | What are the organization rules? | L0 `qeet-context` |

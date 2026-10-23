@@ -8,17 +8,15 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// tokenIssuer is the slice of auth.Service this handler needs (mockable).
-// Entering the organisation an invitation joins is gated on its second-factor
-// requirement: an account the invitation created is signed in as at
-// sign-up, which may answer the enrolment challenge; one already signed in
-// carries its session's factor, and is refused while the organisation
-// requires one it didn't meet.
+// tokenIssuer is the part of auth.Service this handler needs. Both methods honour
+// the joined organisation's second-factor requirement: a new account may get the
+// enrolment challenge, and a signed-in one is refused if its session lacks a
+// required factor.
 type tokenIssuer interface {
 	SignInInvitedAccount(ctx context.Context, userID, tenantID uuid.UUID, ip, ua string) (*auth.LoginResult, error)
 	EnterInvitedTenant(ctx context.Context, userID, tenantID, fromSessionID uuid.UUID, ip, ua string) (*auth.TokenPair, error)
@@ -39,6 +37,7 @@ func (h *Handler) enterAsSignedIn(w http.ResponseWriter, r *http.Request, p *htt
 	httpx.WriteJSON(w, http.StatusOK, pair)
 }
 
+// Handler serves the invitation HTTP API.
 type Handler struct {
 	Service     *Service
 	AuthService tokenIssuer
@@ -102,17 +101,14 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
 		invitedBy = p.UserID
 	}
-	iv, token, err := h.Service.Create(r.Context(), in, invitedBy)
+	// The token goes only to the invitee, by email: the invitation link is
+	// proof of the address.
+	iv, _, err := h.Service.Create(r.Context(), in, invitedBy)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	// Return the raw token to the caller too — admins frequently want to
-	// copy the link directly when email isn't trustworthy yet.
-	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
-		"invite": iv,
-		"token":  token,
-	})
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"invite": iv})
 }
 
 func (h *Handler) resend(w http.ResponseWriter, r *http.Request) {
@@ -126,15 +122,12 @@ func (h *Handler) resend(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	iv, token, err := h.Service.Resend(r.Context(), tid, id)
+	iv, _, err := h.Service.Resend(r.Context(), tid, id)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"invite": iv,
-		"token":  token,
-	})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"invite": iv})
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {

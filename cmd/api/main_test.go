@@ -30,8 +30,8 @@ func TestProbe(t *testing.T) {
 	}
 }
 
-// TestSchemaCheckCantTell: with no database to read, schema-check exits 2
-// ("can't tell"), never 0, so the host stops rather than switching blind.
+// TestSchemaCheckCantTell checks that schema-check exits 2 ("can't tell"), never
+// 0, without a database to read, so the host stops rather than switching blind.
 func TestSchemaCheckCantTell(t *testing.T) {
 	if code := schemaCheck(""); code != 2 {
 		t.Errorf("no DB_URL: exit %d, want 2", code)

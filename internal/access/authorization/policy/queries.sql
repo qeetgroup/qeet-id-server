@@ -1,9 +1,0 @@
--- Queries for the policy domain.
--- Both queries use complex Postgres-specific type casts that sqlc cannot
--- cleanly model:
---
---   Get:    EXTRACT(EPOCH FROM session_max_age / session_idle_timeout) — intervals read
---                                                              as seconds for Duration
---   Upsert: make_interval(secs => $4 / $5)                   — intervals built from seconds
---
--- All SQL therefore remains hand-written in policy.go.

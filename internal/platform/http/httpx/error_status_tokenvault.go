@@ -6,8 +6,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// Token-vault code→status mappings. Registered from init() so this bounded
-// context owns its own statuses without editing the shared error_status.go.
+// init registers the HTTP statuses of the token-vault error codes.
 func init() {
 	registerStatuses(map[string]int{
 		errs.CodeTokenVaultProviderNotFound:         http.StatusNotFound,

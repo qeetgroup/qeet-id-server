@@ -1,4 +1,8 @@
-.PHONY: install dev dev-secrets build test test-integration bench lint migrate-up migrate-down db-up db-down db-reset seed seed-reset kill dev-obs obs-up obs-down obs-reset obs-logs
+.PHONY: install dev dev-secrets build test test-db lint sqlc sqlc-check migrate-up migrate-down db-up db-down db-reset seed seed-reset kill
+
+# Tool versions; keep in step with .github/workflows/ci.yml.
+GOLANGCI_VERSION = v2.14.0
+SQLC_VERSION     = v1.31.1
 
 ifneq (,$(wildcard .env))
     include .env
@@ -11,11 +15,6 @@ MIGRATIONS_DIR = internal/platform/database/migrations
 # Persistent local dev signing material (gitignored). Multi-line PEMs can't live in
 # the Make-included .env, so `dev` injects these from files (see dev-secrets below).
 SECRETS_DIR    = .secrets
-# API stdout is teed here by `make dev-obs`; the otel-collector tails it into Loki.
-LOG_DIR        = logs
-# k6 targets a running server; from the k6 Docker image the host is
-# host.docker.internal. Override for a remote/CI target (e.g. http://localhost:4001).
-BASE_URL      ?= http://host.docker.internal:4001
 
 install:
 	go mod download
@@ -38,8 +37,8 @@ dev-secrets:
 		echo "generated $(SECRETS_DIR)/saml_idp_key.pem + saml_idp_cert.pem (SAML IdP pair)"; }
 
 # `make dev` injects the persistent keys from $(SECRETS_DIR) with real newlines —
-# a multi-line PEM can't be carried by the Make-included .env. JWT_SIGNING_KEY here
-# overrides the blank one exported from .env; SAML_IDP_KEY/CERT aren't in .env at all.
+# a multi-line PEM can't be carried by the Make-included .env. These override the
+# blank JWT_SIGNING_KEY, SAML_IDP_KEY and SAML_IDP_CERT exported from .env.
 dev: dev-secrets
 	@echo "starting qeet-id on :$${HTTP_PORT:-4001} — persistent JWT + SAML keys from $(SECRETS_DIR)/"
 	@JWT_SIGNING_KEY="$$(cat $(SECRETS_DIR)/jwt_es256.pem)" \
@@ -47,61 +46,32 @@ dev: dev-secrets
 	 SAML_IDP_CERT="$$(cat $(SECRETS_DIR)/saml_idp_cert.pem)" \
 	 go run ./cmd/api
 
-# Same as `dev`, but tees stdout into $(LOG_DIR)/qeet-id.log for the collector.
-# LOG_FORMAT=json is forced: .env uses "text" for readable local logs, which the
-# filelog receiver's json_parser cannot read. Terminal output stays visible.
-dev-obs: dev-secrets
-	@mkdir -p $(LOG_DIR)
-	@echo "starting qeet-id on :$${HTTP_PORT:-4001} — JSON logs → $(LOG_DIR)/qeet-id.log (tailed into Loki)"
-	@JWT_SIGNING_KEY="$$(cat $(SECRETS_DIR)/jwt_es256.pem)" \
-	 SAML_IDP_KEY="$$(cat $(SECRETS_DIR)/saml_idp_key.pem)" \
-	 SAML_IDP_CERT="$$(cat $(SECRETS_DIR)/saml_idp_cert.pem)" \
-	 LOG_FORMAT=json \
-	 go run ./cmd/api 2>&1 | tee -a $(LOG_DIR)/qeet-id.log
-
-# Observability stack: Grafana :3010, Prometheus :9090, Loki :3100, Tempo :3200,
-# OTLP collector :4317/:4318. Metrics work with plain `make dev`; logs need
-# `make dev-obs`; traces need OTEL_EXPORTER_OTLP_ENDPOINT set in .env.
-obs-up:
-	@mkdir -p $(LOG_DIR)
-	docker compose up -d prometheus loki tempo otel-collector grafana
-	@echo "Grafana    http://localhost:3010  (anonymous admin, no login)"
-	@echo "Prometheus http://localhost:9090"
-	@echo "Loki       http://localhost:3100  ·  Tempo http://localhost:3200"
-
-obs-down:
-	docker compose stop prometheus loki tempo otel-collector grafana
-
-# Wipes stored metrics/logs/traces and the teed log file. Leaves Postgres alone.
-obs-reset:
-	docker compose rm -sfv prometheus loki tempo otel-collector grafana
-	docker volume rm -f qeet-id-dev_promdata qeet-id-dev_lokidata qeet-id-dev_tempodata qeet-id-dev_grafanadata
-	rm -f $(LOG_DIR)/qeet-id.log
-
-obs-logs:
-	docker compose logs -f otel-collector loki tempo
-
 build:
 	go build -o bin/qeet-id ./cmd/api
 
 test:
 	go test ./...
 
-# Integration flows against an ephemeral Postgres via testcontainers (needs Docker).
-test-integration:
-	go test -tags integration -count=1 ./tests/integration/...
+# Tenant-isolation and sign-in tests against a real PostgreSQL (needs Docker).
+test-db:
+	go test -tags integration -count=1 -timeout 10m ./...
 
-# Load/perf tests via k6 (Docker image — no host install needed). Needs the
-# server running against seeded data first: `make db-up seed dev`. discovery is
-# a hard SLO gate; authz is informational at default load (single seeded user,
-# so it also exercises the per-user rate limiter). Override BASE_URL for a
-# non-Docker/remote target.
-bench:
-	docker run --rm -i grafana/k6 run -e BASE_URL=$(BASE_URL) - < tests/performance/discovery.js
-	-docker run --rm -i grafana/k6 run -e BASE_URL=$(BASE_URL) - < tests/performance/authz.js
-
+# The linters CI runs, over the whole tree including the database tests.
 lint:
 	go vet ./...
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION) run --build-tags=integration ./...
+
+# Regenerate every package's dbgen/ from its queries.sql.
+sqlc:
+	@for cfg in $$(find internal -name sqlc.yaml); do \
+		(cd "$$(dirname "$$cfg")" && go run github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION) generate) || exit 1; \
+	done
+
+# Fail if any dbgen/ differs from what sqlc generates.
+sqlc-check:
+	@for cfg in $$(find internal -name sqlc.yaml); do \
+		(cd "$$(dirname "$$cfg")" && go run github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION) diff) || exit 1; \
+	done
 
 db-up:
 	docker compose up -d

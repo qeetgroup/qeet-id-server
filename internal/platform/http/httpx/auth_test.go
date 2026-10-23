@@ -2,11 +2,6 @@ package httpx_test
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -21,11 +16,9 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// TestEnforceTenantScope locks in the central cross-tenant guard (QID-18): a
-// request to /tenants/{tenantID}/... must be rejected with 403 unless the path
-// tenant equals the caller's own tenant; routes without a {tenantID} param pass
-// through. Uses a real chi router so the {tenantID} param is actually extracted
-// the same way it is in production (the guard reads chi.URLParam).
+// TestEnforceTenantScope checks that a {tenantID} route admits only the caller's
+// own tenant (403 for another, 400 for a malformed id) and that routes without
+// the param pass through.
 func TestEnforceTenantScope(t *testing.T) {
 	callerTenant := uuid.New()
 	otherTenant := uuid.New()
@@ -75,29 +68,25 @@ func TestEnforceTenantScope(t *testing.T) {
 	}
 }
 
-// TestRequireAuth_AgentStatusEnforced locks in the AI-agent kill-switch: an
-// agent token is stateless and stays cryptographically valid until it expires,
-// so revocation is enforced at request time by consulting the agent's current
-// lifecycle status. A suspended/decommissioned/unknown agent must be denied
-// with 401 immediately (within one request), never reaching the handler; an
-// active agent must pass through. This guards against a refactor silently
-// dropping the AgentStatus check (which would make suspend/kill-all a no-op
-// until token expiry).
-func TestRequireAuth_AgentStatusEnforced(t *testing.T) {
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+// TestRequireAuth_AgentStatusEnforced checks that a valid agent token is refused
+// with 401 unless AgentStatus reports the agent active, so suspending an agent
+// takes effect on its next request rather than at token expiry.
+// testIssuer returns an issuer with a fresh signing key, issuing for qeet-test.
+func testIssuer(t *testing.T) *tokens.Issuer {
+	t.Helper()
+	keyPEM, err := tokens.GenerateES256KeyPEM()
 	if err != nil {
 		t.Fatalf("genkey: %v", err)
 	}
-	der, err := x509.MarshalECPrivateKey(priv)
-	if err != nil {
-		t.Fatalf("marshal key: %v", err)
-	}
-	keyPEM := string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der}))
 	iss, err := tokens.NewIssuer(keyPEM, "qeet-test", "qeet-test", time.Hour, 24*time.Hour)
 	if err != nil {
 		t.Fatalf("issuer: %v", err)
 	}
+	return iss
+}
 
+func TestRequireAuth_AgentStatusEnforced(t *testing.T) {
+	iss := testIssuer(t)
 	tenantID, agentID := uuid.New(), uuid.New()
 	now := time.Now()
 	// Mint an agent access token the way the agents service does: a normal ES256
@@ -161,6 +150,58 @@ func TestRequireAuth_AgentStatusEnforced(t *testing.T) {
 			}
 			if reached != tc.wantReached {
 				t.Fatalf("handler reached = %v, want %v", reached, tc.wantReached)
+			}
+		})
+	}
+}
+
+// TestRequireAuth_EndedSessionRefused checks that a user's own access token is
+// refused once its session has ended, that a failed lookup is not a pass, and
+// that an application's token, which has no session of its own, isn't looked up.
+func TestRequireAuth_EndedSessionRefused(t *testing.T) {
+	iss := testIssuer(t)
+	userID, tenantID, sessionID := uuid.New(), uuid.New(), uuid.New()
+	own, _, err := iss.IssueSessionAccess(userID, tenantID, sessionID, nil, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, _, err := iss.IssueClientAccess(tokens.ClientAccess{UserID: userID, TenantID: tenantID, SessionID: uuid.New(), ClientID: "app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name     string
+		token    string
+		live     bool
+		lookErr  error
+		wantCode int
+		wantLook bool
+	}{
+		{"a live session passes", own, true, nil, http.StatusOK, true},
+		{"an ended session is refused", own, false, nil, http.StatusUnauthorized, true},
+		{"a failed lookup is not a pass", own, true, errors.New("db down"), http.StatusInternalServerError, true},
+		{"an application's token isn't looked up", app, false, nil, http.StatusOK, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			looked := false
+			v := &httpx.AuthVerifier{
+				Tokens: iss,
+				SessionLive: func(_ context.Context, sid, uid uuid.UUID) (bool, error) {
+					looked = true
+					if sid != sessionID || uid != userID {
+						t.Errorf("SessionLive(%s, %s), want (%s, %s)", sid, uid, sessionID, userID)
+					}
+					return tc.live, tc.lookErr
+				},
+			}
+			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", "/v1/anything", nil)
+			req.Header.Set("Authorization", "Bearer "+tc.token)
+			httpx.RequireAuth(v)(next).ServeHTTP(w, req)
+			if w.Code != tc.wantCode || looked != tc.wantLook {
+				t.Fatalf("status %d, looked up %v; want %d, %v (body: %s)", w.Code, looked, tc.wantCode, tc.wantLook, w.Body.String())
 			}
 		})
 	}

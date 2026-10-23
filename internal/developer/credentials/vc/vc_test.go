@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	tokens "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -39,7 +41,7 @@ func TestIssue_RequiresSubjectAndType(t *testing.T) {
 		{"did:example:123", "  "},
 	}
 	for _, c := range cases {
-		res, err := s.Issue(context.Background(), [16]byte{}, c.subject, c.credType, nil, 0)
+		res, err := s.Issue(context.Background(), [16]byte{}, c.subject, c.credType, nil, 0, audit.Actor{Type: "system"})
 		if res != nil {
 			t.Errorf("subject=%q type=%q: expected nil result", c.subject, c.credType)
 		}
@@ -84,5 +86,32 @@ func TestVerify_RejectsTokenSignedByDifferentKey(t *testing.T) {
 	}
 	if res == nil || res.Valid {
 		t.Errorf("a credential signed by a different key must NOT verify, got %+v", res)
+	}
+}
+
+// TestVerify_RefusesTheIssuersOtherTokens checks that an access or ID token
+// from the same issuer is not reported as a valid credential.
+func TestVerify_RefusesTheIssuersOtherTokens(t *testing.T) {
+	issuer := newTestIssuer(t)
+	access, _, err := issuer.IssueAccess(uuid.New(), uuid.New(), uuid.New(), "openid")
+	if err != nil {
+		t.Fatalf("issue access token: %v", err)
+	}
+	idToken, err := issuer.Sign(jwt.MapClaims{
+		"iss": issuer.JWTIssuer(), "sub": uuid.NewString(), "aud": "qci_app",
+		"exp": time.Now().Add(time.Hour).Unix(), "jti": uuid.NewString(),
+	})
+	if err != nil {
+		t.Fatalf("sign ID token: %v", err)
+	}
+	s := &Service{issuer: issuer} // nil pool: refused before the revocation lookup
+	for name, raw := range map[string]string{"access token": access, "ID token": idToken} {
+		res, err := s.Verify(context.Background(), raw)
+		if err != nil {
+			t.Fatalf("%s: Verify returned error: %v", name, err)
+		}
+		if res == nil || res.Valid || res.Reason != "not a verifiable credential" {
+			t.Errorf("%s: got %+v, want invalid: not a verifiable credential", name, res)
+		}
 	}
 }

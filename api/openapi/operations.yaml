@@ -14,7 +14,9 @@ info:
 
     ## Authentication
 
-    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /v1/ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it.
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it.
+
+    Responses that carry a token, a sign-in session or a newly created secret are sent with `Cache-Control: no-store` and `Pragma: no-cache`; no operation in this API returns one.
 
     ## Related APIs
 
@@ -176,7 +178,9 @@ paths:
       description: >-
         Returns a cursor-paginated list of ActivityEvent derived from the
         tenant-scoped audit log. Severity and category are computed from the
-        event type and applied post-fetch. Tenant is derived from the JWT
+        event type and applied post-fetch, so with either filter a page can
+        hold fewer events than limit, or none, and still carry next_cursor;
+        follow it until it is absent. Tenant is derived from the JWT
         principal only — never from URL or body.
       tags:
         - Activity
@@ -186,7 +190,7 @@ paths:
           required: false
           description: >-
             Opaque pagination cursor from a previous response next_cursor field.
-            Encodes the ID of the last seen event.
+            Encodes the time and ID of the last event that page returned.
           schema:
             type: string
         - name: limit
@@ -293,13 +297,17 @@ paths:
       summary: Live activity stream (SSE)
       description: >-
         Opens a Server-Sent Events stream of ActivityEvent frames for the
-        caller's tenant. Each frame is `event: activity\ndata: <json>\n\n`;
-        periodic `: keep-alive` comments prevent proxy timeouts.
+        caller's tenant. Each frame is
+        `id: <cursor>\nevent: activity\ndata: <json>\n\n`; periodic
+        `: keep-alive` comments prevent proxy timeouts.
 
 
-        When `Last-Event-ID` is supplied the server replays up to 100 audit
-        events newer than that ID (chronological order) before switching to
-        the live stream, covering reconnect gaps.
+        When `Last-Event-ID` is supplied (the `id` of the last frame received,
+        an opaque cursor, not the event's UUID) the server replays up to 100
+        audit events newer than it (chronological order) before switching to
+        the live stream, covering reconnect gaps. A live frame's id sits ten
+        seconds before its event, to cover events the server had yet to
+        publish, so a reconnect may repeat an event but never skips one.
 
 
         Server-side filters (`?types`, `?severity`, `?category`) are applied
@@ -498,15 +506,14 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Returns the organisation''s dashboard figures: sign-ins, failures, active users and their trends. Requires analytics.read.'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Overview'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -629,7 +636,7 @@ paths:
         - name: cursor
           in: query
           required: false
-          description: The id of the last-seen event, for keyset pagination.
+          description: The previous page's next_cursor (the id of its last event), for keyset pagination.
           schema:
             type: string
       security:
@@ -637,11 +644,11 @@ paths:
         - apiKeyAuth: []
       responses:
         '200':
-          description: '{ items: AuditEvent[], next_cursor: string }'
+          description: '{ items: AuditEvent[], next_cursor: string }; next_cursor is empty on the last page.'
           content:
             application/json:
               example:
-                events:
+                items:
                   - id: 018f2a90-1b2c-7d3e-8f40-5a6b7c8d9e01
                     action: user.created
                     resource_type: user
@@ -657,7 +664,14 @@ paths:
                 next_cursor: 018f2a90-0a1b-7c2d-8e3f-4a5b6c7d8e00
               schema:
                 type: object
-                additionalProperties: true
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Row'
+                  next_cursor:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -715,8 +729,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/AuditVerifyResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -786,8 +799,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Summary'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1018,15 +1030,14 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Returns the organisation''s data-retention policy. Requires policy.read.'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/RetentionPolicy'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1056,18 +1067,15 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/RetentionPolicy'
+      description: 'Replaces the organisation''s data-retention policy. Requires policy.write.'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/RetentionPolicy'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1093,15 +1101,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Reports how many deleted users the retention policy would purge now, without purging them. Requires policy.read.'
       responses:
         '201':
           description: Created
@@ -1109,7 +1109,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [deleted_users_days, ripe_deleted_users]
+                properties:
+                  deleted_users_days:
+                    type: integer
+                  ripe_deleted_users:
+                    type: integer
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1135,15 +1140,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Purges the deleted users the retention policy has made ripe, now rather than at the next scheduled run. Requires policy.write.'
       responses:
         '201':
           description: Created
@@ -1151,7 +1148,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [purged]
+                properties:
+                  purged:
+                    type: integer
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1176,18 +1176,15 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/GdprCreateInput'
+      description: 'Requests erasure of a person''s data in the organisation, carried out after the grace period unless cancelled. Requires gdpr.write.'
       responses:
         '201':
           description: Created
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Request'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1213,7 +1210,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Cancels a scheduled erasure that has not run yet. Requires gdpr.write.'
       responses:
         '204':
           description: No Content
@@ -1242,7 +1239,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the organisation''s erasure requests and their state. Requires gdpr.write.'
       responses:
         '200':
           description: OK
@@ -1250,7 +1247,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Request'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1275,9 +1277,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+              $ref: '#/components/schemas/ExportInput'
       description: Queues an async export job; poll GET .../gdpr/export/{id} for status and payload.
       responses:
         '202':
@@ -1285,8 +1285,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/ExportRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1312,7 +1311,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the organisation''s data-export requests and their state. Requires gdpr.write.'
       responses:
         '200':
           description: OK
@@ -1320,7 +1319,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ExportRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1358,8 +1362,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/ExportRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1381,10 +1384,19 @@ paths:
         - apiKeyAuth: []
       responses:
         '200':
-          description: Portable account data excluding credential material
+          description: The caller's personal data, as a downloadable JSON document.
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                type: object
+                required: [profile, sessions, passkeys, roles, mfa_totp_enabled, generated_at]
+                properties:
+                  profile: {type: object, additionalProperties: true}
+                  sessions: {type: array, items: {type: object, additionalProperties: true}}
+                  passkeys: {type: array, items: {type: object, additionalProperties: true}}
+                  roles: {type: array, items: {type: object, additionalProperties: true}}
+                  mfa_totp_enabled: {type: boolean}
+                  generated_at: {type: string, format: date-time}
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/account/delete:
@@ -1434,8 +1446,7 @@ paths:
                   items:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/Sink'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1479,8 +1490,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Sink'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1576,8 +1586,7 @@ paths:
                   items:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/Notification'
                   unread_count:
                     type: integer
         '401':
@@ -1687,7 +1696,7 @@ paths:
       operationId: get_v1_tenants_ByTenantID_email_messages
       summary: Email delivery to an address
       description: >-
-        Lists the organisation's most recent emails to one address with what happened to each (sent, delivered, bounced, complained, suppressed or failed, with the provider's reason), and whether the address is suppressed. Addresses are stored hashed, so the lookup is by exact address. A suppression carries its id only when this organisation's mail caused it, since only that organisation may clear it. Records are kept 90 days.
+        Lists the organisation's most recent emails to one address with what happened to each (sent, delivered, bounced, complained, suppressed or failed, with the provider's reason), and whether the address is suppressed. Addresses are stored hashed, so the lookup is by exact address. A suppression caused by this organisation's mail (own true) carries its id, reason, provider detail and date, since only that organisation may clear it; one caused by other mail carries only own false. Records are kept 90 days.
       tags:
         - Email Templates
       parameters:
@@ -1729,6 +1738,7 @@ paths:
                     type: object
                     nullable: true
                     properties:
+                      own: { type: boolean, description: "This organisation's mail caused the suppression; the other fields are present only then." }
                       id: { type: string, format: uuid }
                       reason: { type: string, enum: [bounce, complaint] }
                       detail: { type: string }
@@ -1876,7 +1886,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Deletes the organisation''s version of an email template, so the default is sent again. Requires branding.write.'
       responses:
         '200':
           description: Built-in default after removing the override and its options
@@ -1913,7 +1923,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Returns an email template as the organisation sends it: its own version, or the default. Requires branding.write.'
       responses:
         '200':
           description: OK
@@ -2101,7 +2111,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Qeet AIStatus'
+                $ref: '#/components/schemas/QeetAIStatus'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/qeetai/conversations:
@@ -2124,10 +2134,11 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated: {type: boolean, description: 'Present, true, when the list was cut at its limit (1000).'}
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Qeet AIConversation'
+                      $ref: '#/components/schemas/QeetAIConversation'
         '401':
           $ref: '#/components/responses/Unauthorized'
     post:
@@ -2155,7 +2166,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Qeet AIConversation'
+                $ref: '#/components/schemas/QeetAIConversation'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/qeetai/conversations/{conversationID}:
@@ -2186,11 +2197,11 @@ paths:
                 type: object
                 properties:
                   conversation:
-                    $ref: '#/components/schemas/Qeet AIConversation'
+                    $ref: '#/components/schemas/QeetAIConversation'
                   messages:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Qeet AIMessage'
+                      $ref: '#/components/schemas/QeetAIMessage'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -2228,7 +2239,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Qeet AIConversation'
+                $ref: '#/components/schemas/QeetAIConversation'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -2355,10 +2366,20 @@ paths:
         - apiKeyAuth: []
       responses:
         '200':
-          description: Masked provider configuration
+          description: The organisation's effective provider configuration, its key masked.
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                type: object
+                required: [source, provider, model, base_url, max_tokens, last4, platform_fallback]
+                properties:
+                  source: {type: string, enum: [tenant, platform, none], description: 'Whose key answers: the organisation''s own, the deployment''s, or none.'}
+                  provider: {type: string}
+                  model: {type: string}
+                  base_url: {type: string}
+                  max_tokens: {type: integer}
+                  last4: {type: string, description: The key's last four characters.}
+                  platform_fallback: {type: boolean, description: Whether the deployment has a key to fall back on.}
         '401':
           $ref: '#/components/responses/Unauthorized'
     put:
@@ -2376,10 +2397,20 @@ paths:
             schema: { type: object, additionalProperties: true }
       responses:
         '200':
-          description: Updated provider configuration
+          description: The organisation's effective provider configuration, its key masked.
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                type: object
+                required: [source, provider, model, base_url, max_tokens, last4, platform_fallback]
+                properties:
+                  source: {type: string, enum: [tenant, platform, none], description: 'Whose key answers: the organisation''s own, the deployment''s, or none.'}
+                  provider: {type: string}
+                  model: {type: string}
+                  base_url: {type: string}
+                  max_tokens: {type: integer}
+                  last4: {type: string, description: The key's last four characters.}
+                  platform_fallback: {type: boolean, description: Whether the deployment has a key to fall back on.}
         '401':
           $ref: '#/components/responses/Unauthorized'
     delete:
@@ -2397,23 +2428,37 @@ paths:
   /v1/qeetai/provider-config/test:
     post:
       operationId: post_v1_qeetai_provider_config_test
-      description: 'Validates AI provider credentials with a live call and reports whether they work, without persisting them. Accepts candidate credentials in the body or, when omitted, tests the stored configuration. Use this before saving a new key to confirm the provider accepts it.'
+      description: 'Validates candidate AI provider credentials with a live call and reports whether they work, without persisting them. Use this before saving a new key to confirm the provider accepts it. A failed test answers 400 naming the reason: qeetai_provider_unreachable, qeetai_provider_key_invalid, qeetai_provider_model_invalid or qeetai_provider_error.'
       summary: Test tenant AI provider credentials
       tags: [Qeet AI]
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: true }
+            schema:
+              type: object
+              required: [provider, model, api_key]
+              properties:
+                provider: { type: string, enum: [anthropic, openai, azure] }
+                model: { type: string }
+                api_key: { type: string, writeOnly: true }
+                base_url: { type: string, description: 'Required for azure; must be an allowed outbound destination.' }
+                max_tokens: { type: integer, description: 'Defaults to 4096; at most 200000.' }
       responses:
         '200':
-          description: Provider connectivity result
+          description: The provider accepted the credentials.
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/tenants/{tenantID}/billing/checkout:
@@ -2422,6 +2467,7 @@ paths:
       summary: Start checkout
       description: >-
         Returns a hosted-payment URL to redirect the admin to, or {status:"active"} when the plan is free or no card provider serves the request (direct activation). The provider is chosen by billing country (config-driven; an omitted country falls back to currency-based routing: INR → Razorpay, else the default provider). The provider's webhook later activates the subscription.
+        Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress.
       tags:
         - Billing
       parameters:
@@ -2430,6 +2476,7 @@ paths:
           required: true
           schema:
             type: string
+        - $ref: '#/components/parameters/IdempotencyKey'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2459,13 +2506,13 @@ paths:
                   type: string
                   format: uri
       responses:
+        '409': {description: 'A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly.'}
         '200':
           description: Either a checkout URL ({status:"checkout"}) or {status:"active"}
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/CheckoutResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2541,7 +2588,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the plans on sale, with their prices.'
       responses:
         '200':
           description: OK
@@ -2549,7 +2596,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Plan'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2575,7 +2627,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the organisation''s invoices, newest first. Requires billing.read.'
       responses:
         '200':
           description: OK
@@ -2583,7 +2635,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Invoice'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2609,15 +2666,14 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Returns the organisation''s subscription. Requires billing.read.'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Subscription'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2648,19 +2704,32 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              required: [currency, plan_code]
+              properties:
+                currency:
+                  type: string
+                plan_code:
+                  type: string
+      description: >-
+        Puts the tenant on plan_code, priced in currency; no payment is taken here. A free
+        plan starts a new period with a zero invoice. A paid plan that costs no more than the
+        tenant's active subscription in the same currency and billing interval takes over the
+        period already paid for, with no new invoice; the current plan itself changes nothing.
+        Any other paid plan, such as one that costs more, must go through checkout
+        (POST /v1/tenants/{tenantID}/billing/checkout) and is refused with 402
+        billing.checkout_required, unless invoice-only billing
+        (BILLING_ALLOW_UNPAID_ACTIVATION) is on and no card provider serves the currency.
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Subscription'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '402':
+          $ref: '#/components/responses/PaymentRequired'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -2684,15 +2753,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Cancels the subscription at the end of the current period; it stays active until then. Requires billing.write.'
       responses:
         '201':
           description: Created
@@ -2700,7 +2761,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [cancel_at_period_end]
+                properties:
+                  cancel_at_period_end:
+                    type: boolean
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2730,7 +2794,8 @@ paths:
           description: Hosted checkout information
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                $ref: '#/components/schemas/CheckoutResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '422':
@@ -2802,7 +2867,8 @@ paths:
           description: Billing profile
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                $ref: '#/components/schemas/BillingProfile'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2830,7 +2896,8 @@ paths:
           description: Updated billing profile
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                $ref: '#/components/schemas/BillingProfile'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2859,7 +2926,8 @@ paths:
           description: Trial subscription
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                $ref: '#/components/schemas/Subscription'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2965,7 +3033,14 @@ paths:
           description: Resource usage by limit key
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                type: object
+                required: [usage]
+                properties:
+                  usage:
+                    type: object
+                    additionalProperties:
+                      type: integer
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2989,6 +3064,13 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: 'A key of the client''s choosing, 1 to 255 printable characters, that makes retrying the request safe. Kept for 24 hours.'
+      schema: {type: string, minLength: 1, maxLength: 255}
   securitySchemes:
     bearerAuth:
       type: http
@@ -3017,8 +3099,20 @@ components:
       name: qe_ls
       description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session and consumed by the OAuth authorize/consent flow.
   responses:
+    BadRequest:
+      description: Malformed request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     Unauthorized:
       description: Missing or invalid credentials
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    PaymentRequired:
+      description: The change needs payment (`billing.checkout_required`); start a checkout to make it.
       content:
         application/json:
           schema:
@@ -3150,13 +3244,13 @@ components:
           type: string
           format: uuid
           description: >-
-            For audit-log events this is the stable audit.events row UUID and
-            is safe to use as Last-Event-ID for reconnect replay. For live NATS
-            events a fresh UUID is generated per delivery.
+            For audit-log events this is the stable audit.events row UUID. For
+            live NATS events a fresh UUID is generated per delivery. Reconnect
+            with the stream frame's `id`, not this.
         type:
           type: string
           description: >-
-            Audit action string (e.g. "user.created", "auth.login.failed").
+            Audit action string (e.g. "user.created", "auth.sign_in_failed").
             Dot-namespaced; first segment is the resource type.
           example: user.created
         category:
@@ -3173,10 +3267,11 @@ components:
         severity:
           type: string
           description: >-
-            Derived severity level.
+            Derived from the words of the event type.
             critical — security incident (token reuse, threat detection);
-            warning — failure or destructive operation;
-            success — positive transition (create, enable, login);
+            error — a failure, lock or refusal (auth.sign_in_failed, auth.account_locked);
+            warning — a destructive or sensitive change (delete, revoke, rotate, reset);
+            success — positive transition (create, enable, sign-in);
             info — everything else.
           enum: [info, success, warning, error, critical]
         title:
@@ -3234,8 +3329,9 @@ components:
         next_cursor:
           type: string
           description: >-
-            Opaque cursor for the next page. Present only when more results
-            exist; omitted when this is the last page.
+            Opaque cursor for the next page: the time and ID of the last event
+            fetched. Present when more results may exist; omitted on the last
+            page.
     ActivitySummaryResponse:
       type: object
       description: >-
@@ -3406,7 +3502,7 @@ components:
           description: >-
             Opaque cursor for the next page. Present only when more results
             exist; omitted (not null) when this is the last page.
-    Qeet AIStatus:
+    QeetAIStatus:
       type: object
       description: AI qeetai configuration state. Never contains key material.
       properties:
@@ -3419,7 +3515,7 @@ components:
         model:
           type: string
           description: Model identifier (e.g. "claude-sonnet-5"); empty when not configured.
-    Qeet AIConversation:
+    QeetAIConversation:
       type: object
       description: A named qeetai conversation thread (tenant + user scoped).
       properties:
@@ -3442,7 +3538,7 @@ components:
         updated_at:
           type: string
           format: date-time
-    Qeet AIMessage:
+    QeetAIMessage:
       type: object
       description: >-
         One turn in a qeetai conversation. `content` is an array of Anthropic
@@ -3662,3 +3758,441 @@ components:
             request_id:
               type: string
               description: Correlates with the X-Request-Id header
+    ActivityPoint:
+      type: object
+      required: [date, ldap, magic_link, oidc, passkey, password, saml, social]
+      properties:
+        date:
+          type: string
+        ldap:
+          type: integer
+        magic_link:
+          type: integer
+        oidc:
+          type: integer
+        passkey:
+          type: integer
+        password:
+          type: integer
+        saml:
+          type: integer
+        social:
+          type: integer
+    AuditVerifyResult:
+      type: object
+      required: [ok, rows_checked]
+      properties:
+        broken_at_id:
+          type: string
+          format: uuid
+        broken_reason:
+          type: string
+        last_verified_id:
+          type: string
+          format: uuid
+        ok:
+          type: boolean
+        rows_checked:
+          type: integer
+    BillingProfile:
+      type: object
+      required: [address_line1, address_line2, billing_email, city, country, legal_name, postal_code, state, tax_id, tax_id_type]
+      properties:
+        address_line1:
+          type: string
+        address_line2:
+          type: string
+        billing_email:
+          type: string
+        city:
+          type: string
+        country:
+          type: string
+        legal_name:
+          type: string
+        postal_code:
+          type: string
+        state:
+          type: string
+        tax_id:
+          type: string
+        tax_id_type:
+          type: string
+    CheckoutResult:
+      type: object
+      required: [status]
+      properties:
+        checkout_url:
+          type: string
+        provider:
+          type: string
+        status:
+          type: string
+    ExportInput:
+      type: object
+      required: [tenant_id, user_id]
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+    ExportRequest:
+      type: object
+      required: [completed_at, created_at, id, requested_by, status, tenant_id, user_id]
+      properties:
+        completed_at:
+          type: [string, 'null']
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        error:
+          type: string
+        id:
+          type: string
+          format: uuid
+        payload:
+          type: object
+          additionalProperties: true
+        requested_by:
+          type: [string, 'null']
+          format: uuid
+        status:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+    GdprCreateInput:
+      type: object
+      required: [reason, tenant_id, user_id]
+      properties:
+        reason:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+    HourlyPoint:
+      type: object
+      required: [attempts, hour]
+      properties:
+        attempts:
+          type: integer
+        hour:
+          type: string
+    Invoice:
+      type: object
+      required: [amount_minor, currency, id, issued_at, period_end, period_start, place_of_supply, plan_code, status, tax_amount_minor, tax_rate_bps, tax_type, taxable_amount_minor]
+      properties:
+        amount_minor:
+          type: integer
+        currency:
+          type: string
+        id:
+          type: string
+          format: uuid
+        issued_at:
+          type: string
+          format: date-time
+        period_end:
+          type: string
+          format: date-time
+        period_start:
+          type: string
+          format: date-time
+        place_of_supply:
+          type: string
+        plan_code:
+          type: string
+        status:
+          type: string
+        tax_amount_minor:
+          type: integer
+        tax_rate_bps:
+          type: integer
+        tax_type:
+          type: string
+        taxable_amount_minor:
+          type: integer
+    MethodCount:
+      type: object
+      required: [method, users]
+      properties:
+        method:
+          type: string
+        users:
+          type: integer
+    MethodSlice:
+      type: object
+      required: [method, value]
+      properties:
+        method:
+          type: string
+        value:
+          type: number
+    Metric:
+      type: object
+      required: [delta_pct, value]
+      properties:
+        delta_pct:
+          type: number
+        value:
+          type: number
+    Overview:
+      type: object
+      required: [failed_logins_hourly_24h, failed_trend_14d, generated_at, kpis, login_activity_14d, login_methods_mix, login_trend_14d, mfa_methods_adoption, mfa_trend_14d, user_trend_14d, weekly_activity_8w]
+      properties:
+        failed_logins_hourly_24h:
+          type: array
+          items:
+            $ref: '#/components/schemas/HourlyPoint'
+        failed_trend_14d:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrendPoint'
+        generated_at:
+          type: string
+          format: date-time
+        kpis:
+          type: object
+          required: [avg_sessions_per_user, dau, failed_logins_24h, logins_today, mau, mfa_adoption_pct, stickiness_pct, total_users]
+          properties:
+            avg_sessions_per_user:
+              $ref: '#/components/schemas/Metric'
+            dau:
+              $ref: '#/components/schemas/Metric'
+            failed_logins_24h:
+              $ref: '#/components/schemas/Metric'
+            logins_today:
+              $ref: '#/components/schemas/Metric'
+            mau:
+              $ref: '#/components/schemas/Metric'
+            mfa_adoption_pct:
+              $ref: '#/components/schemas/Metric'
+            stickiness_pct:
+              $ref: '#/components/schemas/Metric'
+            total_users:
+              $ref: '#/components/schemas/Metric'
+        login_activity_14d:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActivityPoint'
+        login_methods_mix:
+          type: array
+          items:
+            $ref: '#/components/schemas/MethodSlice'
+        login_trend_14d:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrendPoint'
+        mfa_methods_adoption:
+          type: array
+          items:
+            $ref: '#/components/schemas/MethodCount'
+        mfa_trend_14d:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrendPoint'
+        user_trend_14d:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrendPoint'
+        weekly_activity_8w:
+          type: array
+          items:
+            $ref: '#/components/schemas/WeeklyActivityPoint'
+    Plan:
+      type: object
+      required: [code, description, features, id, interval, name, prices]
+      properties:
+        code:
+          type: string
+        description:
+          type: string
+        features:
+          type: array
+          items:
+            type: string
+        id:
+          type: string
+          format: uuid
+        interval:
+          type: string
+        name:
+          type: string
+        prices:
+          type: object
+          additionalProperties:
+            type: integer
+    Request:
+      type: object
+      required: [completed_at, created_at, grace_until, id, reason, requested_by, status, tenant_id, user_id]
+      properties:
+        completed_at:
+          type: [string, 'null']
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        grace_until:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        reason:
+          type: [string, 'null']
+        requested_by:
+          type: [string, 'null']
+          format: uuid
+        status:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+    RetentionPolicy:
+      type: object
+      required: [deleted_users_days, deleted_users_enabled]
+      properties:
+        deleted_users_days:
+          type: integer
+        deleted_users_enabled:
+          type: boolean
+    Row:
+      type: object
+      required: [action, actor_type, actor_user_id, created_at, id, ip, request_id, resource_id, resource_type, tenant_id, user_agent]
+      properties:
+        action:
+          type: string
+        actor_type:
+          type: string
+        actor_user_id:
+          type: [string, 'null']
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        ip:
+          type: [string, 'null']
+        request_id:
+          type: [string, 'null']
+        resource_id:
+          type: [string, 'null']
+          format: uuid
+        resource_type:
+          type: string
+        tenant_id:
+          type: [string, 'null']
+          format: uuid
+        user_agent:
+          type: [string, 'null']
+    Sink:
+      type: object
+      required: [created_at, enabled, endpoint, id, type]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        enabled:
+          type: boolean
+        endpoint:
+          type: string
+        id:
+          type: string
+          format: uuid
+        last_error:
+          type: string
+        last_forwarded_at:
+          type: string
+          format: date-time
+        type:
+          type: string
+    Subscription:
+      type: object
+      required: [amount_minor, cancel_at_period_end, currency, current_period_end, current_period_start, interval, plan_code, plan_name, status, trial_end]
+      properties:
+        amount_minor:
+          type: integer
+        cancel_at_period_end:
+          type: boolean
+        currency:
+          type: string
+        current_period_end:
+          type: [string, 'null']
+          format: date-time
+        current_period_start:
+          type: [string, 'null']
+          format: date-time
+        interval:
+          type: string
+        plan_code:
+          type: string
+        plan_name:
+          type: string
+        status:
+          type: string
+        trial_end:
+          type: [string, 'null']
+          format: date-time
+    Summary:
+      type: object
+      required: [high_score_open, open, resolved_7d]
+      properties:
+        high_score_open:
+          type: integer
+        open:
+          type: integer
+        resolved_7d:
+          type: integer
+    TrendPoint:
+      type: object
+      required: [date, value]
+      properties:
+        date:
+          type: string
+        value:
+          type: number
+    WeeklyActivityPoint:
+      type: object
+      required: [dau, wau, week]
+      properties:
+        dau:
+          type: integer
+        wau:
+          type: integer
+        week:
+          type: string
+    Notification:
+      type: object
+      required: [created_at, id, kind, title]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        description:
+          type: string
+        href:
+          type: string
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+        read_at:
+          type: string
+          format: date-time
+        title:
+          type: string

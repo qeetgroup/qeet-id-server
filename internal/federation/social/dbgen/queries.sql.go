@@ -436,6 +436,7 @@ func (q *Queries) ListPlatformSocialIdentitiesForUser(ctx context.Context, userI
 }
 
 const listSocialProviders = `-- name: ListSocialProviders :many
+
 SELECT id, tenant_id, provider, client_id, discovery_url, enabled, created_at
 FROM tenant.social_providers WHERE tenant_id = $1 ORDER BY provider
 `
@@ -450,6 +451,8 @@ type ListSocialProvidersRow struct {
 	CreatedAt    time.Time
 }
 
+// Queries for the social domain.
+// All queries are STATIC and compiled by sqlc into ./dbgen.
 func (q *Queries) ListSocialProviders(ctx context.Context, tenantID uuid.UUID) ([]ListSocialProvidersRow, error) {
 	rows, err := q.db.Query(ctx, listSocialProviders, tenantID)
 	if err != nil {

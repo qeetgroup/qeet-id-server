@@ -1,13 +1,7 @@
-// Package authzen implements the OpenID AuthZEN standard's core Policy Decision
-// Point API — POST /access/v1/evaluation — as a thin facade over Qeet ID's
-// composed decision (decide.Decider), the same one the native /check endpoints
-// use: an attribute (ABAC) deny refuses, then roles, relationships and
-// attribute allow policies are a union. It makes no decision of its own.
-//
-// The question asked is chosen by resource.type: "permission" asks about a
-// permission (action.name is the key, resource.id is ignored); anything else
-// asks about a relationship (resource becomes "type:id", action.name the
-// relation). The response context names the deciding model and rule.
+// Package authzen implements the OpenID AuthZEN evaluation API
+// (POST .../access/v1/evaluation) over the composed decision (decide.Decider).
+// resource.type "permission" asks whether the subject holds the permission
+// action.name; any other type asks about relation action.name on "type:id".
 package authzen
 
 import (
@@ -24,25 +18,26 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Subject/Resource/Action are the AuthZEN core request entities.
+// Subject is the AuthZEN subject of an evaluation request.
 type Subject struct {
 	Type string `json:"type"`
 	ID   string `json:"id"`
 }
 
+// Resource is the AuthZEN resource of an evaluation request.
 type Resource struct {
 	Type string `json:"type"`
 	ID   string `json:"id"`
 }
 
+// Action is the AuthZEN action of an evaluation request.
 type Action struct {
 	Name string `json:"name"`
 }
 
-// EvaluationRequest is the AuthZEN §5 evaluation request. Context is
-// accepted but only one key is currently interpreted: {"explain": true}
-// requests the grant path (RBAC/ReBAC's own ?explain=true) and the decision's
-// trace inline in the response's context.
+// EvaluationRequest is the AuthZEN §5 evaluation request. Of Context only
+// {"explain": true} is read: it adds the grant path and the decision's trace
+// to the response's context.
 type EvaluationRequest struct {
 	Subject  Subject        `json:"subject"`
 	Resource Resource       `json:"resource"`
@@ -56,9 +51,8 @@ type EvaluationResponse struct {
 	Context  map[string]any `json:"context,omitempty"`
 }
 
-// rbacChecker/rebacChecker are the slices of rbac.Repository / rebac.Service
-// this package needs — interfaces so authzen doesn't need every method both
-// packages expose, and so it's mockable in tests without a database.
+// rbacChecker is the slice of rbac.Repository this package needs, and
+// rebacChecker the slice of rebac.Service, so tests need no database.
 type rbacChecker interface {
 	Check(ctx context.Context, userID, tenantID uuid.UUID, permKey string) (bool, error)
 	Explain(ctx context.Context, userID, tenantID uuid.UUID, permKey string) (*rbac.Explanation, error)
@@ -69,6 +63,8 @@ type rebacChecker interface {
 	CheckExplain(ctx context.Context, tenantID uuid.UUID, object, relation, userID string) (*rebac.Explanation, error)
 }
 
+// Service answers AuthZEN evaluation requests from the tenant's roles and
+// relationships.
 type Service struct {
 	rbac    rbacChecker
 	rebac   rebacChecker
@@ -81,8 +77,8 @@ func NewService(rbacRepo rbacChecker, rebacSvc rebacChecker, decider *decide.Dec
 	return &Service{rbac: rbacRepo, rebac: rebacSvc, decider: decider}
 }
 
-// permissionResourceType is the resource.type sentinel that routes an
-// evaluation to RBAC instead of ReBAC (see package doc).
+// permissionResourceType is the resource.type that asks a permission question
+// rather than a relationship one (see package doc).
 const permissionResourceType = "permission"
 
 // Evaluate translates one AuthZEN evaluation request into the composed
@@ -147,10 +143,12 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, req Evaluati
 
 // --- HTTP ---
 
+// Handler serves the AuthZEN evaluation HTTP API.
 type Handler struct {
 	Service *Service
 }
 
+// Mount registers the AuthZEN evaluation routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/tenants/{tenantID}/access/v1/evaluation", h.evaluate)
 }

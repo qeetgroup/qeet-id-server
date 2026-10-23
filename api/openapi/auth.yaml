@@ -15,7 +15,9 @@ info:
 
     ## Authentication
 
-    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /v1/ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it.
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it.
+
+    The responses of the sign-up, sign-in (password, MFA, magic link, passkey), refresh, tenant-switch, sign-out (hosted session, everywhere) and forgot-password operations, and of those returning a new authenticator secret, recovery codes, pairing code or device credential, are sent with `Cache-Control: no-store` and `Pragma: no-cache`.
 
     ## Related APIs
 
@@ -65,7 +67,7 @@ paths:
   /v1/auth/forgot-password:
     post:
       operationId: post_v1_auth_forgot_password
-      description: 'Sends a password-reset link to the supplied email when it belongs to an account. It always returns a neutral confirmation regardless of whether the address exists, so it cannot be used to enumerate accounts, and it is rate limited. Complete the flow with the reset-password call using the token from the emailed link. A request for an account is recorded in its organisation''s audit trail as auth.password_reset_requested (at most ten per account, then one a minute).'
+      description: 'Sends a password-reset link to the supplied email when it belongs to an account. It always returns a neutral confirmation regardless of whether the address exists, so it cannot be used to enumerate accounts, and it is rate limited. The link is stored and emailed after the answer, so the answer is the same for any address, takes the same minimum time, and does not depend on whether the email could be delivered. Complete the flow with the reset-password call using the token from the emailed link. A request for an account is recorded in its organisation''s audit trail as auth.password_reset_requested (at most ten per account, then one a minute).'
       summary: Forgot password
       tags:
         - Auth
@@ -106,14 +108,12 @@ paths:
                 properties:
                   message:
                     type: string
-        '422':
-          $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/auth/login:
     post:
       operationId: post_v1_auth_login
-      description: 'Authenticates a user by email and password and, on success, returns an access and refresh token pair. If the account has a second factor enrolled, tokens are withheld and a short-lived mfa_token with the available methods is returned instead; exchange it for tokens at the complete-MFA call. Passwordless accounts authenticate through passkey login rather than this endpoint, and a registered passkey satisfies MFA on its own. Requests are rate limited to slow credential stuffing. Failed sign-ins are counted per account and source network, per account across networks, and per source network across accounts (see the sign-in lockout on the create-SSO-session call); a locked account answers 429 auth.account_locked whatever the password, a throttled source 429 too_many_requests, and an address with no account answers exactly like a wrong password. When the account''s own organisation has switched password sign-in off, a correct password is refused with 403 auth.method_disabled. Every sign-in is assessed for risk (bot-like clients, and impossible travel and new devices where the organisation turns them on), and its country and device are kept 90 days for later sign-ins to be compared against. A risky sign-in by someone with no second factor answers an mfa_token challenge met by a code sent to their verified email address (methods [email], the factor named by the challenge''s own id), or 403 auth.risk_verification_unavailable when they have no verified address. While the organisation''s address rules are on, a sign-in from an address they refuse is refused with 403 auth.address_not_allowed before any session is issued; the same holds on every other way of signing in to the organisation (passkey, magic link, social, SAML, LDAP, invitation, organisation switch, application authorization and the device flow). Each failed attempt is recorded in the audit trail of the organisation the sign-in was for (or the account''s own) as auth.sign_in_failed: the account, or no one for an address with no account, the reason (wrong_password, unknown_account, account_locked or source_throttled) and the source, never what was submitted. The records are bounded per source network and per organisation (sign_in_failures_unrecorded_total counts the rest). A lock a failure sets is recorded as auth.account_locked with locked_until, when it lifts; a source throttle as auth.source_throttled.'
+      description: 'Authenticates a user by email and password and, on success, returns an access and refresh token pair. If the account has a second factor enrolled, tokens are withheld and a short-lived mfa_token with the available methods is returned instead; exchange it for tokens at the complete-MFA call. Passwordless accounts authenticate through passkey login rather than this endpoint, and a registered passkey satisfies MFA on its own. Requests are rate limited to slow credential stuffing. Failed sign-ins are counted per account and source network, per account across networks, and per source network across accounts (see the sign-in lockout on the create-SSO-session call); a locked account answers 429 auth.account_locked whatever the password, a throttled source 429 too_many_requests, and an address with no account answers exactly like a wrong password. A suspended or otherwise inactive account also answers a wrong password with 401 auth.invalid_credentials, counted like any wrong password; only the right password is refused with 403 auth.account_inactive. When the account''s own organisation has switched password sign-in off, a correct password is refused with 403 auth.method_disabled. Every sign-in is assessed for risk (bot-like clients, and impossible travel and new devices where the organisation turns them on), and its country and device are kept 90 days for later sign-ins to be compared against. A risky sign-in by someone with no second factor answers an mfa_token challenge met by a code sent to their verified email address (methods [email], the factor named by the challenge''s own id), or 403 auth.risk_verification_unavailable when they have no verified address. While the organisation''s address rules are on, a sign-in from an address they refuse is refused with 403 auth.address_not_allowed before any session is issued; the same holds on every other way of signing in to the organisation (passkey, magic link, social, SAML, LDAP, invitation, organisation switch, application authorization and the device flow). Each failed attempt is recorded in the audit trail of the organisation the sign-in was for (or the account''s own) as auth.sign_in_failed: the account, or no one for an address with no account, the reason (wrong_password, unknown_account, account_locked or source_throttled) and the source, never what was submitted. The records are bounded per source network and per organisation (sign_in_failures_unrecorded_total counts the rest). A lock a failure sets is recorded as auth.account_locked with locked_until, when it lifts; a source throttle as auth.source_throttled.'
       summary: Sign in
       tags:
         - Auth
@@ -141,6 +141,8 @@ paths:
                   - $ref: '#/components/schemas/MFAChallenge'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -407,14 +409,6 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
       responses:
         '200':
           description: Signed out
@@ -464,7 +458,7 @@ paths:
   /v1/auth/magic-link/start:
     post:
       operationId: post_v1_auth_magic_link_start
-      description: 'Begins passwordless email sign-in by emailing a single-use link to the account holding the address. It answers the same whether or not the address has an account, takes the same minimum time, and sends nothing when it has none. Asked for from an organisation''s sign-in page (tenant_id), it is refused with 403 auth.method_disabled when that organisation has magic links off; from the console (no tenant_id) the account''s own organisation decides, and nothing is sent when it has them off. A link lives for the organisation''s magic_link_ttl_minutes and works once. With app hosted_login the link opens the hosted login''s magic page and, once exchanged at the magic-link session call, continues the sign-in journey at return_to (kept only if it is this service''s authorize endpoint); otherwise it opens the console''s, exchanged at the consume call. Requests are bounded to three per address (then one every five minutes) and ten per caller (then one a minute), counted whether or not the address has an account: 429 past either. A link sent is recorded as auth.magic_link_requested in the audit trail of the organisation that asked, or the account''s own.'
+      description: 'Begins passwordless email sign-in by emailing a single-use link to the account holding the address. It answers the same whether or not the address has an account, takes the same minimum time, and sends nothing when it has none. The link is stored and emailed after the answer, so whether the email could be delivered does not change the answer either. An empty email is refused with 422 auth.email_required. Asked for from an organisation''s sign-in page (tenant_id), it is refused with 403 auth.method_disabled when that organisation has magic links off; from the console (no tenant_id) the account''s own organisation decides, and nothing is sent when it has them off. A link lives for the organisation''s magic_link_ttl_minutes and works once. With app hosted_login the link opens the hosted login''s magic page and, once exchanged at the magic-link session call, continues the sign-in journey at return_to (kept only if it is this service''s authorize endpoint); otherwise it opens the console''s, exchanged at the consume call. Requests are bounded to three per address (then one every five minutes) and ten per caller (then one a minute), counted whether or not the address has an account: 429 past either. A link sent is recorded as auth.magic_link_requested in the audit trail of the organisation that asked, or the account''s own.'
       summary: Magic link start
       tags:
         - Auth
@@ -579,7 +573,8 @@ paths:
         expired or not — to the same address, opening in the same place and
         continuing the same journey, so the user need not type the address
         again. Answers the same whatever the token names, and is bounded like
-        the start call (429).
+        the start call (429). As there, the link is stored and emailed after the
+        answer, so whether the email could be delivered does not change it.
       tags:
         - Auth
       security: []
@@ -629,7 +624,7 @@ paths:
   /v1/auth/refresh:
     post:
       operationId: post_v1_auth_refresh
-      description: 'Exchanges a valid refresh token for a new access and refresh token pair. The presented refresh token is rotated and invalidated, so each token may be redeemed only once; persist the returned refresh token for the next rotation. A revoked or already-rotated token is rejected and forces a fresh sign-in. A session ends by itself at its maximum age however active it is, and once it goes longer than its idle timeout without a renewal; each renewal restarts the idle timeout, and the response says when the session ends either way (session_expires_at, idle_expires_at). A renewal after either is refused with 401 auth.session_timed_out and the session ends, recorded as an expiry and announced to session.revoked subscribers with the reason expired. A renewal from an address the organisation''s address rules refuse answers 403 auth.address_not_allowed; the session stays, and renews again from an allowed address. A session in a tenant that has since been suspended or deleted is refused (403 auth.tenant_inactive).'
+      description: 'Exchanges a valid refresh token for a new access and refresh token pair. The presented refresh token is rotated and invalidated, so each token may be redeemed only once; persist the returned refresh token for the next rotation. A revoked token is rejected and forces a fresh sign-in. A token presented again within the reuse grace of its rotation (REFRESH_TOKEN_REUSE_GRACE, 30 seconds by default, at most one minute), while the token that replaced it is still unused, gets the very pair its rotation returned, so two instances of a client renewing at once, or a client that lost the answer, keep the session; each such retry is audited as auth.refresh_token_retried. Any other reuse of a rotated token is treated as theft: the session ends (401 auth.session_revoked), audited as auth.token_reuse_detected. A session ends by itself at its maximum age however active it is, and once it goes longer than its idle timeout without a renewal; each renewal restarts the idle timeout, and the response says when the session ends either way (session_expires_at, idle_expires_at). A renewal after either is refused with 401 auth.session_timed_out and the session ends, recorded as an expiry and announced to session.revoked subscribers with the reason expired. A renewal from an address the organisation''s address rules refuse answers 403 auth.address_not_allowed; the session stays, and renews again from an allowed address. A session in a tenant that has since been suspended or deleted is refused (403 auth.tenant_inactive).'
       summary: Refresh
       tags:
         - Auth
@@ -709,7 +704,7 @@ paths:
       description: 'Establishes a hosted-login SSO session and sets the HttpOnly qe_ls cookie so the browser can continue into the OAuth authorize and consent flow. When the account has a second factor enrolled, no cookie is set yet and a short-lived mfa_token is returned; complete it at the session-MFA call before the cookie is issued. Because this is a cookie session, later state-changing calls made with it are subject to CSRF protection. End the session with the corresponding destroy-session call.
 
 
-        Sign-in lockout: failed password sign-ins are counted per account and source network (the client IP behind the trusted proxies; an IPv4 address or an IPv6 /64). Reaching the threshold within the window locks the account for that network for the lock duration, so a stranger on another network cannot lock the owner out. The threshold, window and duration are those of the tenant of the OAuth client named by `client_id` (its authentication policy), or the platform defaults when no client is named. Failures from any mix of networks also lock the account everywhere at a looser cap (the threshold times LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER), and a source network that fails against too many distinct accounts (LOGIN_SPRAY_ACCOUNTS within LOGIN_SPRAY_WINDOW) is refused password sign-in for LOGIN_SPRAY_BLOCK. An address with no account is counted and answered exactly like a wrong password. When the counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable (fail closed). When the organisation of the named client_id has switched password sign-in off, the request is refused with 403 auth.method_disabled before any password is checked (the same answer for any account or none); without a client_id, the account''s own organisation decides once the password is verified. While the address rules of that client''s organisation are on, an address they refuse is answered 403 auth.address_not_allowed before any password is checked, and no cookie is set. A body not sent as JSON is refused (415 unsupported_media_type). Failed attempts are recorded as for POST /v1/auth/login.'
+        Sign-in lockout: failed password sign-ins are counted per account and source network (the client IP behind the trusted proxies; an IPv4 address or an IPv6 /64). Reaching the threshold within the window locks the account for that network for the lock duration, so a stranger on another network cannot lock the owner out. The threshold, window and duration are those of the tenant of the OAuth client named by `client_id` (its authentication policy), or the platform defaults when no client is named. Failures from any mix of networks also lock the account everywhere at a looser cap (the threshold times LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER), and a source network that fails against too many distinct accounts (LOGIN_SPRAY_ACCOUNTS within LOGIN_SPRAY_WINDOW) is refused password sign-in for LOGIN_SPRAY_BLOCK. An address with no account is counted and answered exactly like a wrong password, and so is a wrong password for a suspended or otherwise inactive account (401 auth.invalid_credentials); only the right password is refused with 403 auth.account_inactive. When the counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable (fail closed). When the organisation of the named client_id has switched password sign-in off, the request is refused with 403 auth.method_disabled before any password is checked (the same answer for any account or none); without a client_id, the account''s own organisation decides once the password is verified. While the address rules of that client''s organisation are on, an address they refuse is answered 403 auth.address_not_allowed before any password is checked, and no cookie is set. A body not sent as JSON is refused (415 unsupported_media_type). Failed attempts are recorded as for POST /v1/auth/login.'
       summary: Create SSO session
       tags:
         - Auth
@@ -739,6 +734,8 @@ paths:
                   - $ref: '#/components/schemas/MFAChallenge'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
         '422':
@@ -847,7 +844,9 @@ paths:
         authenticator app is set up. Gated by the
         tenant's self_registration_enabled policy (403 when disabled). The
         password must meet that tenant's password rules (422 naming the rule
-        that failed). Enumeration-safe: an existing email returns a neutral 422.
+        that failed). An address that already has an account is refused with
+        the neutral 422 unprocessable of POST /v1/auth/signup, which does not
+        name the reason, and every attempt takes at least the same minimum time.
 
         An address the organisation's address rules refuse answers 403
         auth.address_not_allowed, and no account is created.
@@ -999,7 +998,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [message]
+                properties:
+                  message:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '422':
@@ -1229,12 +1231,12 @@ paths:
         Ends every one of the caller's sessions except the one they are using,
         in a single all-or-nothing step, and returns how many were ended. The
         session that is kept is the one behind the presented access token; the
-        request takes no body and no session identifiers. Refresh tokens of the
-        ended sessions stop working as soon as this returns, but access tokens
-        already issued to them stay valid until they expire (minutes), so do not
-        present this as an instant cut-off. Succeeds with `revoked: 0` when
-        there is no other session. If any session cannot be ended the call fails
-        and none are ended. Returns 401 `auth.session_revoked` when the caller's
+        request takes no body and no session identifiers. The refresh and
+        access tokens of the ended sessions stop working on this API as soon as
+        this returns; a service that verifies access tokens offline, without
+        introspection, accepts them until they expire (minutes). Succeeds with
+        `revoked: 0` when there is no other session. If any session cannot be
+        ended the call fails and none are ended. Returns 401 `auth.session_revoked` when the caller's
         own session has already ended. Sessions in hosted login and tokens held
         by applications are not affected; the sign-out-everywhere call ends
         those too.
@@ -1272,9 +1274,10 @@ paths:
         person to sign in again; and every refresh grant held by applications
         the person signed in to. The response also clears the hosted-login
         cookie for a browser that calls directly. The request takes no body.
-        Refresh tokens and application grants stop working as soon as this
-        returns, but access tokens already issued stay valid until they expire
-        (minutes), so do not present this as an instant cut-off everywhere. The
+        Refresh tokens, application grants and the access tokens of the
+        caller's own sessions stop working on this API as soon as this returns;
+        access tokens held by applications, and any a service verifies offline,
+        last until they expire (minutes). The
         presented access token must belong to one of the caller's own sessions
         (an application's access token is refused with 401). Repeating the call
         succeeds with every count at 0 and changes nothing. If anything cannot
@@ -1362,7 +1365,7 @@ paths:
   /v1/auth/signup:
     post:
       operationId: post_v1_auth_signup
-      description: 'Registers a new user from an email and password and returns a token pair alongside the created user record. The password must meet the platform baseline (8 characters), the offline strength baseline and, when enabled, the breached-password check (422 naming the rule that failed). The new user is tenant-less: no tenant is created here, so the returned token carries no tenant scope. Create a tenant through the Identity Management API before any tenant-scoped call, after which the creator becomes the tenant owner. A duplicate email is rejected, and the endpoint is rate limited.'
+      description: 'Registers a new user from an email and password and returns a token pair alongside the created user record. The password must meet the platform baseline (8 characters), the offline strength baseline and, when enabled, the breached-password check (422 naming the rule that failed). The new user is tenant-less: no tenant is created here, so the returned token carries no tenant scope. Create a tenant through the Identity Management API before any tenant-scoped call, after which the creator becomes the tenant owner. An address that already has an account is refused with a neutral 422 unprocessable that does not name the reason (it suggests signing in or resetting the password), every attempt takes at least the same minimum time, and the endpoint is rate limited.'
       summary: Sign up
       tags:
         - Auth
@@ -1391,8 +1394,6 @@ paths:
                 user_id: 018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f
               schema:
                 $ref: '#/components/schemas/SignupResponse'
-        '409':
-          $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -1400,7 +1401,7 @@ paths:
   /v1/auth/switch-tenant:
     post:
       operationId: post_v1_auth_switch_tenant
-      description: 'Replaces the caller''s session with one scoped to another tenant they belong to and returns its token pair. The new access token carries the claims the target tenant''s authentication hook adds, and renewals keep them; the hook may also refuse the switch. The session the presented access token belongs to ends: its refresh token is refused from now on, its access token stays valid only until it expires, and the tenant''s session.revoked subscribers are notified with reason tenant_switch. Use the returned pair from now on. The caller''s session list shows the one sign-in, not one entry per switch. Refused, with nothing changed: a tenant the caller does not belong to (403), a refusal by the tenant''s hook, an address the tenant''s address rules refuse (403 auth.address_not_allowed), or an access token whose session has already ended (401). An organisation that requires a second factor of the caller (its security policy, or administrators-only for its administrators) is entered only by a session whose sign-in met one, or that holds a fresh step-up; otherwise 403 step_up_required (step up, then try again) or 403 mfa.enrollment_required (set a factor up first), unless the organisation''s grace period still lets the caller put the setup off. The new session carries the factor on. Confirm the active scope afterward with the current-principal call.'
+      description: 'Replaces the caller''s session with one scoped to another tenant they belong to and returns its token pair. The new access token carries the claims the target tenant''s authentication hook adds, and renewals keep them; the hook may also refuse the switch. The session the presented access token belongs to ends: its refresh and access tokens are refused from now on, and the tenant''s session.revoked subscribers are notified with reason tenant_switch. Use the returned pair from now on. The caller''s session list shows the one sign-in, not one entry per switch. Refused, with nothing changed: a tenant the caller does not belong to (403), a refusal by the tenant''s hook, an address the tenant''s address rules refuse (403 auth.address_not_allowed), or an access token whose session has already ended (401). An organisation that requires a second factor of the caller (its security policy, or administrators-only for its administrators) is entered only by a session whose sign-in met one, or that holds a fresh step-up; otherwise 403 step_up_required (step up, then try again) or 403 mfa.enrollment_required (set a factor up first), unless the organisation''s grace period still lets the caller put the setup off. The new session carries the factor on. Confirm the active scope afterward with the current-principal call.'
       summary: Switch tenant
       tags:
         - Auth
@@ -1494,20 +1495,22 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: 'Begins a passkey sign-in ceremony (an empty body, or no email, for a discoverable one) and returns its session_id and the WebAuthn request options. The browser that begins it is given an HttpOnly binding cookie (qe_passkey, __Host- prefixed outside dev) naming the ceremony; only that browser can finish it at POST /v1/passkeys/login/session. A body not sent as JSON is refused (415 unsupported_media_type).'
+              $ref: '#/components/schemas/loginBeginInput'
+      description: 'Begins a passkey sign-in ceremony and returns its session_id and the WebAuthn request options. Every ceremony is discoverable: the options carry no allowCredentials, and the answer is the same whether or not the email (optional; an empty body is allowed) has an account or a passkey. With an email, only a passkey of that account can finish the ceremony. The browser that begins it is given an HttpOnly binding cookie (qe_passkey, __Host- prefixed outside dev) naming the ceremony; only that browser can finish it at POST /v1/passkeys/login/session. A body not sent as JSON is refused (415 unsupported_media_type).'
       responses:
-        '201':
-          description: Created
+        '200':
+          description: The ceremony's session_id and the WebAuthn request options (publicKey), without allowCredentials
           content:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
-        '404':
-          $ref: '#/components/responses/NotFound'
+                required: [publicKey, session_id]
+                properties:
+                  publicKey:
+                    $ref: '#/components/schemas/PublicKeyCredentialRequestOptions'
+                  session_id:
+                    type: string
+                    format: uuid
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
         '422':
@@ -1526,9 +1529,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+              $ref: '#/components/schemas/loginFinishInput'
       description: 'The token form of passkey sign-in: completes the ceremony with the assertion and returns the token pair, setting no cookie, for a caller that keeps tokens on a server (such as the console''s). A browser signs in to the hosted login with POST /v1/passkeys/login/session instead, so no token pair reaches its script. A body not sent as JSON is refused (415 unsupported_media_type). When the account''s organisation has switched passkeys off, the sign-in is refused with 403 passkey.disabled before the assertion is verified. A refused ceremony or assertion is recorded in the organisation''s audit trail as auth.sign_in_failed (method passkey, reason the error code), naming the account when it was identified.'
       responses:
         '201':
@@ -1536,8 +1537,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/TokenPair'
         '404':
           $ref: '#/components/responses/NotFound'
         '415':
@@ -1601,14 +1601,6 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
         - ssoCookie: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
       description: >-
         Starts adding a passkey for the signed-in user and returns the WebAuthn
         creation options with a single-use ceremony id (valid five minutes,
@@ -1624,7 +1616,13 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [publicKey, session_id]
+                properties:
+                  publicKey:
+                    $ref: '#/components/schemas/PublicKeyCredentialCreationOptions'
+                  session_id:
+                    type: string
+                    format: uuid
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1650,9 +1648,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+              $ref: '#/components/schemas/registerFinishInput'
       description: >-
         Verifies the attestation and stores the passkey. An optional `name` is
         cleaned and checked as in Rename passkey (422 when too long, before the
@@ -1668,13 +1664,8 @@ paths:
         since the ceremony began. Accepts the hosted-login session cookie like
         Register begin, with the same CSRF requirement.
       responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
+        '204':
+          description: 'Created'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1688,7 +1679,7 @@ paths:
   /v1/signup/passkey/begin:
     post:
       operationId: post_v1_signup_passkey_begin
-      description: 'Starts the passwordless counterpart to email/password signup, returning the WebAuthn credential-creation options the authenticator needs to mint a passkey. No password is created and no user exists yet; the account is materialized only when the ceremony completes. Finish registration by returning the signed attestation to the passkey-signup finish call.'
+      description: 'Starts the passwordless counterpart to email/password signup, returning the WebAuthn credential-creation options the authenticator needs to mint a passkey. No password is created and no user exists yet; the account is materialized only when the ceremony completes. Finish registration by returning the signed attestation to the passkey-signup finish call. An address already taken is refused, here or at the finish call, with the neutral 422 unprocessable of POST /v1/auth/signup, which does not name the reason; every attempt here takes at least the same minimum time.'
       summary: Passkey-first signup begin (tenant-less)
       tags:
         - Passkeys
@@ -1714,7 +1705,13 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [publicKey, session_id]
+                properties:
+                  publicKey:
+                    $ref: '#/components/schemas/PublicKeyCredentialCreationOptions'
+                  session_id:
+                    type: string
+                    format: uuid
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -1722,7 +1719,7 @@ paths:
   /v1/signup/passkey/finish:
     post:
       operationId: post_v1_signup_passkey_finish
-      description: 'Completes passwordless signup by verifying the authenticator attestation from the begin step and creating a tenant-less user with the new passkey as its founding credential. On success it returns a token pair; because the passkey is first-class, the account has no password and can both authenticate and satisfy MFA with the passkey alone. As with password signup, create a tenant through the Identity Management API before any tenant-scoped call, and the creator becomes the tenant owner.'
+      description: 'Completes passwordless signup by verifying the authenticator attestation from the begin step and creating a tenant-less user with the new passkey as its founding credential. On success it returns a token pair; because the passkey is first-class, the account has no password and can both authenticate and satisfy MFA with the passkey alone. As with password signup, create a tenant through the Identity Management API before any tenant-scoped call, and the creator becomes the tenant owner. An address already taken is refused with the neutral 422 unprocessable of POST /v1/auth/signup, which does not name the reason, and nothing is created.'
       summary: Passkey-first signup finish (tenant-less)
       tags:
         - Passkeys
@@ -1752,7 +1749,23 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [access_token, expires_at, refresh_token, session_id, token_type, user_id]
+                properties:
+                  access_token:
+                    type: string
+                  expires_at:
+                    type: string
+                    format: date-time
+                  refresh_token:
+                    type: string
+                  session_id:
+                    type: string
+                    format: uuid
+                  token_type:
+                    type: string
+                  user_id:
+                    type: string
+                    format: uuid
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -1760,7 +1773,7 @@ paths:
   /v1/register/passkey/begin:
     post:
       operationId: post_v1_register_passkey_begin
-      description: 'Starts the passwordless counterpart to hosted tenant signup, returning the WebAuthn credential-creation options for a passkey scoped to the supplied tenant. It is gated by the tenant''s self-registration policy and is refused when self-registration is disabled. Finish the ceremony by returning the signed attestation to the tenant-scoped passkey-register finish call. Where the organisation has passkeys switched off, it is refused with 403 passkey.disabled before a ceremony starts.'
+      description: 'Starts the passwordless counterpart to hosted tenant signup, returning the WebAuthn credential-creation options for a passkey scoped to the supplied tenant. It is gated by the tenant''s self-registration policy and is refused when self-registration is disabled. Finish the ceremony by returning the signed attestation to the tenant-scoped passkey-register finish call. Where the organisation has passkeys switched off, it is refused with 403 passkey.disabled before a ceremony starts. An address already taken is refused, here or at the finish call, with the neutral 422 unprocessable of POST /v1/auth/signup, which does not name the reason; every attempt here takes at least the same minimum time.'
       summary: Passkey-first signup begin (tenant-scoped hosted signup)
       tags:
         - Passkeys
@@ -1789,7 +1802,13 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [publicKey, session_id]
+                properties:
+                  publicKey:
+                    $ref: '#/components/schemas/PublicKeyCredentialCreationOptions'
+                  session_id:
+                    type: string
+                    format: uuid
         '403':
           $ref: '#/components/responses/Forbidden'
         '422':
@@ -1799,7 +1818,7 @@ paths:
   /v1/register/passkey/finish:
     post:
       operationId: post_v1_register_passkey_finish
-      description: 'Completes passwordless hosted signup by verifying the authenticator attestation and creating the user in the ceremony''s tenant with the passkey as its credential. On success it sets the hosted-login SSO cookie so the browser continues into the OAuth authorize and consent flow rather than returning bearer tokens. The account is passwordless and its passkey satisfies MFA on its own. A body not sent as JSON is refused (415 unsupported_media_type). A ceremony finished after the organisation switched passkeys off is refused with 403 passkey.disabled and nothing is created.'
+      description: 'Completes passwordless hosted signup by verifying the authenticator attestation and creating the user in the ceremony''s tenant with the passkey as its credential. On success it sets the hosted-login SSO cookie so the browser continues into the OAuth authorize and consent flow rather than returning bearer tokens. The account is passwordless and its passkey satisfies MFA on its own. A body not sent as JSON is refused (415 unsupported_media_type). A ceremony finished after the organisation switched passkeys off is refused with 403 passkey.disabled and nothing is created. An address already taken is refused with the neutral 422 unprocessable of POST /v1/auth/signup, which does not name the reason, and nothing is created.'
       summary: Passkey-first signup finish (tenant-scoped hosted signup)
       tags:
         - Passkeys
@@ -1829,7 +1848,11 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [user_id]
+                properties:
+                  user_id:
+                    type: string
+                    format: uuid
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
         '422':
@@ -1909,7 +1932,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Deletes one of the caller''s passkeys. Needs a recent step-up.'
       responses:
         '204':
           description: No Content
@@ -1932,7 +1955,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the caller''s SMS and email factors.'
       responses:
         '200':
           description: OK
@@ -1940,7 +1963,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OTPFactor'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1983,7 +2011,13 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [factor_id, message]
+                properties:
+                  factor_id:
+                    type: string
+                    format: uuid
+                  message:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2009,7 +2043,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Removes one of the caller''s SMS or email factors. Needs a recent step-up.'
       responses:
         '204':
           description: No Content
@@ -2038,14 +2072,6 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
       description: >-
         Sends a step-up code to one of the caller's confirmed email or SMS factors, to verify at
         /v1/mfa/otp/verify. A code to one factor can be sent at most every 30 seconds, ten an hour to one person and five an hour to one address or number over every account; past that the call answers 429 mfa.code_send_limited with retry_after (seconds). A new code makes the factor's earlier unused code stop working. An SMS code needs an organisation whose plan includes SMS (403 upgrade_required). Each code sent is audited as mfa.otp_sent.
@@ -2056,7 +2082,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [message]
+                properties:
+                  message:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2087,10 +2116,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/verifyInput'
+      description: 'Completes adding an SMS or email factor with the code sent to it.'
       responses:
         '201':
           description: Created
@@ -2098,7 +2125,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [verified]
+                properties:
+                  verified:
+                    type: boolean
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2123,10 +2153,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/verifyInput'
+      description: 'Verifies a code sent to one of the caller''s SMS or email factors, stepping up the session.'
       responses:
         '201':
           description: Created
@@ -2134,7 +2162,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [verified]
+                properties:
+                  verified:
+                    type: boolean
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2154,15 +2185,14 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Reports how many of the caller''s recovery codes are left.'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/RecoveryStatus'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2182,15 +2212,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Replaces the caller''s recovery codes; the new ones are shown only in this answer and the old ones stop working. Needs a recent step-up.'
       responses:
         '201':
           description: Created
@@ -2198,7 +2220,14 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [recovery_codes, warning]
+                properties:
+                  recovery_codes:
+                    type: array
+                    items:
+                      type: string
+                  warning:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2389,7 +2418,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Removes the caller''s authenticator app and recovery codes. Needs a recent step-up.'
       responses:
         '204':
           description: No Content
@@ -2417,10 +2446,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/confirmEnrollInput'
+      description: 'Completes adding an authenticator app with a code from it, and returns the recovery codes.'
       responses:
         '201':
           description: Created
@@ -2428,7 +2455,14 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [recovery_codes, warning]
+                properties:
+                  recovery_codes:
+                    type: array
+                    items:
+                      type: string
+                  warning:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2504,10 +2538,8 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/verifyInput'
+      description: 'Verifies a code from the caller''s authenticator app, or a recovery code, stepping up the session.'
       responses:
         '201':
           description: Created
@@ -2515,7 +2547,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [verified]
+                properties:
+                  verified:
+                    type: boolean
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2543,7 +2578,13 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [publicKey, session_id]
+                properties:
+                  publicKey:
+                    $ref: '#/components/schemas/PublicKeyCredentialRequestOptions'
+                  session_id:
+                    type: string
+                    format: uuid
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2570,9 +2611,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+              $ref: '#/components/schemas/webauthnVerifyInput'
       description: Verifies a WebAuthn assertion against the user's registered credentials and records a step-up verification on success.
       responses:
         '200':
@@ -2581,7 +2620,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [verified]
+                properties:
+                  verified:
+                    type: boolean
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2610,7 +2652,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PushDevice'
         '401':
           $ref: '#/components/responses/Unauthorized'
     post:
@@ -2639,7 +2686,14 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [device, device_token, warning]
+                properties:
+                  device:
+                    $ref: '#/components/schemas/PushDevice'
+                  device_token:
+                    type: string
+                  warning:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/mfa/push/devices/{id}:
@@ -2832,8 +2886,7 @@ paths:
                 properties:
                   user_id: { type: string, format: uuid }
                   device:
-                    type: object
-                    additionalProperties: true
+                    $ref: '#/components/schemas/PushDevice'
                   device_token: { type: string }
         '400':
           $ref: '#/components/responses/BadRequest'
@@ -2859,8 +2912,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/PushChallenge'
         '404':
           $ref: '#/components/responses/NotFound'
   /v1/mfa/push/challenges/{id}/respond:
@@ -3068,14 +3120,6 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
       responses:
         '204':
           description: Granted
@@ -3372,14 +3416,6 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
       responses:
         '204':
           description: Assigned
@@ -3581,6 +3617,11 @@ paths:
         Runs the deny-wins ABAC evaluation algorithm against all enabled policies
         that match the supplied resource type and action. Returns the decision and,
         when ?explain=true, a trace of every policy evaluated.
+        A deny policy whose condition compares an attribute the request doesn't
+        supply applies (fail closed); an allow policy doesn't match. Supply the
+        resource's attributes (such as created_by) for policies that compare them:
+        the route guard and the permission checks supply only subject.id,
+        subject.type, subject.tenant_id, resource.type and resource.id.
       tags:
         - ABAC
       parameters:
@@ -3657,11 +3698,11 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated: {type: boolean, description: 'Present, true, when the list was cut at its limit (1000).'}
                   items:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/Tuple'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -3708,8 +3749,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Tuple'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4148,7 +4188,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Lists the organisation''s address rules and whether they are enforced. Requires policy.read.'
       responses:
         '200':
           description: OK
@@ -4156,7 +4196,14 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [enabled, items]
+                properties:
+                  enabled:
+                    type: boolean
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Rule'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4187,17 +4234,22 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              required: [action, cidr, label]
+              properties:
+                action:
+                  type: string
+                cidr:
+                  type: string
+                label:
+                  type: string
+      description: 'Adds an allow or deny rule for an address range (CIDR). Deny rules win over allow rules. Requires policy.write.'
       responses:
         '201':
           description: Created
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/Rule'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4229,8 +4281,10 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+              required: [ip]
+              properties:
+                ip:
+                  type: string
       description: >-
         Says what the address rules make of an address ({"ip": "…"}): enabled,
         allowed, and the reason. The same decision every sign-in gets while the
@@ -4242,7 +4296,14 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [allowed, enabled, reason]
+                properties:
+                  allowed:
+                    type: boolean
+                  enabled:
+                    type: boolean
+                  reason:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4274,8 +4335,10 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
       description: >-
         Turns the organisation's address rules on or off ({"enabled": bool}).
         While they are on, every sign-in to the organisation (password,
@@ -4300,7 +4363,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [enabled]
+                properties:
+                  enabled:
+                    type: boolean
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4331,7 +4397,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Deletes one of the organisation''s address rules. Requires policy.write.'
       responses:
         '204':
           description: No Content
@@ -4368,7 +4434,14 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [recent, stats]
+                properties:
+                  recent:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BotEvent'
+                  stats:
+                    $ref: '#/components/schemas/Stats'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4434,8 +4507,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/RiskSettings'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4464,8 +4536,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/BotSettings'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4498,8 +4569,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/BotSettings'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4560,8 +4630,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/ThreatSummary'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4674,7 +4743,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     SignInUnavailable:
-      description: The sign-in lockout could not be evaluated (its counters could not be read or written), so the attempt was refused (`auth.sign_in_unavailable`, retryable). The same answer whatever the password and whether the address has an account.
+      description: The sign-in lockout could not be evaluated (its counters could not be read or written), or the password could not be checked within a few seconds because the service is busy, so the attempt was refused and not counted (`auth.sign_in_unavailable`, retryable). The same answer whatever the password and whether the address has an account.
       content:
         application/json:
           schema:
@@ -4881,7 +4950,7 @@ components:
         /v1/auth/mfa (token sign-in) or /v1/auth/session/mfa (hosted login).
         Each challenge is audited as auth.mfa_challenged with its reason
         (enrolled, tenant_required, admin_required or user_required) and how
-        the first factor was proven (password or magic_link); meeting it as
+        the first factor was proven (password, magic_link, social or ldap); meeting it as
         auth.mfa_verified.
       properties:
         mfa_required:
@@ -5402,6 +5471,19 @@ components:
             Recursive JSON condition tree. An empty object {} means unconditional.
             Logical nodes: {"all":[...]}, {"any":[...]}, {"not": node}.
             Comparison leaf: {"attr":"subject.dept","op":"eq","value":"eng"}.
+            A leaf's value may instead reference another attribute,
+            {"attr":"subject.region","op":"eq","value":{"attr":"resource.region"}},
+            for eq, ne, gt, gte, lt, lte, in, nin and contains (not regex, prefix,
+            suffix or exists). The reference is exactly
+            {"attr":"<subject|resource|context>.<path>"}, names an attribute other
+            than the leaf's own, and is the whole value, never an array element. A
+            string value is always a literal, even "resource.region". When either
+            attribute a reference compares is absent or null, an allow policy does
+            not match and a deny policy does. A comparison with a literal against an
+            absent attribute is false, except nin, which holds. prefix and suffix
+            need a non-empty string value and match only string attributes; any
+            other value is refused with 422 abac.condition_invalid, as is contains
+            or regex with an empty value.
           additionalProperties: true
         priority:
           type: integer
@@ -5442,7 +5524,7 @@ components:
           minLength: 1
         condition:
           type: object
-          description: Optional condition tree. Omit or send {} for unconditional.
+          description: Optional condition tree. Omit or send {} for unconditional. Same grammar as ABACPolicy.condition, including attribute references; a malformed condition or reference is refused with 422 abac.condition_invalid.
           additionalProperties: true
         priority:
           type: integer
@@ -5507,3 +5589,296 @@ components:
           description: Grant-path trace (present only when ?explain=true).
           items:
             type: string
+    AuthenticatorSelection:
+      type: object
+      properties:
+        authenticatorAttachment:
+          type: string
+        requireResidentKey:
+          type: boolean
+        residentKey:
+          type: string
+        userVerification:
+          type: string
+    BotEvent:
+      type: object
+      required: [created_at, id, score, user_agent, verdict]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        ip:
+          type: string
+        score:
+          type: number
+        user_agent:
+          type: string
+        verdict:
+          type: string
+    BotSettings:
+      type: object
+      required: [captcha, honeypot, score_threshold, signature, ua_check]
+      properties:
+        captcha:
+          type: boolean
+        honeypot:
+          type: boolean
+        score_threshold:
+          type: number
+        signature:
+          type: boolean
+        ua_check:
+          type: boolean
+    CredentialDescriptor:
+      type: object
+      required: [id, type]
+      properties:
+        id: {}
+        transports:
+          type: array
+          items:
+            type: string
+        type:
+          type: string
+    CredentialParameter:
+      type: object
+      required: [alg, type]
+      properties:
+        alg:
+          type: integer
+        type:
+          type: string
+    OTPFactor:
+      type: object
+      required: [channel, created_at, destination, id, verified]
+      properties:
+        channel:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        destination:
+          type: string
+        id:
+          type: string
+          format: uuid
+        verified:
+          type: boolean
+    PublicKeyCredentialCreationOptions:
+      type: object
+      required: [challenge, rp, user]
+      properties:
+        attestation:
+          type: string
+        attestationFormats:
+          type: array
+          items:
+            type: string
+        authenticatorSelection:
+          $ref: '#/components/schemas/AuthenticatorSelection'
+        challenge: {}
+        excludeCredentials:
+          type: array
+          items:
+            $ref: '#/components/schemas/CredentialDescriptor'
+        extensions: {}
+        hints:
+          type: array
+          items:
+            type: string
+        pubKeyCredParams:
+          type: array
+          items:
+            $ref: '#/components/schemas/CredentialParameter'
+        rp:
+          $ref: '#/components/schemas/RelyingPartyEntity'
+        timeout:
+          type: integer
+        user:
+          $ref: '#/components/schemas/UserEntity'
+    PublicKeyCredentialRequestOptions:
+      type: object
+      required: [challenge]
+      properties:
+        allowCredentials:
+          type: array
+          items:
+            $ref: '#/components/schemas/CredentialDescriptor'
+        challenge: {}
+        extensions: {}
+        hints:
+          type: array
+          items:
+            type: string
+        rpId:
+          type: string
+        timeout:
+          type: integer
+        userVerification:
+          type: string
+    PushChallenge:
+      type: object
+      required: [action, context, created_at, expires_at, id, status, user_id]
+      properties:
+        action:
+          type: string
+        context: {}
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+        user_id:
+          type: string
+          format: uuid
+    PushDevice:
+      type: object
+      required: [created_at, id, last_seen_at, name, platform]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        last_seen_at:
+          type: string
+          format: date-time
+        name:
+          type: string
+        platform:
+          type: string
+    RecoveryStatus:
+      type: object
+      required: [enrolled, remaining, total]
+      properties:
+        enrolled:
+          type: boolean
+        remaining:
+          type: integer
+        total:
+          type: integer
+    RelyingPartyEntity:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+    Rule:
+      type: object
+      required: [action, cidr, created_at, id, label, tenant_id]
+      properties:
+        action:
+          type: string
+        cidr:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+    Stats:
+      type: object
+      required: [blocked_24h, challenged_24h, threshold]
+      properties:
+        blocked_24h:
+          type: integer
+        challenged_24h:
+          type: integer
+        threshold:
+          type: number
+    ThreatSummary:
+      type: object
+      required: [affected_accounts, high_severity_24h, open, resolved_24h]
+      properties:
+        affected_accounts:
+          type: integer
+        high_severity_24h:
+          type: integer
+        open:
+          type: integer
+        resolved_24h:
+          type: integer
+    Tuple:
+      type: object
+      required: [id, object, relation, subject]
+      properties:
+        id:
+          type: string
+          format: uuid
+        object:
+          type: string
+        relation:
+          type: string
+        subject:
+          type: string
+    UserEntity:
+      type: object
+      required: [displayName, id, name]
+      properties:
+        displayName:
+          type: string
+        id: {}
+        name:
+          type: string
+    confirmEnrollInput:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+    registerFinishInput:
+      type: object
+      required: [credential, name, session_id]
+      properties:
+        credential: {}
+        name:
+          type: string
+        session_id:
+          type: string
+          format: uuid
+    verifyInput:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+    webauthnVerifyInput:
+      type: object
+      required: [credential, session_id]
+      properties:
+        credential: {}
+        session_id:
+          type: string
+          format: uuid
+    loginBeginInput:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+    loginFinishInput:
+      type: object
+      required: [credential, session_id]
+      properties:
+        credential: {}
+        session_id:
+          type: string
+          format: uuid

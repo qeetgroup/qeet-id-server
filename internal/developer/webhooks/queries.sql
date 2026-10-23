@@ -36,16 +36,19 @@ SET delivered_at = NULL, dead_at = NULL, error = NULL, next_attempt_at = NOW()
 FROM tenant.webhook_subscriptions sub
 WHERE d.id = @delivery_id AND d.subscription_id = sub.id AND sub.tenant_id = @tenant_id;
 
--- GetSubscriptionsForEvent returns subscription IDs for Enqueue: active
--- subscriptions matching the event type (or subscribed to all events).
+-- GetSubscriptionsForEvent returns subscription IDs for Enqueue: the active
+-- subscriptions that name the event type.
 -- name: GetSubscriptionsForEvent :many
 SELECT id FROM tenant.webhook_subscriptions
 WHERE tenant_id = @tenant_id AND disabled_at IS NULL
-  AND (@event_type::text = ANY(events) OR events = '{}'::text[]);
+  AND @event_type::text = ANY(events);
 
+-- InsertDelivery queues an event for a subscription, once: the same event
+-- again is a no-op.
 -- name: InsertDelivery :exec
-INSERT INTO tenant.webhook_deliveries (subscription_id, event_type, payload, next_attempt_at)
-VALUES (@subscription_id, @event_type, @payload, NOW());
+INSERT INTO tenant.webhook_deliveries (subscription_id, event_id, event_type, payload, next_attempt_at)
+VALUES (@subscription_id, @event_id, @event_type, @payload, NOW())
+ON CONFLICT (subscription_id, event_id) DO NOTHING;
 
 -- name: MarkDeliverySucceeded :exec
 UPDATE tenant.webhook_deliveries

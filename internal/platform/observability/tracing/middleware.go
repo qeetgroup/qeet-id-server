@@ -8,17 +8,10 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// Middleware instruments HTTP handlers with OpenTelemetry, starting (or
-// continuing, via the configured propagators) a server span per request.
-//
-// When tracing is disabled (no endpoint configured) the global tracer is a
-// no-op, so this is effectively free and always safe to mount.
-//
-// Span names use the matched chi route pattern (e.g. "GET /v1/users/{id}")
-// rather than the raw path, keeping span cardinality bounded — mirroring how
-// the metrics middleware labels by route. Because chi only resolves the
-// pattern after routing, otelhttp starts with the method as the span name and
-// we refine it once the route is known.
+// Middleware starts or continues a server span per request. Spans are named by
+// method and chi route pattern (e.g. "GET /v1/users/{id}"), not the raw path,
+// to bound cardinality; the name is set once routing has matched. With tracing
+// disabled it costs next to nothing.
 func Middleware(next http.Handler) http.Handler {
 	instrumented := otelhttp.NewHandler(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

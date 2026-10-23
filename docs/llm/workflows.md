@@ -38,12 +38,12 @@ staging or production.
 6  mount it                        internal/bootstrap/router.go
 7  permission                      internal/bootstrap/permissions.go
 8  OpenAPI                         api/openapi/<context>.yaml     ← CI FAILS WITHOUT THIS
-9  tests                           unit + integration
-10 verify                          make test && make test-integration
+9  tests                           unit
+10 verify                          make test
 ```
 
 > **Step 2 matters.** The convention is `<domain>.go`, not a layered `handler/service/repository`
-> split. Only four packages have a `repository.go` and only twelve have an `http.go` — creating one
+> split. Only four packages have a `repository.go` and sixteen have an `http.go` — creating one
 > where the package does not already use that shape breaks the local pattern. Check
 > [subsystems.md](subsystems.md) before adding a file.
 
@@ -57,7 +57,7 @@ genuinely unauthenticated endpoints, and say why in the code.
 path or body, and carry `WHERE tenant_id = $1` into every query.
 
 **The coverage gate will fail CI** if the route is not in an OpenAPI document —
-`tests/integration/coverage_test.go`.
+`internal/bootstrap/openapi_coverage_test.go`.
 
 A new authenticated route **refuses access tokens issued to applications** (they carry `client_id`)
 by default: they are for the application's own use, not account or organisation management. Only routes
@@ -107,7 +107,7 @@ There is no RLS to catch a mistake.
 3  check session/token impact      does it change qe_ls, qe_td, or token claims?
 4  check API impact                api/openapi/auth.yaml
 5  security review                 SECURITY.md + qeet-context/SECURITY.md
-6  tests                           unit + tests/security/ + integration
+6  tests                           unit
 7  cross-repo                      qeet-id-context/CHANGE-MATRIX.md
 ```
 
@@ -130,7 +130,7 @@ Escalate before implementing.
 4  tenant implications             does it change what crosses a tenant boundary?
 5  console impact                  a new permission needs UI work — the console is UX-only
 6  tests                           MUST include a cross-tenant denial test
-7  verify                          make test && make test-integration
+7  verify                          make test
 ```
 
 **Remember:** route-level RBAC applies to **user JWTs only**. API keys and service principals bypass
@@ -167,9 +167,9 @@ its own decision.
 
 ```text
 1  sync or async?                  async if retryable, slow, or must survive the request
-2  existing pattern                internal/platform/jobs/worker.go
+2  existing pattern                internal/platform/worker/worker.go
 3  event-driven?                   write to the outbox in the SAME transaction as the state change
-4  register it                     cmd/worker/main.go and/or embedded in the API
+4  register it                     the workers list in bootstrap/dependencies.go (API and cmd/worker)
 5  scheduled instead?              add it to bootstrap.MaintenanceJobs — once per interval across instances
 6  retry + dead-letter             follow internal/developer/webhooks/
 7  observability                   metrics and structured logs — no PII
@@ -194,7 +194,7 @@ tenant explicitly through the job payload.
 4  claims impact                   → EVERY Qeet product and external RPs
 5  spec conformance                cite the RFC; do not improvise
 6  api/openapi/federation.yaml
-7  tests                           integration, incl. tests/integration/signing_keys_test.go
+7  tests                           unit
 8  cross-repo                      qeet-id-context/CHANGE-MATRIX.md — coordinate BEFORE merging
 ```
 
@@ -213,7 +213,7 @@ There are **two token endpoints** — `/v1/oauth/token-code` (all OIDC grants) a
 3  parser safety                   SAML XML, SCIM payloads and LDAP responses are UNTRUSTED input
 4  spec conformance                cite the RFC or the SCIM/SAML profile — do not improvise
 5  api/openapi/federation.yaml
-6  tests                           unit + the mapped integration test
+6  tests                           unit
 7  external impact                 a customer's Okta/Entra tenant is configured against this
 ```
 
@@ -233,10 +233,10 @@ Additive only, or a deprecation window with direct customer notice. See
 
 ```text
 1  behaviour must not change       if it changes, it is not a refactor
-2  respect R1/R2                   tests/architecture/arch_test.go will fail otherwise
+2  respect R1/R2                   make lint fails otherwise (depguard)
 3  wiring stays in bootstrap
 4  no cross-context concrete imports
-5  make test                       architecture fitness runs here
+5  make test
 6  git diff                        confirm no behavioural change slipped in
 ```
 
@@ -260,19 +260,14 @@ review before merge.
 
 ```bash
 go build ./...
-go test -race ./...        # includes architecture fitness
-make lint                  # go vet — NOT the CI lint
+go test -race ./...        # includes the OpenAPI route-coverage gate
+make lint                  # go vet + golangci-lint, as CI runs it
+make test-db               # if you touched SQL, tenant scoping or sign-in
 git diff                   # no secrets, no unrelated changes, no dbgen hand-edits
 ```
 
-If the change touched a route, also:
-
-```bash
-make test-integration      # includes the OpenAPI route-coverage gate
-```
-
-**`make lint` is `go vet` only.** CI additionally runs `golangci-lint` v2.14.0 with `errcheck`,
-`staticcheck` and `misspell` on new code. Passing locally does not guarantee CI passes.
+A query on a tenant-owned table must mention `tenant_id`, or `internal/platform/database/tenantguard` fails `go test`;
+an exception needs an allowlist line with a reason.
 
 ### Ask before proceeding if the change would
 

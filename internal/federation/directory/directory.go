@@ -1,3 +1,7 @@
+// Package directory gives administrators one view of a tenant's directory
+// connections (its SCIM endpoint and LDAP connections): sync activity and
+// errors, failure alerts, and the attribute mappings applied to the profiles
+// they provision.
 package directory
 
 import (
@@ -15,6 +19,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
+// Connection is a SCIM or LDAP directory connection, as listed.
 type Connection struct {
 	ID             string     `json:"id"`
 	Name           string     `json:"name"`
@@ -32,24 +37,30 @@ type Connection struct {
 	ServerURL      *string    `json:"server_url"`
 }
 
+// SCIMSource lists a tenant's SCIM connection.
 type SCIMSource interface {
 	Config(context.Context, uuid.UUID) (*scim.ConfigView, error)
 }
 
+// LDAPSource lists a tenant's LDAP connections.
 type LDAPSource interface {
 	List(context.Context, uuid.UUID) ([]ldap.Connection, error)
 }
 
+// Service gives one view of a tenant's directory connections, their events
+// and their mappings.
 type Service struct {
 	scim SCIMSource
 	ldap LDAPSource
 	pool *pgxpool.Pool
 }
 
+// NewService returns the directory service.
 func NewService(scimSource SCIMSource, ldapSource LDAPSource) *Service {
 	return &Service{scim: scimSource, ldap: ldapSource}
 }
 
+// List returns the tenant's connections.
 func (service *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, error) {
 	if tenantID == uuid.Nil {
 		return nil, errs.ErrUnauthorized
@@ -90,10 +101,12 @@ func (service *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connect
 	return records, nil
 }
 
+// Handler serves the directory HTTP API.
 type Handler struct {
 	Service *Service
 }
 
+// Mount registers the directory routes on r.
 func (handler *Handler) Mount(router chi.Router) {
 	router.Get("/tenants/{tenantID}/directory/connections", handler.list)
 	router.Get("/tenants/{tenantID}/directory/activity", handler.events)

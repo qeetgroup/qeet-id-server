@@ -27,6 +27,7 @@ import (
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+// PushDevice is a phone paired to approve sign-ins by push.
 type PushDevice struct {
 	ID         uuid.UUID `json:"id"`
 	Name       string    `json:"name"`
@@ -35,6 +36,8 @@ type PushDevice struct {
 	LastSeenAt time.Time `json:"last_seen_at"`
 }
 
+// PushChallenge is a sign-in or step-up waiting for approval on a paired
+// phone.
 type PushChallenge struct {
 	ID        uuid.UUID       `json:"id"`
 	UserID    uuid.UUID       `json:"user_id"`
@@ -45,15 +48,14 @@ type PushChallenge struct {
 	CreatedAt time.Time       `json:"created_at"`
 }
 
-// PushChallengeContext is the payload delivered via push notification and
-// displayed in the app so the user can make an informed approve/deny decision.
+// PushChallengeContext is shown in the app so the user can decide whether to
+// approve. SessionID is the session a step-up request was raised for; only
+// that session is stepped up when it is approved.
 type PushChallengeContext struct {
 	IP        string `json:"ip,omitempty"`
 	UserAgent string `json:"user_agent,omitempty"`
 	Location  string `json:"location,omitempty"`
 	Timestamp string `json:"timestamp"`
-	// SessionID is the session a step-up request was raised for; only that
-	// session's step-up is recorded when it is approved.
 	SessionID string `json:"session_id,omitempty"`
 }
 
@@ -133,6 +135,7 @@ func (s *Service) registerPushDeviceTx(ctx context.Context, tx pgx.Tx, userID uu
 	return d, tok, nil
 }
 
+// ListPushDevices returns the user's paired phones.
 func (s *Service) ListPushDevices(ctx context.Context, userID uuid.UUID) ([]PushDevice, error) {
 	rows, err := s.q.ListPushDevices(ctx, userID)
 	if err != nil {
@@ -151,6 +154,7 @@ func (s *Service) ListPushDevices(ctx context.Context, userID uuid.UUID) ([]Push
 	return out, nil
 }
 
+// RevokePushDevice unpairs one of the user's phones.
 func (s *Service) RevokePushDevice(ctx context.Context, userID, deviceID uuid.UUID) error {
 	n, err := s.q.DeletePushDevice(ctx, dbgen.DeletePushDeviceParams{ID: deviceID, UserID: userID})
 	if err != nil {
@@ -162,8 +166,9 @@ func (s *Service) RevokePushDevice(ctx context.Context, userID, deviceID uuid.UU
 	return nil
 }
 
-// CreatePushChallenge inserts a pending challenge, fans out a push notification
-// to every registered device of the user, and returns the challenge ID.
+// CreatePushChallenge records a pending challenge, sends it to every phone
+// the user has linked, and returns its ID. It fails with
+// ErrMFAPushDeliveryFailed, closing the challenge, when no phone accepted it.
 func (s *Service) CreatePushChallenge(ctx context.Context, userID uuid.UUID, action string, pctx PushChallengeContext) (uuid.UUID, error) {
 	ctxJSON, err := json.Marshal(pctx)
 	if err != nil {
@@ -388,29 +393,25 @@ func secretHash(secret string) string {
 // Approval requests reach a phone through Expo's push service, which hands
 // them to Apple's or Google's.
 const (
-	// pushSendTimeout bounds one call to the push service; a sign-in waits on it.
-	pushSendTimeout = 10 * time.Second
-	// pushRequestTTL is how long the push service keeps trying to deliver a
-	// request: as long as it can be answered (two minutes, migration 0086).
-	pushRequestTTL = 2 * time.Minute
-	// pushChannelID is the Android notification channel the mobile app sets
-	// up for approval requests, at the highest importance.
-	pushChannelID = "push-mfa"
+	pushSendTimeout = 10 * time.Second // one call to the push service; a sign-in waits on it
+	pushRequestTTL  = 2 * time.Minute  // delivery retries, as long as a challenge can be answered
+	pushChannelID   = "push-mfa"       // the app's highest-importance Android notification channel
 )
 
-// errPushDeviceGone: the push service says the app is no longer installed
-// on that phone (DeviceNotRegistered).
+// errPushDeviceGone means the push service reports the app is not installed on
+// that phone (DeviceNotRegistered).
 var errPushDeviceGone = errors.New("push device not registered")
 
+// expoPushMessage is one message to the push service. Priority "high" wakes an
+// idle Android phone; "normal" can wait for it.
 type expoPushMessage struct {
-	To    string         `json:"to"`
-	Title string         `json:"title"`
-	Body  string         `json:"body"`
-	Data  map[string]any `json:"data"`
-	// High priority wakes an idle Android phone; normal can wait for it.
-	Priority  string `json:"priority"`
-	TTL       int    `json:"ttl"`
-	ChannelID string `json:"channelId"`
+	To        string         `json:"to"`
+	Title     string         `json:"title"`
+	Body      string         `json:"body"`
+	Data      map[string]any `json:"data"`
+	Priority  string         `json:"priority"`
+	TTL       int            `json:"ttl"`
+	ChannelID string         `json:"channelId"`
 }
 
 // expoPushTicket is the push service's answer for one message: "ok", or
@@ -462,7 +463,7 @@ func (s *Service) sendExpoPush(ctx context.Context, pushToken string, challengeI
 		req.Header.Set("Authorization", "Bearer "+s.pushAccessToken)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:forbidigo // operator-configured Expo endpoint, not tenant-controlled
 	if err != nil {
 		return err
 	}
@@ -709,7 +710,7 @@ func (s *Service) auditPushDevice(r *http.Request, tenantID *uuid.UUID, owner, d
 	defer tx.Rollback(ctx)
 	actorID, actorType := &owner, "device"
 	if p := httpx.PrincipalFromCtx(ctx); p != nil {
-		actorID, actorType = auditActor(r)
+		actorID, actorType = audit.ActorOf(r).Identity()
 	}
 	if audit.Record(ctx, tx, audit.Event{
 		TenantID: tenantID, ActorUserID: actorID, ActorType: actorType,

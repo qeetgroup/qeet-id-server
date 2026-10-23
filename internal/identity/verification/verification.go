@@ -1,6 +1,6 @@
-// Package verification handles "send-a-code, prove-you-own-it" flows for
-// email and phone. The Sender abstraction lets us swap SendGrid / Twilio
-// at the boundary; tests use the LogSender.
+// Package verification proves a user controls an email address or phone number
+// by sending a one-time code, both to verify the address on file and to change
+// the account's email. Codes go out through a notifier.Sender.
 package verification
 
 import (
@@ -25,6 +25,8 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
+// Service proves a user controls an email address or phone number, by a code
+// sent to it.
 type Service struct {
 	pool   *pgxpool.Pool
 	q      *dbgen.Queries
@@ -53,6 +55,7 @@ const (
 	purposeChangeEmail = "change_email"
 )
 
+// NewService returns the verification service.
 func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration) *Service {
 	if ttl <= 0 {
 		ttl = 10 * time.Minute
@@ -63,12 +66,12 @@ func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration) *
 // latestCode is the newest outstanding verification row for a user, together
 // with the hash of the code it was issued for.
 type latestCode struct {
-	id        uuid.UUID
-	codeHash  string
-	value     string // the email or phone carried on the row
-	expiresAt time.Time
-	usedAt    *time.Time
-	attempts  int
+	id        uuid.UUID  // the row ID
+	codeHash  string     // hash of the code
+	value     string     // the email or phone carried on the row
+	expiresAt time.Time  // when the code expires
+	usedAt    *time.Time // when it was used; nil if unused
+	attempts  int        // wrong guesses so far
 }
 
 // maxVerificationAttempts is the guess budget for a single code. Five wrong
@@ -82,23 +85,9 @@ func (l latestCode) matches(code string) bool {
 	return subtle.ConstantTimeCompare([]byte(codes.Hash(code)), []byte(l.codeHash)) == 1
 }
 
-// newestEmailCode / newestPhoneCode read the most recent row for a user and
-// lock it for update.
-//
-// They deliberately do NOT filter on the submitted code's hash. The generated
-// GetLatest*Verification queries match on (user_id, code_hash), which means the
-// "latest" row is the latest one *for that code* — so every code ever issued
-// stayed valid until it expired, and asking for a resend left the previous code
-// working alongside the new one. Selecting the newest row and comparing the
-// hash in Go makes "only the most recently sent code is accepted" a property of
-// the lookup itself.
-//
-// Both email flows (verify-your-address and change-your-address) write to
-// email_verifications; the purpose column keeps them apart, so the newest code
-// is the newest one of the flow being confirmed.
-//
-// Raw SQL because sqlc isn't wired into the build here; fold these into
-// queries.sql at the next `sqlc generate`.
+// newestEmailCode locks and returns userID's most recent email code for purpose.
+// It doesn't filter on the submitted code, so only the newest code can match: a
+// resend supersedes the code before it. Hand-written SQL, not sqlc.
 func newestEmailCode(ctx context.Context, tx pgx.Tx, userID uuid.UUID, purpose string) (latestCode, error) {
 	var l latestCode
 	err := tx.QueryRow(ctx, `
@@ -112,6 +101,7 @@ func newestEmailCode(ctx context.Context, tx pgx.Tx, userID uuid.UUID, purpose s
 	return l, err
 }
 
+// newestPhoneCode is newestEmailCode for phone codes.
 func newestPhoneCode(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (latestCode, error) {
 	var l latestCode
 	err := tx.QueryRow(ctx, `
@@ -125,15 +115,10 @@ func newestPhoneCode(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (latestCo
 	return l, err
 }
 
-// recordFailedAttempt charges one guess against the code and reports whether
-// that exhausted the budget. Retiring the row here (used_at) means the very
-// attempt that hits the cap also closes the code, rather than leaving one more
-// usable guess behind.
-//
-// The caller must COMMIT after this even though it is about to return an error:
-// the whole point is that a failed confirm has a persistent cost. Rolling back,
-// which is the natural shape of the surrounding transaction, would discard the
-// count and leave the budget infinite.
+// recordFailedAttempt charges one guess against code row id and reports whether
+// that exhausted the budget, retiring the code on the guess that hits the cap.
+// The caller must commit even though it then returns an error, or the count is
+// lost and the budget is unlimited.
 func recordFailedAttempt(ctx context.Context, tx pgx.Tx, table string, id uuid.UUID) (bool, error) {
 	// #nosec G201 -- table is one of two package-local literals, never caller input.
 	q := `UPDATE "user".` + table + `
@@ -191,6 +176,7 @@ func checkUsable(l latestCode, code string) error {
 	return nil
 }
 
+// StartEmail sends a verification code to the user's email address.
 func (s *Service) StartEmail(ctx context.Context, userID uuid.UUID, email string, who Requester) error {
 	// Default to the address on file so the caller doesn't have to pass their
 	// own email just to verify it (POST .../verify/email/start with no body).
@@ -326,10 +312,10 @@ func isCodeRefusal(err error) bool {
 		errors.Is(err, errs.ErrVerifyCodeUsed) || errors.Is(err, errs.ErrVerifyAttemptsExceeded)
 }
 
-// StartEmailChange sends a verification code to a *new* address the user wants
-// to move to. It pre-checks that no other account already owns that address
-// (email is globally unique) and sends the code to the new address, since that's
-// the one whose control we're proving.
+// StartEmailChange sends a code to the address the user wants to move to, to
+// prove they control it. An address another account holds (email is unique
+// platform-wide) is sent a notice instead, and the caller gets the same answer,
+// so the reply doesn't show whether the address has an account.
 func (s *Service) StartEmailChange(ctx context.Context, userID uuid.UUID, newEmail string, who Requester) error {
 	newEmail = strings.TrimSpace(newEmail)
 	if newEmail == "" {
@@ -342,12 +328,14 @@ func (s *Service) StartEmailChange(ctx context.Context, userID uuid.UUID, newEma
 	if err != nil {
 		return err
 	}
-	if taken {
-		return errs.ErrEmailTaken
-	}
+	// A code is stored either way, so it supersedes an earlier one alike. One
+	// for a held address is never sent, and confirming it couldn't assign it.
 	code, err := s.issueEmailCode(ctx, userID, newEmail, purposeChangeEmail, who)
 	if err != nil {
 		return err
+	}
+	if taken {
+		return s.noticeAddressInUse(ctx, newEmail)
 	}
 	expiry := fmt.Sprintf("%d minutes", int(s.ttl.Minutes()))
 	return s.sender.Send(ctx, notifier.Message{
@@ -360,6 +348,20 @@ func (s *Service) StartEmailChange(ctx context.Context, userID uuid.UUID, newEma
 			"Use the code below to confirm your new email address.",
 			code, expiry,
 		),
+	})
+}
+
+// noticeAddressInUse tells an address another account holds that it was asked
+// for, and why no code came.
+func (s *Service) noticeAddressInUse(ctx context.Context, email string) error {
+	intro := "Someone asked to use this email address for a Qeet ID account, but it already belongs to another Qeet ID account, so it can't be used."
+	note := "If that was you, sign in with the account that uses this address. If it wasn't, you can ignore this email."
+	return s.sender.Send(ctx, notifier.Message{
+		Channel: "email",
+		To:      email,
+		Subject: "This email address already has an account",
+		Body:    intro + " " + note,
+		HTML:    emailtmpl.Notice("This email address already has an account", intro, note),
 	})
 }
 
@@ -438,6 +440,7 @@ func (s *Service) noticeEmailChanged(ctx context.Context, userID uuid.UUID, oldE
 	}
 }
 
+// StartPhone sends a verification code to the user's phone number.
 func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string) error {
 	// Default to the number on file when the body omits it.
 	if strings.TrimSpace(phone) == "" {
@@ -472,6 +475,7 @@ func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string
 	})
 }
 
+// ConfirmPhone verifies the user's phone number with the code sent to it.
 func (s *Service) ConfirmPhone(ctx context.Context, userID uuid.UUID, code string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

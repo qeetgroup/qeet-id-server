@@ -1,15 +1,7 @@
-// Package rebac is fine-grained, relationship-based authorization (ReBAC),
-// a Zanzibar/OpenFGA-style subset: relationship tuples plus a recursive Check.
-//
-// A tuple asserts "subject is `relation` of object". A subject is either a
-// direct user (user:<id>) or a userset (<type>:<id>#<relation>) — meaning
-// everyone with that relation on that object. Check answers "does user U have
-// `relation` on object?" by walking direct tuples and expanding usersets
-// recursively, with a depth cap and a visited-set so cycles can't loop forever.
-// It complements RBAC (coarse roles) and ABAC (policy attributes); per-tenant.
-//
-// Expand (and the /relation-tuples/graph endpoint) reuse the same traversal to
-// return the full reachable graph — "who/what can reach this resource?".
+// Package rebac is per-tenant relationship-based authorization (ReBAC), a
+// Zanzibar-style subset. A tuple says a subject (user:<id>, or the userset
+// <type>:<id>#<relation>) holds a relation on an object; Check walks tuples and
+// expands usersets recursively, with a depth cap and a visited set for cycles.
 package rebac
 
 import (
@@ -28,6 +20,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // maxDepth bounds userset expansion (defense-in-depth alongside the visited set).
@@ -144,11 +137,13 @@ func resolve(fetch fetcher, objType, objID, relation, userID string, visited map
 	return false, nil, nil
 }
 
+// Service manages the relationship tuples.
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 }
 
+// NewService returns the relationship service.
 func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool, q: dbgen.New(pool)} }
 
 // Tuple is the API/read projection of a stored relationship.
@@ -166,13 +161,9 @@ func subjectString(typ, id, rel string) string {
 	return typ + ":" + id + "#" + rel
 }
 
-// Write upserts a relationship tuple. object = "type:id", subject =
-// "user:<id>" or "type:id#relation".
-func (s *Service) Write(ctx context.Context, tenantID uuid.UUID, object, relation, subject string) (*Tuple, error) {
-	return s.WriteWithActor(ctx, tenantID, object, relation, subject, audit.Actor{Type: "system"})
-}
-
-func (s *Service) WriteWithActor(ctx context.Context, tenantID uuid.UUID, object, relation, subject string, actor audit.Actor) (*Tuple, error) {
+// Write upserts a relationship tuple, recorded as actor's. object = "type:id",
+// subject = "user:<id>" or "type:id#relation".
+func (s *Service) Write(ctx context.Context, tenantID uuid.UUID, object, relation, subject string, actor audit.Actor) (*Tuple, error) {
 	o, ok := parseObject(object)
 	if !ok {
 		return nil, errs.ErrReBACObjectInvalid
@@ -215,11 +206,8 @@ func (s *Service) WriteWithActor(ctx context.Context, tenantID uuid.UUID, object
 	return tuple, nil
 }
 
-func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
-	return s.DeleteWithActor(ctx, id, tenantID, audit.Actor{Type: "system"})
-}
-
-func (s *Service) DeleteWithActor(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+// Delete removes one of the tenant's relationship tuples, recorded as actor's.
+func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -339,58 +327,60 @@ type Graph struct {
 // graphNodeID formats a GraphNode ID from type+id parts.
 func graphNodeID(typ, id string) string { return typ + ":" + id }
 
-// expand is the pure recursive helper for Expand — builds nodes+edges by BFS
-// through the fetcher, capped at maxExpandDepth hops. visited tracks "node+relation"
-// pairs already enqueued to prevent cycle-induced infinite loops.
+// maxExpandDepth caps how many userset hops Expand follows.
 const maxExpandDepth = 10
 
-func expand(fetch fetcher, objType, objID, relation string, depth int, visited map[string]bool, nodes map[string]GraphNode, edges *[]GraphEdge) error {
-	if depth > maxExpandDepth {
-		return nil
+// expand returns the nodes and edges reachable from objType:objID#relation,
+// following at most limit userset hops. It walks breadth first, so each
+// object#relation is expanded once, at its fewest hops, and cycles end.
+func expand(fetch fetcher, objType, objID, relation string, limit int) (map[string]GraphNode, []GraphEdge, error) {
+	type step struct {
+		typ, id, relation string
+		depth             int
 	}
-	key := objType + ":" + objID + "#" + relation
-	if visited[key] {
-		return nil
-	}
-	visited[key] = true
-
-	fromID := graphNodeID(objType, objID)
-	if _, ok := nodes[fromID]; !ok {
-		nodes[fromID] = GraphNode{ID: fromID, Type: objType, Label: objID}
-	}
-
-	tuples, err := fetch(objType, objID, relation)
-	if err != nil {
-		return err
-	}
-	for _, t := range tuples {
-		toID := graphNodeID(t.subjectType, t.subjectID)
-		if _, ok := nodes[toID]; !ok {
-			nodes[toID] = GraphNode{ID: toID, Type: t.subjectType, Label: t.subjectID}
+	nodes := map[string]GraphNode{}
+	edges := make([]GraphEdge, 0)
+	addNode := func(typ, id string) string {
+		nid := graphNodeID(typ, id)
+		if _, ok := nodes[nid]; !ok {
+			nodes[nid] = GraphNode{ID: nid, Type: typ, Label: id}
 		}
-		// Edge label: the named relation (augmented with the userset relation if
-		// this is a userset reference, so "viewer via group#member" reads clearly).
-		edgeRelation := relation
-		if t.subjectRelation != "" {
-			edgeRelation = relation + " → " + t.subjectRelation
+		return nid
+	}
+	queue := []step{{objType, objID, relation, 0}}
+	queued := map[string]bool{objType + ":" + objID + "#" + relation: true}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		fromID := addNode(cur.typ, cur.id)
+		tuples, err := fetch(cur.typ, cur.id, cur.relation)
+		if err != nil {
+			return nil, nil, err
 		}
-		*edges = append(*edges, GraphEdge{From: fromID, To: toID, Relation: edgeRelation})
+		for _, t := range tuples {
+			toID := addNode(t.subjectType, t.subjectID)
+			// A userset edge names both relations, so "viewer → member" reads
+			// as "viewer via group#member".
+			edgeRelation := cur.relation
+			if t.subjectRelation != "" {
+				edgeRelation = cur.relation + " → " + t.subjectRelation
+			}
+			edges = append(edges, GraphEdge{From: fromID, To: toID, Relation: edgeRelation})
 
-		// Recurse into usersets: "group:eng#member" means we also expand
-		// group:eng at its own "member" relation.
-		if t.subjectRelation != "" {
-			if err := expand(fetch, t.subjectType, t.subjectID, t.subjectRelation, depth+1, visited, nodes, edges); err != nil {
-				return err
+			// "group:eng#member" also expands group:eng at its "member" relation.
+			key := t.subjectType + ":" + t.subjectID + "#" + t.subjectRelation
+			if t.subjectRelation != "" && cur.depth < limit && !queued[key] {
+				queued[key] = true
+				queue = append(queue, step{t.subjectType, t.subjectID, t.subjectRelation, cur.depth + 1})
 			}
 		}
 	}
-	return nil
+	return nodes, edges, nil
 }
 
-// Expand builds a graph of all subject nodes reachable from object+relation.
-// depth is capped at maxExpandDepth. The result's Nodes and Edges are
-// deduplicated. This is the "who/what can reach this resource?" query, answering
-// it as a graph rather than as a single boolean.
+// Expand returns the graph of every subject reachable from object#relation
+// ("who can reach this resource?"), following usersets up to depth hops
+// (maxExpandDepth when depth is out of range). Each node appears once.
 func (s *Service) Expand(ctx context.Context, tenantID uuid.UUID, object, relation string, depth int) (*Graph, error) {
 	o, ok := parseObject(object)
 	if !ok {
@@ -402,10 +392,8 @@ func (s *Service) Expand(ctx context.Context, tenantID uuid.UUID, object, relati
 	if depth <= 0 || depth > maxExpandDepth {
 		depth = maxExpandDepth
 	}
-	nodes := map[string]GraphNode{}
-	edges := make([]GraphEdge, 0)
-	visited := map[string]bool{}
-	if err := expand(s.tupleFetcher(ctx, tenantID), o.Type, o.ID, relation, 0, visited, nodes, &edges); err != nil {
+	nodes, edges, err := expand(s.tupleFetcher(ctx, tenantID), o.Type, o.ID, relation, depth)
+	if err != nil {
 		return nil, err
 	}
 
@@ -416,9 +404,8 @@ func (s *Service) Expand(ctx context.Context, tenantID uuid.UUID, object, relati
 	return &Graph{Nodes: nodeList, Edges: edges}, nil
 }
 
-// ListBySubject returns all tuples in which a given subject (type:id) appears —
-// the reverse-lookup counterpart of List (which anchors on the object side).
-// Uses the idx_relation_tuple_subject index added in migration 0078.
+// ListBySubject returns every tuple in which subject (type:id) appears, the
+// reverse of List.
 func (s *Service) ListBySubject(ctx context.Context, tenantID uuid.UUID, subject string) ([]Tuple, error) {
 	subj, ok := parseSubject(subject)
 	if !ok {
@@ -446,24 +433,15 @@ func (s *Service) ListBySubject(ctx context.Context, tenantID uuid.UUID, subject
 
 // --- handlers ---
 
+// Handler serves the relationship-tuple routes. Decider answers the
+// relationship check across every engine: an attribute (ABAC) deny refuses,
+// and a role grant counts without a tuple.
 type Handler struct {
 	Service *Service
-	// Decider answers the relationship check across every engine: an
-	// attribute (ABAC) deny refuses, and a role grant counts without a tuple.
 	Decider *decide.Decider
 }
 
-func actorOf(r *http.Request) audit.Actor {
-	actor := audit.Actor{Type: "system", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	if principal := httpx.PrincipalFromCtx(r.Context()); principal != nil {
-		actor.UserID = principal.UserID
-		if principal.ActorType != "" {
-			actor.Type = principal.ActorType
-		}
-	}
-	return actor
-}
-
+// Mount registers the relationship routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/relation-tuples", h.list)
 	r.Post("/tenants/{tenantID}/relation-tuples", h.write)
@@ -472,23 +450,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/relation-tuples/graph", h.graph)
 }
 
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
-	}
-	return scope, nil
-}
-
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -505,21 +468,21 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, r, err)
 			return
 		}
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+		httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 	case subject != "":
 		out, err := h.Service.ListBySubject(r.Context(), tenantID, subject)
 		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+		httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 	default:
 		httpx.WriteError(w, r, errs.ErrReBACObjectOrSubjectRequired)
 	}
 }
 
 func (h *Handler) write(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -533,7 +496,7 @@ func (h *Handler) write(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	t, err := h.Service.WriteWithActor(r.Context(), tenantID, in.Object, in.Relation, in.Subject, actorOf(r))
+	t, err := h.Service.Write(r.Context(), tenantID, in.Object, in.Relation, in.Subject, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -542,7 +505,7 @@ func (h *Handler) write(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -552,7 +515,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.DeleteWithActor(r.Context(), id, tenantID, actorOf(r)); err != nil {
+	if err := h.Service.Delete(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -560,7 +523,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -603,14 +566,11 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-// graph expands a subgraph rooted at an object+relation, returning nodes+edges.
-//
-// GET /v1/tenants/{tenantID}/relation-tuples/graph?object=<type:id>&relation=<rel>[&depth=<n>]
-//
-// Answers "who/what can reach this resource, through which chain of
-// relationships?" — the ReBAC equivalent of a privilege-path graph.
+// graph answers GET /v1/tenants/{tenantID}/relation-tuples/graph with Expand's
+// graph for ?object=<type:id>&relation=<rel>[&depth=<n>]: who or what can reach
+// the resource, and through which relationships.
 func (h *Handler) graph(w http.ResponseWriter, r *http.Request) {
-	tenantID, err := requirePathTenant(r)
+	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

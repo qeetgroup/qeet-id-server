@@ -187,18 +187,9 @@ func TestTwilioSender_ErrorsOnNon2xx(t *testing.T) {
 	}
 }
 
-// TestLogSenderDoesNotLeakCredentialsOutsideDev is the regression test for the
-// credential-logging leak.
-//
-// LogSender is the fallback for any channel with no provider configured. It
-// used to log the message body unconditionally, and every credential-bearing
-// message the product sends flows through this struct: MFA sign-in OTPs, email
-// and SMS verification codes, password-reset links, magic links and invitation
-// tokens. slog's redacting handler does not save us — it matches attribute
-// keys, and "body" is just a string.
-//
-// This is not a dev-only path. A deployment with no Twilio credentials routes
-// every SMS OTP here, and an SES init failure downgrades email to it at boot.
+// TestLogSenderDoesNotLeakCredentialsOutsideDev checks that LogSender logs no
+// body without Reveal and reports the send as failed. Every channel without a
+// provider falls back to it, in production too.
 func TestLogSenderDoesNotLeakCredentialsOutsideDev(t *testing.T) {
 	const secret = "Reset your password: https://app.example/forgot-password?token=SUPERSECRET123"
 

@@ -28,15 +28,10 @@ const (
 // enrolling a second phone isn't blocked by a fumbled first one.
 func PurposeOTPEnroll(factorID uuid.UUID) string { return "otp-enroll:" + factorID.String() }
 
-// Attempt is one claimed verification slot.
-//
-// Reserving runs in its own transaction so the count survives the caller
-// rolling back after a rejected code. That makes ordering load-bearing:
-// callers MUST reserve *before* opening the transaction they hand to the
-// verifying method, and MUST refund only after that transaction is finished.
-// Reserving or refunding underneath an open transaction holds two pool
-// connections at once, so enough concurrent verifications will exhaust the
-// pool and every nested acquisition then blocks until its deadline.
+// Attempt is one reserved verification slot. ReserveAttempt commits it in its
+// own transaction so the count survives a rejected code's rollback. Callers
+// must reserve before opening the transaction they verify in and refund only
+// after it ends; otherwise each verification holds two pool connections.
 type Attempt struct {
 	userID    uuid.UUID
 	purpose   string

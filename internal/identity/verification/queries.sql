@@ -39,10 +39,11 @@ FOR UPDATE;
 UPDATE "user".email_verifications SET used_at = NOW() WHERE id = $1;
 
 -- EmailTakenByOther reports whether an email already belongs to a *different*
--- account (email is globally unique) — the pre-check for an email change.
+-- account (email is unique platform-wide, ignoring case) — the pre-check for an
+-- email change.
 -- name: EmailTakenByOther :one
 SELECT EXISTS(
-    SELECT 1 FROM "user".users WHERE email = @email AND id <> @user_id
+    SELECT 1 FROM "user".users WHERE lower(email) = lower(@email) AND id <> @user_id
 )::boolean;
 
 -- GetLatestEmailChange is like GetLatestEmailVerification but also returns the

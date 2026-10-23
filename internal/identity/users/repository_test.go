@@ -109,6 +109,5 @@ func TestParseUserMetadata_DoesNotPanic(t *testing.T) {
 	}
 }
 
-// Compile-time anchor so the unused context import is justified in
-// case scanUser callers expand later.
+// Keeps the context import, which nothing else in this file uses.
 var _ = context.Background

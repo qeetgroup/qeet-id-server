@@ -14,10 +14,12 @@ RETURNING id;
 DELETE FROM auth.relation_tuples WHERE id = @id AND tenant_id = @tenant_id;
 
 -- name: ListRelationTuplesByObject :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, relation, subject_type, subject_id, subject_relation
 FROM auth.relation_tuples
 WHERE tenant_id = @tenant_id AND object_type = @object_type AND object_id = @object_id
-ORDER BY relation, subject_type, subject_id;
+ORDER BY relation, subject_type, subject_id
+LIMIT 1001;
 
 -- name: FetchSubjects :many
 -- Hot path for Check/Explain/Expand: fetch every subject granted relation on one object.
@@ -26,7 +28,9 @@ FROM auth.relation_tuples
 WHERE tenant_id = @tenant_id AND object_type = @object_type AND object_id = @object_id AND relation = @relation;
 
 -- name: ListRelationTuplesBySubject :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, object_type, object_id, relation, subject_relation
 FROM auth.relation_tuples
 WHERE tenant_id = @tenant_id AND subject_type = @subject_type AND subject_id = @subject_id
-ORDER BY object_type, object_id, relation;
+ORDER BY object_type, object_id, relation
+LIMIT 1001;

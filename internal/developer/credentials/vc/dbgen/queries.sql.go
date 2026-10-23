@@ -53,7 +53,7 @@ SELECT revoked_at FROM auth.credentials WHERE id = $1
 `
 
 // GetCredentialRevocation checks the revocation registry for a presented
-// JWT-VC (jti = credential id). Absent record is treated as valid by the caller.
+// JWT-VC (jti = credential id). The caller refuses a credential with no record.
 func (q *Queries) GetCredentialRevocation(ctx context.Context, id uuid.UUID) (pgtype.Timestamptz, error) {
 	row := q.db.QueryRow(ctx, getCredentialRevocation, id)
 	var revoked_at pgtype.Timestamptz

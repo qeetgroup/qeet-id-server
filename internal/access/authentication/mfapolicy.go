@@ -14,30 +14,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// Enforcing the MFA an organisation requires (security policy
-// mfa_enforcement) or an administrator requires of one account
-// (users.mfa_required) at password sign-in:
-//
-//   - optional: only an account holding a second factor is challenged.
-//   - required: every account of the organisation must meet a challenge.
-//   - admin_only: administrators must — accounts holding a role, directly or
-//     through a group, that grants any write permission.
-//   - an account marked as requiring MFA must, whatever its organisation sets.
-//
-// An account that must and holds a factor is challenged as usual. One that
-// holds none gets an enrolment challenge instead of a session: it sets up an
-// authenticator app (StartMFAEnrollment) and the code that confirms the app
-// meets the challenge, so no session is issued before a factor exists.
-//
-// Grace period: for mfa_grace_days after the organisation turns its
-// requirement on, the members it already had may put the setup off — they
-// still get the enrolment challenge, and may skip it (MFAProof.Skip) until
-// the grace period ends. Accounts created later, and accounts marked
-// individually, have none.
-//
-// Every challenge is audited as auth.mfa_challenged with its reason, so one
-// raised by policy is told apart from one raised because the person chose to
-// set up a factor.
+// MFA enforcement at sign-in: an organisation's mfa_enforcement (optional,
+// required or admin_only) or an account's mfa_required decides who must meet a
+// second factor. An account that must but holds none sets one up first; existing
+// members may postpone setup during the organisation's grace period.
 
 // Why a sign-in is challenged.
 const (
@@ -80,10 +60,10 @@ func decideMFARequirement(row dbgen.MFARequirementRow, now time.Time) mfaRequire
 	return req
 }
 
-// mfaRequirementFor reads whether the account must use a second factor to sign
-// in to tenantID (uuid.Nil: only the account's own flag applies).
-func (s *Service) mfaRequirementFor(ctx context.Context, userID, tenantID uuid.UUID) (mfaRequirement, error) {
-	row, err := s.q.MFARequirement(ctx, dbgen.MFARequirementParams{UserID: userID, TenantID: tenantID})
+// mfaRequirementFor reads, through q, whether the account must use a second
+// factor to sign in to tenantID (uuid.Nil: only the account's own flag applies).
+func mfaRequirementFor(ctx context.Context, q *dbgen.Queries, userID, tenantID uuid.UUID) (mfaRequirement, error) {
+	row, err := q.MFARequirement(ctx, dbgen.MFARequirementParams{UserID: userID, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return mfaRequirement{}, nil
 	}
@@ -93,14 +73,9 @@ func (s *Service) mfaRequirementFor(ctx context.Context, userID, tenantID uuid.U
 	return decideMFARequirement(row, time.Now()), nil
 }
 
-// The requirement belongs to the organisation being entered, not only to the
-// one the account calls home. Signing in reads the home
-// organisation's; everything that issues a session or a code for another
-// organisation — switching into it, accepting its invitation, signing in to one
-// of its applications, approving a device for one — asks tenantFactorShortfall
-// first. For that every session records whether, and how, its sign-in met a
-// second factor (auth.sessions and auth.login_sessions second_factor,
-// migration 0149).
+// How a session's sign-in met a second factor. Every session records it, so
+// entering another organisation can be checked against that organisation's
+// requirement (see tenantFactorShortfall).
 const (
 	secondFactorMFA           = "mfa"
 	secondFactorPasskey       = "passkey"
@@ -141,18 +116,15 @@ func stricterRequirement(a, b mfaRequirement) mfaRequirement {
 	return out
 }
 
-// tenantFactorShortfall is what stops a session or a code being issued for
-// tenantID to userID, whose sign-in met secondFactor ("": none): nil when
-// nothing does — the organisation doesn't require a factor of the account, the
-// sign-in met one, or the account holds none and the organisation's grace
-// period still lets it put the setup off. Otherwise ErrMFAEnrollmentRequired
-// when the account must set a factor up first, or ErrStepUpRequired when it
-// holds one this sign-in didn't use.
+// tenantFactorShortfall reports what stops a session or code being issued for
+// tenantID to userID, whose sign-in met secondFactor ("" for none): nil,
+// ErrMFAEnrollmentRequired when a factor must be set up first, or
+// ErrStepUpRequired when the account holds one this sign-in didn't use.
 func (s *Service) tenantFactorShortfall(ctx context.Context, userID, tenantID uuid.UUID, secondFactor string) error {
 	if s.mfa == nil || tenantID == uuid.Nil || secondFactor != "" {
 		return nil
 	}
-	req, err := s.mfaRequirementFor(ctx, userID, tenantID)
+	req, err := mfaRequirementFor(ctx, s.q, userID, tenantID)
 	if err != nil || req.reason == "" {
 		return err
 	}
@@ -219,12 +191,12 @@ func (s *Service) mfaGateFor(ctx context.Context, userID, tenantID, alsoTenant u
 	if err != nil {
 		return mfaGate{}, err
 	}
-	req, err := s.mfaRequirementFor(ctx, userID, tenantID)
+	req, err := mfaRequirementFor(ctx, s.q, userID, tenantID)
 	if err != nil {
 		return mfaGate{}, err
 	}
 	if alsoTenant != uuid.Nil && alsoTenant != tenantID {
-		also, err := s.mfaRequirementFor(ctx, userID, alsoTenant)
+		also, err := mfaRequirementFor(ctx, s.q, userID, alsoTenant)
 		if err != nil {
 			return mfaGate{}, err
 		}
@@ -250,10 +222,10 @@ func (s *Service) StartMFAEnrollment(ctx context.Context, mfaToken, ip, ua strin
 		if !c.enrollment {
 			return errs.ErrBadRequest.WithDetail("This sign-in is not setting up a second factor.")
 		}
-		if err := s.stillWithoutFactor(ctx, c.userID); err != nil {
+		if err := s.stillWithoutFactor(ctx, tx, c.userID); err != nil {
 			return err
 		}
-		u, err := s.users.Get(ctx, c.userID)
+		u, err := s.users.GetTx(ctx, tx, c.userID)
 		if err != nil {
 			return err
 		}
@@ -280,9 +252,10 @@ func (s *Service) StartMFAEnrollment(ctx context.Context, mfaToken, ip, ua strin
 
 // stillWithoutFactor refuses, as an expired challenge, an enrolment challenge
 // for an account that has gained a factor since it was raised: setting up
-// another, or skipping, must not get round the one it now holds.
-func (s *Service) stillWithoutFactor(ctx context.Context, userID uuid.UUID) error {
-	factors, err := s.mfa.LoginFactors(ctx, userID)
+// another, or skipping, must not get round the one it now holds. Read through
+// the challenge transaction tx.
+func (s *Service) stillWithoutFactor(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
+	factors, err := s.mfa.LoginFactorsTx(ctx, tx, userID)
 	if err != nil {
 		return err
 	}
@@ -295,12 +268,12 @@ func (s *Service) stillWithoutFactor(ctx context.Context, userID uuid.UUID) erro
 // mayDeferEnrollment refuses with ErrMFAEnrollmentRequired a skipped
 // enrolment challenge once the account must set up a factor now — the grace
 // period has ended, or never applied. If the requirement has been lifted
-// since, skipping is allowed.
-func (s *Service) mayDeferEnrollment(ctx context.Context, userID, tenantID uuid.UUID) (*time.Time, error) {
-	if err := s.stillWithoutFactor(ctx, userID); err != nil {
+// since, skipping is allowed. Read through the challenge transaction tx.
+func (s *Service) mayDeferEnrollment(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID) (*time.Time, error) {
+	if err := s.stillWithoutFactor(ctx, tx, userID); err != nil {
 		return nil, err
 	}
-	req, err := s.mfaRequirementFor(ctx, userID, tenantID)
+	req, err := mfaRequirementFor(ctx, s.q.WithTx(tx), userID, tenantID)
 	if err != nil {
 		return nil, err
 	}

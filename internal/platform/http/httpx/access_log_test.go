@@ -10,7 +10,35 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
+
+// TestAccessLogNamesThePrincipal checks that the access line carries the
+// principal an authentication middleware below it adds to the request.
+func TestAccessLogNamesThePrincipal(t *testing.T) {
+	var logs bytes.Buffer
+	original := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(original) })
+
+	userID, tenantID := uuid.New(), uuid.New()
+	router := chi.NewRouter()
+	router.Use(AccessLog)
+	router.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			p := &Principal{UserID: &userID, TenantID: &tenantID, ActorType: "user"}
+			next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
+		})
+	})
+	router.Get("/v1/me", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/me", nil))
+
+	for _, want := range []string{`"user_id":"` + userID.String() + `"`, `"tenant_id":"` + tenantID.String() + `"`, `"actor_type":"user"`} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("access log lacks %s: %s", want, logs.String())
+		}
+	}
+}
 
 func TestAccessAndErrorLogsRedactAdminPortalToken(t *testing.T) {
 	const secret = "portal-capability-token-must-not-leak"

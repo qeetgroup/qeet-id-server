@@ -3,6 +3,8 @@ package billing
 import (
 	"testing"
 	"time"
+
+	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
 )
 
 func TestNormalizeCurrency(t *testing.T) {
@@ -59,6 +61,31 @@ func TestBuiltinPlansArePricedConsistently(t *testing.T) {
 			if !cur[c] {
 				t.Errorf("plan %q missing price for %q", b.code, c)
 			}
+		}
+	}
+}
+
+func TestCostsNoMore(t *testing.T) {
+	starter := planPrice{code: "starter", interval: "month", currency: "USD", amountMinor: 2900}
+	active := func(interval, currency string, amount int64) dbgen.GetSubscriptionRow {
+		return dbgen.GetSubscriptionRow{Status: "active", Interval: interval, Currency: currency, AmountMinor: amount}
+	}
+	cases := []struct {
+		name    string
+		current dbgen.GetSubscriptionRow
+		want    bool
+	}{
+		{"a dearer current plan", active("month", "USD", 9900), true},
+		{"the same price", active("month", "USD", 2900), true},
+		{"a cheaper current plan", active("month", "USD", 0), false},
+		{"another currency", active("month", "INR", 800000), false},
+		{"another interval", active("year", "USD", 99000), false},
+		{"a trial", dbgen.GetSubscriptionRow{Status: "trialing", Interval: "month", Currency: "USD", AmountMinor: 9900}, false},
+		{"a past-due plan", dbgen.GetSubscriptionRow{Status: "past_due", Interval: "month", Currency: "USD", AmountMinor: 9900}, false},
+	}
+	for _, c := range cases {
+		if got := costsNoMore(starter, c.current); got != c.want {
+			t.Errorf("costsNoMore(starter, %s) = %v, want %v", c.name, got, c.want)
 		}
 	}
 }

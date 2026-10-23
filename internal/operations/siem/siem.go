@@ -1,8 +1,7 @@
-// Package siem streams a tenant's audit events to an external collector (Splunk
-// HEC, Datadog logs, or a generic HTTP endpoint). A background forwarder walks
-// audit.events past each sink's high-watermark cursor and POSTs new events.
-// Sinks stream from creation time (no history backfill); delivery is
-// at-least-once (the cursor only advances on a 2xx).
+// Package siem streams a tenant's audit events to an external collector: Splunk
+// HEC, Datadog logs or a generic HTTP endpoint. A sink streams from when it was
+// created, with no backfill, and delivery is at-least-once: its cursor advances
+// only after a 2xx.
 package siem
 
 import (
@@ -38,8 +37,8 @@ const (
 
 const forwardBatch = 100
 
-// Sink is a tenant's configured log destination. Token is write-only (never
-// serialized back to the API).
+// Sink is a tenant's configured log destination. Its token is stored encrypted
+// and never returned.
 type Sink struct {
 	ID              uuid.UUID  `json:"id"`
 	Type            string     `json:"type"`
@@ -50,7 +49,7 @@ type Sink struct {
 	CreatedAt       time.Time  `json:"created_at"`
 }
 
-// AuditEvent is the projection of an audit row that gets forwarded.
+// AuditEvent is the forwarded form of an audit row.
 type AuditEvent struct {
 	ID           string    `json:"id"`
 	TenantID     string    `json:"tenant_id"`
@@ -64,6 +63,9 @@ type AuditEvent struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+// Service manages tenants' log sinks and forwards audit events to them. Sink
+// tokens are sealed with the cipher from SetCipher; without one, no sink can be
+// created.
 type Service struct {
 	pool   *pgxpool.Pool
 	q      *dbgen.Queries
@@ -72,8 +74,11 @@ type Service struct {
 	box    *envelope.Cipher
 }
 
+// SetCipher sets the cipher that encrypts sink tokens.
 func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
 
+// NewService returns a Service whose HTTP client follows policies[0], or by
+// default may reach only public https endpoints.
 func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
 	policy := egress.PublicPolicy(policies...)
 	return &Service{
@@ -88,13 +93,10 @@ func validType(t string) bool {
 	return t == typeSplunkHEC || t == typeDatadog || t == typeHTTP
 }
 
-// Create registers a sink. It starts streaming from now (cursor = creation
-// time), so enabling a sink never dumps the entire audit history downstream.
-func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, typ, endpoint, token string) (*Sink, error) {
-	return s.CreateWithActor(ctx, tenantID, typ, endpoint, token, audit.Actor{Type: "system"})
-}
-
-func (s *Service) CreateWithActor(ctx context.Context, tenantID uuid.UUID, typ, endpoint, token string, actor audit.Actor) (*Sink, error) {
+// Create registers a sink with its token encrypted, recording it in
+// the audit log and the outbox. The sink streams from now, so it never receives
+// the existing audit history.
+func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, typ, endpoint, token string, actor audit.Actor) (*Sink, error) {
 	if !validType(typ) {
 		return nil, errs.ErrSIEMSinkTypeInvalid
 	}
@@ -159,6 +161,7 @@ func (s *Service) CreateWithActor(ctx context.Context, tenantID uuid.UUID, typ, 
 	return sk, nil
 }
 
+// List returns the tenant's sinks.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Sink, error) {
 	rows, err := s.q.ListLogSinks(ctx, tenantID)
 	if err != nil {
@@ -179,11 +182,9 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Sink, error) 
 	return out, nil
 }
 
-func (s *Service) SetEnabled(ctx context.Context, id, tenantID uuid.UUID, enabled bool) error {
-	return s.SetEnabledWithActor(ctx, id, tenantID, enabled, audit.Actor{Type: "system"})
-}
-
-func (s *Service) SetEnabledWithActor(ctx context.Context, id, tenantID uuid.UUID, enabled bool, actor audit.Actor) error {
+// SetEnabled enables or disables one of the tenant's sinks. It returns
+// errs.ErrNotFound if there is no such sink.
+func (s *Service) SetEnabled(ctx context.Context, id, tenantID uuid.UUID, enabled bool, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -208,11 +209,9 @@ func (s *Service) SetEnabledWithActor(ctx context.Context, id, tenantID uuid.UUI
 	return tx.Commit(ctx)
 }
 
-func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
-	return s.DeleteWithActor(ctx, id, tenantID, audit.Actor{Type: "system"})
-}
-
-func (s *Service) DeleteWithActor(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+// Delete deletes one of the tenant's sinks. It returns
+// errs.ErrNotFound if there is no such sink.
+func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -236,7 +235,8 @@ func (s *Service) DeleteWithActor(ctx context.Context, id, tenantID uuid.UUID, a
 	return tx.Commit(ctx)
 }
 
-// Run is the background forwarder. It is a no-op when no sinks are enabled.
+// Run is the background forwarder: every 10 seconds until ctx is done, it sends
+// each enabled sink its new events.
 func (s *Service) Run(ctx context.Context) {
 	tk := time.NewTicker(10 * time.Second)
 	defer tk.Stop()
@@ -272,6 +272,8 @@ type storedSink struct {
 	cursorID            pgtype.UUID
 }
 
+// forwardDue forwards new events to every enabled sink, first encrypting any
+// token still stored in plaintext.
 func (s *Service) forwardDue(ctx context.Context) error {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, tenant_id, type, endpoint, token, token_ct, token_nonce,
@@ -326,8 +328,8 @@ func (s *Service) forwardDue(ctx context.Context) error {
 		sk := sinkRow{
 			id: r.id, tenantID: r.tenantID,
 			typ: r.typ, endpoint: r.endpoint, token: tokenValue,
-			// Apply COALESCE defaults in Go: null cursor_created_at → NOW(),
-			// null cursor_id → zero UUID (matches the INSERT default).
+			// A NULL cursor means "from now", with the zero UUID, as the INSERT
+			// default does.
 			cursorAt: time.Now(),
 			cursorID: uuid.UUID{},
 		}
@@ -363,7 +365,7 @@ func (s *Service) forwardSink(ctx context.Context, sk sinkRow) {
 		s.recordError(ctx, sk.id, err.Error())
 		return
 	}
-	// Advance the cursor; ignore errors (retry on next tick).
+	// Advance the cursor; on error, the next tick resends the batch.
 	_ = s.q.AdvanceLogSinkCursor(ctx, dbgen.AdvanceLogSinkCursorParams{
 		CursorCreatedAt: pgtype.Timestamptz{Time: lastAt, Valid: true},
 		CursorID:        pgtype.UUID{Bytes: lastID, Valid: true},
@@ -372,7 +374,7 @@ func (s *Service) forwardSink(ctx context.Context, sk sinkRow) {
 }
 
 func (s *Service) fetchEvents(ctx context.Context, tenantID uuid.UUID, afterAt time.Time, afterID uuid.UUID) ([]AuditEvent, time.Time, uuid.UUID, error) {
-	// tenant_id is nullable in audit.events; we always query by a specific tenant.
+	// audit.events.tenant_id is nullable, so it takes a pgtype.UUID.
 	genRows, err := s.q.FetchAuditEventsAfterCursor(ctx, dbgen.FetchAuditEventsAfterCursorParams{
 		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
 		AfterAt:  afterAt,
@@ -404,12 +406,12 @@ func (s *Service) fetchEvents(ctx context.Context, tenantID uuid.UUID, afterAt t
 			rs := uuid.UUID(r.ResourceID.Bytes).String()
 			e.ResourceID = &rs
 		}
-		// COALESCE(host(ip),'') in the query maps NULL ip to ""; convert back to nil.
+		// The query maps a NULL ip to ""; turn that back into nil.
 		if r.Host != "" {
 			h := r.Host
 			e.IP = &h
 		}
-		// request_id is nullable TEXT; nil pointer means no request ID recorded.
+		// request_id is nullable; nil means none was recorded.
 		if r.RequestID != nil {
 			e.RequestID = *r.RequestID
 		}
@@ -447,8 +449,8 @@ func (s *Service) recordError(ctx context.Context, id uuid.UUID, msg string) {
 	_ = s.q.SetLogSinkError(ctx, dbgen.SetLogSinkErrorParams{LastError: msg, ID: id})
 }
 
-// buildRequest renders a batch of events into the body + headers each collector
-// expects. Pure (no network), so it's unit-testable.
+// buildRequest renders a batch of events into the body and headers the
+// collector type expects. It does no I/O.
 func buildRequest(sinkType, token string, events []AuditEvent) ([]byte, map[string]string, error) {
 	switch sinkType {
 	case typeSplunkHEC:
@@ -509,21 +511,12 @@ func buildRequest(sinkType, token string, events []AuditEvent) ([]byte, map[stri
 
 // --- handlers ---
 
+// Handler serves the log-sink endpoints.
 type Handler struct {
 	Service *Service
 }
 
-func actorOf(r *http.Request) audit.Actor {
-	actor := audit.Actor{Type: "system", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	if principal := httpx.PrincipalFromCtx(r.Context()); principal != nil {
-		actor.UserID = principal.UserID
-		if principal.ActorType != "" {
-			actor.Type = principal.ActorType
-		}
-	}
-	return actor
-}
-
+// Mount registers the log-sink routes.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/log-sinks", h.list)
 	r.Post("/tenants/{tenantID}/log-sinks", h.create)
@@ -532,18 +525,7 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrSIEMTenantInvalid
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrSIEMTenantMismatch
-	}
-	return scope, nil
+	return httpx.PathTenantOr(r, errs.ErrSIEMTenantInvalid, errs.ErrSIEMTenantMismatch)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -575,7 +557,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	sk, err := h.Service.CreateWithActor(r.Context(), tenantID, in.Type, in.Endpoint, in.Token, actorOf(r))
+	sk, err := h.Service.Create(r.Context(), tenantID, in.Type, in.Endpoint, in.Token, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -601,7 +583,7 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.SetEnabledWithActor(r.Context(), id, tenantID, in.Enabled, actorOf(r)); err != nil {
+	if err := h.Service.SetEnabled(r.Context(), id, tenantID, in.Enabled, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -619,7 +601,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSIEMIDInvalid)
 		return
 	}
-	if err := h.Service.DeleteWithActor(r.Context(), id, tenantID, actorOf(r)); err != nil {
+	if err := h.Service.Delete(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

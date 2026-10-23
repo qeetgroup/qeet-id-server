@@ -206,13 +206,15 @@ SELECT client_id, user_id, tenant_id, scopes, issued_at, expires_at, used_at, re
 FROM auth.oidc_refresh_tokens WHERE token_hash = @token_hash;
 
 -- name: ListGrants :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT t.id, t.client_id, t.user_id, COALESCE(u.email, '') AS user_email,
        t.scopes, t.issued_at, t.expires_at
 FROM auth.oidc_refresh_tokens t
 LEFT JOIN "user".users u ON u.id = t.user_id
 WHERE t.tenant_id = @tenant_id
   AND t.revoked_at IS NULL AND t.replaced_by IS NULL AND t.expires_at > NOW()
-ORDER BY t.issued_at DESC;
+ORDER BY t.issued_at DESC
+LIMIT 1001;
 
 -- name: GetGrantForRevoke :one
 SELECT client_id, user_id FROM auth.oidc_refresh_tokens
@@ -264,13 +266,15 @@ UPDATE auth.oidc_device_codes SET last_polled_at = NOW() WHERE id = @id;
 UPDATE auth.oidc_device_codes SET consumed_at = NOW() WHERE id = @id;
 
 -- name: ListDevices :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT d.id, d.client_id, d.user_code, d.status, d.user_id,
        COALESCE(u.email, '') AS user_email, d.scopes,
        d.created_at, d.expires_at, d.last_polled_at
 FROM auth.oidc_device_codes d
 LEFT JOIN "user".users u ON u.id = d.user_id
 WHERE d.tenant_id = @tenant_id
-ORDER BY d.created_at DESC;
+ORDER BY d.created_at DESC
+LIMIT 1001;
 
 -- name: RevokeDevice :one
 UPDATE auth.oidc_device_codes SET status = 'denied'

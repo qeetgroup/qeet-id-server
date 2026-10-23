@@ -1,19 +1,27 @@
-// Package webhook lets tenants subscribe to domain events and receive a
-// signed POST. Deliveries are persisted before send so retries survive
-// process restarts; a background dispatcher walks the queue.
+// Package webhook lets tenants subscribe to the events in its catalogue and
+// receive each as a signed POST. Deliveries are persisted before send so
+// retries survive process restarts; a background dispatcher walks the queue.
+//
+// A delivery's body is an Event. X-Qeet-Signature is "sha256=" and the hex
+// HMAC-SHA256, keyed by the subscription's secret, of X-Qeet-Timestamp (Unix
+// seconds), a ".", and the body, so a receiver can refuse a stale or replayed
+// delivery as well as a forged one.
 package webhook
 
 import (
 	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"math/big"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -31,6 +39,8 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
+// Subscription is a tenant's webhook endpoint and the event types it receives.
+// Secret is returned only on create.
 type Subscription struct {
 	ID         uuid.UUID  `json:"id"`
 	TenantID   uuid.UUID  `json:"tenant_id"`
@@ -38,17 +48,16 @@ type Subscription struct {
 	Events     []string   `json:"events"`
 	DisabledAt *time.Time `json:"disabled_at"`
 	CreatedAt  time.Time  `json:"created_at"`
-	// Secret is returned only on create.
-	Secret string `json:"secret,omitempty"`
+	Secret     string     `json:"secret,omitempty"`
 }
 
 // PlanGate reports whether a plan-gated boolean feature is included in the
-// tenant's plan. Satisfied by operations/entitlements.Service, injected via
-// SetPlanGate.
+// tenant's plan. Satisfied by *entitlements.Service.
 type PlanGate interface {
 	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
 }
 
+// Service manages the webhook subscriptions.
 type Service struct {
 	pool     *pgxpool.Pool
 	q        *dbgen.Queries
@@ -60,6 +69,7 @@ type Service struct {
 	lease    time.Duration
 }
 
+// NewService returns the webhook service.
 func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
 	policy := egress.PublicPolicy(policies...)
 	return &Service{
@@ -75,8 +85,10 @@ func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
 // SetPlanGate wires the plan-feature gate. nil (default) allows all features.
 func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 
+// SetCipher sets the cipher that encrypts webhook secrets at rest.
 func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
 
+// Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 // tsPtr converts a pgtype.Timestamptz to *time.Time (nil when not valid).
@@ -93,7 +105,7 @@ func int32Ptr(v int) *int32 {
 	if v == 0 {
 		return nil
 	}
-	i := int32(v)
+	i := int32(v) // #nosec G115 -- HTTP status codes only
 	return &i
 }
 
@@ -106,21 +118,25 @@ func strPtr(s string) *string {
 	return &s
 }
 
-// toTS converts a time.Time to a valid pgtype.Timestamptz.
-func toTS(t time.Time) pgtype.Timestamptz {
-	return pgtype.Timestamptz{Time: t, Valid: true}
-}
-
+// CreateInput is what Create takes. TenantID is set from the caller's token;
+// one sent in the body is ignored.
 type CreateInput struct {
 	TenantID uuid.UUID `json:"tenant_id"`
 	URL      string    `json:"url"`
 	Events   []string  `json:"events"`
 }
 
+// Create subscribes an endpoint to the events in.Events, which must name at
+// least one and only events in the catalogue.
 func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Subscription, error) {
 	if _, err := s.egress.ValidateHTTPURL(in.URL); err != nil {
 		return nil, errs.ErrBadRequest.WithDetail("webhook URL is not an allowed outbound destination")
 	}
+	events, err := subscribableEvents(in.Events)
+	if err != nil {
+		return nil, err
+	}
+	in.Events = events
 	// Plan gate: webhooks are a paid feature (not included on Free).
 	if s.gate != nil {
 		ok, err := s.gate.FeatureAllowed(ctx, in.TenantID, "webhooks")
@@ -169,6 +185,7 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Subsc
 	}, nil
 }
 
+// List returns the tenant's webhook subscriptions.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Subscription, error) {
 	rows, err := s.q.ListWebhookSubscriptions(ctx, tenantID)
 	if err != nil {
@@ -184,6 +201,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Subscription,
 	return out, nil
 }
 
+// Get returns one of the tenant's webhook subscriptions.
 func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Subscription, error) {
 	row, err := s.q.GetWebhookSubscription(ctx, dbgen.GetWebhookSubscriptionParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -211,8 +229,9 @@ func (s *Service) Disable(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID
 	return row.TenantID, row.Url, nil
 }
 
-// Delivery is one attempt-tracked dispatch of an event to a subscription,
-// projected for the admin delivery viewer (payload + response for debugging).
+// Delivery is one event's dispatch to a subscription, with the payload and
+// response for the admin delivery viewer. DeadAt is set once it has failed
+// maxDeliveryAttempts times; RetryDelivery clears it.
 type Delivery struct {
 	ID            uuid.UUID  `json:"id"`
 	EventType     string     `json:"event_type"`
@@ -223,11 +242,8 @@ type Delivery struct {
 	ResponseBody  *string    `json:"response_body,omitempty"`
 	DeliveredAt   *time.Time `json:"delivered_at,omitempty"`
 	NextAttemptAt *time.Time `json:"next_attempt_at,omitempty"`
-	// DeadAt is set once the delivery exhausted maxDeliveryAttempts without
-	// succeeding — a dead-lettered delivery the dispatcher no longer retries.
-	// Retryable via RetryDelivery, which clears it.
-	DeadAt    *time.Time `json:"dead_at,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
+	DeadAt        *time.Time `json:"dead_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 // int32PtrToInt converts a *int32 to *int for the domain Delivery type.
@@ -273,9 +289,10 @@ func (s *Service) ListDeliveries(ctx context.Context, subscriptionID, tenantID u
 	return out, nil
 }
 
-// RetryDelivery re-queues a delivery for immediate redelivery by the dispatcher
-// (clears delivered_at + error and sets next_attempt_at to now). Tenant-scoped
-// via the subscription join. ErrWebhookDeliveryNotFound when the delivery isn't the tenant's.
+// RetryDelivery re-queues one of the tenant's deliveries for immediate
+// redelivery, clearing delivered_at, dead_at and error. It fails with
+// ErrWebhookDeliveryNotFound when the delivery isn't the tenant's or a
+// dispatcher currently holds its lease.
 func (s *Service) RetryDelivery(ctx context.Context, deliveryID, tenantID uuid.UUID) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE tenant.webhook_deliveries AS delivery
@@ -301,33 +318,31 @@ func (s *Service) Enqueue(ctx context.Context, tenantID uuid.UUID, eventType str
 }
 
 // EnqueueTx is Enqueue inside the caller's transaction, so the deliveries are
-// committed — or rolled back — with the change they describe (ADR-0009).
+// committed, or rolled back, with the change they describe.
 func (s *Service) EnqueueTx(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, eventType string, payload any) error {
 	return s.enqueue(ctx, s.q.WithTx(tx), tenantID, eventType, payload)
 }
 
 func (s *Service) enqueue(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, eventType string, payload any) error {
-	body, err := json.Marshal(payload)
+	data, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	ids, err := q.GetSubscriptionsForEvent(ctx, dbgen.GetSubscriptionsForEventParams{
-		TenantID:  tenantID,
-		EventType: eventType,
-	})
+	return s.queue(ctx, q, Event{ID: uuid.New(), Type: eventType, TenantID: tenantID, OccurredAt: time.Now().UTC(), Data: data})
+}
+
+// SendTest queues a TestEvent for sub alone, whichever events it names.
+func (s *Service) SendTest(ctx context.Context, sub *Subscription) error {
+	data, err := json.Marshal(map[string]any{"subscription_id": sub.ID})
 	if err != nil {
 		return err
 	}
-	for _, id := range ids {
-		if err := q.InsertDelivery(ctx, dbgen.InsertDeliveryParams{
-			SubscriptionID: id,
-			EventType:      eventType,
-			Payload:        body,
-		}); err != nil {
-			return err
-		}
+	e := Event{ID: uuid.New(), Type: TestEvent, TenantID: sub.TenantID, OccurredAt: time.Now().UTC(), Data: data}
+	body, err := json.Marshal(e)
+	if err != nil {
+		return err
 	}
-	return nil
+	return s.q.InsertDelivery(ctx, dbgen.InsertDeliveryParams{SubscriptionID: sub.ID, EventID: e.ID, EventType: e.Type, Payload: body})
 }
 
 // RunDispatcher loops, picking due deliveries and posting them with an
@@ -347,10 +362,6 @@ func (s *Service) RunDispatcher(ctx context.Context) {
 		}
 	}
 }
-
-// Sweep runs a single dispatch pass over due deliveries — the same work
-// RunDispatcher does on each tick. Exposed for ops-triggered sweeps and tests.
-func (s *Service) Sweep(ctx context.Context) error { return s.tick(ctx) }
 
 func (s *Service) tick(ctx context.Context) error {
 	rows, err := s.pool.Query(ctx, `
@@ -440,11 +451,12 @@ func (s *Service) tick(ctx context.Context) error {
 		if derr != nil {
 			errStr = derr.Error()
 		}
-		// Give up after maxDeliveryAttempts: a permanently-failing endpoint
-		// (dead domain, 404, decommissioned integration) would otherwise retry
-		// forever at the 1h backoff ceiling. dead_at marks it dead-lettered;
-		// RetryDelivery clears it for a manual re-send.
-		if int(it.Attempt)+1 >= maxDeliveryAttempts {
+		// Give up after maxDeliveryAttempts, or at once when the endpoint
+		// refused the delivery itself: a permanently-failing endpoint (dead
+		// domain, decommissioned integration) would otherwise retry forever at
+		// the 1h backoff ceiling. dead_at marks it dead-lettered; RetryDelivery
+		// clears it for a manual re-send.
+		if int(it.Attempt)+1 >= maxDeliveryAttempts || !retryable(status) {
 			if _, err := s.pool.Exec(ctx, `
 				UPDATE tenant.webhook_deliveries
 				SET attempt = attempt + 1, status_code = $3, response_body = $4,
@@ -459,6 +471,7 @@ func (s *Service) tick(ctx context.Context) error {
 		if backoff > time.Hour {
 			backoff = time.Hour
 		}
+		backoff = jittered(backoff)
 		if _, err := s.pool.Exec(ctx, `
 			UPDATE tenant.webhook_deliveries
 			SET attempt = attempt + 1, status_code = $3, response_body = $4,
@@ -478,15 +491,37 @@ func (s *Service) tick(ctx context.Context) error {
 // before giving up — in line with common webhook-retry conventions.
 const maxDeliveryAttempts = 60
 
+// retryable reports whether a delivery answered status (0: no answer) may
+// succeed if sent again. A 4xx other than 408 and 429 is the endpoint refusing
+// the delivery itself, and would be refused again.
+func retryable(status int) bool {
+	if status < 400 || status >= 500 {
+		return true
+	}
+	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests
+}
+
+// jittered returns d less a random part of up to half of it, so deliveries
+// that failed together don't all retry together.
+func jittered(d time.Duration) time.Duration {
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(d/2)+1))
+	if err != nil {
+		return d
+	}
+	return d - time.Duration(n.Int64())
+}
+
 func (s *Service) deliver(ctx context.Context, deliveryID uuid.UUID, url, secret, eventType string, body []byte) (int, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return 0, "", err
 	}
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Qeet-Event", eventType)
 	req.Header.Set("X-Qeet-Delivery-ID", deliveryID.String())
-	req.Header.Set("X-Qeet-Signature", "sha256="+sign(secret, body))
+	req.Header.Set("X-Qeet-Timestamp", timestamp)
+	req.Header.Set("X-Qeet-Signature", "sha256="+sign(secret, timestamp, body))
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return 0, "", err
@@ -499,8 +534,11 @@ func (s *Service) deliver(ctx context.Context, deliveryID uuid.UUID, url, secret
 	return resp.StatusCode, string(rb), nil
 }
 
-func sign(secret string, body []byte) string {
+// sign returns the hex HMAC-SHA256 of timestamp, ".", and body, keyed by
+// secret.
+func sign(secret, timestamp string, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(timestamp + "."))
 	mac.Write(body)
 	return hex.EncodeToString(mac.Sum(nil))
 }
@@ -512,13 +550,16 @@ func truncate(s string, max int) string {
 	return s[:max]
 }
 
+// Handler serves the webhook HTTP API.
 type Handler struct {
 	Service *Service
 }
 
+// Mount registers the webhook routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/webhooks", h.create)
 	r.Get("/tenants/{tenantID}/webhooks", h.list)
+	r.Get("/tenants/{tenantID}/webhooks/events", h.events)
 	r.Get("/webhooks/{id}", h.get)
 	r.Delete("/webhooks/{id}", h.disable)
 	r.Post("/webhooks/{id}/test", h.test)
@@ -582,18 +623,6 @@ func (h *Handler) retryDelivery(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"message": "Delivery re-queued."})
 }
 
-func auditActor(r *http.Request) (*uuid.UUID, string) {
-	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil {
-		return nil, "system"
-	}
-	at := p.ActorType
-	if at == "" {
-		at = "user"
-	}
-	return p.UserID, at
-}
-
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := httpx.RequireTenant(r)
 	if err != nil {
@@ -622,7 +651,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	tid := sub.TenantID
 	rid := sub.ID
 	if err := audit.Record(ctx, tx, audit.Event{
@@ -693,7 +722,7 @@ func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := auditActor(r)
+	actorID, actorType := audit.ActorOf(r).Identity()
 	rid := id
 	if err := audit.Record(ctx, tx, audit.Event{
 		TenantID:     &tenantID,
@@ -733,14 +762,20 @@ func (h *Handler) test(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.Enqueue(r.Context(), sub.TenantID, "test.ping", map[string]any{
-		"hello": "world",
-		"at":    time.Now().UTC(),
-	}); err != nil {
+	if err := h.Service.SendTest(r.Context(), sub); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"queued": true, "subscription": sub.ID})
+}
+
+// events lists the event catalogue.
+func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
+	if _, err := httpx.PathTenantOr(r, errs.ErrWebhookInvalidID, errs.ErrWebhookTenantMismatch); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": Events})
 }
 
 // EventBus is satisfied by webhook.Service so other modules can publish

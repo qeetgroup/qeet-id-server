@@ -1,9 +1,6 @@
 package errs
 
-// Auth-policy error codes — stable, namespaced machine identifiers for a
-// tenant's password-complexity rules and the breached-password gate. Clients
-// branch and localize on these, never on the message text. Once shipped, a
-// code MUST NOT change.
+// Auth policy error codes: a tenant's password rules and the breached-password check.
 const (
 	CodeAuthPolicyPasswordTooShort    = "authpolicy.password_too_short"
 	CodeAuthPolicyPasswordNoUppercase = "authpolicy.password_no_uppercase"

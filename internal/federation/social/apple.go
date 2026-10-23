@@ -1,12 +1,9 @@
 package social
 
-// Sign in with Apple adapter. Apple publishes an OIDC discovery doc but differs
-// enough to need its own path: the client secret is a short-lived ES256 JWT
-// signed with a .p8 key (not a static string), the authorize flow uses
-// response_mode=form_post (so the callback is a POST), and there is no userinfo
-// endpoint — the subject and email come from the id_token returned by the token
-// exchange. Apple only sends the user's name on the very first authorization
-// (in the form_post "user" field), so we don't rely on it here.
+// Sign in with Apple needs its own flow: the client secret is a short-lived
+// ES256 JWT signed with a .p8 key, the callback arrives as a form_post, and the
+// identity comes from the verified id_token since there is no userinfo endpoint.
+// The name Apple sends only on first sign-in is not used.
 
 import (
 	"context"
@@ -33,7 +30,7 @@ import (
 
 const (
 	appleAuthorizeURL = "https://appleid.apple.com/auth/authorize"
-	appleTokenURL     = "https://appleid.apple.com/auth/token"
+	appleTokenURL     = "https://appleid.apple.com/auth/token" // #nosec G101 -- public endpoint URL
 	appleJWKSURL      = "https://appleid.apple.com/auth/keys"
 	appleAudience     = "https://appleid.apple.com"
 	appleScopes       = "name email"

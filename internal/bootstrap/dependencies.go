@@ -81,12 +81,14 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
-	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/idempotency"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/health"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/logging"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/worker"
 )
 
 type namedWorker struct {
@@ -128,12 +130,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		slog.Error("init domain encryption", "err", err)
 		os.Exit(1)
 	}
-	// Pin the unwrapped DEK for the process lifetime. Both vaults and every
-	// envelope-encrypted column derive from this one key, so re-unwrapping per
-	// call would buy nothing — the plaintext key is already resident. The
-	// consequence is that rotating a KMS-backed DEK needs a restart, not just a
-	// KMS-side rotation; see docs/JWT-KEY-ROTATION.md for the same two-phase
-	// shape applied to signing keys.
+	// Keep the unwrapped data key for the process lifetime; every vault and
+	// encrypted column derives from it. Rotating a KMS-backed key therefore needs a
+	// restart.
 	keyProvider = secret.StaticKeyProvider{Key: dataKey}
 	signingKeyRegistry, err := tokens.NewSigningKeyRegistry(pool, sharedCipher)
 	if err != nil {
@@ -252,24 +251,18 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	authService := auth.NewService(pool, userRepo, issuer)
 	authPolicyService := authpolicy.NewService(pool)
 
-	// One password check for every path that sets or replaces a password:
-	// authPolicyService.ValidateForTenant (the organisation's rules, or the
-	// platform baseline for a tenant-less account; the offline strength
-	// baseline; the breach check). Sign-up, hosted registration and
-	// self-service change reach it through SetRegistrationPolicy below; admin
-	// create / set-password / bulk import through user.Handler.PasswordPolicy.
+	// One password check for every path that sets a password:
+	// authPolicyService.ValidateForTenant (organisation rules or platform baseline,
+	// strength baseline, breach check).
 	recoveryService.SetPasswordRules(authPolicyService)   // password reset
 	recoveryService.SetMagicLinkPolicy(authPolicyService) // magic links only where the tenant allows them, with its lifetime
 	inviteService.SetPasswordRules(authPolicyService)     // invite accept
 	inviteService.SetAcceptMethods(authPolicyService)     // which ways of accepting the acceptance screen offers
 
-	// Breached-password detection (Have I Been Pwned k-anonymity). OFF by
-	// default (BREACHED_PASSWORD_CHECK unset) so dev/CI/offline deploys are
-	// unaffected; when enabled the password check above runs it on every
-	// password-setting path, and it is fail-open at runtime (a HIBP outage
-	// allows the password and is counted in
-	// breached_password_check_allowed_on_error_total). Only the 5-char SHA-1
-	// prefix ever leaves the process — never the plaintext.
+	// Breached-password check (Have I Been Pwned k-anonymity), off by default. It
+	// fails open on a HIBP outage, counted in
+	// breached_password_check_allowed_on_error_total, and only the 5-character
+	// SHA-1 prefix leaves the process.
 	if cfg.BreachedPasswordCheck {
 		breachChecker := hibp.New(&http.Client{Timeout: 3 * time.Second}, cfg.BreachedPasswordAPIURL, cfg.BreachedPasswordMinCount)
 		authPolicyService.SetBreachChecker(breachChecker)
@@ -285,12 +278,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	authService.SetMethodPolicy(authPolicyService)       // password sign-in only where the tenant allows it
 	authService.SetDevicePolicy(authPolicyService)       // gate adaptive MFA (trusted-device skip)
 
-	// Sign-in lockout (authentication/lockout.go): failures counted per account
-	// + source network (the tenant-configurable lock), per account at a looser
-	// cap, and per source across accounts (spraying). The platform defaults and
-	// the bounds a tenant may choose within come from LOGIN_LOCKOUT_* /
-	// LOGIN_SPRAY_* (validated by config.Load); a tenant's own settings live in
-	// its authentication policy and apply on the next attempt.
+	// Sign-in lockout: platform defaults and the bounds a tenant may choose come
+	// from LOGIN_LOCKOUT_* and LOGIN_SPRAY_*; a tenant's own settings live in its
+	// authentication policy.
 	lockoutDefaults := authpolicy.Lockout{Threshold: cfg.LoginLockoutThreshold, Window: cfg.LoginLockoutWindow, Duration: cfg.LoginLockoutDuration}
 	authPolicyService.SetLockoutLimits(authpolicy.LockoutLimits{
 		Defaults: lockoutDefaults,
@@ -318,6 +308,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	riskService := risk.NewService(pool)
 	authService.SetRiskAssessor(riskService) // assess every sign-in; a risky one skips no factor
 	authService.SetSender(sender)            // email the code that confirms a risky sign-in with no factor
+	// A rotated refresh token sent again within the grace gets its rotation's
+	// pair, for a client that renewed twice at once or lost the answer.
+	authService.SetRefreshReuseGrace(cfg.RefreshTokenReuseGrace, sharedCipher)
 	botService := bot.NewService(pool)
 	siemService := siem.NewService(pool, outboundPolicy) // forwards audit events to configured log sinks
 	siemService.SetCipher(sharedCipher)
@@ -351,10 +344,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 			os.Exit(1)
 		}
 		activityNATSConn = nc
-		slog.Info("activity hub: connected to NATS", "url", cfg.NATSURL)
-	}
-	if activityNATSConn != nil {
-		defer func() { _ = activityNATSConn.Drain() }()
+		slog.Info("activity hub: connected to NATS", "url", logging.StripURLCredentials(cfg.NATSURL))
 	}
 	activityHub := activity.NewHub(activityNATSConn)
 
@@ -363,19 +353,16 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	searchService := search.NewService(pool, rbacRepo)
 	webhookService := webhook.NewService(pool, outboundPolicy)
 	webhookService.SetCipher(sharedCipher)
-	// Agent lifecycle: emit webhook events on transitions, and let the auth
-	// middleware deny suspended/decommissioned agents' tokens per request.
-	agentService.SetEmitter(webhookService.Enqueue)
+	// Let the auth middleware deny suspended/decommissioned agents' tokens per
+	// request.
 	verifier.AgentStatus = agentService.AgentStatus
-	// CAEP/SSF-shaped signals over the existing webhook dispatcher: a tenant
-	// that subscribes to these can react to a revoked session or a changed
-	// role grant immediately, instead of waiting out the access-token TTL.
-	// Every path that ends a session announces it (session.revoked) in the
-	// transaction that ends it; see sessionsignal for reasons and destinations.
+	// Session and role-change signals over the webhook dispatcher, so subscribers
+	// can react before access tokens expire.
 	sessionSignals := sessionsignal.New(webhookService.EnqueueTx)
 	authService.SetSessionSignals(sessionSignals)
 	authService.SetSessionLifetime(cfg.SessionMaxAge, cfg.SessionIdleTimeout) // session bounds where the organisation sets none
 	verifier.SessionUsed = authService.SessionUsed                            // a session's last use, for its idle timeout and the session list
+	verifier.SessionLive = authService.SessionLive                            // an ended session's access tokens are refused at once
 	recoveryService.SetSessionSignals(sessionSignals)
 	rbacService.SetEmitter(webhookService.Enqueue)
 	gdprService := gdpr.NewService(pool, 30*24*time.Hour)
@@ -385,7 +372,6 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	evidenceService := gdpr.NewEvidenceService(pool, auditVerifier, cfg.BreachedPasswordCheck)
 	auditAnomalyService := anomaly.NewService(pool)
 	analyticsReader := analytics.NewReader(pool)
-	outboxReader := outbox.NewReader(pool)
 
 	startedAt := time.Now()
 	healthHandler := health.New(cfg.ServiceName, cfg.ServiceEnv, startedAt)
@@ -395,6 +381,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	inFlight := httpx.NewInFlight()
 	oidcService := oidc.NewService(pool, issuer)
 	oidcService.SetAgentStatus(agentService.AgentStatus)            // a suspended agent's tokens introspect inactive
+	oidcService.SetSessionLive(authService.SessionLive)             // an ended session's tokens introspect inactive and can't be exchanged
 	oidcService.SetGrantMaxAge(cfg.SessionMaxAge)                   // grant bound where the organisation sets none
 	oidcService.SetTokenExchangeMaxDepth(cfg.TokenExchangeMaxDepth) // bound a chain of exchanges
 	oidcService.SetClientLockout(oidc.ClientLockout{                // wrong application secrets
@@ -402,19 +389,10 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	})
 	oidcService.SetNotifier(notificationService) // CIBA async consent prompts
 	rpID, rpDisplayName, rpOrigins := cfg.WebAuthnRP()
-	// UserVerification: Required is load-bearing, not a preference.
-	//
-	// go-webauthn copies Config.AuthenticatorSelection.UserVerification into the
-	// assertion and then gates on `session.UserVerification == Required` — a
-	// strict equality. Left unset (or at "preferred") the UV flag in
-	// authenticatorData is never checked, so a passkey proves only POSSESSION of
-	// the authenticator. Accounts created through passkey signup have no
-	// password at all, which made the passkey the entire credential and reduced
-	// a "phishing-resistant MFA" product to a single touch on a borrowed device.
-	//
-	// Setting it here covers both login ceremonies (BeginLogin and
-	// BeginDiscoverableLogin read it from the config); the two registration
-	// ceremonies override AuthenticatorSelection explicitly and set it there.
+	// UserVerification must be Required: go-webauthn checks the UV flag only on
+	// strict equality, and without it a passkey proves possession alone. Passkey-only
+	// accounts have no password, so this is the whole credential. The registration
+	// ceremonies set it themselves.
 	wa, err := webauthn.New(&webauthn.Config{
 		RPID:          rpID,
 		RPDisplayName: rpDisplayName,
@@ -476,11 +454,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		os.Exit(1)
 	}
 
-	// Qeet AI provider config: per-tenant BYOK keys encrypted with the same data
-	// key as the secrets vault. When a tenant hasn't set its own key, the
-	// deployment-level QEETAI_* env acts as the platform fallback. Because a
-	// tenant can bring its own key even when no platform key is set, the
-	// orchestrator is always constructed (configured state is resolved per-tenant).
+	// Qeet AI provider config: per-tenant keys, encrypted with the vault data key,
+	// with QEETAI_* as the platform fallback. The orchestrator is always built,
+	// since a tenant can bring its own key.
 	qeetaiProviderCfg, err := qeetai.NewProviderConfig(rootCtx, pool, keyProvider, qeetai.PlatformProvider{
 		Provider:  cfg.QeetaiProvider,
 		APIKey:    cfg.QeetaiAPIKey,
@@ -533,6 +509,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 
 	ldapService := ldap.NewService(pool, authService, outboundPolicy)
 	ldapService.SetCipher(sharedCipher)
+	ldapService.SetAllowSkipTLSVerify(cfg.IsDev()) // skip_tls_verify is a dev-only escape hatch
 	directoryService := directory.NewService(scimService, ldapService)
 	directoryService.SetEventStore(pool)
 	scimService.SetOperationObserver(directoryService)
@@ -637,7 +614,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbacService, Validate: v, Decider: decider},
 		RBACChecker:   decider,
 		Verification:  &verification.Handler{Service: verifyService},
-		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService, DevMode: cfg.IsDev(), CookieSecure: !cfg.IsDev()},
+		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService, DevMode: cfg.IsDev(), CookieSecure: !cfg.IsDev(), PublicBaseURL: cfg.PublicBaseURL},
 		Retention:     &retention.Handler{Service: retentionService},
 		Invite:        &invite.Handler{Service: inviteService, AuthService: authService, Validate: v, GrantCheck: rbacRepo.CheckGrantRole},
 		Branding:      &branding.Handler{Repo: brandingRepo},
@@ -657,15 +634,14 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Entitlement:   &entitlements.Handler{Service: entitlementSvc},
 		Sales:         &sales.Handler{Service: salesService},
 		Analytics:     &analytics.Handler{Reader: analyticsReader},
-		Outbox:        &outbox.Handler{Reader: outboxReader},
-		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Methods: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: !cfg.IsDev()},
+		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Methods: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: !cfg.IsDev(), PublicBaseURL: cfg.PublicBaseURL},
 		Passkey:       &passkey.Handler{Service: passkeyService, CookieSecure: !cfg.IsDev()},
-		Social:        &social.Handler{Service: socialService, CookieSecure: !cfg.IsDev(), LoginBaseURL: cfg.LoginBaseURL},
+		Social:        &social.Handler{Service: socialService, CookieSecure: !cfg.IsDev(), LoginBaseURL: cfg.LoginBaseURL, PublicBaseURL: cfg.PublicBaseURL},
 		Group:         &group.Handler{Service: groupService},
-		SCIM:          &scim.Handler{Service: scimService},
+		SCIM:          &scim.Handler{Service: scimService, PublicBaseURL: cfg.PublicBaseURL},
 		Secret:        &secret.Handler{Service: secretService},
-		TokenVault:    &tokenvault.Handler{Service: tokenVaultService},
-		SAML:          &saml.Handler{Service: samlService, IdP: samlIdP, CookieSecure: !cfg.IsDev()},
+		TokenVault:    &tokenvault.Handler{Service: tokenVaultService, PublicBaseURL: cfg.PublicBaseURL},
+		SAML:          &saml.Handler{Service: samlService, IdP: samlIdP, PublicBaseURL: cfg.PublicBaseURL},
 		AdminPortal:   &adminportal.Handler{Service: adminPortalService, SAML: samlService, SCIM: scimService, CookieSecure: !cfg.IsDev()},
 		LDAP:          &ldap.Handler{Service: ldapService},
 		Directory:     &directory.Handler{Service: directoryService},
@@ -697,11 +673,24 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		CSRFDisabled:     cfg.CSRFDisabled,
 		CSRFCookieDomain: cfg.CSRFCookieDomain,
 		RateLimitStore:   rlStore,
+		TenantLim:        tenantTenantLim,
+		UserLim:          tenantUserLim,
+		APIKeyLim:        tenantAPIKeyLim,
+		Idempotency:      idempotency.NewStore(pool, sharedCipher),
+	}
+	if activityNATSConn != nil {
+		deps.shutdownHooks = append(deps.shutdownHooks, func() { _ = activityNATSConn.Drain() })
 	}
 
-	outboxDispatcher := outbox.NewDispatcher(pool, outboxPub, 2*time.Second, 50)
+	// Committed events reach the organisation's webhook subscriptions as well
+	// as the event stream.
+	outboxDispatcher := outbox.NewDispatcher(pool, webhookService.Relay(outboxPub), 2*time.Second, 50)
 	workers := []namedWorker{
 		{name: "jwt-keyring", run: func(ctx context.Context) { signingKeyRegistry.Run(ctx, issuer, cfg.JWTSigningKeyRefreshInterval) }, always: true},
+		// Each instance enforces the overrides from its own cache.
+		{name: "rate-limit-overrides", run: func(ctx context.Context) {
+			ratelimit.ReloadEvery(ctx, time.Minute, tenantTenantLim, tenantUserLim, tenantAPIKeyLim)
+		}, always: true},
 		{name: "outbox", run: outboxDispatcher.Run},
 		{name: "oidc-logout", run: oidcService.RunLogoutDeliveries},
 		{name: "webhook", run: webhookService.RunDispatcher},
@@ -719,12 +708,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	return deps, workers
 }
 
-// secretsKeyProvider builds the vault data-key provider selected by
-// SECRETS_PROVIDER. "static" decodes SECRETS_KEY (or generates an ephemeral key
-// in dev when unset); "aws-kms" unwraps the DEK from AWS KMS at boot.
 // billingOrgProvisioner adapts the tenant repository to billing.OrgProvisioner,
-// so billing can create an organization once a signup checkout is paid without
-// importing the identity/tenant package (keeping the dependency direction clean).
+// so billing can create an organization after a paid checkout.
 type billingOrgProvisioner struct{ tenants *tenant.Repository }
 
 func (p billingOrgProvisioner) ProvisionOrg(ctx context.Context, ownerID uuid.UUID, name, slug, region, plan string) (uuid.UUID, error) {
@@ -735,12 +720,8 @@ func (p billingOrgProvisioner) ProvisionOrg(ctx context.Context, ownerID uuid.UU
 	return t.ID, nil
 }
 
-// entitlementPlanResolver resolves a tenant's effective plan code for the
-// entitlements service. It prefers the billing subscription (the paid source of
-// truth), falls back to the tenant's plan label, and defaults to free — so an
-// in-app upgrade takes effect immediately (subscription) even before/without the
-// label sync, and a plain free org (no subscription row) reads as free.
-// Implemented here because only the composition root may touch both contexts.
+// entitlementPlanResolver returns a tenant's effective plan: the billing
+// subscription first, then the tenant's plan label, otherwise free.
 type entitlementPlanResolver struct {
 	billing *billing.Service
 	tenants *tenant.Repository
@@ -810,6 +791,9 @@ func (u entitlementUsageResolver) Usage(ctx context.Context, tenantID uuid.UUID)
 	return out, nil
 }
 
+// SecretsKeyProvider returns the vault data-key provider selected by
+// SECRETS_PROVIDER: "static" decodes SECRETS_KEY (or generates an ephemeral key
+// in dev), and "aws-kms" unwraps the key with AWS KMS at startup.
 func SecretsKeyProvider(ctx context.Context, cfg *config.Config) (secret.KeyProvider, error) {
 	switch cfg.SecretsProvider {
 	case "aws-kms":

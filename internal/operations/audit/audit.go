@@ -1,8 +1,7 @@
-// Package audit records actor-visible mutations to audit.events. Each write
-// happens inside the caller's pgx.Tx, so the row commits atomically with the
-// business write. Every row carries a SHA-256 hash chaining to the previous row
-// in the same tenant; tampering (delete, edit, reorder) breaks the chain and is
-// caught by Verifier.Verify.
+// Package audit records mutations to audit.events inside the caller's
+// transaction, so each row commits with the change it describes. Each row's
+// SHA-256 hash chains to the previous row of its tenant: deleting, editing or
+// reordering a row breaks the chain, which Verifier detects.
 package audit
 
 import (
@@ -11,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 
@@ -19,10 +19,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
+// chainSeed is the prev_hash of the first row of a chain.
 const chainSeed = "0000000000000000000000000000000000000000000000000000000000000000"
 
+// Event is an audit row to record. A nil TenantID puts it on the platform
+// chain, and an empty ActorType means "user".
 type Event struct {
 	TenantID     *uuid.UUID
 	ActorUserID  *uuid.UUID
@@ -36,8 +40,8 @@ type Event struct {
 	Metadata     map[string]any
 }
 
-// Actor is the request-scoped provenance (who/where) a service attaches to the
-// audit rows it writes, so handlers can hand it off without building Events.
+// Actor is the request's provenance (who and from where) that a service
+// attaches to the audit rows it writes.
 type Actor struct {
 	UserID    *uuid.UUID
 	Type      string
@@ -46,7 +50,25 @@ type Actor struct {
 	RequestID string
 }
 
-// Event builds an audit Event for a tenant-scoped action from this actor.
+// ActorOf returns who made r, for its audit events: its principal (a user
+// unless the principal names another actor type) or, with none, the system,
+// with r's client address, user agent and request ID.
+func ActorOf(r *http.Request) Actor {
+	a := Actor{Type: "system", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
+	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
+		a.UserID, a.Type = p.UserID, "user"
+		if p.ActorType != "" {
+			a.Type = p.ActorType
+		}
+	}
+	return a
+}
+
+// Identity returns the actor's user, if any, and type: an Event's
+// ActorUserID and ActorType.
+func (a Actor) Identity() (*uuid.UUID, string) { return a.UserID, a.Type }
+
+// Event returns an audit Event of a tenant-scoped action by a.
 func (a Actor) Event(tenantID uuid.UUID, action, resourceType string, resourceID uuid.UUID, metadata map[string]any) Event {
 	e := a.PlatformEvent(action, resourceType, resourceID, metadata)
 	tid := tenantID
@@ -54,7 +76,8 @@ func (a Actor) Event(tenantID uuid.UUID, action, resourceType string, resourceID
 	return e
 }
 
-// PlatformEvent builds an audit Event not scoped to any tenant (platform chain).
+// PlatformEvent returns an audit Event on the platform chain, not scoped to a
+// tenant.
 func (a Actor) PlatformEvent(action, resourceType string, resourceID uuid.UUID, metadata map[string]any) Event {
 	rid := resourceID
 	return Event{
@@ -70,10 +93,9 @@ func (a Actor) PlatformEvent(action, resourceType string, resourceID uuid.UUID, 
 	}
 }
 
-// canonicalRow is the deterministic serialisation hashed for the chain.
-// Field order is fixed by struct declaration; nested maps in Metadata are
-// sorted by encoding/json. Changing this struct breaks all existing
-// chains — bump a chain-version column first if that becomes necessary.
+// canonicalRow is the serialisation each row's hash covers; its field order is
+// fixed by this declaration. Changing it breaks every existing chain, so add a
+// chain-version column first.
 type canonicalRow struct {
 	ID           string          `json:"id"`
 	TenantID     string          `json:"tenant_id"`
@@ -120,8 +142,7 @@ func uuidStr(u *uuid.UUID) string {
 	return u.String()
 }
 
-// pgUUIDNullable converts a *uuid.UUID to a pgtype.UUID suitable for
-// nullable UUID columns. A nil pointer maps to the invalid (NULL) form.
+// pgUUIDNullable converts id to a nullable pgtype.UUID; nil becomes NULL.
 func pgUUIDNullable(id *uuid.UUID) pgtype.UUID {
 	if id == nil {
 		return pgtype.UUID{Valid: false}
@@ -129,13 +150,13 @@ func pgUUIDNullable(id *uuid.UUID) pgtype.UUID {
 	return pgtype.UUID{Bytes: *id, Valid: true}
 }
 
-// strRef returns a pointer to s, always non-nil. Used to pass strings to
-// generated *string params without converting empty strings to NULL.
+// strRef returns a pointer to s, so an empty string is stored as "" rather than
+// NULL.
 func strRef(s string) *string { return &s }
 
-// Record writes one audit row inside the given transaction. It computes
-// the next link in the per-tenant hash chain under a per-tenant advisory
-// lock; concurrent audit writes for the same tenant serialise on commit.
+// Record writes one audit row in tx, as the next link of its tenant's hash
+// chain. A per-tenant advisory lock serialises concurrent writers until tx
+// ends.
 func Record(ctx context.Context, tx pgx.Tx, e Event) error {
 	if e.ActorType == "" {
 		e.ActorType = "user"
@@ -154,9 +175,7 @@ func Record(ctx context.Context, tx pgx.Tx, e Event) error {
 	} else {
 		lockKey += "platform"
 	}
-	// Advisory lock stays raw — pg_advisory_xact_lock is a void-returning
-	// side-effect; it does not return rows and cannot be modelled as a
-	// named sqlc query.
+	// Raw SQL: pg_advisory_xact_lock returns void, which sqlc cannot model.
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
 		return err
 	}

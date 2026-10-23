@@ -61,14 +61,16 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/siem"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/idempotency"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/health"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/metrics"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/tracing"
 )
 
+// Deps is everything the router serves: each package's handler and the shared
+// middleware settings.
 type Deps struct {
 	Tenant     *tenant.Handler
 	User       *user.Handler
@@ -100,7 +102,6 @@ type Deps struct {
 	Entitlement   *entitlements.Handler
 	Sales         *sales.Handler
 	Analytics     *analytics.Handler
-	Outbox        *outbox.Handler
 	OIDC          *oidc.Handler
 	Passkey       *passkey.Handler
 	Social        *social.Handler
@@ -142,59 +143,59 @@ type Deps struct {
 	// RateLimitStore, when set, backs every limiter (shared across replicas).
 	// Nil = in-process limits.
 	RateLimitStore ratelimit.Store
+	// TenantLim, UserLim and APIKeyLim limit the authenticated routes per
+	// organisation, user and API key, at the organisation's own limits where it
+	// has set them.
+	TenantLim, UserLim, APIKeyLim *ratelimit.TenantLimiter
+	// Idempotency stores the answers to IdempotentRoutes requests sent with
+	// an Idempotency-Key.
+	Idempotency *idempotency.Store
+
+	shutdownHooks []func() // run once the HTTP server has drained
 }
 
+// NewRouter builds the HTTP API: the middleware chain, the public routes, and
+// the authenticated routes behind it.
 func NewRouter(d Deps) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(chimw.RequestID)
 	r.Use(httpx.ClientIPContext) // the client address, for audit records written below a handler
-	// NOTE: chimw.RealIP is deliberately NOT used. It rewrites r.RemoteAddr from
-	// X-Forwarded-For / X-Real-IP unconditionally, with no notion of a trusted
-	// proxy — which would re-introduce the spoofing that httpx.ClientIP now
-	// defends against by making the transport peer (our safe fallback) equally
-	// caller-controlled. Client IP resolution lives in httpx.ClientIP, governed
-	// by TRUSTED_PROXY_HOPS.
-	r.Use(chimw.Recoverer)
+	// chimw.RealIP is deliberately not used: it trusts X-Forwarded-For from anyone.
+	// Client IPs come from httpx.ClientIP, governed by TRUSTED_PROXY_HOPS.
 	r.Use(httpx.GeoCountryContext) // the trusted upstream country, for the sessions a request opens
 	r.Use(d.InFlight.Middleware)
 	r.Use(httpx.SecurityHeaders(d.ServiceEnv != config.EnvDev))
-	// Tracing wraps metrics so the server span spans the whole request; both
-	// derive low-cardinality names from the matched chi route pattern. When no
-	// OTLP endpoint is configured the global tracer is a no-op, so this is a
-	// cheap pass-through.
-	//
-	// It must also sit ABOVE AccessLog: chi middleware is outer-to-inner, and
-	// AccessLog reads trace.SpanFromContext(r.Context()) when it writes its line.
-	// With AccessLog outermost it only ever saw its own pre-span context, so the
-	// trace_id/span_id attrs were silently never emitted and Grafana's
-	// log-to-trace correlation had nothing to link on.
+	r.Use(httpx.NoStore(NoStoreRoutes())) // responses carrying a token, secret or sign-in session
+	// Tracing wraps metrics so the server span covers the whole request, and it sits
+	// above AccessLog so log lines carry trace_id and span_id. With no OTLP endpoint
+	// the tracer is a no-op.
 	r.Use(tracing.Middleware)
 	r.Use(httpx.AccessLog)
 	r.Use(metrics.Middleware)
+	// Below the logging, metrics and in-flight count, so a panic is answered
+	// 500 and still logged, counted and released.
+	r.Use(chimw.Recoverer)
 	// CORS first (above CSRF) so that even a rejected request — e.g. a CSRF 403
 	// — still carries Access-Control-* headers; otherwise the browser masks the
 	// real error as a generic "blocked by CORS policy" failure.
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   d.AllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Request-Id", "X-Dev-User", "X-Dev-Tenant", "X-CSRF-Token"},
-		ExposedHeaders:   []string{"X-Request-Id"},
+		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Request-Id", "X-Dev-User", "X-Dev-Tenant", "X-CSRF-Token", idempotency.Header},
+		ExposedHeaders:   []string{"X-Request-Id", "Idempotent-Replayed"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
-	// CSRF: enforced on browser cookie-bearing requests; traffic authorised by
-	// a bearer token or an API key bypasses it. Lives above the route groups so
-	// every cookie-session mutation inherits the check.
-	//
-	// CSRFDisabled is an explicit escape hatch for dev/Postman testing only
-	// — main.go refuses to start with CSRF_DISABLED outside SERVICE_ENV=dev.
+	// CSRF applies to cookie-bearing browser requests; bearer tokens and API keys
+	// bypass it. CSRFDisabled is for dev only, and startup refuses it elsewhere.
 	if !d.CSRFDisabled {
 		r.Use(CSRF(d.AllowedOrigins, d.ServiceEnv != config.EnvDev, d.CSRFCookieDomain))
 	}
 
 	// newLimiter builds an in-process limiter, or a Redis-backed one when a
-	// shared store is configured (so limits hold across replicas).
+	// shared store is configured (so limits hold across replicas). A shared
+	// store keys buckets by scope, so each limiter names its own.
 	newLimiter := func(rate float64, capacity int) *ratelimit.Limiter {
 		if d.RateLimitStore != nil {
 			return ratelimit.NewWithStore(d.RateLimitStore, rate, capacity)
@@ -203,30 +204,15 @@ func NewRouter(d Deps) http.Handler {
 	}
 	// Per-IP throttle on auth-burning endpoints.
 	loginLimiter := newLimiter(5, 20)
-	// Per-tenant + per-user throttles on authenticated endpoints. Rates
-	// here are intentionally generous; the per-tenant bucket guards
-	// against a single tenant exhausting shared resources, the per-user
-	// bucket guards against a single compromised principal.
-	tenantLimiter := newLimiter(100, 500)
-	userLimiter := newLimiter(30, 100)
-	apiKeyLimiter := newLimiter(50, 200)
+	// The token endpoints serve an application's code exchanges and refreshes
+	// for all its users from one address, and every credential they take is
+	// long and random, so they get a machine-traffic bucket.
+	tokenLimiter := newLimiter(50, 200)
 
-	// Root-mounted protocol routes (OIDC discovery/revoke/introspect, SCIM,
-	// SAML, LDAP) sit OUTSIDE the /v1 group and therefore inherited no rate
-	// limit at all — mountRootPublicRoutes used to run before any limiter even
-	// existed. Two of those are unauthenticated or near-free to call:
-	//
-	//   POST /ldap/{id}/authenticate  verifies a username+password against the
-	//     customer's own directory. Unthrottled, it is a password-spray gateway
-	//     into a tenant's Active Directory that will also trip AD's lockout
-	//     policy and take the customer's directory down.
-	//   POST /oauth/introspect        needs only a public client_id (no secret),
-	//     making it a token-liveness oracle.
-	//
-	// credentialLimiter matches the /v1 login throttle. protocolLimiter is
-	// deliberately generous: SCIM sync and SAML SSO are legitimate machine
-	// traffic and must not be throttled into failure — it exists to bound abuse,
-	// not to shape normal load.
+	// Rate limits for root-mounted protocol routes. credentialLimiter matches the /v1
+	// login throttle (LDAP authenticate is a password-spray target, introspect a token
+	// oracle); protocolLimiter is generous, since SCIM and SAML are legitimate machine
+	// traffic.
 	credentialLimiter := newLimiter(5, 20)
 	protocolLimiter := newLimiter(50, 200)
 
@@ -246,8 +232,12 @@ func NewRouter(d Deps) http.Handler {
 	r.Route("/v1", func(r chi.Router) {
 		// Public (no JWT required).
 		r.Group(func(r chi.Router) {
-			r.Use(loginLimiter.Middleware)
+			r.Use(loginLimiter.MiddlewareBy("login-ip", ratelimit.PerIP))
 			mountV1PublicRoutes(r, d)
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(tokenLimiter.MiddlewareBy("token-ip", ratelimit.PerIP))
+			mountV1TokenRoutes(r, d)
 		})
 
 		// Authenticated. Accepts either user JWT, service JWT, or API key — and,
@@ -261,19 +251,16 @@ func NewRouter(d Deps) http.Handler {
 			// applications (ApplicationTokenRoutes); everything else here is account
 			// and organisation management, which only the user's own tokens may do.
 			r.Use(httpx.RefuseApplicationTokens(ApplicationTokenRoutes()))
-			// Central cross-tenant guard: any route with a {tenantID} path param
-			// must match the caller's own tenant (QID-18). Belt to the individual
-			// handlers' suspenders. NOTE: this relies on the nested Route("/v1")
-			// + Group structure — chi only exposes the {tenantID} param to a
-			// group-level middleware when routes are matched by the nested
-			// subrouter. Do NOT flatten these routes onto the top mux, or this
-			// guard stops seeing the param and silently fails open. (rbac + users
-			// also self-scope in-handler, so those two survive a refactor; the
-			// other tenant-scoped resources rely on this middleware.)
+			// Cross-tenant guard: a {tenantID} path parameter must match the caller's
+			// tenant. It needs the nested Route("/v1") + Group structure to see the
+			// parameter; flattening these routes onto the top mux makes it fail open.
 			r.Use(httpx.EnforceTenantScope)
-			r.Use(tenantLimiter.MiddlewareBy("tenant", ratelimit.PerTenant))
-			r.Use(userLimiter.MiddlewareBy("user", ratelimit.PerUser))
-			r.Use(apiKeyLimiter.MiddlewareBy("apikey", ratelimit.PerAPIKey))
+			// Generous per-organisation, per-user and per-key buckets: one
+			// organisation can't exhaust shared resources, nor one compromised
+			// principal its organisation's.
+			r.Use(d.TenantLim.MiddlewareBy("tenant", ratelimit.PerTenant))
+			r.Use(d.UserLim.MiddlewareBy("user", ratelimit.PerUser))
+			r.Use(d.APIKeyLim.MiddlewareBy("apikey", ratelimit.PerAPIKey))
 			// RBAC permission enforcement for end-user principals. Gates the
 			// routes listed in permissionMap(); API-key/service actors and
 			// unmapped (self-service / public) routes pass through.
@@ -281,6 +268,8 @@ func NewRouter(d Deps) http.Handler {
 			// Sensitive actions also need a step-up of the calling session
 			// (StepUpRoutes); asked only of a caller already authorized.
 			r.Use(d.MFA.Service.StepUpGate(StepUpRoutes()))
+			// Last, so only a request that may run is remembered for its key.
+			r.Use(d.Idempotency.Middleware(IdempotentRoutes()))
 
 			mountAuthenticatedRoutes(r, d)
 		})
@@ -289,14 +278,9 @@ func NewRouter(d Deps) http.Handler {
 	return r
 }
 
-// mountRootPublicRoutes is the single production registration point for
-// protocol and operational routes mounted outside /v1.
-//
-// The chi.Group wrappers attach rate limiting without altering any route
-// pattern — Group only composes middleware onto the same mux, so path matching,
-// path parameters and the OpenAPI route set are unchanged. Probes are left
-// unlimited on purpose: throttling /healthz or /readyz would make an
-// orchestrator kill a pod that is merely busy.
+// mountRootPublicRoutes registers the protocol and operational routes outside
+// /v1. Groups add rate limits without changing route patterns. Health probes are
+// unlimited, so a busy pod isn't killed.
 func mountRootPublicRoutes(r chi.Router, d Deps, credentialLimiter, protocolLimiter *ratelimit.Limiter) {
 	r.Get("/healthz", d.Health.Liveness)
 	r.Get("/readyz", d.Health.Readiness)
@@ -305,13 +289,13 @@ func mountRootPublicRoutes(r chi.Router, d Deps, credentialLimiter, protocolLimi
 
 	// Directory credential verification — same throttle as /v1 login.
 	r.Group(func(r chi.Router) {
-		r.Use(credentialLimiter.Middleware)
+		r.Use(credentialLimiter.MiddlewareBy("credential-ip", ratelimit.PerIP))
 		d.LDAP.MountPublic(r)
 	})
 
 	// Protocol surfaces: machine traffic, generously bounded.
 	r.Group(func(r chi.Router) {
-		r.Use(protocolLimiter.Middleware)
+		r.Use(protocolLimiter.MiddlewareBy("protocol-ip", ratelimit.PerIP))
 		d.OIDC.MountPublic(r)
 		d.SCIM.MountPublic(r)
 		d.SAML.MountPublic(r)
@@ -325,7 +309,6 @@ func mountV1PublicRoutes(r chi.Router, d Deps) {
 	d.Auth.Mount(r)
 	d.Recovery.Mount(r)
 	d.Invite.MountPublic(r)
-	d.Principal.MountPublic(r)
 	d.Social.MountPublic(r)
 	d.Billing.MountPublic(r)
 	d.Agent.MountPublic(r)
@@ -337,6 +320,13 @@ func mountV1PublicRoutes(r chi.Router, d Deps) {
 	d.TokenVault.MountPublic(r)
 	d.MFA.MountPublic(r)
 	d.SESWebhook.Mount(r)
+}
+
+// mountV1TokenRoutes registers the OAuth token endpoints, which applications
+// call for many people from one address.
+func mountV1TokenRoutes(r chi.Router, d Deps) {
+	d.Principal.MountToken(r)
+	d.OIDC.MountToken(r)
 }
 
 // mountAuthenticatedRoutes is the single production registration point for
@@ -368,7 +358,6 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.Entitlement.Mount(r)
 	d.Sales.Mount(r)
 	d.Analytics.Mount(r)
-	d.Outbox.Mount(r)
 	d.OIDC.Mount(r)
 	d.Passkey.Mount(r)
 	d.Social.Mount(r)
@@ -401,10 +390,8 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 }
 
 // ApplicationTokenRoutes lists the authenticated routes that accept a token
-// issued to an application (one carrying client_id). Every other authenticated
-// route refuses it (httpx.RefuseApplicationTokens): an application's token
-// lets it read who the user is, not manage their account or organisation.
-// Keep it to endpoints meant for applications (TestApplicationTokenRoutesStayNarrow).
+// issued to an application. Every other authenticated route refuses it: an
+// application may read who the user is, not manage their account.
 func ApplicationTokenRoutes() []string {
 	return []string{
 		"GET /v1/oauth/userinfo",
@@ -413,17 +400,8 @@ func ApplicationTokenRoutes() []string {
 }
 
 // LoginSessionRoutes lists the authenticated routes that also accept the hosted
-// login's session cookie (qe_ls) in place of a bearer token, because the hosted
-// login's own signed-in pages call them and it never holds a token. Every other
-// authenticated route stays token-only.
-//
-// Keep it short: each entry lets a browser that is signed in to the hosted
-// login act through that route. All must be user-only self-service routes and
-// none may be CSRF-exempt (TestLoginSessionRoutesStayNarrow). Removing a
-// passkey is deliberately not here: it stays token-only until removal checks
-// that the user keeps a way to sign in. The three reads tell a signed-in page
-// (and the React SDK's useUser and organisation switcher, which hold only the
-// cookie) who the person is and which organisations they belong to.
+// login's session cookie (qe_ls), because its pages hold no token. Keep it to
+// user-only self-service routes that aren't CSRF-exempt.
 func LoginSessionRoutes() []string {
 	return []string{
 		"GET /v1/auth/me",
@@ -436,6 +414,89 @@ func LoginSessionRoutes() []string {
 	}
 }
 
+// IdempotentRoutes are the create routes that honour an Idempotency-Key: one
+// sent again with the same key and body gets the first answer instead of
+// creating twice (see the idempotency package).
+func IdempotentRoutes() []string {
+	return []string{
+		"POST /v1/api-keys",
+		"POST /v1/groups",
+		"POST /v1/invites",
+		"POST /v1/service-principals",
+		"POST /v1/tenants/{tenantID}/agents",
+		"POST /v1/tenants/{tenantID}/billing/checkout",
+		"POST /v1/users",
+		"POST /v1/webhooks",
+	}
+}
+
+// NoStoreRoutes lists the routes whose responses carry a token, a secret shown
+// once, or a sign-in session cookie. NewRouter marks them Cache-Control:
+// no-store and Pragma: no-cache (RFC 6749 §5.1).
+func NoStoreRoutes() []string {
+	return []string{
+		// Token endpoints, the device and backchannel requests whose codes a
+		// client polls them with, the consent answer carrying an authorization
+		// code, and the IdP page carrying a signed SAML assertion.
+		"POST /v1/oauth/token",
+		"POST /v1/oauth/token-code",
+		"POST /v1/oauth/device_authorization",
+		"POST /v1/oauth/bc-authorize",
+		"POST /v1/oauth/authorize/decision",
+		"POST /v1/agents/token",
+		"POST /ldap/{id}/authenticate",
+		"GET /saml/idp/{tenantID}/sso",
+		"POST /saml/idp/{tenantID}/sso",
+
+		// Sign-in: a token pair, an mfa_token, or the hosted-login cookie.
+		"POST /v1/auth/signup",
+		"POST /v1/auth/login",
+		"POST /v1/auth/mfa",
+		"POST /v1/auth/mfa/enroll",
+		"POST /v1/auth/refresh",
+		"POST /v1/auth/session",
+		"POST /v1/auth/session/mfa",
+		"DELETE /v1/auth/session",
+		"POST /v1/auth/register",
+		"POST /v1/auth/switch-tenant",
+		"POST /v1/auth/sessions/revoke-all",
+		"POST /v1/auth/forgot-password",
+		"POST /v1/auth/magic-link/consume",
+		"POST /v1/auth/magic-link/session",
+		"POST /v1/passkeys/login/finish",
+		"POST /v1/passkeys/login/session",
+		"POST /v1/signup/passkey/finish",
+		"POST /v1/register/passkey/finish",
+		"POST /v1/invites/accept",
+		"POST /v1/invites/accept/passkey/finish",
+		"POST /v1/me/invites/accept",
+		"POST /v1/me/invites/{id}/accept",
+		"POST /v1/social/exchange",
+		"POST /saml/exchange",
+		"POST /v1/tenants",
+
+		// A secret, key, code or credential returned to its holder.
+		"POST /v1/api-keys",
+		"POST /v1/oidc/clients",
+		"POST /v1/tenants/{tenantID}/oidc/clients",
+		"POST /v1/tenants/{tenantID}/oidc/clients/{id}/rotate-secret",
+		"POST /v1/service-principals",
+		"POST /v1/tenants/{tenantID}/agents",
+		"POST /v1/webhooks",
+		"POST /v1/mfa/totp/enroll/start",
+		"POST /v1/mfa/totp/enroll/confirm",
+		"POST /v1/mfa/recovery-codes/regenerate",
+		"POST /v1/mfa/push/devices",
+		"POST /v1/mfa/push/pairing",
+		"POST /v1/mfa/push/pairing/claim",
+		"POST /v1/tenants/{tenantID}/scim/token",
+		"POST /v1/tenants/{tenantID}/admin-portal/links",
+		"POST /v1/tenants/{tenantID}/secrets/{id}/reveal",
+		"POST /v1/tenants/{tenantID}/credentials",
+		"GET /v1/vault/tokens/{provider}/access-token",
+	}
+}
+
 // CSRF is the production cross-site request check (httpx.CSRF) with the
 // production exemptions, as NewRouter mounts it.
 func CSRF(allowedOrigins []string, cookieSecure bool, cookieDomain string) func(http.Handler) http.Handler {
@@ -443,29 +504,10 @@ func CSRF(allowedOrigins []string, cookieSecure bool, cookieDomain string) func(
 		AllowedOrigins: allowedOrigins,
 		CookieSecure:   cookieSecure,
 		CookieDomain:   cookieDomain,
-		// Exempt paths, two buckets:
-		//  1. Machine/IdP-driven, authenticated by something other than a
-		//     browser session: SAML ACS (XML-DSig) + IdP SSO POST binding;
-		//     OAuth revoke/introspect (client creds, RFC 7009/7662); the
-		//     code + device-authorization token endpoints (RFC 8628).
-		//  2. Public PRE-AUTH endpoints that bootstrap a *Bearer* token (not a
-		//     cookie session): signup/login/refresh, password recovery, magic
-		//     link, passkey login, social, invite-accept. They carry no cookie
-		//     session to forge; the token response can't be read or stored
-		//     cross-origin by an attacker; and CORS origin-checks + rate limits
-		//     already gate them — so the double-submit only adds friction.
-		//     NB: /v1/auth/session (the cookie-session creator) is deliberately
-		//     NOT exempt — it stays CSRF-protected, as does the hosted
-		//     magic-link exchange (/v1/auth/magic-link/session) and the
-		//     hosted passkey sign-in (/v1/passkeys/login/session), which set
-		//     the same cookie.
-		// Entries are exact paths unless they end in "/" (prefix) or contain
-		// "*" (one path segment). Keep them narrow: a prefix over a whole
-		// feature area also exempts every authenticated mutation later added
-		// under it. Two such cases were found and closed here — "/v1/social/"
-		// was exempting POST /v1/social/providers (a connection.write that
-		// overwrites a tenant's social IdP), and "/v1/oauth/bc-authorize" as
-		// a prefix was exempting the authenticated .../decision endpoint.
+		// Exempt: machine and IdP endpoints authenticated otherwise (SAML ACS, OAuth
+		// revoke, introspect and token) and public pre-auth endpoints that return bearer
+		// tokens; cookie-setting endpoints stay protected. Entries are exact, end in "/"
+		// (prefix) or use "*" (one segment), so keep prefixes narrow.
 		ExemptPaths: csrfExemptPaths(),
 	})
 }
@@ -475,11 +517,11 @@ func CSRF(allowedOrigins []string, cookieSecure bool, cookieDomain string) func(
 // covers a route in the authenticated tree.
 func csrfExemptPaths() []string {
 	return []string{
-		"/saml/acs/", "/saml/idp/sso", "/oauth/revoke", "/oauth/introspect",
+		"/saml/acs/", "/saml/idp/*/sso", "/oauth/revoke", "/oauth/introspect",
 		"/v1/oauth/token-code", "/v1/oauth/device_authorization",
-		"/v1/oauth/token",         // service-principal client credentials, in the form or Basic; no cookie session
-		"/v1/ldap/*/authenticate", // directory credentials in the body, answered with a token pair; no cookie session
-		"/v1/oauth/bc-authorize",  // exact: .../decision below it is authenticated
+		"/v1/oauth/token",        // service-principal client credentials, in the form or Basic; no cookie session
+		"/ldap/*/authenticate",   // directory credentials in the body, answered with a token pair; no cookie session
+		"/v1/oauth/bc-authorize", // exact: .../decision below it is authenticated
 		"/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh",
 		"/v1/auth/mfa",  // completes a token-flow sign-in: the mfa_token, not a cookie, is the credential
 		"/v1/auth/mfa/", // its helpers (send a code, begin a passkey, send a push) — likewise

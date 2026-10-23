@@ -1,8 +1,6 @@
 // Package useragent describes the device behind a User-Agent header in words a
-// person recognises ("Chrome on macOS"), so every surface names a session or a
-// passkey the same way instead of each client guessing. It reads only the
-// well-known browser and platform tokens; anything it does not recognise is
-// described neutrally, never as an error.
+// person recognises ("Chrome on macOS"), so every surface names sessions and
+// passkeys alike. Unrecognised tokens are described neutrally, never as errors.
 package useragent
 
 import "strings"
@@ -53,8 +51,8 @@ func Parse(userAgent string) Device {
 	return d
 }
 
-// Label is a readable description: "Chrome on macOS", "Android device" when
-// only the platform is known, "Firefox" when only the browser is, and
+// Label returns a readable description: "Chrome on macOS", "Android device"
+// when only the platform is known, "Firefox" when only the browser is, and
 // "Unknown device" when neither is.
 func (d Device) Label() string {
 	switch {

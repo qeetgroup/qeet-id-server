@@ -9,15 +9,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// RefuseApplicationTokens refuses a request authenticated by a token issued
-// to an application (Principal.ClientID set) with 403 auth.application_token,
-// unless its route is listed in allowed. An application's token was approved
-// for that application — reading who the user is — not for managing the
-// account or the organisation, which only the user's own tokens may do. Mount
-// it on the authenticated route group, after RequireAuth.
-//
-// allowed are "METHOD /path" entries in chi pattern syntax ("{id}" matches one
-// path segment); keep the list to the endpoints meant for applications.
+// RefuseApplicationTokens answers 403 auth.application_token to a request made
+// with an application's token (Principal.ClientID set) unless its route matches
+// an allowed "METHOD /pattern" entry in chi syntax: such a token may read who
+// the user is, not manage the account. Mount it after RequireAuth.
 func RefuseApplicationTokens(allowed []string) func(http.Handler) http.Handler {
 	listed := chi.NewRouter()
 	for _, route := range allowed {

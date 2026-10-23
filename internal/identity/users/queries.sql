@@ -99,6 +99,7 @@ ON CONFLICT (user_id) DO UPDATE SET password_hash = EXCLUDED.password_hash, upda
 -- boolean signals live here so sqlc types them concretely; the two nullable
 -- timestamps (password last-changed, passkey last-used) are fetched by the
 -- dedicated :one queries below, where an absent row cleanly means "never".
+-- Sessions are counted as ListUserActiveSessions lists them for @tenant_id.
 -- name: GetUserSecuritySummary :one
 SELECT
   u.mfa_required::boolean AS mfa_required,
@@ -109,11 +110,13 @@ SELECT
   (SELECT count(*) FROM auth.mfa_recovery_codes rc WHERE rc.user_id = u.id AND rc.used_at IS NULL)::int AS recovery_codes_remaining,
   EXISTS(SELECT 1 FROM auth.password_credentials pc WHERE pc.user_id = u.id)::boolean AS password_set,
   (SELECT count(*) FROM auth.sessions s WHERE s.user_id = u.id AND s.revoked_at IS NULL
-     AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW())::int AS active_sessions,
+     AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
+     AND (s.tenant_id = @tenant_id::uuid OR (s.tenant_id IS NULL AND u.tenant_id = @tenant_id::uuid)))::int AS active_sessions,
   (SELECT count(DISTINCT s.user_agent) FROM auth.sessions s WHERE s.user_id = u.id AND s.revoked_at IS NULL
-     AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW())::int AS distinct_devices
+     AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
+     AND (s.tenant_id = @tenant_id::uuid OR (s.tenant_id IS NULL AND u.tenant_id = @tenant_id::uuid)))::int AS distinct_devices
 FROM "user".users u
-WHERE u.id = $1 AND u.deleted_at IS NULL;
+WHERE u.id = @id AND u.deleted_at IS NULL;
 
 -- GetUserPasswordChangedAt returns when the user's password was last set/changed.
 -- ErrNoRows means the user has no password credential (password login not set up).
@@ -129,16 +132,18 @@ WHERE user_id = $1 AND last_used_at IS NOT NULL
 ORDER BY last_used_at DESC
 LIMIT 1;
 
--- ListUserActiveSessions lists a user's live sessions (most-recently-seen first):
--- not revoked and not past their maximum age or idle timeout.
--- ip is rendered through host() (clean address, no INET CIDR suffix) and
--- COALESCEd so the nullable INET scans into a plain non-null string.
+-- ListUserActiveSessions lists a user's live sessions in @tenant_id (most
+-- recently seen first): not revoked and not past their maximum age or idle
+-- timeout. Sessions in no tenant belong to the account, so only its home tenant
+-- sees them. ip goes through host() and COALESCE to scan as a plain string.
 -- name: ListUserActiveSessions :many
-SELECT id, COALESCE(host(ip), '')::text AS ip, user_agent, created_at, last_seen_at
-FROM auth.sessions
-WHERE user_id = $1 AND revoked_at IS NULL
-  AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
-ORDER BY last_seen_at DESC
+SELECT s.id, COALESCE(host(s.ip), '')::text AS ip, s.user_agent, s.created_at, s.last_seen_at
+FROM auth.sessions s
+JOIN "user".users u ON u.id = s.user_id
+WHERE s.user_id = @user_id AND s.revoked_at IS NULL
+  AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
+  AND (s.tenant_id = @tenant_id::uuid OR (s.tenant_id IS NULL AND u.tenant_id = @tenant_id::uuid))
+ORDER BY s.last_seen_at DESC
 LIMIT 100;
 
 -- ListUserRolesInTenant returns the roles directly assigned to a user within a

@@ -1,26 +1,13 @@
-// Package hibp implements breached-password detection against the Have I Been
-// Pwned "Pwned Passwords" range API using k-anonymity, so the plaintext
-// password never leaves the process.
-//
-// The protocol: SHA-1 the UTF-8 password and uppercase the 40-char hex digest.
-// Only the first 5 hex chars (the PREFIX) are sent to the API; the remaining 35
-// (the SUFFIX) are matched locally against the response. The request carries
-// `Add-Padding: true` so the response length doesn't leak how many hashes share
-// the prefix. The response is CRLF-separated `SUFFIX:COUNT` lines; a match with
-// COUNT above the configured threshold means the password is known-breached.
-//
-// The Checker is OFF by default (constructed only when enabled) and FAIL-OPEN:
-// any transport error, timeout, or non-200 status logs a warning, reports
-// not-breached and is counted in breached_password_check_allowed_on_error_total,
-// so a HIBP outage can never block a password change but is visible. Wiring is
-// in internal/bootstrap/dependencies.go: the one checker is held by the
-// authpolicy service, whose ValidateForTenant every password-setting flow runs.
+// Package hibp checks passwords against the Have I Been Pwned range API with
+// k-anonymity: only the first 5 hex characters of the password's SHA-1 are sent
+// and the rest is matched locally. The check is off unless enabled and fails
+// open (see PwnedAllowOnError), so an outage never blocks a password change.
 package hibp
 
 import (
 	"bufio"
 	"context"
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 -- the HIBP range API is keyed by SHA-1
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -39,7 +26,7 @@ import (
 const DefaultBaseURL = "https://api.pwnedpasswords.com"
 
 // defaultTimeout bounds a single range lookup so a slow HIBP never stalls a
-// password change; on timeout the Checker fails open (see Pwned).
+// password change; on timeout PwnedAllowOnError fails open.
 const defaultTimeout = 3 * time.Second
 
 // allowedOnError counts the passwords let through because the provider could
@@ -75,12 +62,9 @@ func New(client *http.Client, baseURL string, minCount int) *Checker {
 	return &Checker{client: client, baseURL: strings.TrimRight(baseURL, "/"), minCount: minCount}
 }
 
-// Pwned reports whether password appears in known breach corpora and, if so,
-// how many times. Only the 5-char SHA-1 prefix is sent to the API. It is
-// FAIL-OPEN: on any error (nil checker, request build, transport, non-200,
-// body read) it returns (false, 0, err) with a logged warning — callers that
-// want fail-open behaviour should ignore err for the allow/deny decision and
-// rely on the false. PwnedAllowOnError wraps that pattern.
+// Pwned reports whether password has been seen in at least minCount breaches,
+// and how many times. Only the 5-character SHA-1 prefix is sent. On any failure
+// it returns (false, 0, err); a nil Checker returns (false, 0, nil).
 func (c *Checker) Pwned(ctx context.Context, password string) (breached bool, count int, err error) {
 	if c == nil {
 		return false, 0, nil
@@ -116,11 +100,9 @@ func (c *Checker) Pwned(ctx context.Context, password string) (breached bool, co
 	return count >= c.minCount, count, nil
 }
 
-// PwnedAllowOnError is the fail-open convenience used by the password-setting
-// flows: it returns whether the password is breached, swallowing any error
-// (logging a warning and counting it in allowedOnError) so a HIBP outage never
-// blocks the user. A nil checker always returns false (the feature is
-// disabled) and is not counted.
+// PwnedAllowOnError reports whether password is breached, failing open: an
+// error is logged, counted in breached_password_check_allowed_on_error_total and
+// reported as not breached. A nil Checker returns false without counting.
 func (c *Checker) PwnedAllowOnError(ctx context.Context, password string) bool {
 	breached, _, err := c.Pwned(ctx, password)
 	if err != nil {
@@ -161,6 +143,6 @@ func matchSuffix(body io.Reader, want string) (int, error) {
 	return 0, nil
 }
 
-// ErrBreached is the sentinel a validation layer can compare against; the
-// user-facing 422 detail deliberately omits the sighting count.
+// ErrBreached reports a password found in known breaches. Its message carries
+// no sighting count.
 var ErrBreached = errors.New("password has appeared in known data breaches")

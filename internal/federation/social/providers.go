@@ -15,20 +15,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// An organisation's social providers are managed for their whole life: added
-// (or replaced) with UpsertProvider, changed field by field — switched off or
-// on, a secret replaced — with UpdateProvider, and removed with DeleteProvider.
-// A secret is stored encrypted and never returned. A provider switched off
-// stays off whatever else is saved, and is no longer offered or usable for
-// sign-in; to an unauthenticated caller it reads exactly like a provider that
-// was never set up. Every change is audited, naming the fields changed; the
-// secret's value never is.
-//
-// Removing a provider keeps the identities people linked through it: they
-// still appear in those people's connected accounts and work again if the
-// provider is added back. Removal is refused while anyone in the organisation
-// can sign in only through that provider (no password, no passkey, no other
-// linked identity); switch it off instead, or give them another way in first.
+// A provider's secret is stored encrypted and never returned, and every change
+// is audited with the fields it changed (never the secret). A switched-off
+// provider looks to an unauthenticated caller exactly like one never set up.
+// Removing a provider keeps the identities linked through it.
 
 // ChangedBy is who changed a provider, for the audit record.
 type ChangedBy struct {

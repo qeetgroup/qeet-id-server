@@ -22,17 +22,17 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 )
 
+// DefaultSigningKeyRetireGrace is how long a retired key keeps verifying.
+// SyncFailuresUntilNotReady is how many keyring refreshes in a row may fail
+// before Ready reports the instance not ready.
 const (
 	DefaultSigningKeyRetireGrace = 30 * 24 * time.Hour
 	signingKeyAdvisoryLock       = int64(0x514545544A5754)
-	// SyncFailuresUntilNotReady is how many refreshes of the keyring in a row
-	// may fail before readiness reports the instance not ready: it may be
-	// signing with a key the others have dropped, or unable to verify theirs.
-	SyncFailuresUntilNotReady = 3
+	SyncFailuresUntilNotReady    = 3
 )
 
-// ErrActiveKeySealedElsewhere: the database's active signing key was sealed
-// with a different vault key, so this instance can't sign with it.
+// ErrActiveKeySealedElsewhere means the database's active signing key was
+// sealed with a different vault key, so this instance can't sign with it.
 var ErrActiveKeySealedElsewhere = errors.New("the active JWT signing key in the database was sealed with a different vault key (SECRETS_KEY / KMS data key)")
 
 //nolint:gochecknoglobals // Prometheus collectors are process-wide by design.
@@ -68,6 +68,8 @@ type SigningKeyRegistry struct {
 	activeKID    string
 }
 
+// NewSigningKeyRegistry returns a registry over pool that seals private keys
+// with box. Both are required.
 func NewSigningKeyRegistry(pool *pgxpool.Pool, box *envelope.Cipher) (*SigningKeyRegistry, error) {
 	if pool == nil || box == nil {
 		return nil, errors.New("signing key registry requires database and envelope cipher")
@@ -154,14 +156,10 @@ func (r *SigningKeyRegistry) Reconcile(ctx context.Context, configuredKeyPEM, le
 	return tx.Commit(ctx)
 }
 
-// EnsureDevelopmentKey gives a developer workstation (SERVICE_ENV=dev) with no
-// JWT_SIGNING_KEY a signing key without making up a new one at every start.
-// The database's active key is used when this instance's vault key opens it;
-// only a database with no active key gets a new one, which becomes active as
-// the first key. Under the registry's lock, so instances starting together
-// agree on one key. An active key this instance can't open is
-// ErrActiveKeySealedElsewhere, and nothing changes: it is never retired in
-// favour of a key of this instance's own. generated reports a new key.
+// EnsureDevelopmentKey gives a dev instance without JWT_SIGNING_KEY a stable key:
+// it keeps the database's active key if this instance's vault key opens it, and
+// otherwise creates the first one; generated reports a new key. An active key it
+// can't open returns ErrActiveKeySealedElsewhere and changes nothing.
 func (r *SigningKeyRegistry) EnsureDevelopmentKey(ctx context.Context) (generated bool, err error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -327,6 +325,7 @@ func (r *SigningKeyRegistry) loadSnapshot(ctx context.Context) (string, []verifi
 	return string(plaintext), keys, nil
 }
 
+// NewIssuer returns an Issuer loaded with the registry's current keyring.
 func (r *SigningKeyRegistry) NewIssuer(ctx context.Context, issuer, audience string, accessTTL, refreshTTL time.Duration) (*Issuer, error) {
 	activePEM, keys, err := r.loadSnapshot(ctx)
 	if err != nil {
@@ -392,6 +391,8 @@ func (r *SigningKeyRegistry) Ready(context.Context) error {
 	return nil
 }
 
+// Run syncs issuer every interval (default 5s) until ctx is done, logging
+// failures.
 func (r *SigningKeyRegistry) Run(ctx context.Context, issuer *Issuer, interval time.Duration) {
 	if interval <= 0 {
 		interval = 5 * time.Second

@@ -13,15 +13,16 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
+// Handler serves the RBAC routes. Decider answers GET /v1/check across every
+// engine, so an attribute (ABAC) deny refuses there as everywhere else.
 type Handler struct {
 	Repo     *Repository
 	Service  *Service
 	Validate *validator.Validate
-	// Decider answers GET /v1/check across every engine, so an attribute
-	// (ABAC) deny refuses there as at every other enforcement point.
-	Decider *decide.Decider
+	Decider  *decide.Decider
 }
 
+// Mount registers the role and permission routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/permissions", h.listPermissions)
 
@@ -43,31 +44,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/check", h.check)
 }
 
-// requirePathTenant enforces that the {tenantID} in the path matches the
-// caller's own JWT tenant scope, returning 403 on mismatch (QID-18). Mirrors
-// the identical guard in the rebac/authpolicy/threat/ipallow handlers — the
-// RBAC handlers previously parsed the path tenant and trusted it unverified,
-// letting a tenant admin read/write another tenant's roles and assignments.
-func requirePathTenant(r *http.Request) (uuid.UUID, error) {
-	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
-	}
-	scope, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
-	}
-	return scope, nil
-}
-
-// scopedRole parses the {roleID} path param and enforces the role belongs to
-// the caller's own tenant, returning ErrNotFound on cross-tenant access. The
-// role-permission routes carry only a roleID (no tenantID), so without this a
-// tenant admin could grant/revoke/read another tenant's role permissions if
-// they knew the role id (QID-18).
+// scopedRole returns the path's {roleID} if the role belongs to the caller's
+// tenant. These routes carry no tenant, so another tenant's role is
+// ErrNotFound, the same as a missing one, and role IDs can't be probed.
 func (h *Handler) scopedRole(r *http.Request) (uuid.UUID, error) {
 	roleID, err := uuid.Parse(chi.URLParam(r, "roleID"))
 	if err != nil {
@@ -87,19 +66,6 @@ func (h *Handler) scopedRole(r *http.Request) (uuid.UUID, error) {
 	return roleID, nil
 }
 
-// actorOf captures the request's audit provenance from the principal + headers.
-func actorOf(r *http.Request) audit.Actor {
-	a := audit.Actor{Type: "system", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
-		a.UserID = p.UserID
-		a.Type = "user"
-		if p.ActorType != "" {
-			a.Type = p.ActorType
-		}
-	}
-	return a
-}
-
 func (h *Handler) listPermissions(w http.ResponseWriter, r *http.Request) {
 	out, err := h.Repo.ListPermissions(r.Context())
 	if err != nil {
@@ -110,7 +76,7 @@ func (h *Handler) listPermissions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request) {
-	tid, err := requirePathTenant(r)
+	tid, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -129,7 +95,7 @@ type createRoleInput struct {
 }
 
 func (h *Handler) createRole(w http.ResponseWriter, r *http.Request) {
-	tid, err := requirePathTenant(r)
+	tid, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -143,7 +109,7 @@ func (h *Handler) createRole(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	role, err := h.Service.CreateRole(r.Context(), tid, in.Name, in.Description, actorOf(r))
+	role, err := h.Service.CreateRole(r.Context(), tid, in.Name, in.Description, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -185,7 +151,7 @@ func (h *Handler) grant(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.GrantPermission(r.Context(), roleID, permID, actorOf(r)); err != nil {
+	if err := h.Service.GrantPermission(r.Context(), roleID, permID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -203,7 +169,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid permID"))
 		return
 	}
-	if err := h.Service.RevokePermission(r.Context(), roleID, permID, actorOf(r)); err != nil {
+	if err := h.Service.RevokePermission(r.Context(), roleID, permID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -216,7 +182,7 @@ func (h *Handler) assign(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
 		return
 	}
-	tid, err := requirePathTenant(r)
+	tid, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -230,7 +196,7 @@ func (h *Handler) assign(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actor := actorOf(r)
+	actor := audit.ActorOf(r)
 	if err := h.Service.AssignRole(r.Context(), uid, tid, rid, actor.UserID, actor); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -244,7 +210,7 @@ func (h *Handler) unassign(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
 		return
 	}
-	tid, err := requirePathTenant(r)
+	tid, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -254,7 +220,7 @@ func (h *Handler) unassign(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid roleID"))
 		return
 	}
-	if err := h.Service.UnassignRole(r.Context(), uid, tid, rid, actorOf(r)); err != nil {
+	if err := h.Service.UnassignRole(r.Context(), uid, tid, rid, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -267,7 +233,7 @@ func (h *Handler) effective(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
 		return
 	}
-	tid, err := requirePathTenant(r)
+	tid, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -280,11 +246,10 @@ func (h *Handler) effective(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"permissions": keys})
 }
 
-// check authorizes an action through the composed decision (decide.Decider):
-// an attribute (ABAC) deny refuses, a role or an attribute allow permits. It
-// returns {"allowed": bool, "decided_by": {"model", "rule"}}. With the opt-in
-// query flag explain=true it adds the role grant paths, a reason on denial and
-// the decision's trace.
+// check answers GET /v1/check with the composed decision (decide.Decider):
+// {"allowed", "decided_by": {"model", "rule"}}, ABAC detail shown only to a
+// caller who may read policies. explain=true adds the role grant paths, a
+// reason on denial and the decision's trace.
 func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	uid, err := uuid.Parse(q.Get("user_id"))
@@ -297,9 +262,8 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenant_id"))
 		return
 	}
-	// The tenant_id is caller-supplied via query; verify it matches the caller's
-	// own JWT tenant so /check can't be used as a cross-tenant permission oracle
-	// (QID-18).
+	// tenant_id comes from the query, so it must be the caller's own tenant, or
+	// /check would be a cross-tenant permission oracle.
 	if scope, serr := httpx.RequireTenant(r); serr != nil {
 		httpx.WriteError(w, r, serr)
 		return
@@ -338,7 +302,7 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listGroupRoles(w http.ResponseWriter, r *http.Request) {
-	tid, err := requirePathTenant(r)
+	tid, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -357,7 +321,7 @@ func (h *Handler) listGroupRoles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) assignGroupRole(w http.ResponseWriter, r *http.Request) {
-	tid, err := requirePathTenant(r)
+	tid, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -376,7 +340,7 @@ func (h *Handler) assignGroupRole(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actor := actorOf(r)
+	actor := audit.ActorOf(r)
 	if err := h.Service.AssignRoleToGroup(r.Context(), gid, tid, rid, actor.UserID, actor); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -385,7 +349,7 @@ func (h *Handler) assignGroupRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) unassignGroupRole(w http.ResponseWriter, r *http.Request) {
-	tid, err := requirePathTenant(r)
+	tid, err := httpx.PathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -400,7 +364,7 @@ func (h *Handler) unassignGroupRole(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid roleID"))
 		return
 	}
-	if err := h.Service.RemoveRoleFromGroup(r.Context(), gid, tid, rid, actorOf(r)); err != nil {
+	if err := h.Service.RemoveRoleFromGroup(r.Context(), gid, tid, rid, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

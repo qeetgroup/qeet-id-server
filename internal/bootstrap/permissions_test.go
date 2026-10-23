@@ -92,11 +92,9 @@ func TestAuthenticatedRoutesHaveExplicitPolicies(t *testing.T) {
 	}
 }
 
-// TestEveryRouteNamesAnApplicationScope fails when an authenticated route's
-// policy names no scope for an application's token: without one, opening the
-// route to applications would let any of them act there with the user's whole
-// role set. Administrative routes need their permission as the scope, and the
-// routes open to applications need one too.
+// TestEveryRouteNamesAnApplicationScope checks that every authenticated route's
+// policy names the scope an application's token needs, so no application can act
+// there with the user's whole role set.
 func TestEveryRouteNamesAnApplicationScope(t *testing.T) {
 	policies := RoutePolicies()
 	var unscoped, mismatched []string
@@ -131,14 +129,9 @@ func TestEveryRouteNamesAnApplicationScope(t *testing.T) {
 	}
 }
 
-// TestNoAuthenticatedRouteIsCSRFExempt is the guard for the exemption class of
-// bug: a CSRF exemption written as a prefix over a public feature area also
-// covers any authenticated mutation later mounted underneath it. Two such
-// routes existed — POST /v1/social/providers under "/v1/social/", and
-// POST /v1/oauth/bc-authorize/decision under "/v1/oauth/bc-authorize".
-//
-// Every route in the authenticated tree is reachable with a cookie session, so
-// none of them may be exempt.
+// TestNoAuthenticatedRouteIsCSRFExempt checks that no authenticated route is
+// CSRF-exempt, since every one is reachable with a cookie session. Prefix
+// exemptions over public areas are the usual cause.
 func TestNoAuthenticatedRouteIsCSRFExempt(t *testing.T) {
 	router := chi.NewRouter()
 	router.Route("/v1", func(r chi.Router) {
@@ -171,6 +164,33 @@ func TestNoAuthenticatedRouteIsCSRFExempt(t *testing.T) {
 }
 
 var routeParamPattern = regexp.MustCompile(`\{[^}]+\}`)
+
+// TestEveryCSRFExemptionMatchesARoute checks that each CSRF exemption matches at
+// least one mounted mutation route, so a mistyped path can't exempt nothing
+// while the route it meant stays blocked.
+func TestEveryCSRFExemptionMatchesARoute(t *testing.T) {
+	var paths []string
+	for key := range productionRouteInventory(t) {
+		method, path, _ := strings.Cut(key, " ")
+		switch method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			continue // read-only methods never reach the CSRF check
+		}
+		paths = append(paths, routeParamPattern.ReplaceAllString(path, "00000000-0000-0000-0000-000000000000"))
+	}
+	for _, pattern := range csrfExemptPaths() {
+		matched := false
+		for _, p := range paths {
+			if httpx.MatchExemptPathForTest(pattern, p) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			t.Errorf("CSRF exemption %q matches no mounted mutation route: fix the path or remove it", pattern)
+		}
+	}
+}
 
 // TestLoginSessionRoutesStayNarrow guards the routes that accept the hosted
 // login's session cookie in place of a bearer token: exactly the passkey list,
@@ -249,11 +269,9 @@ func TestApplicationTokenRoutesStayNarrow(t *testing.T) {
 	}
 }
 
-// sensitiveLooking matches the paths of routes that change factors, machine
-// credentials, secrets, sign-in or security policy, single sign-on, retention
-// or audit streaming, hand out authority (roles, permissions, invitations,
-// relationship rules, attribute policies), bring an account back, move an
-// account's email address, or destroy an account or organisation.
+// sensitiveLooking matches paths of routes that change credentials, factors,
+// secrets, security policy, SSO, retention or authority, restore accounts, move
+// email addresses, or destroy accounts or organisations.
 var sensitiveLooking = regexp.MustCompile(`/mfa/|/passkeys|/api-keys|/service-principals|/agents|` +
 	`/roles|/permissions|/invites|/relation-tuples|/abac|/reactivate|/restore|/email|` +
 	`/oidc/clients|/scim/token|/credentials|/webhooks|/auth-hooks|/secrets|/vault/tokens|/provider-config|` +
@@ -343,12 +361,9 @@ func TestLinkedPhoneCallsPassCSRF(t *testing.T) {
 	}
 }
 
-// TestHostedLoginCookieRoutesKeepTheCSRFCheck: the routes that give a browser
-// the hosted-login cookie must not skip the CSRF check, or a page on another
-// site could sign a visitor's browser in to an account of its choosing. The
-// hosted magic-link exchange sat under the magic-link exemption, and the hosted
-// passkey sign-in sits beside the passkey token steps; the bearer steps still
-// skip the check.
+// TestHostedLoginCookieRoutesKeepTheCSRFCheck checks that the routes setting the
+// hosted-login cookie keep the CSRF check, so another site can't sign a visitor
+// in to an account of its choosing.
 func TestHostedLoginCookieRoutesKeepTheCSRFCheck(t *testing.T) {
 	reached := false
 	h := httpx.CSRF(httpx.CSRFConfig{AllowedOrigins: []string{"https://login.example"}, ExemptPaths: csrfExemptPaths()})(
@@ -376,11 +391,9 @@ func TestHostedLoginCookieRoutesKeepTheCSRFCheck(t *testing.T) {
 	}
 }
 
-// TestServerCallersPassTheCSRFCheck: the production check let only a bearer
-// token skip it, so writes the server libraries make with an API key, and back
-// ends exchanging service-principal or directory credentials, were refused for
-// sending no Origin. Those pass now; a cookie change without the token, a
-// cross-site form post and Basic credentials still don't.
+// TestServerCallersPassTheCSRFCheck checks that API-key and server credential
+// calls pass the CSRF check, while cookie changes without the token, cross-site
+// form posts and Basic credentials still don't.
 func TestServerCallersPassTheCSRFCheck(t *testing.T) {
 	reached := false
 	h := CSRF([]string{"https://console.example"}, true, "")(
@@ -391,7 +404,7 @@ func TestServerCallersPassTheCSRFCheck(t *testing.T) {
 	}{
 		{name: "an API-key write", path: "/v1/users", authorization: "ApiKey qk_test", want: true},
 		{name: "the service-principal token exchange", path: "/v1/oauth/token", contentType: "application/x-www-form-urlencoded", want: true},
-		{name: "a directory sign-in", path: "/v1/ldap/" + uuid.NewString() + "/authenticate", want: true},
+		{name: "a directory sign-in", path: "/ldap/" + uuid.NewString() + "/authenticate", want: true},
 		{name: "a cookie change without the token", path: "/v1/passkeys/register/begin", cookie: "qe_ls=session", origin: "https://console.example"},
 		{name: "a cross-site form post", path: "/v1/auth/session", origin: "https://attacker.example", contentType: "text/plain"},
 		{name: "Basic credentials from another site", path: "/v1/users", authorization: "Basic dXNlcjpwYXNz", origin: "https://attacker.example"},
@@ -406,6 +419,105 @@ func TestServerCallersPassTheCSRFCheck(t *testing.T) {
 		h.ServeHTTP(httptest.NewRecorder(), req)
 		if reached != c.want {
 			t.Errorf("%s: reached handler = %v, want %v", c.name, reached, c.want)
+		}
+	}
+}
+
+// tokenScopedRoutes are the organisation routes that take the organisation
+// from the caller's token alone, as they did before 1.0. The set is frozen: a
+// new organisation route names it in the path, /v1/tenants/{tenantID}/….
+var tokenScopedRoutes = map[string]bool{
+	"GET /v1/activity":                                     true,
+	"GET /v1/activity/stream":                              true,
+	"GET /v1/activity/summary":                             true,
+	"GET /v1/activity/{id}/related":                        true,
+	"POST /v1/api-keys":                                    true,
+	"DELETE /v1/api-keys/{id}":                             true,
+	"GET /v1/auth/trusted-devices/count":                   true,
+	"GET /v1/check":                                        true,
+	"POST /v1/gdpr/export":                                 true,
+	"POST /v1/gdpr/purge":                                  true,
+	"DELETE /v1/gdpr/purge/{id}":                           true,
+	"POST /v1/groups":                                      true,
+	"POST /v1/groups/import":                               true,
+	"GET /v1/groups/templates":                             true,
+	"POST /v1/groups/templates":                            true,
+	"DELETE /v1/groups/templates/{id}":                     true,
+	"POST /v1/groups/templates/{id}/apply":                 true,
+	"DELETE /v1/groups/{id}":                               true,
+	"PATCH /v1/groups/{id}":                                true,
+	"GET /v1/groups/{id}/members":                          true,
+	"DELETE /v1/groups/{id}/members/{userID}":              true,
+	"POST /v1/groups/{id}/members/{userID}":                true,
+	"POST /v1/invites":                                     true,
+	"DELETE /v1/invites/{id}":                              true,
+	"POST /v1/invites/{id}/resend":                         true,
+	"POST /v1/oidc/clients":                                true,
+	"DELETE /v1/oidc/clients/{id}":                         true,
+	"GET /v1/oidc/signing-keys":                            true,
+	"GET /v1/permissions":                                  true,
+	"DELETE /v1/qeetai/provider-config":                    true,
+	"GET /v1/qeetai/provider-config":                       true,
+	"PUT /v1/qeetai/provider-config":                       true,
+	"POST /v1/qeetai/provider-config/test":                 true,
+	"GET /v1/roles/{roleID}/permissions":                   true,
+	"DELETE /v1/roles/{roleID}/permissions/{permID}":       true,
+	"POST /v1/roles/{roleID}/permissions/{permID}":         true,
+	"POST /v1/service-principals":                          true,
+	"DELETE /v1/service-principals/{id}":                   true,
+	"DELETE /v1/social/identities/{id}":                    true,
+	"POST /v1/social/providers":                            true,
+	"DELETE /v1/social/providers/{provider}":               true,
+	"PATCH /v1/social/providers/{provider}":                true,
+	"GET /v1/users":                                        true,
+	"POST /v1/users":                                       true,
+	"POST /v1/users/bulk":                                  true,
+	"POST /v1/users/bulk/import":                           true,
+	"GET /v1/users/deleted":                                true,
+	"GET /v1/users/stats":                                  true,
+	"GET /v1/users/suspended":                              true,
+	"GET /v1/users/trends":                                 true,
+	"DELETE /v1/users/{id}":                                true,
+	"GET /v1/users/{id}":                                   true,
+	"PATCH /v1/users/{id}":                                 true,
+	"GET /v1/users/{id}/access":                            true,
+	"DELETE /v1/users/{id}/membership":                     true,
+	"DELETE /v1/users/{id}/mfa":                            true,
+	"PUT /v1/users/{id}/mfa-required":                      true,
+	"POST /v1/users/{id}/password":                         true,
+	"DELETE /v1/users/{id}/purge":                          true,
+	"GET /v1/users/{id}/push-devices":                      true,
+	"DELETE /v1/users/{id}/push-devices/{deviceID}":        true,
+	"POST /v1/users/{id}/reactivate":                       true,
+	"POST /v1/users/{id}/restore":                          true,
+	"GET /v1/users/{id}/security":                          true,
+	"GET /v1/users/{id}/sessions":                          true,
+	"POST /v1/users/{id}/sessions/revoke-all":              true,
+	"PUT /v1/users/{id}/suspension":                        true,
+	"DELETE /v1/users/{id}/trusted-devices":                true,
+	"GET /v1/users/{id}/trusted-devices":                   true,
+	"DELETE /v1/users/{id}/trusted-devices/{deviceID}":     true,
+	"GET /v1/users/{userID}/social/identities":             true,
+	"POST /v1/webhooks":                                    true,
+	"DELETE /v1/webhooks/{id}":                             true,
+	"GET /v1/webhooks/{id}":                                true,
+	"GET /v1/webhooks/{id}/deliveries":                     true,
+	"POST /v1/webhooks/{id}/deliveries/{deliveryID}/retry": true,
+	"POST /v1/webhooks/{id}/test":                          true,
+}
+
+// TestNewOrganisationRoutesNameTheTenant checks that every route needing a
+// permission, an organisation administration route, has {tenantID} in its path
+// unless it is one of the frozen token-scoped routes.
+func TestNewOrganisationRoutesNameTheTenant(t *testing.T) {
+	for route := range userPermissionMap() {
+		if !strings.Contains(route, "{tenantID}") && !tokenScopedRoutes[route] {
+			t.Errorf("%s: an organisation route names it in the path: /v1/tenants/{tenantID}/…", route)
+		}
+	}
+	for route := range tokenScopedRoutes {
+		if _, ok := userPermissionMap()[route]; !ok {
+			t.Errorf("%s is no longer a route; delete it from tokenScopedRoutes", route)
 		}
 	}
 }

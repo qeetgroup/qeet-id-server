@@ -9,10 +9,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// OperationObserver records each directory operation.
 type OperationObserver interface {
 	RecordOperation(context.Context, uuid.UUID, string, string, string, string, int, time.Time, time.Duration) error
 }
 
+// SetOperationObserver sets where directory operations are recorded.
 func (service *Service) SetOperationObserver(observer OperationObserver) { service.observer = observer }
 
 func (service *Service) recordOperation(ctx context.Context, tenantID, connectionID uuid.UUID, operation, resource string, started time.Time, operationError error) {
@@ -33,6 +35,8 @@ func (service *Service) recordOperation(ctx context.Context, tenantID, connectio
 	}
 }
 
+// TestConnection binds to one of the tenant's LDAP connections and reports
+// the error, if any.
 func (service *Service) TestConnection(ctx context.Context, tenantID, connectionID uuid.UUID) (resultError error) {
 	connection, err := service.getFull(ctx, connectionID, tenantID)
 	if err != nil {

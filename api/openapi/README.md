@@ -45,16 +45,5 @@ unused, or undescribed tags.
 
 ## Tooling
 
-These files are split by bounded context; tools that want a single document merge
-them on the fly:
-
-```bash
-# Merge all five into one document (stdout) — used by codegen, Swagger UI, etc.
-go run ./tools/openapi-split merge
-
-# Verify each file is self-contained (no dangling $ref, no stray YAML aliases)
-go run ./tools/openapi-split verify
-```
-
-SDK type generation ([`tools/codegen/openapi-gen.sh`](../../tools/codegen/openapi-gen.sh))
-uses the merge step automatically.
+These files are split by bounded context. A consumer that wants one document merges
+them itself — the qeet-apis reference site does so in `scripts/sync-specs.mjs`.
