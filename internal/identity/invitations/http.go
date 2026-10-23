@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -190,7 +191,10 @@ func (h *Handler) accept(w http.ResponseWriter, r *http.Request) {
 }
 
 // listMine returns pending invitations addressed to the signed-in user's email.
+// These handlers act on invitations from any organisation, so they run across
+// organisations; each finds the invitation by the caller's own email.
 func (h *Handler) listMine(w http.ResponseWriter, r *http.Request) {
+	r = r.WithContext(postgres.AcrossTenants(r.Context()))
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
@@ -206,6 +210,7 @@ func (h *Handler) listMine(w http.ResponseWriter, r *http.Request) {
 
 // declineMine dismisses a pending invite from the caller's inbox.
 func (h *Handler) declineMine(w http.ResponseWriter, r *http.Request) {
+	r = r.WithContext(postgres.AcrossTenants(r.Context()))
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
@@ -225,6 +230,7 @@ func (h *Handler) declineMine(w http.ResponseWriter, r *http.Request) {
 
 // acceptMineByID accepts a pending invite chosen from the caller's inbox.
 func (h *Handler) acceptMineByID(w http.ResponseWriter, r *http.Request) {
+	r = r.WithContext(postgres.AcrossTenants(r.Context()))
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
@@ -250,6 +256,7 @@ type acceptAuthedInput struct {
 // acceptAuthenticated joins the caller's existing account to the invited tenant
 // and returns a tenant-scoped token pair so the client can switch straight in.
 func (h *Handler) acceptAuthenticated(w http.ResponseWriter, r *http.Request) {
+	r = r.WithContext(postgres.AcrossTenants(r.Context()))
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)

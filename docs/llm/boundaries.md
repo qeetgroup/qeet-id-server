@@ -110,7 +110,7 @@ Qeet's own consoles.
 | Boundary | Enforcement |
 |---|---|
 | Unauthenticated → authenticated | `httpx.RequireAuth` |
-| **Tenant A → tenant B** | `httpx.EnforceTenantScope` + `WHERE tenant_id = $1` — **application layer, no RLS** |
+| **Tenant A → tenant B** | `httpx.EnforceTenantScope` + `WHERE tenant_id = $1`, backed by row-level security on organisation-owned tables in organisation-administration requests (`scopeOrganisationRoutes`) |
 | Caller → permission | `rbac.Enforce` with `internal/bootstrap/permissions.go` |
 | Browser → API | CORS allowlist, then CSRF double-submit |
 | Process → secrets | Managed store; `Config.Validate()` boot gate |

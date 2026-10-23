@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -255,6 +256,9 @@ func NewRouter(d Deps) http.Handler {
 			// tenant. It needs the nested Route("/v1") + Group structure to see the
 			// parameter; flattening these routes onto the top mux makes it fail open.
 			r.Use(httpx.EnforceTenantScope)
+			// Row-level security: on organisation-administration routes the
+			// database shows the request only its organisation's rows.
+			r.Use(scopeOrganisationRoutes(RoutePolicies()))
 			// Generous per-organisation, per-user and per-key buckets: one
 			// organisation can't exhaust shared resources, nor one compromised
 			// principal its organisation's.
@@ -411,6 +415,31 @@ func LoginSessionRoutes() []string {
 		"PATCH /v1/passkeys/{id}",
 		"POST /v1/passkeys/register/begin",
 		"POST /v1/passkeys/register/finish",
+	}
+}
+
+// scopeOrganisationRoutes applies row-level security (httpx.ScopeDatabase) to
+// the organisation-administration routes: those whose policy needs a user
+// permission or a machine scope. A person's own routes (user-only policies)
+// act on their data across organisations and run unscoped.
+func scopeOrganisationRoutes(policies map[string]rbac.RoutePolicy) func(http.Handler) http.Handler {
+	administration := chi.NewRouter()
+	for route, p := range policies {
+		if p.UserPermission == "" && len(p.MachineScopes) == 0 && !p.HandlerAuthorizedMachine {
+			continue
+		}
+		method, pattern, _ := strings.Cut(route, " ")
+		administration.MethodFunc(method, pattern, func(http.ResponseWriter, *http.Request) {})
+	}
+	return func(next http.Handler) http.Handler {
+		scoped := httpx.ScopeDatabase(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if administration.Match(chi.NewRouteContext(), r.Method, r.URL.Path) {
+				scoped.ServeHTTP(w, r)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
 	}
 }
 

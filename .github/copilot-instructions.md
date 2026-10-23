@@ -45,8 +45,9 @@ Take the tenant from `httpx.RequireTenant(r)` — **never** from a path, body or
 `httpx.EnforceTenantScope` checks `{tenantID}` against the caller. Every tenant-scoped query carries
 `WHERE tenant_id = $1`.
 
-**There is no PostgreSQL RLS.** A missing predicate is a cross-tenant data exposure, not an error the
-database catches.
+**Row-level security is a second layer, not the first.** It covers organisation-owned tables in
+organisation-administration requests only; on a person's own routes, in background jobs, sign-in
+and on account-level tables a missing predicate is still a cross-tenant data exposure.
 
 ## API contracts
 
@@ -55,7 +56,7 @@ database catches.
 
 ## Migrations
 
-`internal/platform/database/migrations/NNNN_description.{up,down}.sql` — highest is `0105` (`0082` is intentionally absent).
+`internal/platform/database/migrations/NNNN_description.{up,down}.sql` — highest is `0160` (`0082` is intentionally absent).
 **Never edit an applied migration.** Additive first.
 
 ## Tests

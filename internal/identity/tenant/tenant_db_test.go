@@ -218,3 +218,42 @@ func TestSuspendAndDeleteEndSessions(t *testing.T) {
 		t.Errorf("a deleted organisation: %d, want 404", rec.Code)
 	}
 }
+
+// TestCreateOrganisationFromAnother checks that a member signed in to one
+// organisation, and so scoped to it by row-level security, creates another
+// and is its owner, with a token pair for it.
+func TestCreateOrganisationFromAnother(t *testing.T) {
+	h, _, _ := newHandler(t)
+	home := dbtest.Tenant(t)
+	a := verifiedAccount(t)
+	dbtest.Assign(t, a.ID, home, dbtest.Role(t, home))
+	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, home), h.Mount), http.MethodPost, "/tenants",
+		map[string]any{"slug": dbtest.Unique("org"), "name": "Second"})
+	var created struct {
+		TenantID    uuid.UUID `json:"tenant_id"`
+		AccessToken string    `json:"access_token"`
+	}
+	dbtest.Decode(t, rec, &created)
+	if rec.Code != http.StatusCreated || created.AccessToken == "" {
+		t.Fatalf("create: %d %s; want the organisation and a token pair for it", rec.Code, rec.Body.String())
+	}
+	if n := dbtest.Count(t, `
+		SELECT count(*) FROM rbac.user_roles ur JOIN rbac.roles r ON r.id = ur.role_id AND r.tenant_id = ur.tenant_id
+		WHERE ur.user_id = $1 AND ur.tenant_id = $2 AND r.name = 'owner'
+	`, a.ID, created.TenantID); n != 1 {
+		t.Error("the creator is not the new organisation's owner")
+	}
+}
+
+// TestOrganisationPickerListsEveryOrganisation checks that the organisation
+// picker, asked for while signed in to one organisation and so scoped to it by
+// row-level security, lists every organisation the person belongs to.
+func TestOrganisationPickerListsEveryOrganisation(t *testing.T) {
+	h, _, _ := newHandler(t)
+	home, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	a := dbtest.User(t, home, home, other)
+	ids := dbtest.IDs(t, dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, home), h.Mount), http.MethodGet, "/me/organizations", nil))
+	if !slices.Contains(ids, home) || !slices.Contains(ids, other) {
+		t.Errorf("picker lists %v; want both %s and %s", ids, home, other)
+	}
+}

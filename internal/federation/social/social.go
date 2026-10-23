@@ -26,6 +26,7 @@ import (
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -307,6 +308,8 @@ func (s *Service) ListIdentities(ctx context.Context, userID, tenantID uuid.UUID
 // its tenant. Refused, and recorded, when it is the account's only way to sign
 // in.
 func (s *Service) Unlink(ctx context.Context, id, tenantID uuid.UUID, by user.Remover) error {
+	// The account's other ways to sign in span its organisations.
+	ctx = postgres.AcrossTenants(ctx)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -368,6 +371,8 @@ func (s *Service) ListIdentitiesForUser(ctx context.Context, userID uuid.UUID) (
 // accounts. ErrNotFound when it is not theirs (nothing is removed); refused,
 // and recorded, when it is their account's only way to sign in.
 func (s *Service) UnlinkForUser(ctx context.Context, id, userID uuid.UUID, by user.Remover) error {
+	// The account's other ways to sign in span its organisations.
+	ctx = postgres.AcrossTenants(ctx)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err

@@ -294,7 +294,7 @@ One PostgreSQL database, **seven schemas**: `auth`, `tenant`, `user`, `rbac`, `a
 
 ### Migrations
 
-**Evidence:** `internal/platform/database/migrations/` — 105 up/down pairs, `0001`–`0106` (`0082` intentionally absent)
+**Evidence:** `internal/platform/database/migrations/` — 159 up/down pairs, `0001`–`0160` (`0082` intentionally absent)
 (`0082` is absent and must not be reused). Embedded with `//go:embed *.sql` in `runner.go` and
 applied on startup.
 
@@ -329,20 +329,25 @@ The source states the rule directly:
 > *"RequireTenant returns the principal's tenant id — the only trustworthy source of tenant scope.
 > Handlers must never take tenant id from URL/body."*
 
-### There is no PostgreSQL RLS
+### Row-level security is the second layer
 
-**Verified: zero `ROW LEVEL SECURITY` or `CREATE POLICY` statements across all 105 migrations.**
+Migration 0160 puts a `tenant_isolation` policy on each organisation-owned table: a connection sees
+and writes only the rows of the organisation set on it (`qeet.tenant_id`), and every row when none
+is set. Connections run as `qeet_app` (`postgres.NewPool`); `httpx.ScopeDatabase` sets the caller's
+organisation through the context, applied each time a connection leaves the pool. The router
+applies it to the organisation-administration routes — those whose policy needs a permission or a
+machine scope (`scopeOrganisationRoutes`); a person's own routes act across their organisations.
 
-| Enforcement | A missing `tenant_id` predicate causes |
+| Where | A missing `tenant_id` predicate causes |
 |---|---|
-| RLS | nothing — the database refuses the rows |
-| **This repository (application layer)** | **cross-tenant data exposure** |
+| Organisation-administration request, organisation-owned table | nothing — the database hides the other organisations' rows |
+| A person's own route, background job, sign-in, public flow, account-level table | **cross-tenant data exposure** |
 
-Isolation holds **while the code is correct**. It is not a database guarantee.
-
-> Two `qeet-id-console` ADRs and one `qeet-id-files` security document assert that RLS is in place.
-> They are wrong. Recorded as `qeet-id-context/DRIFT-REGISTER.md` **QID-002** and **QID-003**, both
-> `critical`. Do not repeat the claim.
+The account-level tables (`accountLevelTables` in `migrations/schema_db_test.go`: a person's
+sessions, memberships, invitations inbox and such) have no policy. Requests that act across
+organisations by design — switching organisation, creating one, a person's own invitations, export
+and account deletion — call `postgres.AcrossTenants`. The owner-guard trigger functions run as their
+owner, so they always see every organisation.
 
 ### Restructuring routes is a security change
 

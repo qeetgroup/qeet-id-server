@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -68,12 +69,13 @@ func countSignInMethods(ctx context.Context, q querier, userID uuid.UUID) (SignI
 // CountSignInMethods counts the account's ways to sign in, for display. A
 // removal decides with LockSignInMethods instead.
 func CountSignInMethods(ctx context.Context, pool *pgxpool.Pool, userID uuid.UUID) (SignInMethods, error) {
-	return countSignInMethods(ctx, pool, userID)
+	return countSignInMethods(postgres.AcrossTenants(ctx), pool, userID)
 }
 
 // LockSignInMethods takes the account's lock inside tx — the one session
 // revocations and password changes take — and counts its ways to sign in.
-// ErrNotFound for an account that does not exist.
+// ErrNotFound for an account that does not exist. The methods span the
+// account's organisations, so tx must have begun with postgres.AcrossTenants.
 func LockSignInMethods(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (SignInMethods, error) {
 	if err := tx.QueryRow(ctx, `SELECT id FROM "user".users WHERE id = $1 FOR NO KEY UPDATE`, userID).Scan(&userID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

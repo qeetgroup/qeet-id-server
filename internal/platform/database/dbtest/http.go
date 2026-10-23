@@ -21,7 +21,8 @@ func Principal(userID, tenant uuid.UUID) *httpx.Principal {
 }
 
 // Serve returns a router that runs the routes mount registers as p, behind the
-// same tenant-scope guard as the authenticated /v1 routes.
+// same tenant-scope guard and row-level security scope as the authenticated
+// /v1 routes.
 func Serve(p *httpx.Principal, mount func(chi.Router)) http.Handler {
 	r := chi.NewRouter()
 	r.Group(func(r chi.Router) {
@@ -31,6 +32,7 @@ func Serve(p *httpx.Principal, mount func(chi.Router)) http.Handler {
 			})
 		})
 		r.Use(httpx.EnforceTenantScope)
+		r.Use(httpx.ScopeDatabase)
 		mount(r)
 	})
 	return r

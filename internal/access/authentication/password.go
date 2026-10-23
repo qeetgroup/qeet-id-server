@@ -12,6 +12,7 @@ import (
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -265,6 +266,9 @@ type ChangePasswordInput struct {
 // in one transaction; the current session stays. The new password is checked
 // against the account's organisation's rules before the current one is verified.
 func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) error {
+	// The account's organisation, whose password rules apply, needn't be the
+	// one the caller is signed in to.
+	ctx = postgres.AcrossTenants(ctx)
 	account, err := s.users.Get(ctx, in.UserID)
 	if err != nil {
 		return err

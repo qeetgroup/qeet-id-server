@@ -3718,12 +3718,25 @@ components:
       type: object
       required: [name, status]
       properties:
+        code:
+          type: string
+          enum: [group.import_name_required, group.import_name_exists, group.import_parent_not_found, internal]
+          description: >-
+            Set when the row isn't created: it has no name; a group of that name exists, or an earlier row made one;
+            its parent is no existing group and no other row (or the rows form a cycle); or it failed on the server.
+            Word the message from this.
+        field:
+          type: string
+          enum: [name, parent]
+          description: The row field the code concerns, when one does.
         name:
           type: string
         reason:
           type: string
+          description: The code's meaning in English, kept for compatibility.
         status:
           type: string
+          enum: [created, skipped, failed]
     Invite:
       type: object
       required: [accepted_at, created_at, email, expires_at, id, role_id, status, tenant_id]

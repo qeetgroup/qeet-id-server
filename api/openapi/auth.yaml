@@ -4246,6 +4246,7 @@ paths:
               properties:
                 action:
                   type: string
+                  enum: [allow, deny]
                 cidr:
                   type: string
                 label:

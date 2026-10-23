@@ -3,6 +3,7 @@ package group
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
@@ -35,12 +36,22 @@ type ImportResult struct {
 }
 
 // ImportRowResult is the outcome of one imported row. Status is created, skipped
-// or failed.
+// or failed; a row that isn't created has a Code (one below, or errs.CodeInternal)
+// with the Field it concerns, and Reason the same in English.
 type ImportRowResult struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
 	Reason string `json:"reason,omitempty"`
+	Code   string `json:"code,omitempty"`
+	Field  string `json:"field,omitempty"`
 }
+
+// Why an imported row isn't created.
+const (
+	CodeImportNameRequired   = "group.import_name_required"    // the row has no name
+	CodeImportNameExists     = "group.import_name_exists"      // a group of that name exists, or an earlier row made one
+	CodeImportParentNotFound = "group.import_parent_not_found" // its parent is no group and no other row, or rows form a cycle
+)
 
 // ImportGroups creates groups from a flat list, resolving each parent by name
 // among existing groups and rows created earlier in the call. It makes repeated
@@ -74,14 +85,14 @@ func (s *Service) ImportGroups(
 		if name == "" {
 			res.Failed++
 			res.Rows = append(res.Rows, ImportRowResult{
-				Name: r.Name, Status: "failed", Reason: "name is required",
+				Name: r.Name, Status: "failed", Reason: "name is required", Code: CodeImportNameRequired, Field: "name",
 			})
 			continue
 		}
 		if _, clash := byName[strings.ToLower(name)]; clash {
 			res.Skipped++
 			res.Rows = append(res.Rows, ImportRowResult{
-				Name: name, Status: "skipped", Reason: "a group with this name already exists",
+				Name: name, Status: "skipped", Reason: "a group with this name already exists", Code: CodeImportNameExists, Field: "name",
 			})
 			continue
 		}
@@ -112,14 +123,17 @@ func (s *Service) ImportGroups(
 				Description: r.Description,
 			}, actor)
 			if err != nil {
-				reason := "could not be created"
-				if errors.Is(err, errs.ErrGroupNameExists) {
-					reason = "a group with this name already exists"
+				row := ImportRowResult{Name: r.Name, Status: "failed", Reason: "could not be created", Code: errs.CodeInternal}
+				switch {
+				case errors.Is(err, errs.ErrGroupNameExists):
+					row.Reason, row.Code, row.Field = "a group with this name already exists", CodeImportNameExists, "name"
+				case errors.Is(err, errs.ErrGroupParentNotFound):
+					row.Reason, row.Code, row.Field = "parent group \""+r.Parent+"\" was not found", CodeImportParentNotFound, "parent"
+				default:
+					slog.Warn("group import row not created", "tenant_id", tenantID, "err", err)
 				}
 				res.Failed++
-				res.Rows = append(res.Rows, ImportRowResult{
-					Name: r.Name, Status: "failed", Reason: reason,
-				})
+				res.Rows = append(res.Rows, row)
 				progressed = true
 				continue
 			}
@@ -138,6 +152,8 @@ func (s *Service) ImportGroups(
 					Name:   r.Name,
 					Status: "failed",
 					Reason: "parent group \"" + r.Parent + "\" was not found",
+					Code:   CodeImportParentNotFound,
+					Field:  "parent",
 				})
 			}
 			break

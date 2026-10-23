@@ -9,9 +9,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// NewPool opens a pgx pool on url with server-side query timeouts, applying
-// minConns and maxConns when positive, and returns it once a ping succeeds
-// within 5 seconds.
+// NewPool opens a pgx pool on url with server-side query timeouts and row-level
+// security, applying minConns and maxConns when positive, and returns it once
+// a ping succeeds within 5 seconds.
 func NewPool(ctx context.Context, url string, minConns, maxConns int32) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
@@ -50,6 +50,11 @@ func NewPool(ctx context.Context, url string, minConns, maxConns int32) (*pgxpoo
 			cfg.ConnConfig.RuntimeParams[k] = v
 		}
 	}
+
+	// Row-level security: every connection runs as AppRole, scoped to the
+	// organisation of the context that takes it (see rowsecurity.go).
+	cfg.AfterConnect = useAppRole
+	cfg.PrepareConn = prepareScope
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
