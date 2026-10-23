@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
@@ -50,5 +51,31 @@ func TestPurgePublishedKeepsPendingEvents(t *testing.T) {
 		if n := dbtest.Count(t, `SELECT count(*) FROM platform.outbox WHERE id = $1`, id); n != want {
 			t.Errorf("event %s: %d rows left, want %d", id, n, want)
 		}
+	}
+}
+
+// TestLagCollectorReportsTheBacklog checks that the lag metrics count the
+// unpublished events and age the oldest.
+func TestLagCollectorReportsTheBacklog(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO platform.outbox (aggregate_id, topic, event_type, payload, created_at)
+		VALUES ($1, 'test.events', 'test.lag', '{}', NOW() - interval '90 seconds')
+	`, uuid.New()); err != nil {
+		t.Fatal(err)
+	}
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(LagCollector(pool))
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]float64{}
+	for _, f := range families {
+		got[f.GetName()] = f.GetMetric()[0].GetGauge().GetValue()
+	}
+	if got["outbox_unpublished_events"] < 1 || got["outbox_oldest_unpublished_age_seconds"] < 90 {
+		t.Errorf("lag metrics %v, want at least one event at least 90s old", got)
 	}
 }

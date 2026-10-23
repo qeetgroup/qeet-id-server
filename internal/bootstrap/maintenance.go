@@ -13,6 +13,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/risk"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/idempotency"
@@ -155,9 +156,13 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller) []wor
 
 // RegisterMaintenanceMetrics exposes when each scheduled job, and the audit
 // verification, last succeeded (read from the database at scrape time, so it
-// holds whichever instance ran them). Registering twice is a no-op.
+// holds whichever instance ran them), the outbox backlog and this instance's
+// connection pool. Registering twice is a no-op.
 func RegisterMaintenanceMetrics(pool *pgxpool.Pool) {
-	for _, c := range []prometheus.Collector{worker.LastSuccessCollector(pool), audit.VerificationMetrics(pool)} {
+	for _, c := range []prometheus.Collector{
+		worker.LastSuccessCollector(pool), audit.VerificationMetrics(pool),
+		outbox.LagCollector(pool), postgres.PoolCollector(pool),
+	} {
 		var dup prometheus.AlreadyRegisteredError
 		if err := prometheus.Register(c); err != nil && !errors.As(err, &dup) {
 			slog.Warn("register maintenance metrics", "err", err)

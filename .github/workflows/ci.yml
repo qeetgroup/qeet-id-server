@@ -18,9 +18,8 @@ jobs:
     name: Build & test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -55,9 +54,8 @@ jobs:
     name: Database tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -72,9 +70,8 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -105,9 +102,8 @@ jobs:
     name: Vulnerability scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -134,9 +130,8 @@ jobs:
     # its line; .gosec.json excludes only G101 in the errs catalogue (error-code
     # constants) and requires a rule and a reason on every #nosec.
     steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -204,6 +199,15 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
+      - name: Scan for critical vulnerabilities before publishing
+        env:
+          # Run as the project's own image, pinned by digest, not as an action.
+          TRIVY: aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
+        run: |
+          docker buildx build . --platform linux/amd64 --tag qeet-id-server:scan --load
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY" image \
+            --exit-code 1 --severity CRITICAL --ignore-unfixed --no-progress qeet-id-server:scan
+
       - name: Build and push linux/amd64 + linux/arm64
         env:
           IMAGE: ${{ steps.meta.outputs.image }}
@@ -239,6 +243,8 @@ jobs:
             --build-arg DATE="$CREATED" \
             "${args[@]}" \
             --tag "$ref" \
+            --sbom=true \
+            --provenance=mode=max \
             --metadata-file "$RUNNER_TEMP/build.json" \
             --push
           digest=$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/build.json")
@@ -249,6 +255,7 @@ jobs:
             echo "| Image | \`$ref\` |"
             echo "| Digest | \`$digest\` |"
             echo "| Release | \`$RELEASE\` (schema $SCHEMA) |"
+            echo "| Attestations | SBOM (SPDX) and SLSA provenance, attached to the image |"
             echo
             echo "Assemble a product RC in qeet-id-kit → Actions → **publish-candidate** with server = \`$GITHUB_SHA\`."
           } >> "$GITHUB_STEP_SUMMARY"

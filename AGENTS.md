@@ -189,7 +189,7 @@ Single test: `go test ./internal/access/authentication/... -run TestName`
 | `lint` | `golangci-lint` v2.14.0 on the whole tree; `sqlc diff` in every package |
 | `vuln` | `govulncheck ./cmd/... ./internal/...` blocking, plus an advisory full-tree scan |
 | `sast` | `gosec` — blocking; an accepted finding needs `// #nosec <rule> -- <reason>` (`.gosec.json`) |
-| `image` | On push to `release/**` only, after `test`/`database`/`lint`/`vuln`: publish `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>` (amd64+arm64) for the Qeet ID Kit (`qeet-id-kit`). Never computes an RC number |
+| `image` | On push to `release/**` only, after `test`/`database`/`lint`/`vuln`: scan the image with Trivy (blocking on fixable critical CVEs), then publish `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>` (amd64+arm64) with an SBOM and SLSA provenance attached, for the Qeet ID Kit (`qeet-id-kit`). Base images are pinned by digest and every action by commit SHA. Never computes an RC number |
 | `deploy` | On push to `main` only: build, deploy to AWS via OIDC, then tag |
 
 ---

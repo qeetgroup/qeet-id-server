@@ -23,6 +23,7 @@ import (
 )
 
 func main() {
+	slog.SetDefault(slog.New(logging.NewRedactingHandler(slog.NewJSONHandler(os.Stdout, nil))))
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("load config", "err", err)

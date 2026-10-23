@@ -41,6 +41,9 @@ func parseLogLevel(s string) slog.Level {
 // loadConfig loads and validates the configuration and installs the logger.
 // It exits the process if either fails.
 func loadConfig() *config.Config {
+	// JSON until the configuration chooses, so even a refusal to start is a
+	// structured line.
+	slog.SetDefault(slog.New(logging.NewRedactingHandler(slog.NewJSONHandler(os.Stdout, nil))))
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("load config", "err", err)

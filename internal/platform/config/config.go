@@ -145,6 +145,10 @@ type Config struct {
 	HTTPReadHeaderTimeout time.Duration `envconfig:"HTTP_READ_HEADER_TIMEOUT" default:"5s"`
 	HTTPIdleTimeout       time.Duration `envconfig:"HTTP_IDLE_TIMEOUT" default:"60s"`
 	HTTPMaxHeaderBytes    int           `envconfig:"HTTP_MAX_HEADER_BYTES" default:"65536"`
+	// ShutdownDrainDelay is how long a stopping server answers /readyz 503
+	// before it stops taking requests, so a load balancer sends no new ones
+	// first. 0..30s; 0 suits a server with no load balancer in front.
+	ShutdownDrainDelay time.Duration `envconfig:"SHUTDOWN_DRAIN_DELAY" default:"5s"`
 
 	// EgressProxyURL routes tenant-configured outbound HTTP (webhooks, auth
 	// hooks, SIEM sinks, social/token-vault calls) through a forward proxy.
@@ -389,8 +393,9 @@ const (
 const RefreshTokenReuseGraceMax = time.Minute
 
 // checkSessionLifetime rejects session bounds outside the limits above, an
-// idle timeout longer than the maximum age, and access tokens that outlive the
-// shortest idle timeout an organisation may set.
+// idle timeout longer than the maximum age, access tokens that outlive the
+// shortest idle timeout an organisation may set, and a refresh reuse grace or
+// shutdown drain delay out of range.
 func (c *Config) checkSessionLifetime() error {
 	var problems []string
 	if c.SessionMaxAge < SessionMaxAgeMin || c.SessionMaxAge > SessionMaxAgeMax {
@@ -405,8 +410,11 @@ func (c *Config) checkSessionLifetime() error {
 	if c.RefreshTokenReuseGrace < 0 || c.RefreshTokenReuseGrace > RefreshTokenReuseGraceMax {
 		problems = append(problems, "REFRESH_TOKEN_REUSE_GRACE must lie within 0..1m")
 	}
+	if c.ShutdownDrainDelay < 0 || c.ShutdownDrainDelay > 30*time.Second {
+		problems = append(problems, "SHUTDOWN_DRAIN_DELAY must lie within 0..30s")
+	}
 	if len(problems) > 0 {
-		return fmt.Errorf("invalid session lifetime configuration:\n  - %s", strings.Join(problems, "\n  - "))
+		return fmt.Errorf("invalid session and timing configuration:\n  - %s", strings.Join(problems, "\n  - "))
 	}
 	return nil
 }

@@ -310,6 +310,7 @@ func TestLoad_RejectsUnusableSessionLifetime(t *testing.T) {
 		"access tokens outliving idle bounds": {"ACCESS_TOKEN_TTL", "15m"},
 		"a refresh reuse grace over a minute": {"REFRESH_TOKEN_REUSE_GRACE", "61s"},
 		"a negative refresh reuse grace":      {"REFRESH_TOKEN_REUSE_GRACE", "-1s"},
+		"a drain delay over 30 seconds":       {"SHUTDOWN_DRAIN_DELAY", "31s"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			setRequiredEnv(t)

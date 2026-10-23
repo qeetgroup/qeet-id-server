@@ -1,11 +1,13 @@
 // Package health serves the liveness (/healthz), readiness (/readyz) and
 // /version endpoints. Liveness always returns 200; readiness runs every
-// registered check under one 2s timeout and returns 503 if any fails.
+// registered check under one 2s timeout and returns 503 if any fails, or once
+// the server has begun to drain for shutdown.
 package health
 
 import (
 	"context"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -35,6 +37,8 @@ type Handler struct {
 	StartedAt      time.Time
 	Build          buildinfo.Info
 	Schema         *migrations.Status
+
+	draining atomic.Bool
 
 	checks []namedCheck
 }
@@ -85,9 +89,17 @@ func (h *Handler) Version(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, body)
 }
 
+// Drain makes readiness answer 503 from now on, so a load balancer sends no
+// new requests while the server finishes the ones it has.
+func (h *Handler) Drain() { h.draining.Store(true) }
+
 // Readiness runs every registered check under a 2 s timeout and returns
-// 503 with a per-check breakdown if any one fails.
+// 503 with a per-check breakdown if any one fails, or 503 while draining.
 func (h *Handler) Readiness(w http.ResponseWriter, r *http.Request) {
+	if h.draining.Load() {
+		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "draining"})
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 

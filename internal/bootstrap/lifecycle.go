@@ -12,9 +12,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 )
 
-// Shutdown phase budgets. These are spent sequentially, so the worst-case
-// shutdown is their sum — keep that under the orchestrator's termination grace
-// period (Kubernetes terminationGracePeriodSeconds, ECS stopTimeout).
+// Shutdown phase budgets. These are spent sequentially, after
+// SHUTDOWN_DRAIN_DELAY, so the worst-case shutdown is their sum plus the drain
+// delay — keep that under the orchestrator's termination grace period
+// (Kubernetes terminationGracePeriodSeconds, ECS stopTimeout, docker stop -t).
 const (
 	httpDrainTimeout   = 15 * time.Second
 	workerDrainTimeout = 15 * time.Second
@@ -36,6 +37,14 @@ func gracefulShutdown(
 	shutdownStart := time.Now()
 	inFlightAtSignal := deps.InFlight.Count()
 	slog.Info("shutdown initiated", "in_flight", inFlightAtSignal)
+
+	// Answer not ready first, so the load balancer stops sending requests
+	// before the listener closes.
+	deps.Health.Drain()
+	if d := cfg.ShutdownDrainDelay; d > 0 {
+		slog.Info("draining: readiness answers 503", "for", d)
+		time.Sleep(d)
+	}
 
 	// Each phase gets its own timeout, so a slow HTTP drain can't use up the time
 	// for the worker drain and the tracer flush.

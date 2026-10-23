@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -141,5 +142,17 @@ func TestReadiness_TimeoutSurfacedAsFail(t *testing.T) {
 	}
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want 503", rec.Code)
+	}
+}
+
+// TestReadiness_503WhileDraining checks that a draining server answers not
+// ready whatever its checks say.
+func TestReadiness_503WhileDraining(t *testing.T) {
+	h := New("svc", "test", time.Now())
+	h.Drain()
+	rec := httptest.NewRecorder()
+	h.Readiness(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"draining"`) {
+		t.Errorf("draining readiness: %d %s, want 503 draining", rec.Code, rec.Body.String())
 	}
 }
