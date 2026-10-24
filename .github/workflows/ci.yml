@@ -128,7 +128,8 @@ jobs:
     runs-on: ubuntu-latest
     # Blocking. Every accepted finding carries a `#nosec <rule> -- <reason>` on
     # its line; .gosec.json excludes only G101 in the errs catalogue (error-code
-    # constants) and requires a rule and a reason on every #nosec.
+    # constants) and G101/G404/G115 in the dev-only seed (fixtures, a fixed-seed
+    # generator), and requires a rule and a reason on every #nosec.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
