@@ -169,10 +169,17 @@ That is the whole setup. Everything else on this page is reference.
   SAML IdP key/certificate pair into `.secrets/` (gitignored, idempotent — it skips whatever already
   exists). It then starts the API, which **applies database migrations on startup**. There is no
   separate migrate step to remember.
-- **`make seed`** loads fictional, production-shaped demo data: several workspaces, users across
-  every role, API keys, OIDC clients, a SCIM token, service accounts, vault secrets and more. **It
-  prints every credential it creates — read its output**, that is your login reference for the
-  admin console.
+- **`make seed`** loads fictional, production-shaped demo data in about a minute, so every console
+  and hosted-login screen has something to show:
+  - Ten organisations: Qeet Group and customers on every plan and stage (Enterprise on Okta or
+    Microsoft Entra with SCIM, a Pro trial, a past-due Starter, a cancelled one, a brand-new Free one).
+  - About 290 people with roles, teams and managers, and the organisations' SSO, SCIM, LDAP,
+    applications, API keys, webhooks, agents and policies.
+  - 90 days of sessions, sign-ins, audit, email and billing history.
+
+  It needs `SECRETS_KEY` set, so the API can read what it encrypts. **It prints what you need to
+  test, so read its output**: test accounts for each role, TOTP secrets, hosted sign-in URLs for each
+  organisation's app, API keys and invitation links. `make seed-reset` empties the database first.
 
 ### Useful endpoints
 
