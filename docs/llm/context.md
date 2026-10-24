@@ -329,6 +329,14 @@ The source states the rule directly:
 > *"RequireTenant returns the principal's tenant id — the only trustworthy source of tenant scope.
 > Handlers must never take tenant id from URL/body."*
 
+### Membership
+
+A person belongs to an organisation when it is their account's home (`"user".users.tenant_id`) or
+they hold one of its roles (`rbac.user_roles`). Every membership check — signing in to its
+applications, renewing, switching organisation, the member list — uses this rule; permissions still
+come only from roles, so a home account with none has no access. A guest leaves when their roles are
+removed; a home account is suspended or deleted instead.
+
 ### Row-level security is the second layer
 
 Migration 0160 puts a `tenant_isolation` policy on each organisation-owned table: a connection sees

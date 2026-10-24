@@ -247,13 +247,20 @@ func TestCreateOrganisationFromAnother(t *testing.T) {
 
 // TestOrganisationPickerListsEveryOrganisation checks that the organisation
 // picker, asked for while signed in to one organisation and so scoped to it by
-// row-level security, lists every organisation the person belongs to.
+// row-level security, and the organisation list name every organisation the
+// person belongs to, their own one included though they hold no role there,
+// and no other.
 func TestOrganisationPickerListsEveryOrganisation(t *testing.T) {
 	h, _, _ := newHandler(t)
-	home, other := dbtest.Tenant(t), dbtest.Tenant(t)
-	a := dbtest.User(t, home, home, other)
+	home, other, unrelated := dbtest.Tenant(t), dbtest.Tenant(t), dbtest.Tenant(t)
+	a := dbtest.User(t, home, other)
+	dbtest.User(t, unrelated, unrelated)
 	ids := dbtest.IDs(t, dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, home), h.Mount), http.MethodGet, "/me/organizations", nil))
-	if !slices.Contains(ids, home) || !slices.Contains(ids, other) {
-		t.Errorf("picker lists %v; want both %s and %s", ids, home, other)
+	if len(ids) != 2 || !slices.Contains(ids, home) || !slices.Contains(ids, other) {
+		t.Errorf("picker lists %v; want only %s and %s", ids, home, other)
+	}
+	listed, _, err := h.Repo.List(dbtest.Context(t), a.ID, 50, "")
+	if err != nil || len(listed) != 2 || !slices.ContainsFunc(listed, func(o Tenant) bool { return o.ID == home }) {
+		t.Errorf("organisation list %+v, %v; want %s and %s", listed, err, home, other)
 	}
 }

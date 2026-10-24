@@ -3,6 +3,7 @@
 package auth
 
 import (
+	"errors"
 	"net/http"
 	"testing"
 
@@ -57,5 +58,46 @@ func TestSwitchAppliesTheTargetsRules(t *testing.T) {
 	}
 	if status, code := switchTo(open); status != http.StatusOK {
 		t.Errorf("switch into an organisation with no such rule: %d %q, want 200", status, code)
+	}
+}
+
+// TestOwnOrganisationNeedsNoRole checks that an account signs in to its own
+// organisation and switches back into it holding no role there, while a guest
+// whose roles were removed, or a suspended account, can't switch in.
+func TestOwnOrganisationNeedsNoRole(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := newService(t)
+	home, guestOf := dbtest.Tenant(t), dbtest.Tenant(t)
+	a := dbtest.User(t, home, guestOf)
+	dbtest.SetPassword(t, a.ID, testPassword)
+	switchTo := func(from *TokenPair, tenant uuid.UUID) (*TokenPair, error) {
+		return svc.SwitchTenant(ctx, SwitchTenantInput{UserID: a.ID, FromSessionID: from.SessionID, TenantID: tenant})
+	}
+
+	signedIn := signIn(t, svc, a)
+	if signedIn.TenantID == nil || *signedIn.TenantID != home {
+		t.Fatalf("signed in to %v, want their own organisation %s", signedIn.TenantID, home)
+	}
+	there, err := switchTo(signedIn, guestOf)
+	if err != nil {
+		t.Fatalf("switch into the organisation they hold a role in: %v", err)
+	}
+	back, err := switchTo(there, home)
+	if err != nil || back.TenantID == nil || *back.TenantID != home {
+		t.Fatalf("switch back into their own organisation: %+v, %v", back, err)
+	}
+
+	if _, err := pool.Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, a.ID, guestOf); err != nil {
+		t.Fatal(err)
+	}
+	if next, err := switchTo(back, guestOf); !errors.Is(err, errs.ErrAuthNotTenantMember) || next != nil {
+		t.Errorf("switch into an organisation whose roles were removed: %+v, %v; want %v", next, err, errs.ErrAuthNotTenantMember)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if next, err := switchTo(back, home); !errors.Is(err, errs.ErrAuthNotTenantMember) || next != nil {
+		t.Errorf("a suspended account switching into its own organisation: %+v, %v; want %v", next, err, errs.ErrAuthNotTenantMember)
 	}
 }

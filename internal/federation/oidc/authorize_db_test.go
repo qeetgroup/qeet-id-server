@@ -4,6 +4,7 @@ package oidc
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -268,6 +269,121 @@ func TestBrowserSignInToAnApplication(t *testing.T) {
 	rec = dbtest.Do(t, dbtest.Serve(noOpenID, p.mount), http.MethodPost, "/oauth/userinfo", nil)
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Header().Get("WWW-Authenticate"), `error="insufficient_scope"`) {
 		t.Errorf("userinfo without openid: %d %q, want 403 insufficient_scope", rec.Code, rec.Header().Get("WWW-Authenticate"))
+	}
+}
+
+// openRegistration lets anyone register in any organisation, with any password.
+type openRegistration struct{}
+
+func (openRegistration) SelfRegistrationEnabled(context.Context, uuid.UUID) (bool, error) {
+	return true, nil
+}
+
+func (openRegistration) ValidateForTenant(context.Context, uuid.UUID, string, string) error {
+	return nil
+}
+
+// authorizeInBrowser runs an authorization request from clientID in the
+// browser holding cookie, approving consent when asked, and returns where the
+// browser is sent, with the query, and the request's PKCE verifier.
+func (p *provider) authorizeInBrowser(t *testing.T, cookie *http.Cookie, clientID string) (string, url.Values, string) {
+	t.Helper()
+	target, verifier := authorizeURL(t, clientID)
+	to, q := redirected(t, browse(t, p.public, http.MethodGet, target, cookie, nil))
+	if to == loginBase+"/consent" {
+		var decided struct {
+			Redirect string `json:"redirect"`
+		}
+		approve := map[string]any{"request_id": q.Get("request_id"), "approve": true}
+		dbtest.Decode(t, browse(t, p.public, http.MethodPost, "/oauth/authorize/decision", cookie, approve), &decided)
+		to, q = splitURL(t, decided.Redirect)
+	}
+	return to, q, verifier
+}
+
+// TestOrganisationsOwnAccountsSignInWithoutARole checks that the accounts an
+// organisation makes hold no role and still sign in to its applications and
+// renew there, while a guest whose roles were removed and a suspended account
+// of the organisation's own are refused.
+func TestOrganisationsOwnAccountsSignInWithoutARole(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	p := newProvider(t)
+	p.sessions.SetRegistrationPolicy(openRegistration{})
+	tenant, elsewhere := dbtest.Tenant(t), dbtest.Tenant(t)
+	client, secret := registerClient(t, p.svc, tenant)
+
+	_, registered, err := p.sessions.RegisterInTenant(ctx, tenant, dbtest.Unique("registered")+"@example.test", "Pw4!nKx7mQ2v", "", "192.0.2.1", "test")
+	if err != nil || registered.RawCookie == "" {
+		t.Fatalf("register: %+v, %v; want a hosted-login session", registered, err)
+	}
+	created, err := user.NewRepository(pool).CreateWithCredential(ctx, user.CreateInput{TenantID: tenant, Email: dbtest.Unique("created") + "@example.test"}, "")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	createdCookie, _ := p.signIn(t, created.ID)
+	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.user_roles WHERE tenant_id = $1`, tenant); n != 0 {
+		t.Fatalf("the organisation's accounts hold %d roles, want none", n)
+	}
+	for name, cookie := range map[string]*http.Cookie{
+		"a self-registered account":           {Name: auth.LoginSessionCookie, Value: registered.RawCookie},
+		"an account an administrator created": createdCookie,
+	} {
+		to, q, verifier := p.authorizeInBrowser(t, cookie, client.ClientID)
+		if to != testRedirect || q.Get("code") == "" {
+			t.Errorf("%s signing in to the application: sent to %s %v, want a code", name, to, q)
+			continue
+		}
+		form := url.Values{"grant_type": {"authorization_code"}, "code": {q.Get("code")}, "redirect_uri": {testRedirect}, "code_verifier": {verifier}}
+		rec := postForm(t, p.public, "/oauth/token-code", form, client.ClientID, secret)
+		var issued TokenResponse
+		dbtest.Decode(t, rec, &issued)
+		if rec.Code != http.StatusOK || issued.RefreshToken == "" {
+			t.Errorf("%s redeeming the code: %d %s", name, rec.Code, rec.Body.String())
+			continue
+		}
+		if out, err := p.svc.Introspect(ctx, client.ClientID, secret, issued.AccessToken, ""); err != nil || out["active"] != true {
+			t.Errorf("%s's access token introspects %v, %v; want active", name, out, err)
+		}
+		if renewed, err := p.svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken, ""); err != nil || renewed.AccessToken == "" {
+			t.Errorf("%s renewing: %+v, %v", name, renewed, err)
+		}
+	}
+
+	formerGuest, suspended := dbtest.User(t, elsewhere, tenant), dbtest.User(t, tenant)
+	guestTokens := redeemCode(t, p.svc, client, secret, formerGuest.ID, "")
+	suspendedTokens := redeemCode(t, p.svc, client, secret, suspended.ID, "")
+	guestCookie, _ := p.signIn(t, formerGuest.ID)
+	suspendedCookie, _ := p.signIn(t, suspended.ID)
+	if _, err := pool.Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, formerGuest.ID, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, suspended.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		account dbtest.Account
+		cookie  *http.Cookie
+		tokens  *TokenResponse
+		renewal error
+	}{
+		{"a guest whose roles were removed", formerGuest, guestCookie, guestTokens, errs.ErrOIDCUserTenantMismatch},
+		{"a suspended account of the organisation", suspended, suspendedCookie, suspendedTokens, errs.ErrAuthAccountSuspended},
+	} {
+		if to, q, _ := p.authorizeInBrowser(t, tc.cookie, client.ClientID); q.Get("code") != "" {
+			t.Errorf("%s signed in to the application: sent to %s %v", tc.name, to, q)
+		}
+		_, challenge, _ := codes.URLToken()
+		if _, _, err := p.svc.Authorize(ctx, tc.account.ID, client.ClientID, testRedirect, []string{"openid"}, "n-1", challenge, "S256"); !errors.Is(err, errs.ErrOIDCUserTenantMismatch) {
+			t.Errorf("%s authorized: %v, want %v", tc.name, err, errs.ErrOIDCUserTenantMismatch)
+		}
+		if out, err := p.svc.Introspect(ctx, client.ClientID, secret, tc.tokens.AccessToken, ""); err != nil || out["active"] == true {
+			t.Errorf("%s's access token introspects %v, %v; want inactive", tc.name, out, err)
+		}
+		if _, err := p.svc.RefreshToken(ctx, client.ClientID, secret, tc.tokens.RefreshToken, ""); !errors.Is(err, tc.renewal) {
+			t.Errorf("%s renewing: %v, want %v", tc.name, err, tc.renewal)
+		}
 	}
 }
 

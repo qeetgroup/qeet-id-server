@@ -15,23 +15,26 @@ import (
 
 const checkTenantMembership = `-- name: CheckTenantMembership :one
 SELECT EXISTS (
-    SELECT 1 FROM rbac.user_roles membership
-    JOIN rbac.roles role ON role.id = membership.role_id AND role.tenant_id = membership.tenant_id
-    JOIN tenant.tenants organization ON organization.id = membership.tenant_id
-    JOIN "user".users account ON account.id = membership.user_id
-    WHERE membership.user_id = $1 AND membership.tenant_id = $2
-      AND organization.status = 'active' AND organization.deleted_at IS NULL
+    SELECT 1 FROM "user".users account
+    JOIN tenant.tenants organization ON organization.id = $1::uuid
+    WHERE account.id = $2
       AND account.status = 'active' AND account.deleted_at IS NULL
+      AND organization.status = 'active' AND organization.deleted_at IS NULL
+      AND (account.tenant_id = organization.id
+           OR EXISTS (SELECT 1 FROM rbac.user_roles membership
+                      WHERE membership.tenant_id = organization.id AND membership.user_id = account.id))
 ) AS is_member
 `
 
 type CheckTenantMembershipParams struct {
-	UserID   uuid.UUID
 	TenantID uuid.UUID
+	UserID   uuid.UUID
 }
 
+// CheckTenantMembership reports whether an active account is a member of an
+// active organisation: the organisation's own account, or holding a role there.
 func (q *Queries) CheckTenantMembership(ctx context.Context, arg CheckTenantMembershipParams) (bool, error) {
-	row := q.db.QueryRow(ctx, checkTenantMembership, arg.UserID, arg.TenantID)
+	row := q.db.QueryRow(ctx, checkTenantMembership, arg.TenantID, arg.UserID)
 	var is_member bool
 	err := row.Scan(&is_member)
 	return is_member, err

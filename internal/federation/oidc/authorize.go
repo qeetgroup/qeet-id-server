@@ -122,21 +122,10 @@ func validPKCEValue(value string, minLength, maxLength int) bool {
 	return true
 }
 
+// activeClientTenantMember reports whether userID is an active member of the
+// client's active tenant: its own account, or holding a role there.
 func (s *Service) activeClientTenantMember(ctx context.Context, userID uuid.UUID, clientID string) (bool, error) {
-	var member bool
-	err := s.pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM auth.oidc_clients c
-			JOIN tenant.tenants t ON t.id = c.tenant_id
-			JOIN rbac.user_roles ur ON ur.tenant_id = c.tenant_id AND ur.user_id = $1
-			JOIN "user".users u ON u.id = ur.user_id
-			WHERE c.client_id = $2
-			  AND t.status = 'active' AND t.deleted_at IS NULL
-			  AND u.status = 'active' AND u.deleted_at IS NULL
-		)
-	`, userID, clientID).Scan(&member)
-	return member, err
+	return s.q.IsActiveClientMember(ctx, dbgen.IsActiveClientMemberParams{UserID: userID, ClientID: clientID})
 }
 
 // HasConsent reports whether the user has already granted the client every

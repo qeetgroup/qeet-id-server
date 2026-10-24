@@ -6,6 +6,8 @@
 SELECT * FROM tenant.tenants
 WHERE id = $1 AND deleted_at IS NULL;
 
+-- ListEligibleOrganizations lists the active organisations an active account
+-- belongs to, by id: its own, and each one it holds a role in.
 -- name: ListEligibleOrganizations :many
 SELECT t.id, t.slug, t.name, t.plan, t.region, t.logo_url,
   ARRAY(SELECT DISTINCT role.name FROM rbac.user_roles membership
@@ -22,9 +24,8 @@ FROM tenant.tenants t
 WHERE t.status = 'active' AND t.deleted_at IS NULL
   AND EXISTS (SELECT 1 FROM "user".users account
     WHERE account.id = @user_id AND account.status = 'active' AND account.deleted_at IS NULL)
-  AND EXISTS (SELECT 1 FROM rbac.user_roles membership
-    JOIN rbac.roles role ON role.id = membership.role_id AND role.tenant_id = membership.tenant_id
-    WHERE membership.user_id = @user_id AND membership.tenant_id = t.id)
+  AND t.id IN (SELECT account.tenant_id FROM "user".users account WHERE account.id = @user_id
+    UNION SELECT membership.tenant_id FROM rbac.user_roles membership WHERE membership.user_id = @user_id)
   AND (@after_id::uuid = '00000000-0000-0000-0000-000000000000'::uuid OR t.id > @after_id::uuid)
 ORDER BY t.id
 LIMIT @row_limit;
@@ -69,10 +70,8 @@ SELECT t.id, t.slug, t.name, t.status, t.plan, t.region, t.logo_url,
          OR EXISTS(SELECT 1 FROM auth.mfa_push_devices md WHERE md.user_id = ur.user_id)))::bigint AS mfa_enabled_count
 FROM tenant.tenants t
 WHERE t.deleted_at IS NULL
-  AND EXISTS (
-    SELECT 1 FROM rbac.user_roles ur
-    WHERE ur.tenant_id = t.id AND ur.user_id = $1
-  )
+  AND t.id IN (SELECT ur.tenant_id FROM rbac.user_roles ur WHERE ur.user_id = $1
+               UNION SELECT u.tenant_id FROM "user".users u WHERE u.id = $1)
 ORDER BY t.created_at DESC, t.id DESC
 LIMIT $2;
 
@@ -88,10 +87,8 @@ SELECT t.id, t.slug, t.name, t.status, t.plan, t.region, t.logo_url,
          OR EXISTS(SELECT 1 FROM auth.mfa_push_devices md WHERE md.user_id = ur.user_id)))::bigint AS mfa_enabled_count
 FROM tenant.tenants t
 WHERE t.deleted_at IS NULL
-  AND EXISTS (
-    SELECT 1 FROM rbac.user_roles ur
-    WHERE ur.tenant_id = t.id AND ur.user_id = $1
-  )
+  AND t.id IN (SELECT ur.tenant_id FROM rbac.user_roles ur WHERE ur.user_id = $1
+               UNION SELECT u.tenant_id FROM "user".users u WHERE u.id = $1)
   AND (t.created_at < @before_created_at
        OR (t.created_at = @before_created_at AND t.id < @before_id))
 ORDER BY t.created_at DESC, t.id DESC

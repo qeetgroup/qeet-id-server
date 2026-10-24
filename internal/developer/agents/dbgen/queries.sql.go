@@ -280,7 +280,9 @@ func (q *Queries) ResumeAgent(ctx context.Context, arg ResumeAgentParams) error 
 
 const sponsorBelongsToTenant = `-- name: SponsorBelongsToTenant :one
 SELECT EXISTS (
-    SELECT 1 FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2
+    SELECT 1 FROM "user".users WHERE id = $1 AND tenant_id = $2::uuid AND deleted_at IS NULL
+    UNION ALL
+    SELECT 1 FROM rbac.user_roles WHERE tenant_id = $2::uuid AND user_id = $1
 )
 `
 
@@ -289,6 +291,8 @@ type SponsorBelongsToTenantParams struct {
 	TenantID uuid.UUID
 }
 
+// SponsorBelongsToTenant reports whether the user is a member of the tenant:
+// its own account, or holding a role there.
 func (q *Queries) SponsorBelongsToTenant(ctx context.Context, arg SponsorBelongsToTenantParams) (bool, error) {
 	row := q.db.QueryRow(ctx, sponsorBelongsToTenant, arg.UserID, arg.TenantID)
 	var exists bool

@@ -194,7 +194,7 @@ func newSecret() (string, error) {
 	return "agt_" + hex.EncodeToString(b), nil
 }
 
-// sponsorBelongsToTenant reports whether userID holds a role in tenantID: a
+// sponsorBelongsToTenant reports whether userID is a member of tenantID: a
 // sponsor must be an accountable member of the tenant, not just any user.
 func (s *Service) sponsorBelongsToTenant(ctx context.Context, tenantID, userID uuid.UUID) (bool, error) {
 	return s.q.SponsorBelongsToTenant(ctx, dbgen.SponsorBelongsToTenantParams{

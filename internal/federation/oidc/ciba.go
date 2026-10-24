@@ -93,7 +93,7 @@ func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecr
 	// GetUserByEmailInTenant filters soft-deletes but not suspension, and the
 	// tenant's own state is never consulted. Match a browser sign-in's
 	// requirement before minting anything.
-	live, err := s.activeTenantPrincipal(ctx, s.pool, userID, tenantID)
+	live, err := s.activeTenantPrincipal(ctx, s.q, userID, tenantID)
 	if err != nil {
 		return nil, err
 	}
