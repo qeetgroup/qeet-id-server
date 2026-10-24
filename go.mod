@@ -12,7 +12,7 @@ require (
 	github.com/beevik/etree v1.8.1
 	github.com/descope/virtualwebauthn v1.0.5
 	github.com/go-asn1-ber/asn1-ber v1.5.8
-	github.com/go-chi/chi/v5 v5.3.2
+	github.com/go-chi/chi/v5 v5.4.0
 	github.com/go-chi/cors v1.2.2
 	github.com/go-ldap/ldap/v3 v3.4.15
 	github.com/go-playground/validator/v10 v10.30.5
