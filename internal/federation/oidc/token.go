@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -65,8 +66,8 @@ func (s *Service) authenticateClient(ctx context.Context, clientID, clientSecret
 	}
 	c := authedClient{ID: row.ID, TenantID: row.TenantID, ClientID: clientID, Type: row.Type, GrantTypes: row.GrantTypes}
 	if row.Type == "confidential" {
-		// A locked-out application is refused before its secret is compared
-		// (a memory-hard hash per guess), with the same answer as a wrong one.
+		// A locked-out application is refused before its secret is compared,
+		// with the same answer as a wrong one.
 		locked, err := s.clientLocked(ctx, row.ID)
 		if err != nil {
 			return authedClient{}, err
@@ -74,9 +75,21 @@ func (s *Service) authenticateClient(ctx context.Context, clientID, clientSecret
 		if locked {
 			return authedClient{}, errs.ErrOIDCClientAuthFailed
 		}
-		if row.ClientSecretHash == nil || !password.Verify(*row.ClientSecretHash, clientSecret) {
+		var ok, rehash bool
+		if row.ClientSecretHash != nil {
+			ok, rehash = password.VerifySecret(*row.ClientSecretHash, clientSecret)
+		}
+		if !ok {
 			s.clientAuthFailed(ctx, c)
 			return authedClient{}, errs.ErrOIDCClientAuthFailed
+		}
+		if rehash {
+			upgraded := password.HashSecret(clientSecret)
+			if err := s.q.UpgradeOIDCClientSecretHash(ctx, dbgen.UpgradeOIDCClientSecretHashParams{
+				NewHash: &upgraded, ID: row.ID, TenantID: row.TenantID, OldHash: row.ClientSecretHash,
+			}); err != nil {
+				slog.Warn("oidc client hash upgrade failed", "err", err, "client_id", clientID)
+			}
 		}
 		if err := s.q.ClearClientAuthFailures(ctx, row.ID); err != nil {
 			return authedClient{}, err
@@ -157,6 +170,11 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 	userID, err := uuid.Parse(claims.Subject)
 	if err != nil {
 		return nil, errs.ErrOIDCSubjectTokenNoSubject
+	}
+	// Only a person's access token names them in user_id: an ID token, signed by
+	// the same key, carries none and is no credential.
+	if claims.UserID != userID {
+		return nil, errs.ErrOIDCSubjectTokenInvalid
 	}
 	// The caller must be entitled to the subject's token: issued to it, issued
 	// for a resource it serves, or the person delegated to it (consented).
@@ -442,8 +460,13 @@ func (s *Service) issueRefreshToken(ctx context.Context, q *dbgen.Queries, clien
 // live token for the client and user. A resource (RFC 8707) other than the one
 // the grant is bound to is invalid_target; none carries the bound one forward.
 func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawRefresh, resource string) (*TokenResponse, error) {
-	if _, err := s.authenticateClient(ctx, clientID, clientSecret); err != nil {
+	client, err := s.authenticateClient(ctx, clientID, clientSecret)
+	if err != nil {
 		return nil, err
+	}
+	// A client no longer registered for refresh renews nothing.
+	if !contains(client.GrantTypes, "refresh_token") {
+		return nil, errs.ErrOIDCGrantTypeNotAllowed
 	}
 	if rawRefresh == "" {
 		return nil, errs.ErrOIDCRefreshTokenRequired
@@ -485,6 +508,13 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 			return nil, err
 		}
 		return nil, errs.ErrAuthAccountSuspended
+	}
+	// Nor does it renew once the person has left the application's
+	// organisation or the organisation has been suspended.
+	if live, err := s.activeTenantPrincipal(ctx, tx, rt.UserID, rt.TenantID); err != nil {
+		return nil, err
+	} else if !live {
+		return nil, errs.ErrOIDCUserTenantMismatch
 	}
 	if rt.UsedAt.Valid {
 		// Reuse — assume theft: revoke every live token for this (client, user) and audit it.
@@ -765,16 +795,18 @@ func (s *Service) tokenSessionLive(ctx context.Context, claims *tokens.Claims) (
 	return s.sessionLive(ctx, claims.SessionID, claims.UserID)
 }
 
-// activeTenantPrincipal reports whether userID and tenantID are both active and
-// not deleted, so the user may receive a token for that tenant. Each flow checks
-// membership separately. db is the pool, or the caller's transaction.
+// activeTenantPrincipal reports whether userID is an active member (holding a
+// role) of tenantID and the tenant is active, so the user may receive a token for
+// it: the rule a browser sign-in to an application applies. db is the pool, or
+// the caller's transaction.
 func (s *Service) activeTenantPrincipal(ctx context.Context, db dbgen.DBTX, userID, tenantID uuid.UUID) (bool, error) {
 	var live bool
 	err := db.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1
 			FROM "user".users u
-			JOIN tenant.tenants t ON t.id = $2
+			JOIN rbac.user_roles ur ON ur.user_id = u.id AND ur.tenant_id = $2
+			JOIN tenant.tenants t ON t.id = ur.tenant_id
 			WHERE u.id = $1
 			  AND u.status = 'active' AND u.deleted_at IS NULL
 			  AND t.status = 'active' AND t.deleted_at IS NULL

@@ -255,19 +255,25 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (uuid.UUID, 
 }
 
 const getUserForIdP = `-- name: GetUserForIdP :one
-SELECT email, display_name, tenant_id FROM "user".users WHERE id = $1 AND deleted_at IS NULL
+SELECT email, display_name, tenant_id, status FROM "user".users WHERE id = $1 AND deleted_at IS NULL
 `
 
 type GetUserForIdPRow struct {
 	Email       string
 	DisplayName *string
 	TenantID    pgtype.UUID
+	Status      string
 }
 
 func (q *Queries) GetUserForIdP(ctx context.Context, id uuid.UUID) (GetUserForIdPRow, error) {
 	row := q.db.QueryRow(ctx, getUserForIdP, id)
 	var i GetUserForIdPRow
-	err := row.Scan(&i.Email, &i.DisplayName, &i.TenantID)
+	err := row.Scan(
+		&i.Email,
+		&i.DisplayName,
+		&i.TenantID,
+		&i.Status,
+	)
 	return i, err
 }
 

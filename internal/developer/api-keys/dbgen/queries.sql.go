@@ -161,6 +161,30 @@ func (q *Queries) TouchAPIKeyLastUsed(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const upgradeAPIKeyHash = `-- name: UpgradeAPIKeyHash :exec
+UPDATE auth.api_keys SET key_hash = $1
+WHERE id = $2 AND tenant_id = $3 AND key_hash = $4
+`
+
+type UpgradeAPIKeyHashParams struct {
+	NewHash  string
+	ID       uuid.UUID
+	TenantID uuid.UUID
+	OldHash  string
+}
+
+// UpgradeAPIKeyHash replaces an Argon2id key hash from before with its SHA-256
+// form, once the key has verified. A concurrent rotation keeps its own hash.
+func (q *Queries) UpgradeAPIKeyHash(ctx context.Context, arg UpgradeAPIKeyHashParams) error {
+	_, err := q.db.Exec(ctx, upgradeAPIKeyHash,
+		arg.NewHash,
+		arg.ID,
+		arg.TenantID,
+		arg.OldHash,
+	)
+	return err
+}
+
 const verifyAPIKey = `-- name: VerifyAPIKey :one
 SELECT id, tenant_id, user_id, name, prefix, scopes, expires_at, last_used_at, revoked_at, created_at, key_hash
 FROM auth.api_keys

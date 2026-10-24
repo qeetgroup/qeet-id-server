@@ -125,7 +125,8 @@ func (noFactors) LoginFactors(context.Context, uuid.UUID) ([]auth.LoginFactor, e
 	return nil, nil
 }
 
-// TestLoginAppliesSignInChecks checks that a directory sign-in is held to the
+// TestLoginAppliesSignInChecks checks that a directory sign-in adopts an
+// existing account only once its address is verified, is held to the
 // sign-in lockout, counted across spellings of one username, and answers with
 // a challenge for an account that must use a second factor, as well as signing
 // in an account that has none.
@@ -151,6 +152,12 @@ func TestLoginAppliesSignInChecks(t *testing.T) {
 	authSvc.SetMFA(noFactors{})
 	svc := NewService(pool, authSvc, egress.DevelopmentPolicy())
 
+	if _, err := svc.Login(ctx, connID, "alice", "alice-secret", "192.0.2.20", "test"); !errors.Is(err, errs.ErrLDAPAccountUnverified) {
+		t.Errorf("adopt an account whose address isn't verified: %v, want %v", err, errs.ErrLDAPAccountUnverified)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
+		t.Fatalf("verify the address: %v", err)
+	}
 	res, err := svc.Login(ctx, connID, "alice", "alice-secret", "192.0.2.20", "test")
 	if err != nil || res.Pair == nil || res.Pair.UserID != a.ID || res.Pair.TenantID == nil || *res.Pair.TenantID != tenant {
 		t.Fatalf("sign in: %+v, %v", res, err)

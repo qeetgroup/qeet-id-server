@@ -22,13 +22,13 @@ SELECT id, tenant_id, client_secret_hash, type, grant_types,
 FROM auth.oidc_clients WHERE client_id = @client_id;
 
 -- name: GetClientTenantAndScopes :one
-SELECT tenant_id, scopes FROM auth.oidc_clients WHERE client_id = @client_id;
+SELECT tenant_id, scopes, grant_types FROM auth.oidc_clients WHERE client_id = @client_id;
 
 -- name: GetClientName :one
 SELECT name, tenant_id FROM auth.oidc_clients WHERE client_id = @client_id;
 
 -- name: GetClientRedirectInfo :one
-SELECT tenant_id, type, scopes, redirect_uris,
+SELECT tenant_id, type, scopes, redirect_uris, grant_types,
        (pkce_exempt_until IS NOT NULL AND pkce_exempt_until > NOW())::bool AS pkce_exempt
 FROM auth.oidc_clients WHERE client_id = @client_id;
 
@@ -247,9 +247,6 @@ FROM auth.oidc_device_codes WHERE user_code = @user_code FOR UPDATE;
 -- name: DenyDevice :exec
 UPDATE auth.oidc_device_codes SET status = 'denied' WHERE id = @id;
 
--- name: CheckUserInDeviceTenant :one
-SELECT EXISTS(SELECT 1 FROM "user".users WHERE id = @id AND tenant_id = @tenant_id);
-
 -- name: ApproveDevice :exec
 UPDATE auth.oidc_device_codes SET status = 'authorized', user_id = @user_id, approved_at = NOW()
 WHERE id = @id;
@@ -285,9 +282,12 @@ RETURNING client_id, user_code;
 -- CIBA (OpenID Connect Client-Initiated Backchannel Authentication)
 -- ==========================================================================
 
+-- GetUserByEmailInTenant finds the member (a role holder) of the tenant with
+-- the address, as a browser sign-in to its applications would.
 -- name: GetUserByEmailInTenant :one
-SELECT id FROM "user".users
-WHERE tenant_id = @tenant_id AND LOWER(email) = LOWER(@email) AND deleted_at IS NULL;
+SELECT u.id FROM "user".users u
+WHERE LOWER(u.email) = LOWER(@email) AND u.deleted_at IS NULL
+  AND EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = @tenant_id);
 
 -- name: InsertCIBARequest :exec
 INSERT INTO auth.oidc_ciba_requests (
@@ -477,3 +477,9 @@ SET attempts = attempts + 1, last_error = @last_error,
     next_attempt_at = NOW() + make_interval(secs => @retry_in_seconds::float8),
     failed_at = CASE WHEN @final::bool THEN NOW() END
 WHERE id = @id;
+
+-- UpgradeOIDCClientSecretHash replaces an Argon2id secret hash from before with
+-- its SHA-256 form, once the secret has verified.
+-- name: UpgradeOIDCClientSecretHash :exec
+UPDATE auth.oidc_clients SET client_secret_hash = @new_hash
+WHERE id = @id AND tenant_id = @tenant_id AND client_secret_hash = @old_hash;

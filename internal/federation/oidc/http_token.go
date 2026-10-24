@@ -91,6 +91,7 @@ var tokenErrorCodes = map[string]string{
 	errs.CodeOIDCRefreshTokenExpired:            "invalid_grant",
 	errs.CodeOIDCRefreshTokenReuse:              "invalid_grant",
 	errs.CodeAuthAccountSuspended:               "invalid_grant",
+	errs.CodeOIDCUserTenantMismatch:             "invalid_grant",
 	errs.CodeOIDCScopeExceedsSubject:            "invalid_scope",
 }
 

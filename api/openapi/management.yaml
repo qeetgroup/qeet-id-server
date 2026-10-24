@@ -637,7 +637,7 @@ paths:
   /v1/users:
     get:
       operationId: get_v1_users
-      description: 'Returns a page of users in the caller''s tenant. Supports opaque cursor paging or numeric offset paging to jump to a specific page. Requires an existing tenant; scope comes from the authenticated principal.'
+      description: 'Returns a page of users in the caller''s tenant. Supports opaque cursor paging or numeric offset paging to jump to a specific page. Requires an existing tenant; scope comes from the authenticated principal. Members are the organisation''s own users (their home is this organisation) and the people who hold a role in it; last_seen_at and last_seen_ip come from sessions in this organisation only.'
       summary: List users
       tags:
         - Users
@@ -830,7 +830,7 @@ paths:
   /v1/users/{id}:
     delete:
       operationId: delete_v1_users_ById
-      description: 'Soft-deletes the user, moving the account into the tenant recycle bin rather than erasing it. A soft-deleted account can be brought back with the restore call or removed for good with the purge call. It continues to appear in the deleted-users list until purged. In the same transaction every session of the user ends, the deletion is audited (user.deleted, naming the admin) and a user.deleted event is queued; restoring the account brings none of those sessions back. The answer names the deleted user, when, and by whom. Only the organization the account belongs to can delete it; for a member whose account belongs elsewhere the call answers 403 user.managed_elsewhere. Refused with 409 tenant.last_owner, and nothing changes, when it would leave an organization with no active owner: make someone else an owner first.'
+      description: 'Soft-deletes the user, moving the account into the tenant recycle bin rather than erasing it. A soft-deleted account can be brought back with the restore call or removed for good with the purge call. It continues to appear in the deleted-users list until purged. In the same transaction every way the user is signed in ends (sessions, hosted-login sessions, application grants, remembered devices and pending authorizations), the deletion is audited (user.deleted, naming the admin) and a user.deleted event is queued; restoring the account brings none of those sessions back. The answer names the deleted user, when, and by whom. Only the organization the account belongs to can delete it; for a member whose account belongs elsewhere the call answers 403 user.managed_elsewhere. Refused with 409 tenant.last_owner, and nothing changes, when it would leave an organization with no active owner: make someone else an owner first.'
       summary: Delete user
       tags:
         - Users
@@ -897,7 +897,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_users_ById
-      description: 'Updates mutable attributes of a user in the caller''s tenant. Only the fields present in the request body are modified. This edits directory attributes, not credentials or verification state. Changing the account (status, profile) belongs to the organization the account belongs to; for a member whose account belongs elsewhere the call answers 403 user.managed_elsewhere and nothing changes. Remove them from this organization instead (DELETE /v1/users/{id}/membership). Suspending is refused with 409 tenant.last_owner, and nothing changes, when it would leave an organization with no active owner: make someone else an owner first.'
+      description: 'Updates mutable attributes of a user in the caller''s tenant. Only the fields present in the request body are modified. This edits directory attributes, not credentials or verification state. Changing the account (status, profile) belongs to the organization the account belongs to; for a member whose account belongs elsewhere the call answers 403 user.managed_elsewhere and nothing changes. Remove them from this organization instead (DELETE /v1/users/{id}/membership). Suspending is refused with 409 tenant.last_owner, and nothing changes, when it would leave an organization with no active owner: make someone else an owner first. Changing the phone number clears its verification.'
       summary: Update user
       tags:
         - Users
@@ -1567,7 +1567,7 @@ paths:
   /v1/users/{id}/restore:
     post:
       operationId: post_v1_users_ById_restore
-      description: 'Brings a soft-deleted user back from the tenant recycle bin, reversing an earlier delete call and returning the reactivated account. Only accounts that are still soft-deleted (not yet purged) can be restored. It is the counterpart to the purge call.'
+      description: 'Brings a soft-deleted user back from the tenant recycle bin, reversing an earlier delete call and returning the reactivated account. Only accounts that are still soft-deleted (not yet purged) can be restored. It is the counterpart to the purge call. An address another account has taken since the deletion is refused with 409 auth.email_exists.'
       summary: Restore user
       tags:
         - Users
@@ -1595,6 +1595,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v1/me:
     get:
       operationId: get_v1_me

@@ -195,10 +195,7 @@ func (s *Service) RotateClientSecret(ctx context.Context, tx pgx.Tx, tenantID, i
 	if err != nil {
 		return "", nil, err
 	}
-	hash, err := password.Hash(secret)
-	if err != nil {
-		return "", nil, err
-	}
+	hash := password.HashSecret(secret)
 	if err := q.UpdateOIDCClientSecret(ctx, dbgen.UpdateOIDCClientSecretParams{
 		ClientSecretHash: &hash, ID: id, TenantID: tenantID,
 	}); err != nil {

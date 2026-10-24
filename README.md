@@ -277,7 +277,7 @@ Qeet ID validates production configuration at startup and refuses development-on
 trusted-header, origin, URL, sandbox-payment, or ephemeral-key settings outside the development
 environment.
 
-- Passwords and credential secrets use Argon2id, with transparent verification and upgrade of legacy bcrypt hashes.
+- Passwords and MFA recovery codes use Argon2id, with transparent verification and upgrade of legacy bcrypt hashes; random machine secrets (API keys, service-principal, agent and OAuth client secrets) are stored as their SHA-256.
 - Passkeys use `go-webauthn`; access and ID tokens use ES256 with `kid`-based JWKS verification and retired-key support.
 - The secrets vault uses AES-GCM with a static key or AWS KMS-backed data-key provider.
 - Tenant routes are checked against the authenticated principal and persistence queries carry tenant scope.

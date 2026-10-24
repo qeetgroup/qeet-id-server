@@ -59,3 +59,9 @@ WHERE id = @id AND tenant_id = @tenant_id;
 -- name: DeactivateAgent :exec
 UPDATE auth.agents SET status = @status, disabled_at = NOW()
 WHERE id = @id AND tenant_id = @tenant_id;
+
+-- UpgradeAgentSecretHash replaces an Argon2id secret hash from before with its
+-- SHA-256 form, once the secret has verified.
+-- name: UpgradeAgentSecretHash :exec
+UPDATE auth.agents SET secret_hash = @new_hash
+WHERE id = @id AND tenant_id = @tenant_id AND secret_hash = @old_hash;

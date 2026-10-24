@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -79,10 +80,7 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Princ
 	if err != nil {
 		return nil, "", err
 	}
-	hash, err := password.Hash(raw)
-	if err != nil {
-		return nil, "", err
-	}
+	hash := password.HashSecret(raw)
 	row, err := s.q.WithTx(tx).CreateServicePrincipal(ctx, dbgen.CreateServicePrincipalParams{
 		TenantID:    in.TenantID,
 		Name:        in.Name,
@@ -154,8 +152,16 @@ func (s *Service) IssueClientCredentials(ctx context.Context, clientID, clientSe
 		return nil, err
 	}
 	// The secret first, so only its holder learns that it is disabled.
-	if !password.Verify(row.SecretHash, clientSecret) {
+	ok, rehash := password.VerifySecret(row.SecretHash, clientSecret)
+	if !ok {
 		return nil, errs.ErrPrincipalInvalidCredentials
+	}
+	if rehash {
+		if err := s.q.UpgradeServicePrincipalSecretHash(ctx, dbgen.UpgradeServicePrincipalSecretHashParams{
+			NewHash: password.HashSecret(clientSecret), ID: row.ID, TenantID: row.TenantID, OldHash: row.SecretHash,
+		}); err != nil {
+			slog.Warn("service principal hash upgrade failed", "err", err, "principal_id", row.ID)
+		}
 	}
 	if row.DisabledAt.Valid {
 		return nil, errs.ErrPrincipalDisabled

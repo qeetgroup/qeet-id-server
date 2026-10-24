@@ -344,8 +344,8 @@ func (r *Repository) GetByEmailGlobal(ctx context.Context, email string) (*User,
 		row.PhoneVerifiedAt, row.DisplayName, row.Status, row.Metadata, row.CreatedAt, row.UpdatedAt), nil
 }
 
-// ListByTenant returns a page of a tenant's members (by rbac.user_roles, not
-// users.tenant_id) and the next cursor. offset > 0 pages by offset, otherwise
+// ListByTenant returns a page of a tenant's members (its home users and those
+// holding a role there) and the next cursor. offset > 0 pages by offset, otherwise
 // by cursor. Hand-written because sqlc types the text[] roles column as any.
 func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit int, cursor string, offset int) ([]User, string, error) {
 	if limit <= 0 || limit > 200 {
@@ -373,15 +373,18 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 			   WHERE gm.user_id = "user".users.id AND gm.tenant_id = $1)::int AS groups_count,
 			  (SELECT s.last_seen_at FROM auth.sessions s
 			   WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
+			     AND (s.tenant_id = $1 OR (s.tenant_id IS NULL AND "user".users.tenant_id = $1))
 			   ORDER BY s.last_seen_at DESC LIMIT 1) AS last_seen_at,
 			  (SELECT host(s.ip) FROM auth.sessions s
 			   WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
+			     AND (s.tenant_id = $1 OR (s.tenant_id IS NULL AND "user".users.tenant_id = $1))
 			   ORDER BY s.last_seen_at DESC LIMIT 1)::text AS last_seen_ip
 			FROM "user".users
 			WHERE deleted_at IS NULL
-			  AND EXISTS (
-				SELECT 1 FROM rbac.user_roles ur
-				WHERE ur.user_id = "user".users.id AND ur.tenant_id = $1
+			  AND id IN (
+				SELECT u.id FROM "user".users u WHERE u.tenant_id = $1 AND u.deleted_at IS NULL
+				UNION
+				SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1
 			  )
 			ORDER BY created_at DESC, id DESC
 			LIMIT $2 OFFSET $3
@@ -402,15 +405,18 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 			   WHERE gm.user_id = "user".users.id AND gm.tenant_id = $1)::int AS groups_count,
 			  (SELECT s.last_seen_at FROM auth.sessions s
 			   WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
+			     AND (s.tenant_id = $1 OR (s.tenant_id IS NULL AND "user".users.tenant_id = $1))
 			   ORDER BY s.last_seen_at DESC LIMIT 1) AS last_seen_at,
 			  (SELECT host(s.ip) FROM auth.sessions s
 			   WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
+			     AND (s.tenant_id = $1 OR (s.tenant_id IS NULL AND "user".users.tenant_id = $1))
 			   ORDER BY s.last_seen_at DESC LIMIT 1)::text AS last_seen_ip
 			FROM "user".users
 			WHERE deleted_at IS NULL
-			  AND EXISTS (
-				SELECT 1 FROM rbac.user_roles ur
-				WHERE ur.user_id = "user".users.id AND ur.tenant_id = $1
+			  AND id IN (
+				SELECT u.id FROM "user".users u WHERE u.tenant_id = $1 AND u.deleted_at IS NULL
+				UNION
+				SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1
 			  )
 			ORDER BY created_at DESC, id DESC
 			LIMIT $2
@@ -436,15 +442,18 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 			   WHERE gm.user_id = "user".users.id AND gm.tenant_id = $1)::int AS groups_count,
 			  (SELECT s.last_seen_at FROM auth.sessions s
 			   WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
+			     AND (s.tenant_id = $1 OR (s.tenant_id IS NULL AND "user".users.tenant_id = $1))
 			   ORDER BY s.last_seen_at DESC LIMIT 1) AS last_seen_at,
 			  (SELECT host(s.ip) FROM auth.sessions s
 			   WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
+			     AND (s.tenant_id = $1 OR (s.tenant_id IS NULL AND "user".users.tenant_id = $1))
 			   ORDER BY s.last_seen_at DESC LIMIT 1)::text AS last_seen_ip
 			FROM "user".users
 			WHERE deleted_at IS NULL
-			  AND EXISTS (
-				SELECT 1 FROM rbac.user_roles ur
-				WHERE ur.user_id = "user".users.id AND ur.tenant_id = $1
+			  AND id IN (
+				SELECT u.id FROM "user".users u WHERE u.tenant_id = $1 AND u.deleted_at IS NULL
+				UNION
+				SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1
 			  )
 			  AND (created_at, id) < ($2, $3)
 			ORDER BY created_at DESC, id DESC
@@ -535,6 +544,8 @@ func (r *Repository) update(ctx context.Context, db dbgen.DBTX, id uuid.UUID, in
 	}
 	if in.Phone != nil {
 		ub.Set("phone", *in.Phone)
+		// A number that changed hasn't been verified.
+		ub.SetRaw("phone_verified_at = CASE WHEN phone IS NOT DISTINCT FROM $" + strconv.Itoa(len(ub.Args())) + " THEN phone_verified_at END")
 	}
 	if in.Status != nil {
 		ub.Set("status", *in.Status)
@@ -606,9 +617,13 @@ func (r *Repository) ListDeleted(ctx context.Context, tenantID uuid.UUID, limit 
 }
 
 // Restore reverses a soft delete. Returns ErrNotFound if the user isn't
-// currently soft-deleted.
+// currently soft-deleted, and ErrAuthEmailExists if their address has since
+// been taken by another account.
 func (r *Repository) Restore(ctx context.Context, id uuid.UUID) error {
 	n, err := r.q.RestoreUser(ctx, id)
+	if pgxerr.IsUnique(err) {
+		return errs.ErrAuthEmailExists
+	}
 	if err != nil {
 		return err
 	}

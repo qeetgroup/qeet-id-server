@@ -59,6 +59,23 @@ type Handler struct {
 	Mailer         notifier.Sender
 }
 
+// endEverySignIn ends, inside tx, every way userID is signed in: sessions,
+// hosted-login sessions, application grants, trusted devices and pending
+// authorizations, so none of them works again if the account comes back. With
+// no SignIns it ends the sessions alone.
+func (h *Handler) endEverySignIn(ctx context.Context, tx pgx.Tx, userID uuid.UUID, reason string) error {
+	if h.SignIns != nil {
+		_, err := h.SignIns.EndAllSignIns(ctx, tx, userID, reason)
+		return err
+	}
+	ended, err := sessionsignal.EndUserSessions(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
+	h.Signals.Revoked(ctx, tx, reason, ended...)
+	return nil
+}
+
 // hashNewPassword checks a password for an account in tenantID with the given
 // email, then hashes it.
 func (h *Handler) hashNewPassword(ctx context.Context, tenantID uuid.UUID, email, plain string) (string, error) {
@@ -596,11 +613,9 @@ func (h *Handler) softDeleteWithEvidence(r *http.Request, tenantID, userID uuid.
 	if err != nil {
 		return nil, err
 	}
-	ended, err := sessionsignal.EndUserSessions(ctx, tx, userID)
-	if err != nil {
+	if err := h.endEverySignIn(ctx, tx, userID, sessionsignal.ReasonDeleted); err != nil {
 		return nil, err
 	}
-	h.Signals.Revoked(ctx, tx, sessionsignal.ReasonDeleted, ended...)
 	if err := recordSuspensionEvidence(ctx, tx, r, tenantID, userID, "user.deleted"); err != nil {
 		return nil, err
 	}

@@ -132,6 +132,8 @@ func (h *Handler) authorizeError(w http.ResponseWriter, r *http.Request, clientI
 		oauthCode = "access_denied"
 	case errors.Is(err, errs.ErrOIDCScopeNotPermitted):
 		oauthCode = "invalid_scope"
+	case errors.Is(err, errs.ErrOIDCGrantTypeNotAllowed):
+		oauthCode = "unauthorized_client"
 	case errors.Is(err, errs.ErrOIDCCodeChallengeRequired),
 		errors.Is(err, errs.ErrOIDCCodeChallengeInvalid),
 		errors.Is(err, errs.ErrOIDCCodeChallengeMethodUnsupported),

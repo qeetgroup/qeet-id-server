@@ -30,6 +30,8 @@ const (
 	CodeSAMLACSURLInvalid            = "saml.acs_url_invalid"
 	CodeSAMLSPFieldsRequired         = "saml.sp_fields_required"
 	CodeSAMLUserTenantMismatch       = "saml.user_tenant_mismatch"
+	CodeSAMLAccountUnverified        = "saml.account_unverified"
+	CodeSAMLSPEntityIDTaken          = "saml.sp_entity_id_taken"
 )
 
 // SAML errors. Message is the end-user-facing text; edit wording here. Handlers
@@ -63,4 +65,7 @@ var (
 	ErrSAMLACSURLInvalid            = New(CodeSAMLACSURLInvalid, "The ACS URL must be an absolute https:// URL without a user name or password (http only on localhost).")
 	ErrSAMLSPFieldsRequired         = New(CodeSAMLSPFieldsRequired, "Name, entity ID and ACS URL are all required.")
 	ErrSAMLUserTenantMismatch       = New(CodeSAMLUserTenantMismatch, "You aren't a member of this service provider's tenant.")
+	ErrSAMLAccountUnverified        = New(CodeSAMLAccountUnverified,
+		"An account already uses this email address, but the address hasn't been verified. Verify it, or reset the password from the link we email you, then sign in with single sign-on.")
+	ErrSAMLSPEntityIDTaken = New(CodeSAMLSPEntityIDTaken, "A service provider with this entity ID is already registered.")
 )

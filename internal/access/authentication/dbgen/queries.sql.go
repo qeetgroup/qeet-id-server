@@ -195,7 +195,10 @@ func (q *Queries) GetClientTenant(ctx context.Context, clientID string) (uuid.UU
 }
 
 const getLoginSession = `-- name: GetLoginSession :one
-SELECT id, user_id, expires_at, created_at FROM auth.login_sessions WHERE token_hash = $1
+SELECT s.id, s.user_id, s.expires_at, s.created_at
+FROM auth.login_sessions s
+JOIN "user".users u ON u.id = s.user_id
+WHERE s.token_hash = $1 AND u.status = 'active' AND u.deleted_at IS NULL
 `
 
 type GetLoginSessionRow struct {
@@ -205,6 +208,9 @@ type GetLoginSessionRow struct {
 	CreatedAt time.Time
 }
 
+// GetLoginSession is the hosted-login session a cookie names, unless its user is
+// suspended or deleted: however it was suspended, a suspended person's browser
+// signs in nothing.
 func (q *Queries) GetLoginSession(ctx context.Context, tokenHash string) (GetLoginSessionRow, error) {
 	row := q.db.QueryRow(ctx, getLoginSession, tokenHash)
 	var i GetLoginSessionRow

@@ -137,4 +137,4 @@ DELETE FROM tenant.saml_service_providers WHERE id = @id AND tenant_id = @tenant
 UPDATE tenant.saml_service_providers SET last_login_at = NOW() WHERE id = @id;
 
 -- name: GetUserForIdP :one
-SELECT email, display_name, tenant_id FROM "user".users WHERE id = @id AND deleted_at IS NULL;
+SELECT email, display_name, tenant_id, status FROM "user".users WHERE id = @id AND deleted_at IS NULL;

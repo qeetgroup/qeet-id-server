@@ -129,8 +129,14 @@ func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, t
 		return nil, err
 	}
 	// A trusted device may skip a factor the account holds, never the setting
-	// up of one it must have, and never on a risky sign-in.
-	switch s.nextSignInStep(ctx, u.ID, u.TenantID, gate, firstFactorPassword, trustedToken, in.IP, ua, country) {
+	// up of one it must have, and never on a risky sign-in. The organisation
+	// served — the application's, else the account's own — decides, as on the
+	// social path, so a device another organisation remembers skips nothing.
+	served := clientTenant
+	if served == uuid.Nil {
+		served = u.TenantID
+	}
+	switch s.nextSignInStep(ctx, u.ID, served, gate, firstFactorPassword, trustedToken, in.IP, ua, country) {
 	case stepRiskEmail:
 		challenge, err := s.riskEmailChallenge(ctx, u.ID, u.TenantID, nil, firstFactorPassword, in.IP, ua)
 		if err != nil {
