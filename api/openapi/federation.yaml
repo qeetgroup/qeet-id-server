@@ -4904,6 +4904,7 @@ components:
             format: uri
         grant_types:
           type: array
+          description: "Any of authorization_code, refresh_token, urn:ietf:params:oauth:grant-type:device_code, token exchange (token_exchange or urn:ietf:params:oauth:grant-type:token-exchange; confidential only) and urn:openid:params:grant-type:ciba (confidential only). client_credentials is refused with oidc.grant_type_unsupported: a machine caller is a service principal, which gets its tokens from POST /v1/oauth/token."
           items:
             type: string
         scopes:
@@ -4946,6 +4947,7 @@ components:
             format: uri
         grant_types:
           type: array
+          description: "Any of authorization_code, refresh_token, urn:ietf:params:oauth:grant-type:device_code, token exchange (token_exchange or urn:ietf:params:oauth:grant-type:token-exchange; confidential only) and urn:openid:params:grant-type:ciba (confidential only). client_credentials is refused with oidc.grant_type_unsupported: a machine caller is a service principal, which gets its tokens from POST /v1/oauth/token."
           items:
             type: string
         scopes:
