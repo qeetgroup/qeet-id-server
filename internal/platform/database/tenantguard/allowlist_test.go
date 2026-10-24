@@ -25,8 +25,11 @@ const allowlist = `
 #   global-table-join  a global table joined to a tenant-owned one
 #   platform-wide      one record for every tenant; callers show its tenant's fields to that tenant only
 #   pending-review     not shown to be safe; needs a tenant condition or removal
+#   dev-seed           the development seed, which writes every organisation's data by design
 
-cmd/seed/main.go#main  pre-tenant: local seed empties tables before creating tenants
+cmd/seed/internal/world/audit.go#World.Rechain  dev-seed: lists every audit chain to rehash it
+cmd/seed/internal/world/audit.go#World.rechain  dev-seed: reads one chain, the tenant or platform one, to rehash it
+cmd/seed/internal/world/audit.go#World.VerifyChains  dev-seed: lists every audit chain to verify it
 
 internal/access/authentication/accountstatus.go#Service.refuseInactiveAccount  pre-tenant: sign-in checks the account it just verified
 internal/access/authentication/mfalogin.go#Service.BeginMFAPasskey  secret-lookup: challenge found by its random MFA token
