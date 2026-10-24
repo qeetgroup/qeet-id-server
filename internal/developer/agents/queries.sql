@@ -8,9 +8,13 @@ SELECT status FROM auth.agents WHERE id = $1;
 -- name: GetAgentStatus :one
 SELECT status FROM auth.agents WHERE id = @id AND tenant_id = @tenant_id;
 
+-- SponsorBelongsToTenant reports whether the user is a member of the tenant:
+-- its own account, or holding a role there.
 -- name: SponsorBelongsToTenant :one
 SELECT EXISTS (
-    SELECT 1 FROM rbac.user_roles WHERE user_id = @user_id AND tenant_id = @tenant_id
+    SELECT 1 FROM "user".users WHERE id = @user_id AND tenant_id = @tenant_id::uuid AND deleted_at IS NULL
+    UNION ALL
+    SELECT 1 FROM rbac.user_roles WHERE tenant_id = @tenant_id::uuid AND user_id = @user_id
 );
 
 -- name: CreateAgent :one

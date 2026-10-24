@@ -82,6 +82,16 @@ type namedWorker struct {
 	always bool
 }
 
+// Services wires every service as the API does, for a tool that drives them
+// directly, such as the development seed. No worker runs, nothing listens, and
+// committed events wait in the outbox for the API's dispatcher.
+func Services(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool) Deps {
+	depsCfg := *cfg
+	depsCfg.NATSURL = ""
+	deps, _ := buildDeps(ctx, &depsCfg, pool, outbox.LogPublisher{})
+	return deps
+}
+
 // buildDeps constructs every repository, service, and handler and returns the
 // HTTP dependency set plus the background workers to supervise. Keeping all
 // wiring here lets main() focus on process lifecycle.
@@ -387,7 +397,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		invites: inviteService, oidc: oidcService, apikeys: apikeyService, rbacRepo: rbacRepo,
 	})
 	// custom domain — extracted from its inline handler so the gate can be wired.
-	domainVerifyService := domainverify.NewService(pool)
+	domainVerifyService := domainverify.NewService(pool, outboundPolicy)
 	domainVerifyService.SetPlanGate(entitlementSvc)
 
 	limits := newRateLimits(rootCtx, cfg, pool)

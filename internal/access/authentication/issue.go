@@ -145,24 +145,7 @@ func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID u
 	}); err != nil {
 		return nil, err
 	}
-	if method == "" {
-		method = "unknown"
-	}
-	meta := map[string]any{"method": method}
-	for k, v := range auditMeta {
-		meta[k] = v
-	}
-	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     tenantPtr,
-		ActorUserID:  &userID,
-		ActorType:    "user",
-		Action:       "auth.login_succeeded",
-		ResourceType: "session",
-		ResourceID:   &sessionID,
-		IP:           ip,
-		UserAgent:    ua,
-		Metadata:     meta,
-	}); err != nil {
+	if err := audit.Record(ctx, tx, signInEvent(userID, tenantID, "session", sessionID, ip, ua, method, auditMeta)); err != nil {
 		return nil, err
 	}
 	return &TokenPair{
@@ -176,6 +159,35 @@ func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID u
 		UserID:           userID,
 		TenantID:         tenantPtr,
 	}, nil
+}
+
+// signInEvent is the auth.login_succeeded record of a sign-in by method to
+// tenantID (uuid.Nil: none) that opened the session resourceType/sessionID.
+// Every sign-in writes one, and the dashboard counts them; extra joins its
+// metadata.
+func signInEvent(userID, tenantID uuid.UUID, resourceType string, sessionID uuid.UUID, ip, ua, method string, extra map[string]any) audit.Event {
+	if method == "" {
+		method = "unknown"
+	}
+	meta := map[string]any{"method": method}
+	for k, v := range extra {
+		meta[k] = v
+	}
+	var tenantPtr *uuid.UUID
+	if tenantID != uuid.Nil {
+		tenantPtr = &tenantID
+	}
+	return audit.Event{
+		TenantID:     tenantPtr,
+		ActorUserID:  &userID,
+		ActorType:    "user",
+		Action:       "auth.login_succeeded",
+		ResourceType: resourceType,
+		ResourceID:   &sessionID,
+		IP:           ip,
+		UserAgent:    ua,
+		Metadata:     meta,
+	}
 }
 
 // notAfterArg is a session's latest end for the insert: NULL for none.

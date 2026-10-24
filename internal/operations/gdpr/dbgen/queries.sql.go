@@ -13,10 +13,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const cancelPurgeRequest = `-- name: CancelPurgeRequest :execrows
+const cancelPurgeRequest = `-- name: CancelPurgeRequest :one
 UPDATE "user".purge_requests
 SET status = 'cancelled'
 WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
+RETURNING user_id
 `
 
 type CancelPurgeRequestParams struct {
@@ -24,14 +25,13 @@ type CancelPurgeRequestParams struct {
 	TenantID uuid.UUID
 }
 
-// Cancel a pending purge request (e.g. the subject changed their mind).
-// Returns 0 rows affected when the request is already completed or not found.
-func (q *Queries) CancelPurgeRequest(ctx context.Context, arg CancelPurgeRequestParams) (int64, error) {
-	result, err := q.db.Exec(ctx, cancelPurgeRequest, arg.ID, arg.TenantID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+// Cancel a pending purge request (e.g. the subject changed their mind),
+// returning its user. No row when it is already completed or not found.
+func (q *Queries) CancelPurgeRequest(ctx context.Context, arg CancelPurgeRequestParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, cancelPurgeRequest, arg.ID, arg.TenantID)
+	var user_id uuid.UUID
+	err := row.Scan(&user_id)
+	return user_id, err
 }
 
 const checkAuditEventCount = `-- name: CheckAuditEventCount :one
@@ -305,20 +305,32 @@ func (q *Queries) DeletePasswordCredentials(ctx context.Context, userID uuid.UUI
 	return err
 }
 
-const failExportRequest = `-- name: FailExportRequest :exec
+const failExportRequest = `-- name: FailExportRequest :execrows
 UPDATE "user".export_requests
-SET status = 'failed', error = $1, completed_at = NOW()
-WHERE id = $2
+SET status = 'failed', error = $1, completed_at = NOW(),
+    lease_owner = NULL, lease_until = NULL
+WHERE id = $2 AND tenant_id = $3 AND lease_owner = $4
 `
 
 type FailExportRequestParams struct {
-	ErrorMsg *string
-	ID       uuid.UUID
+	ErrorMsg   *string
+	ID         uuid.UUID
+	TenantID   uuid.UUID
+	LeaseOwner pgtype.UUID
 }
 
-func (q *Queries) FailExportRequest(ctx context.Context, arg FailExportRequestParams) error {
-	_, err := q.db.Exec(ctx, failExportRequest, arg.ErrorMsg, arg.ID)
-	return err
+// Mark an export request the worker holds the lease on as failed.
+func (q *Queries) FailExportRequest(ctx context.Context, arg FailExportRequestParams) (int64, error) {
+	result, err := q.db.Exec(ctx, failExportRequest,
+		arg.ErrorMsg,
+		arg.ID,
+		arg.TenantID,
+		arg.LeaseOwner,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getEvidenceRun = `-- name: GetEvidenceRun :one

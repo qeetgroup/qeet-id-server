@@ -95,6 +95,8 @@ func TestCategoryOfRecordedActions(t *testing.T) {
 		"abac_policy.created":     CategoryAuthorization,
 		"email_template.updated":  CategoryDirectory,
 		"billing.plan_changed":    CategorySystem,
+		"gdpr.erasure_requested":  CategorySecurity,
+		"invite.accepted":         CategoryDirectory,
 	}
 	for action, want := range cases {
 		if got := categoryOf(action); got != want {

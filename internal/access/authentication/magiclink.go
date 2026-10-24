@@ -62,7 +62,7 @@ func (s *Service) BeginMagicLinkSession(ctx context.Context, userID, tenantID uu
 		}
 		return &LoginSessionResult{UserID: userID, MFAChallenge: challenge}, nil
 	}
-	raw, err := s.createLoginSession(ctx, userID, ip, ua, gate.skippedFactor())
+	raw, err := s.createLoginSession(ctx, userID, tenantID, ip, ua, firstFactorMagicLink, gate.skippedFactor())
 	if err != nil {
 		return nil, err
 	}

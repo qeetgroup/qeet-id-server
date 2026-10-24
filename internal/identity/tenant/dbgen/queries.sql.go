@@ -193,9 +193,8 @@ FROM tenant.tenants t
 WHERE t.status = 'active' AND t.deleted_at IS NULL
   AND EXISTS (SELECT 1 FROM "user".users account
     WHERE account.id = $1 AND account.status = 'active' AND account.deleted_at IS NULL)
-  AND EXISTS (SELECT 1 FROM rbac.user_roles membership
-    JOIN rbac.roles role ON role.id = membership.role_id AND role.tenant_id = membership.tenant_id
-    WHERE membership.user_id = $1 AND membership.tenant_id = t.id)
+  AND t.id IN (SELECT account.tenant_id FROM "user".users account WHERE account.id = $1
+    UNION SELECT membership.tenant_id FROM rbac.user_roles membership WHERE membership.user_id = $1)
   AND ($3::uuid = '00000000-0000-0000-0000-000000000000'::uuid OR t.id > $3::uuid)
 ORDER BY t.id
 LIMIT $4
@@ -220,6 +219,8 @@ type ListEligibleOrganizationsRow struct {
 	LastUsedAt time.Time
 }
 
+// ListEligibleOrganizations lists the active organisations an active account
+// belongs to, by id: its own, and each one it holds a role in.
 func (q *Queries) ListEligibleOrganizations(ctx context.Context, arg ListEligibleOrganizationsParams) ([]ListEligibleOrganizationsRow, error) {
 	rows, err := q.db.Query(ctx, listEligibleOrganizations,
 		arg.UserID,
@@ -269,10 +270,8 @@ SELECT t.id, t.slug, t.name, t.status, t.plan, t.region, t.logo_url,
          OR EXISTS(SELECT 1 FROM auth.mfa_push_devices md WHERE md.user_id = ur.user_id)))::bigint AS mfa_enabled_count
 FROM tenant.tenants t
 WHERE t.deleted_at IS NULL
-  AND EXISTS (
-    SELECT 1 FROM rbac.user_roles ur
-    WHERE ur.tenant_id = t.id AND ur.user_id = $1
-  )
+  AND t.id IN (SELECT ur.tenant_id FROM rbac.user_roles ur WHERE ur.user_id = $1
+               UNION SELECT u.tenant_id FROM "user".users u WHERE u.id = $1)
 ORDER BY t.created_at DESC, t.id DESC
 LIMIT $2
 `
@@ -349,10 +348,8 @@ SELECT t.id, t.slug, t.name, t.status, t.plan, t.region, t.logo_url,
          OR EXISTS(SELECT 1 FROM auth.mfa_push_devices md WHERE md.user_id = ur.user_id)))::bigint AS mfa_enabled_count
 FROM tenant.tenants t
 WHERE t.deleted_at IS NULL
-  AND EXISTS (
-    SELECT 1 FROM rbac.user_roles ur
-    WHERE ur.tenant_id = t.id AND ur.user_id = $1
-  )
+  AND t.id IN (SELECT ur.tenant_id FROM rbac.user_roles ur WHERE ur.user_id = $1
+               UNION SELECT u.tenant_id FROM "user".users u WHERE u.id = $1)
   AND (t.created_at < $2
        OR (t.created_at = $2 AND t.id < $3))
 ORDER BY t.created_at DESC, t.id DESC

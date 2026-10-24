@@ -116,12 +116,13 @@ DELETE FROM auth.login_attempts a WHERE a.email = @email;
 -- is held to).
 SELECT tenant_id FROM auth.oidc_clients WHERE client_id = @client_id;
 
--- name: InsertLoginSession :exec
+-- name: InsertLoginSession :one
 -- second_factor: how the sign-in met a second factor (NULL: it didn't); see
 -- migration 0149.
 INSERT INTO auth.login_sessions (token_hash, user_id, expires_at, ip, user_agent, second_factor)
 VALUES (@token_hash, @user_id, @expires_at, NULLIF(@ip::text, '')::inet, @user_agent,
-        NULLIF(@second_factor::text, ''));
+        NULLIF(@second_factor::text, ''))
+RETURNING id;
 
 -- name: LoginSessionSecondFactor :one
 -- How the sign-in behind a live hosted-login session of the user's met a
@@ -218,15 +219,18 @@ RETURNING id;
 -- name: PurgeExpiredTrustedDevices :execrows
 DELETE FROM auth.trusted_devices WHERE expires_at < @cutoff;
 
+-- CheckTenantMembership reports whether an active account is a member of an
+-- active organisation: the organisation's own account, or holding a role there.
 -- name: CheckTenantMembership :one
 SELECT EXISTS (
-    SELECT 1 FROM rbac.user_roles membership
-    JOIN rbac.roles role ON role.id = membership.role_id AND role.tenant_id = membership.tenant_id
-    JOIN tenant.tenants organization ON organization.id = membership.tenant_id
-    JOIN "user".users account ON account.id = membership.user_id
-    WHERE membership.user_id = @user_id AND membership.tenant_id = @tenant_id
-      AND organization.status = 'active' AND organization.deleted_at IS NULL
+    SELECT 1 FROM "user".users account
+    JOIN tenant.tenants organization ON organization.id = @tenant_id::uuid
+    WHERE account.id = @user_id
       AND account.status = 'active' AND account.deleted_at IS NULL
+      AND organization.status = 'active' AND organization.deleted_at IS NULL
+      AND (account.tenant_id = organization.id
+           OR EXISTS (SELECT 1 FROM rbac.user_roles membership
+                      WHERE membership.tenant_id = organization.id AND membership.user_id = account.id))
 ) AS is_member;
 
 -- name: UpdatePasswordCredentialHash :exec

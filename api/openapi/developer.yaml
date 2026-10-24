@@ -796,7 +796,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_auth_hooks
-      description: 'Registers an authentication hook, called on every sign-in to the organisation once its first factor is proven, whatever the method: password, passkey, social, SAML, LDAP, magic link, invitation and organisation switch. It may deny the sign-in (authhook.denied), and on a sign-in that returns tokens its claims are added to the access token. A sign-in to no organisation asks the account''s own. Hooks fail open by default: a hook error does not block authentication.'
+      description: 'Registers an authentication hook, called on every sign-in to the organisation once its first factor is proven, whatever the method: password, passkey, social, SAML, LDAP, magic link, invitation and organisation switch. It may deny the sign-in (authhook.denied), and on a sign-in that returns tokens its claims are added to the access token. An organisation may have several: every enabled hook is called, one after another, oldest first. The first to deny ends the sign-in and the rest are not called; otherwise the claims of all are added, a later hook''s replacing an earlier one''s of the same name. Each hook''s own fail_open decides what its silence does. A sign-in to no organisation asks the account''s own. Hooks fail open by default: a hook error does not block authentication.'
       summary: Create auth hook
       tags:
         - Auth Hooks

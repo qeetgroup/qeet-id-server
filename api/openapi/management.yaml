@@ -59,7 +59,7 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
         - ssoCookie: []
-      description: Caller-scoped user-only list of active, non-deleted organizations with valid role membership. No user or tenant identity is taken from query parameters. last_used_at excludes the current session so automatic sign-in scope is not labeled as a prior selection. Also accepts the hosted-login session cookie (qe_ls) in place of a bearer token, so a browser app signed in through the hosted login can list the caller's organizations by name.
+      description: Caller-scoped user-only list of the active, non-deleted organizations the caller belongs to (their own organization, and each one where they hold a role). No user or tenant identity is taken from query parameters. last_used_at excludes the current session so automatic sign-in scope is not labeled as a prior selection. Also accepts the hosted-login session cookie (qe_ls) in place of a bearer token, so a browser app signed in through the hosted login can list the caller's organizations by name.
       parameters:
         - name: limit
           in: query
@@ -276,8 +276,14 @@ paths:
         - Domains
       description: >-
         Provisioning state of the tenant's custom hosted-login hostname, plus the
-        DNS records to publish. DNS is checked live; TLS and the login endpoint
-        report their own stage rather than being inferred from the DNS result.
+        DNS records to publish. Each stage is checked live, in order: the TXT
+        record (dns_verified); then, over HTTPS, a certificate valid for the
+        hostname (tls_state issued; pending until one is served); then the hosted
+        login answering its health check on the hostname (endpoint_state live,
+        with endpoint_url). TLS and the login endpoint report their own stage
+        rather than being inferred from the DNS result. status is active once
+        all three are done, pending before, and not_configured without a
+        hostname.
       parameters:
         - name: tenantID
           in: path

@@ -287,9 +287,8 @@ type ShadowAICandidate struct {
 }
 
 // machineGrantTypes are the grant types that let a client obtain a token
-// without a human present in the loop, under either name for token exchange.
-// client_credentials is no longer registered but may remain on older clients.
-var machineGrantTypes = []string{"client_credentials", "token_exchange", grantTypeTokenExchange}
+// without a human present in the loop: token exchange, under either name.
+var machineGrantTypes = []string{"token_exchange", grantTypeTokenExchange}
 
 // ShadowAICandidates lists tenantID's unreviewed OIDC clients whose
 // grant_types include a machine grant type, ordered by live-grant count so

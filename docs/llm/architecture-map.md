@@ -26,7 +26,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Background workers | `cmd/worker/main.go` |
 | Scheduled maintenance | `internal/bootstrap/maintenance.go` (jobs) · `internal/platform/worker/scheduled.go` (runner) |
 | Migration runner | `cmd/migrate/main.go` |
-| Demo data (dev only) | `cmd/seed/main.go` |
+| Demo data (dev only) | `cmd/seed/` — `main.go` runs the steps in `internal/` (census, accounts, connections, integrations, security, activity) |
 
 ## Composition root — where everything is wired
 
@@ -159,7 +159,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 |---|---|
 | Postgres pool | `internal/platform/database/postgres/` |
 | pgx error mapping | `internal/platform/database/postgres/pgxerr/` |
-| **Migrations (0001–0162; 0082 absent)** | `internal/platform/database/migrations/` |
+| **Migrations (0001–0164; 0082 absent)** | `internal/platform/database/migrations/` |
 | Migration runner (`//go:embed`) | `internal/platform/database/migrations/runner.go` |
 | Per-domain queries | `internal/<context>/<domain>/queries.sql` (48) |
 | sqlc config | `internal/<context>/<domain>/sqlc.yaml` (48) |

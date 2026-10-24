@@ -1,7 +1,8 @@
-// Package authhook runs an organisation's synchronous sign-in hook: after the
-// credentials check, Run POSTs a signed event to the hook's URL, which answers
-// allow or deny. When the hook gives no answer, fail_open decides (allow by
-// default, so an outage never locks everyone out) and the skip is recorded.
+// Package authhook runs an organisation's synchronous sign-in hooks: after the
+// credentials check, Run POSTs a signed event to each enabled hook's URL, which
+// answers allow or deny. When a hook gives no answer, its fail_open decides
+// (allow by default, so an outage never locks everyone out) and the skip is
+// recorded.
 package authhook
 
 import (
@@ -21,7 +22,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -63,12 +63,26 @@ func init() {
 	}
 }
 
-// hookState is an organisation's sign-in hook as last read: none, or one and
-// whether it fails open.
+// hookState is an organisation's enabled sign-in hooks as last read: whether
+// there are any, whether all fail open, and the hook a skip names (the first
+// that fails closed, else the first).
 type hookState struct {
 	present  bool
 	id       uuid.UUID
 	failOpen bool
+}
+
+// stateOf returns the hookState of an organisation's enabled hooks.
+func stateOf(hooks []dbgen.ListEnabledSignInHooksRow) hookState {
+	if len(hooks) == 0 {
+		return hookState{}
+	}
+	for _, h := range hooks {
+		if !h.FailOpen {
+			return hookState{present: true, id: h.ID}
+		}
+	}
+	return hookState{present: true, id: hooks[0].ID, failOpen: true}
 }
 
 // Hook is a tenant's login hook, without its signing secret.
@@ -81,9 +95,9 @@ type Hook struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// Service manages and runs sign-in hooks. known holds each organisation's hook
-// as last read (uuid.UUID → hookState), for a sign-in made while the hook can't
-// be read.
+// Service manages and runs sign-in hooks. known holds each organisation's hooks
+// as last read (uuid.UUID → hookState), for a sign-in made while they can't be
+// read.
 type Service struct {
 	pool   *pgxpool.Pool
 	q      *dbgen.Queries
@@ -102,59 +116,29 @@ func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
 // SetCipher sets the cipher that encrypts login hook secrets at rest.
 func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
 
-// Run implements auth.LoginHook. It returns ErrAuthHookDenied to refuse the
-// sign-in, or nil with any custom claims the hook asked to add to the access
-// token. No enabled hook allows with no claims; a hook that gives no answer is
-// handled by skipped.
+// Run implements auth.LoginHook. It calls each of the organisation's enabled
+// hooks, oldest first. The first to deny refuses the sign-in with
+// ErrAuthHookDenied; otherwise Run returns the claims they asked to add to the
+// access token, a later hook's replacing an earlier one's of the same name.
+// A hook that gives no answer is handled by skipped.
 func (s *Service) Run(ctx context.Context, tenantID, userID uuid.UUID, email string) (map[string]any, error) {
 	if tenantID == uuid.Nil {
 		return nil, nil
 	}
-	var hookID uuid.UUID
-	var url, legacySecret string
-	var ciphertext, nonce []byte
-	var failOpen bool
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, url, secret, secret_ct, secret_nonce, fail_open
-		FROM tenant.auth_hooks
-		WHERE tenant_id = $1 AND enabled AND trigger = 'post_login'
-		ORDER BY created_at LIMIT 1
-	`, tenantID).Scan(&hookID, &url, &legacySecret, &ciphertext, &nonce, &failOpen)
-	if errors.Is(err, pgx.ErrNoRows) {
-		s.known.Store(tenantID, hookState{})
-		return nil, nil
-	}
+	hooks, err := s.q.ListEnabledSignInHooks(ctx, tenantID)
 	if err != nil {
-		// Whether the organisation's hook fails open can't be read now, so it
-		// is taken from the last time it was read here: a fail-closed
-		// organisation stays fail-closed. Never read, the hook's default
+		// Whether the organisation's hooks fail open can't be read now, so it
+		// is taken from the last time they were read here: a fail-closed
+		// organisation stays fail-closed. Never read, the hooks' default
 		// (fail open) applies.
 		last, _ := s.known.Load(tenantID)
 		state, seen := last.(hookState)
 		return s.skipped(ctx, tenantID, userID, state.id, skipUnreadable, !seen || !state.present || state.failOpen, err)
 	}
-	s.known.Store(tenantID, hookState{present: true, id: hookID, failOpen: failOpen})
-	secretValue := legacySecret
-	if len(ciphertext) > 0 {
-		if s.box == nil {
-			return s.skipped(ctx, tenantID, userID, hookID, skipSecretUnavailable, failOpen, errors.New("no cipher to open the signing secret"))
-		}
-		plain, openErr := s.box.Open(tenantID, "auth-hook-signing", hookID.String(), ciphertext, nonce)
-		if openErr != nil {
-			return s.skipped(ctx, tenantID, userID, hookID, skipSecretUnavailable, failOpen, openErr)
-		}
-		secretValue = string(plain)
-	} else if legacySecret != "" && s.box != nil {
-		ct, newNonce, sealErr := s.box.Seal(tenantID, "auth-hook-signing", hookID.String(), []byte(legacySecret))
-		if sealErr == nil {
-			_, _ = s.pool.Exec(ctx, `
-				UPDATE tenant.auth_hooks
-				SET secret = '', secret_ct = $2, secret_nonce = $3, encryption_version = 1
-				WHERE id = $1 AND secret_ct IS NULL
-			`, hookID, ct, newNonce)
-		}
+	s.known.Store(tenantID, stateOf(hooks))
+	if len(hooks) == 0 {
+		return nil, nil
 	}
-
 	payload, _ := json.Marshal(map[string]any{
 		"trigger":   "post_login",
 		"tenant_id": tenantID,
@@ -162,14 +146,51 @@ func (s *Service) Run(ctx context.Context, tenantID, userID uuid.UUID, email str
 		"email":     email,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
-	body, callErr := s.call(ctx, url, secretValue, payload)
-	if callErr != nil {
-		return s.skipped(ctx, tenantID, userID, hookID, skipCallFailed, failOpen, callErr)
+	var claims map[string]any
+	for _, hook := range hooks {
+		got, err := s.runHook(ctx, tenantID, userID, hook, payload)
+		if err != nil {
+			return nil, err
+		}
+		for name, value := range got {
+			if claims == nil {
+				claims = map[string]any{}
+			}
+			claims[name] = value
+		}
+	}
+	return claims, nil
+}
+
+// runHook calls one hook with payload, signed with its secret, and returns the
+// claims it asked for, ErrAuthHookDenied when it denies, or skipped's answer
+// when it gives none. A plaintext secret is encrypted on first use.
+func (s *Service) runHook(ctx context.Context, tenantID, userID uuid.UUID, hook dbgen.ListEnabledSignInHooksRow, payload []byte) (map[string]any, error) {
+	secretValue := hook.Secret
+	if len(hook.SecretCt) > 0 {
+		if s.box == nil {
+			return s.skipped(ctx, tenantID, userID, hook.ID, skipSecretUnavailable, hook.FailOpen, errors.New("no cipher to open the signing secret"))
+		}
+		plain, err := s.box.Open(tenantID, "auth-hook-signing", hook.ID.String(), hook.SecretCt, hook.SecretNonce)
+		if err != nil {
+			return s.skipped(ctx, tenantID, userID, hook.ID, skipSecretUnavailable, hook.FailOpen, err)
+		}
+		secretValue = string(plain)
+	} else if hook.Secret != "" && s.box != nil {
+		ct, nonce, err := s.box.Seal(tenantID, "auth-hook-signing", hook.ID.String(), []byte(hook.Secret))
+		if err == nil {
+			_ = s.q.SealHookSecret(ctx, dbgen.SealHookSecretParams{SecretCt: ct, SecretNonce: nonce, ID: hook.ID, TenantID: tenantID})
+		}
+	}
+
+	body, err := s.call(ctx, hook.Url, secretValue, payload)
+	if err != nil {
+		return s.skipped(ctx, tenantID, userID, hook.ID, skipCallFailed, hook.FailOpen, err)
 	}
 	if _, ok := parseAnswer(body); !ok {
-		return s.skipped(ctx, tenantID, userID, hookID, skipUnparseable, failOpen, errors.New("the hook's answer isn't a JSON object"))
+		return s.skipped(ctx, tenantID, userID, hook.ID, skipUnparseable, hook.FailOpen, errors.New("the hook's answer isn't a JSON object"))
 	}
-	msg, denied, claims := decide(failOpen, nil, body)
+	msg, denied, claims := decide(hook.FailOpen, nil, body)
 	if denied {
 		return nil, errs.ErrAuthHookDenied.WithMessage(msg)
 	}

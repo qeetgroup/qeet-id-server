@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -98,13 +99,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	var invitedBy *uuid.UUID
-	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
-		invitedBy = p.UserID
-	}
 	// The token goes only to the invitee, by email: the invitation link is
 	// proof of the address.
-	iv, _, err := h.Service.Create(r.Context(), in, invitedBy)
+	iv, _, err := h.Service.Create(r.Context(), in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -123,7 +120,7 @@ func (h *Handler) resend(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	iv, _, err := h.Service.Resend(r.Context(), tid, id)
+	iv, _, err := h.Service.Resend(r.Context(), tid, id, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -156,7 +153,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.Revoke(r.Context(), tid, id); err != nil {
+	if err := h.Service.Revoke(r.Context(), tid, id, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -173,7 +170,7 @@ func (h *Handler) accept(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	res, err := h.Service.Accept(r.Context(), in)
+	res, err := h.Service.Accept(r.Context(), in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -221,7 +218,7 @@ func (h *Handler) declineMine(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.DeclineForUser(r.Context(), *p.UserID, id); err != nil {
+	if err := h.Service.DeclineForUser(r.Context(), *p.UserID, id, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -241,7 +238,7 @@ func (h *Handler) acceptMineByID(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	res, err := h.Service.AcceptAuthenticatedByID(r.Context(), *p.UserID, id)
+	res, err := h.Service.AcceptAuthenticatedByID(r.Context(), *p.UserID, id, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -271,7 +268,7 @@ func (h *Handler) acceptAuthenticated(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	res, err := h.Service.AcceptAuthenticated(r.Context(), *p.UserID, in.Token)
+	res, err := h.Service.AcceptAuthenticated(r.Context(), *p.UserID, in.Token, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

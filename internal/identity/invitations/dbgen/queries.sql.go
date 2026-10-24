@@ -44,9 +44,10 @@ func (q *Queries) CountSeats(ctx context.Context, tenantID uuid.UUID) (int64, er
 	return seats, err
 }
 
-const declineInviteForEmail = `-- name: DeclineInviteForEmail :execrows
+const declineInviteForEmail = `-- name: DeclineInviteForEmail :one
 UPDATE tenant.invites SET status = 'declined'
 WHERE id = $1 AND email = $2 AND status = 'pending'
+RETURNING tenant_id, role_id
 `
 
 type DeclineInviteForEmailParams struct {
@@ -54,17 +55,21 @@ type DeclineInviteForEmailParams struct {
 	Email string
 }
 
+type DeclineInviteForEmailRow struct {
+	TenantID uuid.UUID
+	RoleID   pgtype.UUID
+}
+
 // ListInvitesForEmail returns the pending, unexpired invites addressed to a
 // signed-in user's email, with the inviting org's display name — the "pending
 // invitations" inbox for a user who may not belong to any org yet.
 // DeclineInviteForEmail lets an invitee dismiss a pending invite addressed to
 // their own email (scoped by email so one user can't decline another's).
-func (q *Queries) DeclineInviteForEmail(ctx context.Context, arg DeclineInviteForEmailParams) (int64, error) {
-	result, err := q.db.Exec(ctx, declineInviteForEmail, arg.ID, arg.Email)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+func (q *Queries) DeclineInviteForEmail(ctx context.Context, arg DeclineInviteForEmailParams) (DeclineInviteForEmailRow, error) {
+	row := q.db.QueryRow(ctx, declineInviteForEmail, arg.ID, arg.Email)
+	var i DeclineInviteForEmailRow
+	err := row.Scan(&i.TenantID, &i.RoleID)
+	return i, err
 }
 
 const findUserIDByEmail = `-- name: FindUserIDByEmail :one
@@ -499,9 +504,10 @@ func (q *Queries) RegenerateInvite(ctx context.Context, arg RegenerateInvitePara
 	return i, err
 }
 
-const revokeInvite = `-- name: RevokeInvite :execrows
+const revokeInvite = `-- name: RevokeInvite :one
 UPDATE tenant.invites SET status = 'revoked'
 WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
+RETURNING email, role_id
 `
 
 type RevokeInviteParams struct {
@@ -509,10 +515,14 @@ type RevokeInviteParams struct {
 	TenantID uuid.UUID
 }
 
-func (q *Queries) RevokeInvite(ctx context.Context, arg RevokeInviteParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeInvite, arg.ID, arg.TenantID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+type RevokeInviteRow struct {
+	Email  string
+	RoleID pgtype.UUID
+}
+
+func (q *Queries) RevokeInvite(ctx context.Context, arg RevokeInviteParams) (RevokeInviteRow, error) {
+	row := q.db.QueryRow(ctx, revokeInvite, arg.ID, arg.TenantID)
+	var i RevokeInviteRow
+	err := row.Scan(&i.Email, &i.RoleID)
+	return i, err
 }

@@ -506,7 +506,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Returns the organisation''s dashboard figures: sign-ins, failures, active users and their trends. Requires analytics.read.'
+      description: 'Returns the organisation''s dashboard figures: sign-ins, failures, active users and their trends. Sign-ins and active users are counted from the sign-in log, which outlives the sessions: a person who switched to the organisation, created it or accepted an invitation to it is active in it, but only a sign-in that proved a factor counts as one. Requires analytics.read.'
       responses:
         '200':
           description: OK

@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/invitations/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -188,9 +189,28 @@ func inviteFromListRow(row dbgen.ListInvitesRow) Invite {
 // and another tenant's role get the same answer, as on the rbac role routes.
 var errRoleNotFound = errs.ErrNotFound.WithDetail("role not found")
 
-// Create stores an invitation and emails its link. A role it carries must be
-// the tenant's, or it is errRoleNotFound.
-func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UUID) (*Invite, string, error) {
+// inviteMetadata is the audit metadata of an invitation to email with roleID.
+// It never carries the invitation's token.
+func inviteMetadata(email string, roleID *uuid.UUID) map[string]any {
+	return map[string]any{"email": email, "role_id": roleID}
+}
+
+// asInvitee returns actor, the request's details, as the invitee userID.
+func asInvitee(actor audit.Actor, userID uuid.UUID) audit.Actor {
+	actor.UserID, actor.Type = &userID, "user"
+	return actor
+}
+
+// recordAccepted records, in tx, that userID accepted inv by method.
+func recordAccepted(ctx context.Context, tx pgx.Tx, actor audit.Actor, userID uuid.UUID, inv pendingInvite, method string) error {
+	meta := inviteMetadata(inv.Email, pgtypeToUUIDPtr(inv.RoleID))
+	meta["method"] = method
+	return audit.Record(ctx, tx, asInvitee(actor, userID).Event(inv.TenantID, "invite.accepted", "invite", inv.ID, meta))
+}
+
+// Create stores an invitation from actor, recorded as theirs, and emails its
+// link. A role it carries must be the tenant's, or it is errRoleNotFound.
+func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor) (*Invite, string, error) {
 	// Plan gate: a new invite consumes a seat, so refuse once the tenant's seat
 	// limit (members + pending invites) is reached.
 	if s.limits != nil {
@@ -213,11 +233,16 @@ func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UU
 		return nil, "", err
 	}
 	expires := time.Now().UTC().Add(s.ttl)
-	row, err := s.q.InsertInvite(ctx, dbgen.InsertInviteParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	defer tx.Rollback(ctx)
+	row, err := s.q.WithTx(tx).InsertInvite(ctx, dbgen.InsertInviteParams{
 		TenantID:  in.TenantID,
 		Email:     in.Email,
 		RoleID:    uuidPtrToPgtype(in.RoleID),
-		InvitedBy: uuidPtrToPgtype(invitedBy),
+		InvitedBy: uuidPtrToPgtype(actor.UserID),
 		TokenHash: hash,
 		ExpiresAt: expires,
 	})
@@ -228,6 +253,12 @@ func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UU
 		return nil, "", err
 	}
 	iv := inviteFromInsertRow(row)
+	if err := audit.Record(ctx, tx, actor.Event(iv.TenantID, "invite.created", "invite", iv.ID, inviteMetadata(iv.Email, iv.RoleID))); err != nil {
+		return nil, "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, "", err
+	}
 	iv.Delivery = deliveryOf(s.sendInviteEmail(ctx, in.TenantID, iv.ID, in.Email, raw))
 	return &iv, raw, nil
 }
@@ -258,14 +289,19 @@ func (s *Service) sendInviteEmail(ctx context.Context, tenantID, inviteID uuid.U
 	return nil
 }
 
-// Resend rotates the invite token, extends the expiry, and re-sends the email.
-// Only pending/expired invites for this tenant qualify.
-func (s *Service) Resend(ctx context.Context, tenantID, id uuid.UUID) (*Invite, string, error) {
+// Resend rotates the invite token, extends the expiry, and re-sends the email,
+// recorded as actor's. Only pending/expired invites for this tenant qualify.
+func (s *Service) Resend(ctx context.Context, tenantID, id uuid.UUID, actor audit.Actor) (*Invite, string, error) {
 	raw, hash, err := codes.URLToken()
 	if err != nil {
 		return nil, "", err
 	}
-	row, err := s.q.RegenerateInvite(ctx, dbgen.RegenerateInviteParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	defer tx.Rollback(ctx)
+	row, err := s.q.WithTx(tx).RegenerateInvite(ctx, dbgen.RegenerateInviteParams{
 		ID:        id,
 		TenantID:  tenantID,
 		TokenHash: hash,
@@ -278,6 +314,12 @@ func (s *Service) Resend(ctx context.Context, tenantID, id uuid.UUID) (*Invite, 
 		return nil, "", err
 	}
 	iv := inviteFromRegenerateRow(row)
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "invite.resent", "invite", iv.ID, inviteMetadata(iv.Email, iv.RoleID))); err != nil {
+		return nil, "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, "", err
+	}
 	iv.Delivery = deliveryOf(s.sendInviteEmail(ctx, tenantID, iv.ID, iv.Email, raw))
 	return &iv, raw, nil
 }
@@ -295,16 +337,26 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Invite, error
 	return out, nil
 }
 
-// Revoke withdraws one of the tenant's pending invitations.
-func (s *Service) Revoke(ctx context.Context, tenantID, id uuid.UUID) error {
-	n, err := s.q.RevokeInvite(ctx, dbgen.RevokeInviteParams{ID: id, TenantID: tenantID})
+// Revoke withdraws one of the tenant's pending invitations, recorded as
+// actor's.
+func (s *Service) Revoke(ctx context.Context, tenantID, id uuid.UUID, actor audit.Actor) error {
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if n == 0 {
+	defer tx.Rollback(ctx)
+	row, err := s.q.WithTx(tx).RevokeInvite(ctx, dbgen.RevokeInviteParams{ID: id, TenantID: tenantID})
+	if errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "invite.revoked", "invite", id,
+		inviteMetadata(row.Email, pgtypeToUUIDPtr(row.RoleID)))); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // AcceptInput is what Accept takes.
@@ -321,8 +373,9 @@ type AcceptResult struct {
 }
 
 // Accept creates the invitee's password account from an invitation's token,
-// under the inviting organisation's sign-in rules.
-func (s *Service) Accept(ctx context.Context, in AcceptInput) (*AcceptResult, error) {
+// under the inviting organisation's sign-in rules. The acceptance is recorded
+// as the new account's, with actor's request details.
+func (s *Service) Accept(ctx context.Context, in AcceptInput, actor audit.Actor) (*AcceptResult, error) {
 	if s.rules == nil {
 		return nil, errs.ErrNotImplemented
 	}
@@ -408,6 +461,9 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (*AcceptResult, er
 	if err := qtx.MarkInviteAccepted(ctx, inv.ID); err != nil {
 		return nil, err
 	}
+	if err := recordAccepted(ctx, tx, actor, userID, pendingInvite(inv), "password"); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -454,23 +510,34 @@ func (s *Service) ListForUser(ctx context.Context, userID uuid.UUID) ([]Received
 	return out, nil
 }
 
-// DeclineForUser dismisses a pending invitation addressed to the caller's email.
-func (s *Service) DeclineForUser(ctx context.Context, userID, inviteID uuid.UUID) error {
-	email, err := inboxEmail(ctx, s.q, userID)
+// DeclineForUser dismisses a pending invitation addressed to the caller's
+// email, recorded as theirs with actor's request details.
+func (s *Service) DeclineForUser(ctx context.Context, userID, inviteID uuid.UUID, actor audit.Actor) error {
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	n, err := s.q.DeclineInviteForEmail(ctx, dbgen.DeclineInviteForEmailParams{
+	defer tx.Rollback(ctx)
+	qtx := s.q.WithTx(tx)
+	email, err := inboxEmail(ctx, qtx, userID)
+	if err != nil {
+		return err
+	}
+	row, err := qtx.DeclineInviteForEmail(ctx, dbgen.DeclineInviteForEmailParams{
 		ID:    inviteID,
 		Email: email,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errs.ErrInviteInvalid
+	}
 	if err != nil {
 		return err
 	}
-	if n == 0 {
-		return errs.ErrInviteInvalid
+	if err := audit.Record(ctx, tx, asInvitee(actor, userID).Event(row.TenantID, "invite.declined", "invite", inviteID,
+		inviteMetadata(email, pgtypeToUUIDPtr(row.RoleID)))); err != nil {
+		return err
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 // inboxEmail returns the caller's address for the in-app invitations inbox, or
@@ -503,8 +570,9 @@ type pendingInvite struct {
 }
 
 // AcceptAuthenticated lets a signed-in user join the invited tenant with their
-// existing account, using the emailed token: no new user and no password.
-func (s *Service) AcceptAuthenticated(ctx context.Context, userID uuid.UUID, token string) (*AcceptResult, error) {
+// existing account, using the emailed token: no new user and no password. It
+// is recorded as theirs, with actor's request details.
+func (s *Service) AcceptAuthenticated(ctx context.Context, userID uuid.UUID, token string, actor audit.Actor) (*AcceptResult, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -518,12 +586,12 @@ func (s *Service) AcceptAuthenticated(ctx context.Context, userID uuid.UUID, tok
 		}
 		return nil, err
 	}
-	return s.grantAuthedAccept(ctx, tx, qtx, userID, pendingInvite(inv))
+	return s.grantAuthedAccept(ctx, tx, qtx, userID, pendingInvite(inv), actor)
 }
 
 // AcceptAuthenticatedByID is the in-app "accept from my inbox" counterpart: the
 // caller picks an invite by id (from ListForUser) rather than pasting a token.
-func (s *Service) AcceptAuthenticatedByID(ctx context.Context, userID, inviteID uuid.UUID) (*AcceptResult, error) {
+func (s *Service) AcceptAuthenticatedByID(ctx context.Context, userID, inviteID uuid.UUID, actor audit.Actor) (*AcceptResult, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -540,13 +608,13 @@ func (s *Service) AcceptAuthenticatedByID(ctx context.Context, userID, inviteID 
 		}
 		return nil, err
 	}
-	return s.grantAuthedAccept(ctx, tx, qtx, userID, pendingInvite(inv))
+	return s.grantAuthedAccept(ctx, tx, qtx, userID, pendingInvite(inv), actor)
 }
 
 // grantAuthedAccept validates a pending invite against the signed-in caller and
 // attaches the membership. The invite is bound to an email; only the account
 // that owns that email may accept it as themselves.
-func (s *Service) grantAuthedAccept(ctx context.Context, tx pgx.Tx, qtx *dbgen.Queries, userID uuid.UUID, inv pendingInvite) (*AcceptResult, error) {
+func (s *Service) grantAuthedAccept(ctx context.Context, tx pgx.Tx, qtx *dbgen.Queries, userID uuid.UUID, inv pendingInvite, actor audit.Actor) (*AcceptResult, error) {
 	email, err := qtx.GetUserEmailByID(ctx, userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -575,6 +643,9 @@ func (s *Service) grantAuthedAccept(ctx context.Context, tx pgx.Tx, qtx *dbgen.Q
 		}
 	}
 	if err := qtx.MarkInviteAccepted(ctx, inv.ID); err != nil {
+		return nil, err
+	}
+	if err := recordAccepted(ctx, tx, actor, userID, inv, "existing_account"); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {

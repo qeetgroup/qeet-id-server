@@ -2,14 +2,18 @@ package domainverify
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 // loginHostSuffix is the zone tenants point their CNAME at. Kept here rather
@@ -64,9 +68,27 @@ func loginRecords(tenantID uuid.UUID, host string) []DNSRecord {
 	}
 }
 
+// The hosted login's health route and the service it names, which answer on
+// every hostname the hosted login serves.
+const (
+	hostedLoginHealth  = "/healthz"
+	hostedLoginService = "qeet-id-hosted"
+)
+
+// loginProbeTimeout bounds each live check of a custom login hostname.
+const loginProbeTimeout = 5 * time.Second
+
+// loginProbeClient returns the client that checks a custom login hostname over
+// HTTPS: only to destinations policy allows, and without following redirects,
+// so the answer is the hostname's own.
+func loginProbeClient(policy *egress.Policy) *http.Client {
+	c := policy.HTTPClient(loginProbeTimeout)
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return c
+}
+
 // LoginDomain reports the provisioning state of the tenant's custom login
-// hostname. DNS is checked live; TLS and the endpoint are never reported ready,
-// because no certificate pipeline confirms them yet.
+// hostname, checking each stage live.
 func (s *Service) LoginDomain(ctx context.Context, tenantID uuid.UUID) (*LoginDomainStatus, error) {
 	var host string
 	if err := s.pool.QueryRow(ctx,
@@ -75,51 +97,87 @@ func (s *Service) LoginDomain(ctx context.Context, tenantID uuid.UUID) (*LoginDo
 		// No branding row yet simply means no custom domain has been set.
 		host = ""
 	}
-	host = strings.TrimSpace(strings.ToLower(host))
+	return s.loginDomainStatus(ctx, tenantID, strings.TrimSpace(strings.ToLower(host))), nil
+}
 
-	st := &LoginDomainStatus{LoginDomain: host, Status: "not_configured"}
+// loginDomainStatus checks host's stages in order: its DNS records, then a
+// certificate valid for it, then the hosted login answering on it. The TLS
+// certificate is issued at the deployment edge, so it is observed, not
+// assumed. Status is active once all three are done.
+func (s *Service) loginDomainStatus(ctx context.Context, tenantID uuid.UUID, host string) *LoginDomainStatus {
+	st := &LoginDomainStatus{
+		LoginDomain: host, Status: "not_configured",
+		TLSState: "not_started", TLSDetail: "Issued automatically after DNS is verified.",
+		EndpointState: "not_available",
+	}
 	if host == "" {
 		st.DNSDetail = "No custom login domain configured."
-		st.TLSState, st.TLSDetail = "not_started", "Issued automatically after DNS is verified."
-		st.EndpointState = "not_available"
-		return st, nil
+		return st
 	}
-
 	st.Records = loginRecords(tenantID, host)
 	st.Status = "pending"
+	if !validDomain(host) {
+		st.DNSDetail = "The login domain isn't a valid hostname."
+		return st
+	}
 
 	lookupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	now := time.Now().UTC()
 	st.DNSCheckedAt = &now
-
 	want := fmt.Sprintf("qeetid-verify=%s", shortTenant(tenantID))
-	records, err := s.resolver.LookupTXT(lookupCtx, loginVerifyHost+"."+host)
+	records, _ := s.resolver.LookupTXT(lookupCtx, loginVerifyHost+"."+host)
 	for _, rec := range records {
 		if strings.TrimSpace(rec) == want {
 			st.DNSVerified = true
 			break
 		}
 	}
-	switch {
-	case st.DNSVerified:
-		st.DNSDetail = "DNS records found."
-	case err != nil:
+	if !st.DNSVerified {
 		st.DNSDetail = "We're checking for your DNS records."
-	default:
-		st.DNSDetail = "We're checking for your DNS records."
+		return st
 	}
+	st.DNSDetail = "DNS records found."
 
-	if st.DNSVerified {
-		// DNS is the only stage we can observe today. Issuance is reported as
-		// pending — not issued — until a certificate pipeline exists to confirm it.
+	tlsIssued, live := s.probeLoginHost(ctx, host)
+	if !tlsIssued {
 		st.TLSState, st.TLSDetail = "pending", "Certificate issuance in progress."
-		st.EndpointState = "not_available"
-	} else {
-		st.TLSState, st.TLSDetail = "not_started", "Issued automatically after DNS is verified."
-		st.EndpointState = "not_available"
+		return st
 	}
-	return st, nil
+	st.TLSState, st.TLSDetail = "issued", "Certificate issued."
+	if live {
+		st.EndpointState, st.EndpointURL = "live", "https://"+host
+		st.Status = "active"
+	}
+	return st
+}
+
+// probeLoginHost asks host for the hosted login's health over HTTPS. tlsIssued
+// reports that host served a certificate valid for it; live, that the hosted
+// login answered.
+func (s *Service) probeLoginHost(ctx context.Context, host string) (tlsIssued, live bool) {
+	if s.web == nil {
+		return false, false
+	}
+	ctx, cancel := context.WithTimeout(ctx, loginProbeTimeout)
+	defer cancel()
+	target := url.URL{Scheme: "https", Host: host, Path: hostedLoginHealth}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	if err != nil {
+		return false, false
+	}
+	resp, err := s.web.Do(req)
+	if err != nil {
+		return false, false
+	}
+	defer resp.Body.Close()
+	var health struct {
+		Status  string `json:"status"`
+		Service string `json:"service"`
+	}
+	err = json.NewDecoder(io.LimitReader(resp.Body, 4<<10)).Decode(&health)
+	return true, err == nil && resp.StatusCode == http.StatusOK &&
+		health.Status == "ok" && health.Service == hostedLoginService
 }
 
 func (h *Handler) loginDomain(w http.ResponseWriter, r *http.Request) {

@@ -197,15 +197,24 @@ func TestDeviceAuthorizationNeedsTheDeviceGrant(t *testing.T) {
 // TestDeviceAndBackchannelJudgeMembershipLikeSignIn checks that device
 // approval and backchannel sign-in admit whom the browser sign-in admits: a
 // member of the application's organisation whose account lives in another,
-// and not an account of the organisation holding no role there.
+// and an account of the organisation holding no role there; not a guest whose
+// roles were removed, nor a suspended account of the organisation.
 func TestDeviceAndBackchannelJudgeMembershipLikeSignIn(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	pool := dbtest.Pool(t)
+	svc := NewService(pool, dbtest.Issuer(t))
 	tenant, home := dbtest.Tenant(t), dbtest.Tenant(t)
 	web, _ := registerClient(t, svc, tenant)
 	device, _ := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, Type: "public", GrantTypes: []string{grantTypeDeviceCode}})
 	ciba, cibaSecret := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, GrantTypes: []string{grantTypeCIBA}})
 	_, challenge, _ := codes.URLToken()
+	formerGuest, suspended := dbtest.User(t, home, tenant), dbtest.User(t, tenant)
+	if _, err := pool.Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, formerGuest.ID, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, suspended.ID); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, tc := range []struct {
 		name    string
@@ -213,7 +222,9 @@ func TestDeviceAndBackchannelJudgeMembershipLikeSignIn(t *testing.T) {
 		member  bool
 	}{
 		{"a member whose account lives elsewhere", dbtest.User(t, home, home, tenant), true},
-		{"an account of the organisation without a role", dbtest.User(t, tenant), false},
+		{"an account of the organisation without a role", dbtest.User(t, tenant), true},
+		{"a guest whose roles were removed", formerGuest, false},
+		{"a suspended account of the organisation", suspended, false},
 	} {
 		if _, _, err := svc.Authorize(ctx, tc.account.ID, web.ClientID, testRedirect, []string{"openid"}, "n-1", challenge, "S256"); (err == nil) != tc.member {
 			t.Fatalf("%s signing in: %v, want admitted %t", tc.name, err, tc.member)
