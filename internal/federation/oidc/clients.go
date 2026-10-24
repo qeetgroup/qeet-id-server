@@ -129,10 +129,7 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 			return nil, "", err
 		}
 		raw = secret
-		hash, err := password.Hash(secret)
-		if err != nil {
-			return nil, "", err
-		}
+		hash := password.HashSecret(secret)
 		secretHash = &hash
 	}
 	q := s.q.WithTx(tx)

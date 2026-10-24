@@ -66,6 +66,9 @@ func (s *Service) AuthorizeInLoginSession(ctx context.Context, in AuthorizeInput
 	if !contains(info.RedirectUris, redirectURI) {
 		return "", uuid.Nil, errs.ErrOIDCRedirectURIInvalid
 	}
+	if !contains(info.GrantTypes, "authorization_code") {
+		return "", uuid.Nil, errs.ErrOIDCGrantTypeNotAllowed
+	}
 	for _, sc := range scopes {
 		if !contains(info.Scopes, sc) {
 			return "", uuid.Nil, errs.ErrOIDCScopeNotPermitted

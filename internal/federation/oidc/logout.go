@@ -49,15 +49,23 @@ func validLogoutURI(raw string) bool {
 }
 
 // NotifySignOut tells the applications in an ended hosted-login session. It
-// queues a back-channel logout token for each, records who was told, and returns
-// the front-channel addresses for the signed-out page. initiatedBy is the
-// application that asked for the sign-out ("" for none).
+// queues a back-channel logout token for each, records who was told in each
+// organisation's own audit trail, and returns the front-channel addresses for
+// the signed-out page. initiatedBy is the application that asked for the
+// sign-out ("" for none).
 func (s *Service) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID, initiatedBy string) ([]string, error) {
 	clients, err := s.q.SessionClients(ctx, optionalUUID(sessionID))
 	if err != nil || len(clients) == 0 {
 		return nil, err
 	}
-	var frontchannel, backchannel []string
+	// Each organisation's record names only its own applications.
+	type notice struct {
+		backchannel  []string
+		frontchannel int
+	}
+	var frontchannel []string
+	notices := map[uuid.UUID]*notice{}
+	var tenants []uuid.UUID
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -65,6 +73,12 @@ func (s *Service) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID
 	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
 	for _, c := range clients {
+		n := notices[c.TenantID]
+		if n == nil {
+			n = &notice{}
+			notices[c.TenantID] = n
+			tenants = append(tenants, c.TenantID)
+		}
 		if c.BackchannelLogoutUri != "" {
 			token, err := s.logoutToken(c.ClientID, userID, sessionID)
 			if err != nil {
@@ -75,23 +89,26 @@ func (s *Service) NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID
 			}); err != nil {
 				return nil, err
 			}
-			backchannel = append(backchannel, c.ClientID)
+			n.backchannel = append(n.backchannel, c.ClientID)
 		}
 		if c.FrontchannelLogoutUri != "" {
 			frontchannel = append(frontchannel, appendQuery(c.FrontchannelLogoutUri,
 				"iss", s.issuer.JWTIssuer(), "sid", sessionID.String()))
+			n.frontchannel++
 		}
 	}
-	tenantID := clients[0].TenantID
 	sid := sessionID
-	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID: &tenantID, ActorUserID: &userID, ActorType: "user",
-		Action: "oidc.sign_out_notified", ResourceType: "login_session", ResourceID: &sid,
-		Metadata: map[string]any{
-			"initiated_by": initiatedBy, "backchannel": backchannel, "frontchannel_clients": len(frontchannel),
-		},
-	}); err != nil {
-		return nil, err
+	for _, tenantID := range tenants {
+		n := notices[tenantID]
+		if err := audit.Record(ctx, tx, audit.Event{
+			TenantID: &tenantID, ActorUserID: &userID, ActorType: "user",
+			Action: "oidc.sign_out_notified", ResourceType: "login_session", ResourceID: &sid,
+			Metadata: map[string]any{
+				"initiated_by": initiatedBy, "backchannel": n.backchannel, "frontchannel_clients": n.frontchannel,
+			},
+		}); err != nil {
+			return nil, err
+		}
 	}
 	return frontchannel, tx.Commit(ctx)
 }

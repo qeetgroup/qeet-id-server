@@ -24,3 +24,9 @@ RETURNING tenant_id, name;
 -- name: GetServicePrincipalForAuth :one
 SELECT id, tenant_id, secret_hash, scopes, disabled_at
 FROM auth.service_principals WHERE id = $1;
+
+-- UpgradeServicePrincipalSecretHash replaces an Argon2id secret hash from before
+-- with its SHA-256 form, once the secret has verified.
+-- name: UpgradeServicePrincipalSecretHash :exec
+UPDATE auth.service_principals SET secret_hash = @new_hash
+WHERE id = @id AND tenant_id = @tenant_id AND secret_hash = @old_hash;

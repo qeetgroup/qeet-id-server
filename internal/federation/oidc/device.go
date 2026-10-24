@@ -111,6 +111,9 @@ func (s *Service) DeviceAuthorize(ctx context.Context, clientID string, scopes [
 	if err != nil {
 		return "", "", uuid.Nil, err
 	}
+	if !contains(info.GrantTypes, grantTypeDeviceCode) {
+		return "", "", uuid.Nil, oauthErr("unauthorized_client", "client is not permitted the device grant")
+	}
 	tenantID = info.TenantID
 	dbScopes := info.Scopes
 	// An empty scope request defaults to the client's full registered set.
@@ -221,19 +224,8 @@ func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode s
 		return tx.Commit(ctx)
 	}
 
-	// The approving user must belong to the client's tenant (multi-tenant).
-	ok, err := q.CheckUserInDeviceTenant(ctx, dbgen.CheckUserInDeviceTenantParams{
-		ID:       userID,
-		TenantID: pgtype.UUID{Bytes: row.TenantID, Valid: true},
-	})
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return errs.ErrOIDCUserTenantMismatch
-	}
-	// CheckUserInDeviceTenant doesn't check that the user and tenant are still
-	// active, so refuse suspended users here, as the authorization-code path does.
+	// The approving user must be an active member of the client's active
+	// tenant, as at a browser sign-in to the application.
 	live, err := s.activeTenantPrincipal(ctx, tx, userID, row.TenantID)
 	if err != nil {
 		return err
@@ -273,8 +265,12 @@ func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode s
 // flow's tokens. A confidential client authenticates as at the other grants;
 // ip is the device's address, which the organisation's rules must allow.
 func (s *Service) DeviceToken(ctx context.Context, clientID, clientSecret, rawDeviceCode, ip string) (*TokenResponse, error) {
-	if _, err := s.authenticateClient(ctx, clientID, clientSecret); err != nil {
+	client, err := s.authenticateClient(ctx, clientID, clientSecret)
+	if err != nil {
 		return nil, err
+	}
+	if !contains(client.GrantTypes, grantTypeDeviceCode) {
+		return nil, errs.ErrOIDCGrantTypeNotAllowed
 	}
 	if rawDeviceCode == "" {
 		return nil, oauthErr("invalid_request", "device_code required")
@@ -577,6 +573,11 @@ func (h *Handler) deviceAuthorization(w http.ResponseWriter, r *http.Request) {
 	}
 	scopes := strings.Fields(r.Form.Get("scope"))
 	rawDeviceCode, userCode, _, err := h.Service.DeviceAuthorize(r.Context(), clientID, scopes)
+	var oe *oauthError
+	if errors.As(err, &oe) {
+		writeOAuthError(w, oe)
+		return
+	}
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

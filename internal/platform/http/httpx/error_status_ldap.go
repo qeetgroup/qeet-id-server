@@ -19,6 +19,7 @@ func init() {
 		errs.CodeLDAPConnectionFieldsRequired: http.StatusUnprocessableEntity,
 		errs.CodeLDAPServerURLInvalid:         http.StatusUnprocessableEntity,
 		errs.CodeLDAPAccountNotInTenant:       http.StatusForbidden,
+		errs.CodeLDAPAccountUnverified:        http.StatusForbidden,
 		errs.CodeLDAPStatusInvalid:            http.StatusUnprocessableEntity,
 		errs.CodeLDAPTLSVerifyRequired:        http.StatusUnprocessableEntity,
 	})

@@ -81,7 +81,7 @@ func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecr
 	}
 
 	userID, err := s.q.GetUserByEmailInTenant(ctx, dbgen.GetUserByEmailInTenantParams{
-		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+		TenantID: tenantID,
 		Email:    loginHint,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -91,8 +91,8 @@ func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecr
 		return nil, err
 	}
 	// GetUserByEmailInTenant filters soft-deletes but not suspension, and the
-	// tenant's own state is never consulted. Match the authorization-code
-	// path's liveness requirement before minting anything.
+	// tenant's own state is never consulted. Match a browser sign-in's
+	// requirement before minting anything.
 	live, err := s.activeTenantPrincipal(ctx, s.pool, userID, tenantID)
 	if err != nil {
 		return nil, err

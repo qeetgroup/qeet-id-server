@@ -184,10 +184,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Key, string, err
 	if err != nil {
 		return nil, "", err
 	}
-	secretHash, err := password.Hash(secret)
-	if err != nil {
-		return nil, "", err
-	}
+	secretHash := password.HashSecret(secret)
 	// scopes is NOT NULL DEFAULT '{}'; a nil Go slice encodes as SQL NULL, so
 	// coalesce to empty for callers that omit it.
 	if in.Scopes == nil {
@@ -276,7 +273,8 @@ func (s *Service) Verify(ctx context.Context, raw string) (*Key, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !password.Verify(row.KeyHash, secret) {
+	ok, rehash := password.VerifySecret(row.KeyHash, secret)
+	if !ok {
 		return nil, errs.ErrAPIKeyInvalid
 	}
 	k := rowToKey(row.ID, row.TenantID, row.UserID, row.Name, row.Prefix,
@@ -285,13 +283,18 @@ func (s *Service) Verify(ctx context.Context, raw string) (*Key, error) {
 		return nil, errs.ErrAPIKeyExpired
 	}
 	// Best-effort, detached from the request but time-bounded so it can't leak.
-	go func(id uuid.UUID) { // #nosec G118 -- detached on purpose, with its own timeout
+	go func(id, tenantID uuid.UUID, oldHash string) { // #nosec G118 -- detached on purpose, with its own timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := s.q.TouchAPIKeyLastUsed(ctx, id); err != nil {
 			slog.Warn("apikey last_used_at update failed", "err", err, "api_key_id", id)
 		}
-	}(k.ID)
+		if rehash {
+			if err := s.q.UpgradeAPIKeyHash(ctx, dbgen.UpgradeAPIKeyHashParams{NewHash: password.HashSecret(secret), ID: id, TenantID: tenantID, OldHash: oldHash}); err != nil {
+				slog.Warn("apikey hash upgrade failed", "err", err, "api_key_id", id)
+			}
+		}
+	}(k.ID, k.TenantID, row.KeyHash)
 	return &k, nil
 }
 

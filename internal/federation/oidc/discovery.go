@@ -23,7 +23,9 @@ func (h *Handler) authorizationServerMetadata(w http.ResponseWriter, r *http.Req
 func (h *Handler) serverMetadata(r *http.Request) map[string]any {
 	base := httpx.PublicOrigin(r, h.PublicBaseURL)
 	return map[string]any{
-		"issuer":                                base,
+		// The issuer the tokens and authorization responses carry, which a
+		// relying party compares them with.
+		"issuer":                                h.Service.issuer.JWTIssuer(),
 		"authorization_endpoint":                base + "/v1/oauth/authorize",
 		"token_endpoint":                        base + "/v1/oauth/token-code",
 		"device_authorization_endpoint":         base + "/v1/oauth/device_authorization",

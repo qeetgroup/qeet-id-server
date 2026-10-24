@@ -18,8 +18,9 @@ import (
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
 // TestSocialSignInAdoptsOnlyAnAccountInTheTenant checks that a verified
-// address adopts an existing account in its home tenant or one where it holds
-// a role, and is refused in any other tenant.
+// address adopts an existing account only in its home tenant: a tenant where
+// it merely holds a role, like any other, is refused, so that tenant's provider
+// can't sign a guest in and switch into the guest's home.
 func TestSocialSignInAdoptsOnlyAnAccountInTheTenant(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), nil, "https://api.id.qeet.in")
@@ -32,15 +33,15 @@ func TestSocialSignInAdoptsOnlyAnAccountInTheTenant(t *testing.T) {
 		return svc.findOrCreateUser(ctx, tenant, "google", userInfo{Subject: uuid.NewString(), Email: account.Email, EmailVerified: true})
 	}
 
-	for name, tenant := range map[string]uuid.UUID{"home": home, "joined": joined} {
-		if got, err := signIn(tenant); err != nil || got != account.ID {
-			t.Errorf("sign-in to the %s tenant = %s, %v; want the account %s", name, got, err, account.ID)
+	if got, err := signIn(home); err != nil || got != account.ID {
+		t.Errorf("sign-in to the home tenant = %s, %v; want the account %s", got, err, account.ID)
+	}
+	for name, tenant := range map[string]uuid.UUID{"joined": joined, "another": other} {
+		if got, err := signIn(tenant); !errors.Is(err, errs.ErrSocialAccountNotInTenant) {
+			t.Errorf("sign-in to the %s tenant = %s, %v; want %v", name, got, err, errs.ErrSocialAccountNotInTenant)
 		}
 	}
-	if got, err := signIn(other); !errors.Is(err, errs.ErrSocialAccountNotInTenant) {
-		t.Errorf("sign-in to another tenant = %s, %v; want %v", got, err, errs.ErrSocialAccountNotInTenant)
-	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1 AND tenant_id = $2`, account.ID, other); n != 0 {
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1 AND tenant_id <> $2`, account.ID, home); n != 0 {
 		t.Errorf("another tenant's sign-in linked %d identities", n)
 	}
 }

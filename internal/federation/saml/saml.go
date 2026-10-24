@@ -135,9 +135,12 @@ type CreateInput struct {
 	Status         string `json:"status"`
 }
 
-// check trims the IdP SSO URL, then requires it to pass validIdPSSOURL and the
-// certificate to parse.
+// check trims the IdP SSO URL, then requires it to pass validIdPSSOURL, the
+// certificate to parse and the status, if given, to be a known one.
 func (in *CreateInput) check() error {
+	if in.Status != "" && !validStatus(in.Status) {
+		return errs.ErrSAMLStatusInvalid
+	}
 	in.IdpSSOURL = strings.TrimSpace(in.IdpSSOURL)
 	if !validIdPSSOURL(in.IdpSSOURL) {
 		return errs.ErrSAMLSSOURLInvalid
@@ -146,6 +149,12 @@ func (in *CreateInput) check() error {
 		return errs.ErrSAMLCertificateInvalid
 	}
 	return nil
+}
+
+// validStatus reports whether status is one a connection or service provider
+// can have.
+func validStatus(status string) bool {
+	return status == "draft" || status == "active" || status == "disabled"
 }
 
 // Create stores a connection in tenantID within tx, refusing input that fails
@@ -537,8 +546,9 @@ func (s *Service) ConsumeValidatedResponse(ctx context.Context, connectionID uui
 }
 
 // findOrCreateUser returns the user linked to the NameID subject, else the user
-// with the asserted email (who must belong to tenantID), else a new user, and
-// links the subject. One transaction, so concurrent logins can't duplicate rows.
+// with the asserted email, else a new user, and links the subject. The account
+// must have tenantID as its home, and an adopted one a verified address. One
+// transaction, so concurrent logins can't duplicate rows.
 func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, subject, email, name string) (uuid.UUID, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -553,6 +563,15 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, subj
 		Subject:  subject,
 	})
 	if err == nil {
+		// A linked subject signs in only while this organisation is still the
+		// account's home.
+		home, herr := identitylink.HomeIn(ctx, tx, userID, tenantID)
+		if herr != nil {
+			return uuid.Nil, herr
+		}
+		if !home {
+			return uuid.Nil, errs.ErrSAMLUserTenantMismatch
+		}
 		return userID, tx.Commit(ctx)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -580,12 +599,19 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, subj
 		// the assertion only proves this connection's IdP vouched for it. Otherwise
 		// anyone with a connection to an IdP they control could assert a victim's
 		// address and receive the victim's tokens.
-		belongs, berr := identitylink.UserInTenant(ctx, tx, userID, tenantID)
-		if berr != nil {
-			return uuid.Nil, berr
+		home, herr := identitylink.HomeIn(ctx, tx, userID, tenantID)
+		if herr != nil {
+			return uuid.Nil, herr
 		}
-		if !belongs {
+		if !home {
 			return uuid.Nil, errs.ErrSAMLUserTenantMismatch
+		}
+		verified, verr := identitylink.AddressVerified(ctx, tx, userID)
+		if verr != nil {
+			return uuid.Nil, verr
+		}
+		if !verified {
+			return uuid.Nil, errs.ErrSAMLAccountUnverified
 		}
 	}
 
@@ -1062,6 +1088,10 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	userID, err := h.Service.findOrCreateUser(ctx, conn.TenantID, info.NameID, email, name)
+	if e := errs.As(err); e != nil && e.Code != errs.CodeInternal {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	if err != nil {
 		slog.Error("saml acs: provisioning failed", "err", err, "connection", conn.ID)
 		httpx.WriteError(w, r, errs.ErrInternalServer)

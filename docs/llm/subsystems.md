@@ -112,7 +112,7 @@ authpolicy/authpolicy.go   password rules, permitted login methods
 ## access — mfa, passkeys, recovery
 
 **Purpose** — MFA: *"TOTP enrollment and verification plus a small set of recovery codes. Recovery
-codes are bcrypt-hashed."* Passkeys: *"implements WebAuthn passkey registration and login on top of
+codes are Argon2id-hashed."* Passkeys: *"implements WebAuthn passkey registration and login on top of
 go-webauthn."* Recovery: *"forgot-password and magic-link login. Both are stateless tokens."*
 **Path** `internal/access/{mfa,passkeys,recovery}/`
 **Key dependencies** `platform/crypto/password` · `platform/crypto/totp` · `platform/messaging/{notifier,emailtmpl}` ·
@@ -245,7 +245,7 @@ identities … tokens (`actor_type="agent"`) that are re-minted rather than refr
 
 ```text
 agents/agent.go              lifecycle, sponsor, kill switch, ephemeral tokens
-api-keys/apikey.go           qk_ keys — "<prefix>.<secret>", bcrypt hash stored
+api-keys/apikey.go           qk_ keys — "<prefix>.<secret>", the secret's SHA-256 stored
 principal/principal.go       client_credentials, /v1/oauth/token
 auth-hooks/authhook.go       post-login hooks — DEFAULT FAIL-OPEN (ADR-0011)
 webhooks/webhook.go          HMAC-SHA256 delivery (timestamp + body) + dead-letter
@@ -317,7 +317,7 @@ http/httpx/middleware.go · response.go · ctx.go · timing.go
 http/errs/                ~50 files, one per domain
 http/httpx/error_status_*.go   ~40 files, 1:1 mirror of errs/
 crypto/tokens/jwt.go      ES256, RFC 7638 kid, rotation
-crypto/password/          Argon2id hashing and strength rules
+crypto/password/          Argon2id hashing, strength rules, machine secrets' SHA-256
 crypto/envelope/          AES-256-GCM encryption under the data key
 crypto/totp/              TOTP codes
 crypto/hibp/              breached-password k-anonymity

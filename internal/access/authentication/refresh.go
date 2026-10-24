@@ -225,11 +225,16 @@ func buildReuseEvents(userID, tenantID, sessionID, refreshID uuid.UUID, in Refre
 		meta["user_agent"] = in.UserAgent
 	}
 
-	tid := tenantID
+	// A session in no organisation is recorded as the platform's, not under the
+	// nil UUID.
+	var tid *uuid.UUID
+	if tenantID != uuid.Nil {
+		tid = &tenantID
+	}
 	uid := userID
 	sid := sessionID
 	ae := audit.Event{
-		TenantID:     &tid,
+		TenantID:     tid,
 		ActorUserID:  &uid,
 		ActorType:    "system",
 		Action:       "auth.token_reuse_detected",
@@ -246,7 +251,7 @@ func buildReuseEvents(userID, tenantID, sessionID, refreshID uuid.UUID, in Refre
 		EventType:   "auth.session.revoked_for_reuse",
 		Payload: map[string]any{
 			"user_id":    userID,
-			"tenant_id":  tenantID,
+			"tenant_id":  tid,
 			"session_id": sessionID,
 			"ip":         in.IP,
 			"user_agent": in.UserAgent,

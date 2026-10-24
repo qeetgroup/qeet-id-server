@@ -37,22 +37,6 @@ func (q *Queries) ApproveDevice(ctx context.Context, arg ApproveDeviceParams) er
 	return err
 }
 
-const checkUserInDeviceTenant = `-- name: CheckUserInDeviceTenant :one
-SELECT EXISTS(SELECT 1 FROM "user".users WHERE id = $1 AND tenant_id = $2)
-`
-
-type CheckUserInDeviceTenantParams struct {
-	ID       uuid.UUID
-	TenantID pgtype.UUID
-}
-
-func (q *Queries) CheckUserInDeviceTenant(ctx context.Context, arg CheckUserInDeviceTenantParams) (bool, error) {
-	row := q.db.QueryRow(ctx, checkUserInDeviceTenant, arg.ID, arg.TenantID)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
-}
-
 const claimLogoutDeliveries = `-- name: ClaimLogoutDeliveries :many
 UPDATE auth.oidc_logout_deliveries d SET next_attempt_at = NOW() + INTERVAL '5 minutes'
 WHERE d.id IN (
@@ -345,7 +329,7 @@ func (q *Queries) GetClientPostLogoutURIs(ctx context.Context, clientID string) 
 }
 
 const getClientRedirectInfo = `-- name: GetClientRedirectInfo :one
-SELECT tenant_id, type, scopes, redirect_uris,
+SELECT tenant_id, type, scopes, redirect_uris, grant_types,
        (pkce_exempt_until IS NOT NULL AND pkce_exempt_until > NOW())::bool AS pkce_exempt
 FROM auth.oidc_clients WHERE client_id = $1
 `
@@ -355,6 +339,7 @@ type GetClientRedirectInfoRow struct {
 	Type         string
 	Scopes       []string
 	RedirectUris []string
+	GrantTypes   []string
 	PkceExempt   bool
 }
 
@@ -366,24 +351,26 @@ func (q *Queries) GetClientRedirectInfo(ctx context.Context, clientID string) (G
 		&i.Type,
 		&i.Scopes,
 		&i.RedirectUris,
+		&i.GrantTypes,
 		&i.PkceExempt,
 	)
 	return i, err
 }
 
 const getClientTenantAndScopes = `-- name: GetClientTenantAndScopes :one
-SELECT tenant_id, scopes FROM auth.oidc_clients WHERE client_id = $1
+SELECT tenant_id, scopes, grant_types FROM auth.oidc_clients WHERE client_id = $1
 `
 
 type GetClientTenantAndScopesRow struct {
-	TenantID uuid.UUID
-	Scopes   []string
+	TenantID   uuid.UUID
+	Scopes     []string
+	GrantTypes []string
 }
 
 func (q *Queries) GetClientTenantAndScopes(ctx context.Context, clientID string) (GetClientTenantAndScopesRow, error) {
 	row := q.db.QueryRow(ctx, getClientTenantAndScopes, clientID)
 	var i GetClientTenantAndScopesRow
-	err := row.Scan(&i.TenantID, &i.Scopes)
+	err := row.Scan(&i.TenantID, &i.Scopes, &i.GrantTypes)
 	return i, err
 }
 
@@ -581,20 +568,23 @@ func (q *Queries) GetRefreshTokenForIntrospect(ctx context.Context, tokenHash st
 
 const getUserByEmailInTenant = `-- name: GetUserByEmailInTenant :one
 
-SELECT id FROM "user".users
-WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) AND deleted_at IS NULL
+SELECT u.id FROM "user".users u
+WHERE LOWER(u.email) = LOWER($1) AND u.deleted_at IS NULL
+  AND EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $2)
 `
 
 type GetUserByEmailInTenantParams struct {
-	TenantID pgtype.UUID
 	Email    string
+	TenantID uuid.UUID
 }
 
 // ==========================================================================
 // CIBA (OpenID Connect Client-Initiated Backchannel Authentication)
 // ==========================================================================
+// GetUserByEmailInTenant finds the member (a role holder) of the tenant with
+// the address, as a browser sign-in to its applications would.
 func (q *Queries) GetUserByEmailInTenant(ctx context.Context, arg GetUserByEmailInTenantParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getUserByEmailInTenant, arg.TenantID, arg.Email)
+	row := q.db.QueryRow(ctx, getUserByEmailInTenant, arg.Email, arg.TenantID)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
@@ -2079,6 +2069,30 @@ type UpdateOIDCClientSecretParams struct {
 
 func (q *Queries) UpdateOIDCClientSecret(ctx context.Context, arg UpdateOIDCClientSecretParams) error {
 	_, err := q.db.Exec(ctx, updateOIDCClientSecret, arg.ClientSecretHash, arg.ID, arg.TenantID)
+	return err
+}
+
+const upgradeOIDCClientSecretHash = `-- name: UpgradeOIDCClientSecretHash :exec
+UPDATE auth.oidc_clients SET client_secret_hash = $1
+WHERE id = $2 AND tenant_id = $3 AND client_secret_hash = $4
+`
+
+type UpgradeOIDCClientSecretHashParams struct {
+	NewHash  *string
+	ID       uuid.UUID
+	TenantID uuid.UUID
+	OldHash  *string
+}
+
+// UpgradeOIDCClientSecretHash replaces an Argon2id secret hash from before with
+// its SHA-256 form, once the secret has verified.
+func (q *Queries) UpgradeOIDCClientSecretHash(ctx context.Context, arg UpgradeOIDCClientSecretHashParams) error {
+	_, err := q.db.Exec(ctx, upgradeOIDCClientSecretHash,
+		arg.NewHash,
+		arg.ID,
+		arg.TenantID,
+		arg.OldHash,
+	)
 	return err
 }
 

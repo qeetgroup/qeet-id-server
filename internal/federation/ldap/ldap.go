@@ -554,8 +554,9 @@ func (s *Service) authenticate(ctx context.Context, c *connFull, username, passw
 }
 
 // findOrCreateUser returns the user linked to the directory DN, else the user
-// with the directory's email (who must belong to tenantID), else a new user,
-// then links the DN and stores the mapped profile, in one transaction.
+// with the directory's email, else a new user, then links the DN and stores the
+// mapped profile, in one transaction. The account must have tenantID as its
+// home, and an adopted one a verified address.
 func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *ldapUser) (uuid.UUID, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -570,6 +571,15 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *l
 		Subject:  u.DN,
 	})
 	if err == nil {
+		// A linked DN signs in only while this organisation is still the
+		// account's home.
+		home, herr := identitylink.HomeIn(ctx, tx, userID, tenantID)
+		if herr != nil {
+			return uuid.Nil, herr
+		}
+		if !home {
+			return uuid.Nil, errs.ErrLDAPAccountNotInTenant
+		}
 		if err := s.storeMappedProfile(ctx, tx, tenantID, userID, u); err != nil {
 			return uuid.Nil, err
 		}
@@ -600,12 +610,19 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *l
 		// bind only proves this connection's directory accepted the credentials.
 		// Otherwise an admin pointing a connection at a directory they run could assert
 		// a victim's address and receive the victim's tokens.
-		belongs, berr := identitylink.UserInTenant(ctx, tx, userID, tenantID)
-		if berr != nil {
-			return uuid.Nil, berr
+		home, herr := identitylink.HomeIn(ctx, tx, userID, tenantID)
+		if herr != nil {
+			return uuid.Nil, herr
 		}
-		if !belongs {
+		if !home {
 			return uuid.Nil, errs.ErrLDAPAccountNotInTenant
+		}
+		verified, verr := identitylink.AddressVerified(ctx, tx, userID)
+		if verr != nil {
+			return uuid.Nil, verr
+		}
+		if !verified {
+			return uuid.Nil, errs.ErrLDAPAccountUnverified
 		}
 	}
 

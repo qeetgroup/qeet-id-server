@@ -147,8 +147,14 @@ LEFT JOIN tenant.security_policies sp ON sp.tenant_id = s.tenant_id
 WHERE s.id = @session_id AND s.user_id = @user_id AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW();
 
+-- GetLoginSession is the hosted-login session a cookie names, unless its user is
+-- suspended or deleted: however it was suspended, a suspended person's browser
+-- signs in nothing.
 -- name: GetLoginSession :one
-SELECT id, user_id, expires_at, created_at FROM auth.login_sessions WHERE token_hash = @token_hash;
+SELECT s.id, s.user_id, s.expires_at, s.created_at
+FROM auth.login_sessions s
+JOIN "user".users u ON u.id = s.user_id
+WHERE s.token_hash = @token_hash AND u.status = 'active' AND u.deleted_at IS NULL;
 
 -- name: GetLoginSessionUser :one
 -- The user behind a live hosted-login session, and their own organization (NULL

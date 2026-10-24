@@ -314,3 +314,27 @@ func (q *Queries) TransferAgentSponsor(ctx context.Context, arg TransferAgentSpo
 	}
 	return result.RowsAffected(), nil
 }
+
+const upgradeAgentSecretHash = `-- name: UpgradeAgentSecretHash :exec
+UPDATE auth.agents SET secret_hash = $1
+WHERE id = $2 AND tenant_id = $3 AND secret_hash = $4
+`
+
+type UpgradeAgentSecretHashParams struct {
+	NewHash  string
+	ID       uuid.UUID
+	TenantID uuid.UUID
+	OldHash  string
+}
+
+// UpgradeAgentSecretHash replaces an Argon2id secret hash from before with its
+// SHA-256 form, once the secret has verified.
+func (q *Queries) UpgradeAgentSecretHash(ctx context.Context, arg UpgradeAgentSecretHashParams) error {
+	_, err := q.db.Exec(ctx, upgradeAgentSecretHash,
+		arg.NewHash,
+		arg.ID,
+		arg.TenantID,
+		arg.OldHash,
+	)
+	return err
+}

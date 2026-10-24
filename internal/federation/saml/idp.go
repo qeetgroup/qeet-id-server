@@ -38,6 +38,7 @@ import (
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -245,6 +246,9 @@ type CreateSPInput struct {
 // check requires the ACS URL to pass validACSURL and a certificate, if given,
 // to parse.
 func (in *CreateSPInput) check() error {
+	if in.Status != "" && !validStatus(in.Status) {
+		return errs.ErrSAMLStatusInvalid
+	}
 	in.ACSURL = strings.TrimSpace(in.ACSURL)
 	if !validACSURL(in.ACSURL) {
 		return errs.ErrSAMLACSURLInvalid
@@ -319,6 +323,9 @@ func (i *IdP) CreateSP(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in Cr
 		Certificate:     in.Certificate,
 		Status:          status,
 	})
+	if pgxerr.IsUnique(err) {
+		return nil, errs.ErrSAMLSPEntityIDTaken
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -443,10 +450,19 @@ func (i *IdP) lookupSP(ctx context.Context, tenantID uuid.UUID, key string) (*Se
 	return i.lookupSPByEntityID(ctx, tenantID, key)
 }
 
+// loadUser returns what an assertion about userID says and the account's home
+// tenant, or ErrAuthAccountInactive for an account that isn't active.
 func (i *IdP) loadUser(ctx context.Context, userID uuid.UUID) (email, name string, tenantID uuid.UUID, err error) {
 	row, err := i.q.GetUserForIdP(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", uuid.Nil, errs.ErrAuthAccountInactive
+	}
 	if err != nil {
 		return "", "", uuid.Nil, err
+	}
+	// A suspended account gets no assertion, whatever its open sign-in session.
+	if row.Status != "active" {
+		return "", "", uuid.Nil, errs.ErrAuthAccountInactive
 	}
 	if row.DisplayName != nil {
 		name = *row.DisplayName
@@ -879,6 +895,10 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 	}
 
 	email, name, userTenant, err := h.IdP.loadUser(r.Context(), userID)
+	if errors.Is(err, errs.ErrAuthAccountInactive) {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	if err != nil {
 		slog.Error("saml idp sso: user lookup", "err", err, "user", userID)
 		httpx.WriteError(w, r, errs.ErrInternalServer)

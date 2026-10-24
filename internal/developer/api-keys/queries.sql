@@ -29,3 +29,9 @@ WHERE prefix = $1 AND revoked_at IS NULL;
 
 -- name: TouchAPIKeyLastUsed :exec
 UPDATE auth.api_keys SET last_used_at = NOW() WHERE id = $1;
+
+-- UpgradeAPIKeyHash replaces an Argon2id key hash from before with its SHA-256
+-- form, once the key has verified. A concurrent rotation keeps its own hash.
+-- name: UpgradeAPIKeyHash :exec
+UPDATE auth.api_keys SET key_hash = @new_hash
+WHERE id = @id AND tenant_id = @tenant_id AND key_hash = @old_hash;
