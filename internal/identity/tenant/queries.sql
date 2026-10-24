@@ -7,7 +7,9 @@ SELECT * FROM tenant.tenants
 WHERE id = $1 AND deleted_at IS NULL;
 
 -- ListEligibleOrganizations lists the active organisations an active account
--- belongs to, by id: its own, and each one it holds a role in.
+-- belongs to, by id: its own, and each one it holds a role in. last_used_at is
+-- its newest other session there, else its last sign-in there in the audit
+-- log, which outlasts the sessions the cleanup deletes.
 -- name: ListEligibleOrganizations :many
 SELECT t.id, t.slug, t.name, t.plan, t.region, t.logo_url,
   ARRAY(SELECT DISTINCT role.name FROM rbac.user_roles membership
@@ -17,9 +19,15 @@ SELECT t.id, t.slug, t.name, t.plan, t.region, t.logo_url,
   COALESCE((SELECT domain.domain FROM tenant.domains domain
     WHERE domain.tenant_id = t.id AND domain.verified_at IS NOT NULL
     ORDER BY domain.created_at, domain.id LIMIT 1), '')::text AS domain,
-  COALESCE((SELECT MAX(session.last_seen_at) FROM auth.sessions session
-    WHERE session.user_id = @user_id AND session.tenant_id = t.id
-      AND session.id <> @current_session_id), '0001-01-01 00:00:00+00'::timestamptz)::timestamptz AS last_used_at
+  COALESCE(GREATEST(
+    (SELECT MAX(session.last_seen_at) FROM auth.sessions session
+      WHERE session.user_id = @user_id AND session.tenant_id = t.id
+        AND session.id <> @current_session_id),
+    (SELECT MAX(sign_in.created_at) FROM audit.events sign_in
+      WHERE sign_in.actor_user_id = @user_id AND sign_in.tenant_id = t.id
+        AND sign_in.action = 'auth.login_succeeded'
+        AND sign_in.resource_id IS DISTINCT FROM @current_session_id)),
+    '0001-01-01 00:00:00+00'::timestamptz)::timestamptz AS last_used_at
 FROM tenant.tenants t
 WHERE t.status = 'active' AND t.deleted_at IS NULL
   AND EXISTS (SELECT 1 FROM "user".users account

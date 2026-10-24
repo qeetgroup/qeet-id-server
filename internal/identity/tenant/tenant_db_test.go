@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
@@ -263,6 +264,22 @@ func TestOrganisationPickerListsEveryOrganisation(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), `"roles":null`) {
 		t.Errorf("picker gives a member with no role null roles, want []: %s", rec.Body.String())
+	}
+	// A sign-in to the other organisation outlasts its session: the picker
+	// still shows when it was last used.
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
+		INSERT INTO audit.events (tenant_id, actor_user_id, actor_type, action, resource_type, created_at)
+		VALUES ($1, $2, 'user', 'auth.login_succeeded', 'session', NOW() - interval '10 days')`, other, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	var picker struct {
+		Items []EligibleOrganization `json:"items"`
+	}
+	dbtest.Decode(t, dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, home), h.Mount), http.MethodGet, "/me/organizations", nil), &picker)
+	for _, o := range picker.Items {
+		if o.ID == other && (o.LastUsedAt == nil || time.Since(*o.LastUsedAt) < 9*24*time.Hour) {
+			t.Errorf("the other organisation's last use %v, want the sign-in 10 days ago", o.LastUsedAt)
+		}
 	}
 	listed, _, err := h.Repo.List(dbtest.Context(t), a.ID, 50, "")
 	if err != nil || len(listed) != 2 || !slices.ContainsFunc(listed, func(o Tenant) bool { return o.ID == home }) {
