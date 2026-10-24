@@ -173,7 +173,6 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 var supportedClientGrantTypes = map[string]struct{}{
 	"authorization_code": {},
 	"refresh_token":      {},
-	"client_credentials": {},
 	"token_exchange":     {},
 	"urn:ietf:params:oauth:grant-type:device_code":    {},
 	"urn:ietf:params:oauth:grant-type:token-exchange": {},
@@ -185,6 +184,11 @@ func validateClientInput(in CreateClientInput) error {
 		return errs.ErrBadRequest.WithDetail("type must be public or confidential")
 	}
 	for _, grantType := range in.GrantTypes {
+		if grantType == "client_credentials" {
+			// The application token endpoint never serves it; a machine caller is
+			// a service principal, with its own token endpoint.
+			return errs.ErrOIDCGrantTypeUnsupported.WithDetail("client_credentials is for machine identities: create a service principal and use POST /v1/oauth/token")
+		}
 		if _, ok := supportedClientGrantTypes[grantType]; !ok {
 			return errs.ErrOIDCGrantTypeUnsupported.WithDetail("unsupported grant_type: " + grantType)
 		}
@@ -283,8 +287,9 @@ type ShadowAICandidate struct {
 }
 
 // machineGrantTypes are the grant types that let a client obtain a token
-// without a human present in the loop.
-var machineGrantTypes = []string{"client_credentials", grantTypeTokenExchange}
+// without a human present in the loop, under either name for token exchange.
+// client_credentials is no longer registered but may remain on older clients.
+var machineGrantTypes = []string{"client_credentials", "token_exchange", grantTypeTokenExchange}
 
 // ShadowAICandidates lists tenantID's unreviewed OIDC clients whose
 // grant_types include a machine grant type, ordered by live-grant count so

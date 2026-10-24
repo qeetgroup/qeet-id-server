@@ -183,7 +183,10 @@ func TestResourcesAndShadowAIReview(t *testing.T) {
 		t.Error("a grant for a removed resource renewed")
 	}
 
-	machine, _ := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, Name: "Agent", GrantTypes: []string{"client_credentials"}})
+	if _, _, err := svc.RegisterClient(ctx, nil, CreateClientInput{TenantID: tenant, Name: "Cron", GrantTypes: []string{"client_credentials"}}); !errors.Is(err, errs.ErrOIDCGrantTypeUnsupported) {
+		t.Errorf("register a client_credentials application: %v, want %v (machine callers are service principals)", err, errs.ErrOIDCGrantTypeUnsupported)
+	}
+	machine, _ := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, Name: "Agent", GrantTypes: []string{"token_exchange"}})
 	shadow := "/tenants/" + tenant.String() + "/oidc/clients/shadow-ai"
 	if ids := dbtest.IDs(t, dbtest.Do(t, asAdmin, http.MethodGet, shadow, nil)); !slices.Equal(ids, []uuid.UUID{machine.ID}) {
 		t.Errorf("shadow-AI candidates %v, want only the machine application %s", ids, machine.ID)
