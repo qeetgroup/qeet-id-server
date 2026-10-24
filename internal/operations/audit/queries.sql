@@ -8,13 +8,18 @@
 --     void-returning side-effect function; it stays as a raw tx.Exec call.
 
 -- name: GetAuditChainTip :one
--- Fetch the most recent row_hash for a tenant's (or the platform) chain.
--- Called by Record() inside the caller's transaction to chain the next row.
--- tenant_id = NULL means the platform chain (NULL IS NOT DISTINCT FROM NULL).
-SELECT row_hash FROM audit.events
-WHERE tenant_id IS NOT DISTINCT FROM @tenant_id
-  AND row_hash IS NOT NULL
-ORDER BY created_at DESC, id DESC
+-- Fetch the most recent row_hash for a tenant's chain, or the platform chain's
+-- when tenant_id is NULL. Called by Record() inside the caller's transaction to
+-- chain the next row. One branch per kind of chain, the other always empty, so
+-- each is an index scan of idx_audit_chain_tip: IS NOT DISTINCT FROM can't use
+-- an index and read the whole table on every audited action.
+(SELECT o.row_hash FROM audit.events o
+ WHERE o.tenant_id = @tenant_id AND o.row_hash IS NOT NULL
+ ORDER BY o.created_at DESC, o.id DESC LIMIT 1)
+UNION ALL
+(SELECT p.row_hash FROM audit.events p
+ WHERE @tenant_id::uuid IS NULL AND p.tenant_id IS NULL AND p.row_hash IS NOT NULL
+ ORDER BY p.created_at DESC, p.id DESC LIMIT 1)
 LIMIT 1;
 
 -- name: InsertAuditEvent :exec
@@ -34,24 +39,39 @@ INSERT INTO audit.events (
 
 -- name: ListAuditEventsForVerify :many
 -- Walk the chain in chronological insert order for hash-chain verification,
--- one page after (after_created_at, after_id) at a time.
--- Only rows with non-NULL hashes (post-hash-chain migration) are returned.
--- COALESCE on optional fields ensures the canonical bytes match what Record
--- wrote at insert time regardless of how Postgres stored the values.
-SELECT id, tenant_id, actor_user_id, actor_type, action,
-       resource_type, resource_id,
-       COALESCE(host(ip), '') AS ip,
-       COALESCE(user_agent, '') AS user_agent,
-       COALESCE(request_id, '') AS request_id,
-       metadata,
-       created_at,
-       prev_hash, row_hash
-FROM audit.events
-WHERE tenant_id IS NOT DISTINCT FROM @tenant_id
-  AND row_hash IS NOT NULL
-  AND (created_at, id) > (@after_created_at::timestamptz, @after_id::uuid)
-ORDER BY created_at ASC, id ASC
-LIMIT @page_size;
+-- one page after (after_created_at, after_id) at a time: a tenant's chain, or
+-- the platform's when tenant_id is NULL, each branch an index scan (see
+-- GetAuditChainTip). Only rows with non-NULL hashes (post-hash-chain migration)
+-- are returned. COALESCE on optional fields ensures the canonical bytes match
+-- what Record wrote at insert time regardless of how Postgres stored the values.
+(SELECT o.id, o.tenant_id, o.actor_user_id, o.actor_type, o.action,
+        o.resource_type, o.resource_id,
+        COALESCE(host(o.ip), '') AS ip,
+        COALESCE(o.user_agent, '') AS user_agent,
+        COALESCE(o.request_id, '') AS request_id,
+        o.metadata,
+        o.created_at,
+        o.prev_hash, o.row_hash
+ FROM audit.events o
+ WHERE o.tenant_id = @tenant_id AND o.row_hash IS NOT NULL
+   AND (o.created_at, o.id) > (@after_created_at::timestamptz, @after_id::uuid)
+ ORDER BY o.created_at ASC, o.id ASC
+ LIMIT @page_size)
+UNION ALL
+(SELECT p.id, p.tenant_id, p.actor_user_id, p.actor_type, p.action,
+        p.resource_type, p.resource_id,
+        COALESCE(host(p.ip), '') AS ip,
+        COALESCE(p.user_agent, '') AS user_agent,
+        COALESCE(p.request_id, '') AS request_id,
+        p.metadata,
+        p.created_at,
+        p.prev_hash, p.row_hash
+ FROM audit.events p
+ WHERE @tenant_id::uuid IS NULL AND p.tenant_id IS NULL AND p.row_hash IS NOT NULL
+   AND (p.created_at, p.id) > (@after_created_at::timestamptz, @after_id::uuid)
+ ORDER BY p.created_at ASC, p.id ASC
+ LIMIT @page_size)
+ORDER BY created_at ASC, id ASC;
 
 -- name: ListAuditChainTenants :many
 -- Every organisation with a hash chain, for the scheduled verification of all

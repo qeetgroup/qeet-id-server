@@ -41,6 +41,7 @@ internal/access/authentication/queries.sql#DenyDeviceAuthorizationsForUser  pare
 internal/access/authentication/queries.sql#EndLoginSession  secret-lookup: login session found by its cookie hash
 internal/access/authentication/queries.sql#ExpireAuthorizationCodesForLoginSession  session-scoped: the login session being ended
 internal/access/authentication/queries.sql#GetClientTenant  global-client: client_id is unique platform-wide
+internal/access/authentication/queries.sql#GetLoginSession  secret-lookup: session found by its cookie token hash; reads its own account's status
 internal/access/authentication/queries.sql#IsSessionLiveForUser  session-scoped: the caller's own session and user
 internal/access/authentication/queries.sql#IsSessionOfUser  session-scoped: the caller's own session and user
 internal/access/authentication/queries.sql#LockUserForSessionRevocation  parent-scoped: locks an account its callers already checked
@@ -100,10 +101,10 @@ internal/federation/adminportal/adminportal.go#Service.Exchange  secret-lookup: 
 internal/federation/adminportal/adminportal.go#Service.ResolveSession  secret-lookup: session found by its token hash
 internal/federation/adminportal/queries.sql#GetAdminPortalLinkByHash  pending-review: unused query; delete it or add a tenant condition
 internal/federation/adminportal/queries.sql#TouchAdminPortalLinkUsed  pending-review: unused query; delete it or add a tenant condition
+internal/federation/identitylink/identitylink.go#AddressVerified  pre-tenant: federated sign-in checks the account it found
 internal/federation/ldap/ldap.go#Service.getFull  parent-scoped: re-encrypts the connection row just read
 internal/federation/ldap/queries.sql#GetUserByEmail  pre-tenant: federated sign-in finds the account by email
 internal/federation/ldap/queries.sql#TouchLdapLastLogin  parent-scoped: connection row read for this sign-in
-internal/federation/oidc/token.go#Service.activeTenantPrincipal  parent-scoped: account and tenant named by a verified grant
 internal/federation/oidc/queries.sql#ApproveCIBARequest  parent-scoped: request locked and checked against the caller
 internal/federation/oidc/queries.sql#ApproveDevice  secret-lookup: request found by its user code
 internal/federation/oidc/queries.sql#ClaimLogoutDeliveries  background-sweep: back-channel logout worker

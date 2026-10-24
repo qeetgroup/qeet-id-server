@@ -400,7 +400,8 @@ WITH members AS (
   SELECT u.id, u.status, u.created_at
   FROM "user".users u
   WHERE u.deleted_at IS NULL
-    AND EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $1)
+    AND u.id IN (SELECT h.id FROM "user".users h WHERE h.tenant_id = $1::uuid AND h.deleted_at IS NULL
+                 UNION SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1)
 ),
 mfa AS (
   SELECT m.id,
@@ -432,11 +433,11 @@ type GetUserStatsRow struct {
 
 // GetUserStats returns the tenant-wide member counts for the Users admin summary
 // strip: total, active, suspended, invited, and MFA enabled/missing. Membership
-// is defined the same way the list is (an rbac.user_roles row in this tenant),
-// and "MFA enabled" matches the list's OR-logic (confirmed TOTP / verified OTP /
+// is defined the same way the list is (home users and role holders), and "MFA
+// enabled" matches the list's OR-logic (confirmed TOTP / verified OTP /
 // a push device).
-func (q *Queries) GetUserStats(ctx context.Context, tenantID uuid.UUID) (GetUserStatsRow, error) {
-	row := q.db.QueryRow(ctx, getUserStats, tenantID)
+func (q *Queries) GetUserStats(ctx context.Context, dollar_1 uuid.UUID) (GetUserStatsRow, error) {
+	row := q.db.QueryRow(ctx, getUserStats, dollar_1)
 	var i GetUserStatsRow
 	err := row.Scan(
 		&i.TotalUsers,
@@ -469,7 +470,8 @@ members AS (
      ) e) AS mfa_at
   FROM "user".users u
   WHERE u.deleted_at IS NULL
-    AND EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $1)
+    AND u.id IN (SELECT h.id FROM "user".users h WHERE h.tenant_id = $1::uuid AND h.deleted_at IS NULL
+                 UNION SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1)
 )
 SELECT
   (SELECT count(*) FROM members m WHERE m.created_at < days.day + interval '1 day')::int AS total,
@@ -488,8 +490,8 @@ type GetUserTrendsRow struct {
 // at least one MFA factor enrolled. Both are derived from real timestamps
 // (users.created_at and the earliest MFA factor enrolment); the MFA curve is an
 // enrolment curve (factor removals are not historised, so it never decreases).
-func (q *Queries) GetUserTrends(ctx context.Context, tenantID uuid.UUID) ([]GetUserTrendsRow, error) {
-	rows, err := q.db.Query(ctx, getUserTrends, tenantID)
+func (q *Queries) GetUserTrends(ctx context.Context, dollar_1 uuid.UUID) ([]GetUserTrendsRow, error) {
+	rows, err := q.db.Query(ctx, getUserTrends, dollar_1)
 	if err != nil {
 		return nil, err
 	}

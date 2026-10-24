@@ -105,7 +105,7 @@ type UpdateInput struct {
 	DisplayName *string `json:"display_name,omitempty" validate:"omitempty,max=200"`
 	// AvatarURL is a small image data-URL (capped/compressed client-side). Empty
 	// string clears it. The startswith guard keeps it to image data-URLs only.
-	AvatarURL *string `json:"avatar_url,omitempty" validate:"omitempty,max=300000,startswith=data:image/"`
+	AvatarURL *string `json:"avatar_url,omitempty" validate:"omitempty,max=300000,len=0|startswith=data:image/"`
 	Phone     *string `json:"phone,omitempty" validate:"omitempty,e164"`
 	Status    *string `json:"status,omitempty" validate:"omitempty,oneof=active suspended"`
 	// Locale is the user's preferred UI language (one of the shipped console

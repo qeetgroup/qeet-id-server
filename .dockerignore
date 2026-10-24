@@ -1,6 +1,6 @@
 # Build context is the REPO ROOT (single Go module at root). Keep only what the
-# Go image build needs: go.mod/go.sum + cmd/ domains/ platform/. Everything else
-# is excluded.
+# Go image build needs: go.mod/go.sum + cmd/ internal/ api/qeetai/. Everything
+# else is excluded.
 
 # Git
 .git
@@ -13,7 +13,7 @@ deploy/
 docs/
 graphify-out/
 tests/
-# api/ holds specs (openapi, postman) AND a Go package (api/copilot, embedded
+# api/ holds specs (openapi, postman) AND a Go package (api/qeetai, embedded
 # tools manifest imported by the binary) — exclude the specs, keep the code.
 api/openapi/
 api/postman/
@@ -26,10 +26,11 @@ bin/
 coverage.html
 coverage.txt
 
-# Env / secrets
+# Env / secrets (.secrets/ holds the local signing keys from `make dev-secrets`)
 .env
 .env.*
 !.env.example
+.secrets/
 
 # Editor / OS
 .idea/

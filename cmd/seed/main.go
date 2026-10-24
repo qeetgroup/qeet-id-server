@@ -1,6 +1,6 @@
 // Command seed populates the database with realistic, production-shaped demo
 // workspaces (dev-only; fictional customers, not real data). It drives the app's
-// own services, so passwords are real bcrypt, memberships go through rbac, and
+// own services, so passwords are real Argon2id, memberships go through rbac, and
 // audit rows hash-chain. The notifier only logs; everyone shares seedPassword.
 package main
 

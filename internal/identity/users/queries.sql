@@ -222,15 +222,16 @@ WHERE id = $1 AND deleted_at IS NULL;
 
 -- GetUserStats returns the tenant-wide member counts for the Users admin summary
 -- strip: total, active, suspended, invited, and MFA enabled/missing. Membership
--- is defined the same way the list is (an rbac.user_roles row in this tenant),
--- and "MFA enabled" matches the list's OR-logic (confirmed TOTP / verified OTP /
+-- is defined the same way the list is (home users and role holders), and "MFA
+-- enabled" matches the list's OR-logic (confirmed TOTP / verified OTP /
 -- a push device).
 -- name: GetUserStats :one
 WITH members AS (
   SELECT u.id, u.status, u.created_at
   FROM "user".users u
   WHERE u.deleted_at IS NULL
-    AND EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $1)
+    AND u.id IN (SELECT h.id FROM "user".users h WHERE h.tenant_id = $1::uuid AND h.deleted_at IS NULL
+                 UNION SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1)
 ),
 mfa AS (
   SELECT m.id,
@@ -273,7 +274,8 @@ members AS (
      ) e) AS mfa_at
   FROM "user".users u
   WHERE u.deleted_at IS NULL
-    AND EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $1)
+    AND u.id IN (SELECT h.id FROM "user".users h WHERE h.tenant_id = $1::uuid AND h.deleted_at IS NULL
+                 UNION SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1)
 )
 SELECT
   (SELECT count(*) FROM members m WHERE m.created_at < days.day + interval '1 day')::int AS total,

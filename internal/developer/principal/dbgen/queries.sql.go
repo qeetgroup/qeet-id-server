@@ -154,3 +154,27 @@ func (q *Queries) ListServicePrincipals(ctx context.Context, tenantID uuid.UUID)
 	}
 	return items, nil
 }
+
+const upgradeServicePrincipalSecretHash = `-- name: UpgradeServicePrincipalSecretHash :exec
+UPDATE auth.service_principals SET secret_hash = $1
+WHERE id = $2 AND tenant_id = $3 AND secret_hash = $4
+`
+
+type UpgradeServicePrincipalSecretHashParams struct {
+	NewHash  string
+	ID       uuid.UUID
+	TenantID uuid.UUID
+	OldHash  string
+}
+
+// UpgradeServicePrincipalSecretHash replaces an Argon2id secret hash from before
+// with its SHA-256 form, once the secret has verified.
+func (q *Queries) UpgradeServicePrincipalSecretHash(ctx context.Context, arg UpgradeServicePrincipalSecretHashParams) error {
+	_, err := q.db.Exec(ctx, upgradeServicePrincipalSecretHash,
+		arg.NewHash,
+		arg.ID,
+		arg.TenantID,
+		arg.OldHash,
+	)
+	return err
+}

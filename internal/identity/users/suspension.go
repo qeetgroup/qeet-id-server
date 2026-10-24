@@ -269,11 +269,9 @@ func (handler *Handler) updateStatusWithEvidence(request *http.Request, tenantID
 		if *input.Status == "suspended" {
 			reason = sessionsignal.ReasonSuspended
 		}
-		ended, err := sessionsignal.EndUserSessions(ctx, tx, userID)
-		if err != nil {
+		if err := handler.endEverySignIn(ctx, tx, userID, reason); err != nil {
 			return nil, err
 		}
-		handler.Signals.Revoked(ctx, tx, reason, ended...)
 		if err := recordSuspensionEvidence(ctx, tx, request, tenantID, userID, action); err != nil {
 			return nil, err
 		}
@@ -335,12 +333,10 @@ func (handler *Handler) reactivateUser(response http.ResponseWriter, request *ht
 		httpx.WriteError(response, request, err)
 		return
 	}
-	ended, err := sessionsignal.EndUserSessions(ctx, tx, userID)
-	if err != nil {
+	if err := handler.endEverySignIn(ctx, tx, userID, sessionsignal.ReasonReactivated); err != nil {
 		httpx.WriteError(response, request, err)
 		return
 	}
-	handler.Signals.Revoked(ctx, tx, sessionsignal.ReasonReactivated, ended...)
 	if err := recordSuspensionEvidence(ctx, tx, request, tenantID, userID, "user.reactivated"); err != nil {
 		httpx.WriteError(response, request, err)
 		return

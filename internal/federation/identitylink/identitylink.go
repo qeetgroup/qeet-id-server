@@ -1,6 +1,6 @@
-// Package identitylink holds the check SAML, LDAP and social sign-in run before
-// adopting an existing account by email. Emails are unique across tenants, so the
-// matched user may belong to a different tenant from the one signing in.
+// Package identitylink holds the checks SAML, LDAP and social sign-in run on the
+// account they would sign in, whether found by a linked identity or adopted by
+// email. Emails are unique across tenants, so the account may belong elsewhere.
 package identitylink
 
 import (
@@ -10,25 +10,29 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Querier is the part of pgx.Tx and *pgxpool.Pool that UserInTenant needs.
+// Querier is the part of pgx.Tx and *pgxpool.Pool the checks need.
 type Querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-// UserInTenant reports whether userID belongs to tenantID: it is the user's home
-// tenant (which federation-provisioned users get, since provisioning grants no
-// role) or the user holds a role there. Callers must refuse the sign-in on
-// false, or one tenant's IdP could take over another tenant's account.
-func UserInTenant(ctx context.Context, q Querier, userID, tenantID uuid.UUID) (bool, error) {
+// HomeIn reports whether tenantID is userID's home tenant and the account isn't
+// deleted. An organisation's identity provider vouches only for its own
+// accounts: if it also signed in its guests (a role there, home elsewhere), that
+// organisation's admin could assert a guest's address and switch the session
+// into the guest's home. Callers must refuse the sign-in on false.
+func HomeIn(ctx context.Context, q Querier, userID, tenantID uuid.UUID) (bool, error) {
 	var ok bool
 	err := q.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM "user".users u
-			WHERE u.id = $1 AND u.deleted_at IS NULL AND u.tenant_id = $2
-			UNION ALL
-			SELECT 1 FROM rbac.user_roles ur
-			WHERE ur.user_id = $1 AND ur.tenant_id = $2
-		)
+		SELECT EXISTS (SELECT 1 FROM "user".users WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL)
 	`, userID, tenantID).Scan(&ok)
+	return ok, err
+}
+
+// AddressVerified reports whether userID has proved owning its email address.
+// Adopting an account by email needs it, or a squatter who registered the
+// address unverified would keep a working password on the adopted account.
+func AddressVerified(ctx context.Context, q Querier, userID uuid.UUID) (bool, error) {
+	var ok bool
+	err := q.QueryRow(ctx, `SELECT email_verified_at IS NOT NULL FROM "user".users WHERE id = $1`, userID).Scan(&ok)
 	return ok, err
 }

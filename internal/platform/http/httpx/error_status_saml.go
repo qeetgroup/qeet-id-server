@@ -37,5 +37,7 @@ func init() {
 		errs.CodeSAMLACSURLInvalid:            http.StatusUnprocessableEntity,
 		errs.CodeSAMLSPFieldsRequired:         http.StatusUnprocessableEntity,
 		errs.CodeSAMLUserTenantMismatch:       http.StatusForbidden,
+		errs.CodeSAMLAccountUnverified:        http.StatusForbidden,
+		errs.CodeSAMLSPEntityIDTaken:          http.StatusConflict,
 	})
 }

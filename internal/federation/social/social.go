@@ -682,6 +682,15 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 		Subject:  ui.Subject,
 	})
 	if err == nil {
+		// A linked identity signs in only while this organisation is still the
+		// account's home.
+		home, herr := identitylink.HomeIn(ctx, tx, userID, tenantID)
+		if herr != nil {
+			return uuid.Nil, herr
+		}
+		if !home {
+			return uuid.Nil, errs.ErrSocialAccountNotInTenant
+		}
 		return userID, tx.Commit(ctx)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -732,14 +741,14 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 		if !ui.EmailVerified {
 			return uuid.Nil, errs.ErrSocialEmailUnverified
 		}
-		// Second, the account must belong to this tenant. Emails are unique across
+		// Second, this tenant must be the account's home. Emails are unique across
 		// tenants, so otherwise a tenant admin's own IdP could assert another tenant's
-		// user's address and be handed that user's tokens.
-		belongs, err := identitylink.UserInTenant(ctx, tx, userID, tenantID)
+		// user's address, or a guest's, and be handed that user's tokens.
+		home, err := identitylink.HomeIn(ctx, tx, userID, tenantID)
 		if err != nil {
 			return uuid.Nil, err
 		}
-		if !belongs {
+		if !home {
 			return uuid.Nil, errs.ErrSocialAccountNotInTenant
 		}
 		// Third, the account must have proved owning the address, or a squatter who

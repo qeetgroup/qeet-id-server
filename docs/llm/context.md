@@ -361,8 +361,10 @@ self-scope in-handler; other tenant-scoped resources rely entirely on the middle
 **Evidence:** `internal/platform/crypto/password/hasher.go`, `internal/access/authentication/`
 
 Password hashing is **Argon2id** (`m=19456,t=2,p=1`) with transparent upgrade of legacy bcrypt on
-successful login. bcrypt remains in use for MFA recovery codes and API-key secrets — a different
-requirement, and correct for those.
+successful login; MFA recovery codes use it too. Machine secrets — API keys and service-principal,
+agent and OAuth client secrets — are random (≥192 bits), so they are stored as their SHA-256
+(`sha256$…`, `password.HashSecret`): Argon2id adds nothing to such a secret and would cost a
+sign-in's CPU on every call. An older Argon2id hash verifies once and is replaced.
 
 Implemented mechanisms: password · passkeys (WebAuthn) · magic link · email and SMS OTP · TOTP ·
 push approval · social login · adaptive risk (**off by default**) · sign-in lockout ·
@@ -445,8 +447,8 @@ advertised in the discovery document (`qeet-id-context` QID-005).
 
 **Status:** verified · **Evidence:** `internal/developer/`
 
-Three non-human identity forms: **API keys** (`qk_`, stored as `<prefix>.<secret>` with a bcrypt
-hash), **service principals** (`client_credentials`, short-lived service JWT scoped to one tenant),
+Three non-human identity forms: **API keys** (`qk_`, `<prefix>.<secret>`, the secret stored as its
+SHA-256), **service principals** (`client_credentials`, short-lived service JWT scoped to one tenant),
 and **AI agents** (`actor_type="agent"`, tokens **re-minted rather than refreshed**, with a sponsor
 and a kill switch).
 

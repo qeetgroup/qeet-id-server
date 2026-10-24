@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -227,10 +228,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name string, s
 	if err != nil {
 		return nil, err
 	}
-	hash, err := password.Hash(secret)
-	if err != nil {
-		return nil, err
-	}
+	hash := password.HashSecret(secret)
 	ttl = clampTTL(ttl)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -448,8 +446,16 @@ func (s *Service) IssueToken(ctx context.Context, agentID, secret string) (*Toke
 		return nil, err
 	}
 	// The secret first, so only its holder learns the agent's status.
-	if !password.Verify(row.SecretHash, secret) {
+	ok, rehash := password.VerifySecret(row.SecretHash, secret)
+	if !ok {
 		return nil, errs.ErrAgentTokenInvalid
+	}
+	if rehash {
+		if err := s.q.UpgradeAgentSecretHash(ctx, dbgen.UpgradeAgentSecretHashParams{
+			NewHash: password.HashSecret(secret), ID: id, TenantID: row.TenantID, OldHash: row.SecretHash,
+		}); err != nil {
+			slog.Warn("agent hash upgrade failed", "err", err, "agent_id", id)
+		}
 	}
 	if row.Status != "active" {
 		return nil, errs.ErrAgentInactive
