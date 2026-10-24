@@ -54,14 +54,14 @@ func (s *Service) loginSessionLifetime(ctx context.Context, userID uuid.UUID) (t
 }
 
 // CreateLoginSession mints a hosted SSO session, once the login hook of the
-// user's own organisation allows it, for a sign-in that met no second factor,
-// and returns the raw cookie value. Only the hash is persisted (like refresh
-// tokens).
+// user's own organisation allows it, for a password sign-in that met no second
+// factor, and returns the raw cookie value. Only the hash is persisted (like
+// refresh tokens).
 func (s *Service) CreateLoginSession(ctx context.Context, userID uuid.UUID, ip, ua string) (string, error) {
 	if _, err := s.signInHook(ctx, userID, uuid.Nil); err != nil {
 		return "", err
 	}
-	return s.createLoginSession(ctx, userID, ip, ua, "")
+	return s.createLoginSession(ctx, userID, uuid.Nil, ip, ua, firstFactorPassword, "")
 }
 
 // CreatePasskeyLoginSession is CreateLoginSession for a passkey sign-in: the
@@ -71,12 +71,13 @@ func (s *Service) CreatePasskeyLoginSession(ctx context.Context, userID uuid.UUI
 	if _, err := s.signInHook(ctx, userID, uuid.Nil); err != nil {
 		return "", err
 	}
-	return s.createLoginSession(ctx, userID, ip, ua, secondFactorPasskey)
+	return s.createLoginSession(ctx, userID, uuid.Nil, ip, ua, "passkey", secondFactorPasskey)
 }
 
-// createLoginSession mints the session, recording how its sign-in met a
+// createLoginSession mints the session and records the sign-in by method to
+// tenantID (uuid.Nil: the account's own organisation), with how it met a
 // second factor ("": it didn't).
-func (s *Service) createLoginSession(ctx context.Context, userID uuid.UUID, ip, ua, secondFactor string) (string, error) {
+func (s *Service) createLoginSession(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, method, secondFactor string) (string, error) {
 	// Every hosted sign-in ends here, whatever its method.
 	if err := s.refuseInactiveAccount(ctx, userID, uuid.Nil, "hosted", ip, ua); err != nil {
 		return "", err
@@ -89,17 +90,33 @@ func (s *Service) createLoginSession(ctx context.Context, userID uuid.UUID, ip, 
 	if err != nil {
 		return "", err
 	}
-	if err := s.q.InsertLoginSession(ctx, dbgen.InsertLoginSessionParams{
+	if tenantID == uuid.Nil {
+		u, err := s.users.Get(ctx, userID)
+		if err != nil {
+			return "", err
+		}
+		tenantID = u.TenantID
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	sessionID, err := s.q.WithTx(tx).InsertLoginSession(ctx, dbgen.InsertLoginSessionParams{
 		TokenHash:    hash,
 		UserID:       userID,
 		ExpiresAt:    time.Now().Add(ttl),
 		Ip:           ip,
 		UserAgent:    &ua,
 		SecondFactor: secondFactor,
-	}); err != nil {
+	})
+	if err != nil {
 		return "", err
 	}
-	return raw, nil
+	if err := audit.Record(ctx, tx, signInEvent(userID, tenantID, "login_session", sessionID, ip, ua, method, nil)); err != nil {
+		return "", err
+	}
+	return raw, tx.Commit(ctx)
 }
 
 // LoginSessionFactorShortfall reports what stops a code or token being issued

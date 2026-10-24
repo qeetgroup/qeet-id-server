@@ -112,7 +112,7 @@ type HourlyPoint struct {
 // WeeklyActivityPoint is one ISO week of activity.
 type WeeklyActivityPoint struct {
 	Week string `json:"week"` // "Wnn" — ISO week number
-	WAU  int64  `json:"wau"`  // distinct users with a session in that week
+	WAU  int64  `json:"wau"`  // distinct people who signed in that week
 	DAU  int64  `json:"dau"`  // average DAU within the week
 }
 
@@ -162,8 +162,8 @@ func (r *Reader) Overview(ctx context.Context, tenantID uuid.UUID) (*Overview, e
 }
 
 func (r *Reader) kpis(ctx context.Context, tid uuid.UUID, out *Overview) error {
-	// MAU: distinct users with a session created in the last 30 days, against
-	// the 30 days before.
+	// MAU: distinct people who signed in in the last 30 days, against the 30
+	// days before.
 	mau, err := r.q.CountMAUWindows(ctx, pgUUID(tid))
 	if err != nil {
 		return err
@@ -250,10 +250,12 @@ func (r *Reader) trends14d(ctx context.Context, tid uuid.UUID, out *Overview) er
 			WHERE tenant_id = $1 AND deleted_at IS NULL
 			  AND created_at < NOW() - INTERVAL '14 days'
 		),
-		sessions_per_day AS (
-			SELECT date_trunc('day', created_at)::date AS day, COUNT(*) AS sess
-			FROM auth.sessions
-			WHERE tenant_id = $1 AND created_at >= NOW() - INTERVAL '14 days'
+		sign_ins_per_day AS (
+			SELECT date_trunc('day', created_at)::date AS day, COUNT(*) AS sign_ins
+			FROM audit.events
+			WHERE tenant_id = $1 AND action = 'auth.login_succeeded'
+			  AND COALESCE(metadata->>'method', '') NOT IN ('tenant_switch', 'tenant_create', 'invite_accept')
+			  AND created_at >= NOW() - INTERVAL '14 days'
 			GROUP BY 1
 		),
 		failed_per_day AS (
@@ -275,15 +277,15 @@ func (r *Reader) trends14d(ctx context.Context, tid uuid.UUID, out *Overview) er
 			COALESCE((SELECT total FROM base), 0)
 				+ COALESCE(SUM(users_per_day.new_users)
 				           FILTER (WHERE users_per_day.day <= days.day), 0) AS users_cum,
-			COALESCE(sessions_per_day.sess, 0) AS logins,
+			COALESCE(sign_ins_per_day.sign_ins, 0) AS logins,
 			COALESCE(mfa_per_day.enrolled, 0) AS mfa_new,
 			COALESCE(failed_per_day.fails, 0) AS fails
 		FROM days
 		LEFT JOIN users_per_day ON users_per_day.day = days.day
-		LEFT JOIN sessions_per_day ON sessions_per_day.day = days.day
+		LEFT JOIN sign_ins_per_day ON sign_ins_per_day.day = days.day
 		LEFT JOIN mfa_per_day ON mfa_per_day.day = days.day
 		LEFT JOIN failed_per_day ON failed_per_day.day = days.day
-		GROUP BY days.day, sessions_per_day.sess, mfa_per_day.enrolled, failed_per_day.fails
+		GROUP BY days.day, sign_ins_per_day.sign_ins, mfa_per_day.enrolled, failed_per_day.fails
 		ORDER BY days.day ASC
 	`, tid)
 	if err != nil {
@@ -409,7 +411,7 @@ func (r *Reader) failedHourly24h(ctx context.Context, tid uuid.UUID, out *Overvi
 // DAU, total users, average sessions per user over 30 days, and stickiness
 // (DAU/MAU).
 func (r *Reader) extraKPIs(ctx context.Context, tid uuid.UUID, out *Overview) error {
-	// DAU: distinct users with a session today, against yesterday.
+	// DAU: distinct people who signed in today, against yesterday.
 	dau, err := r.q.CountDAUWindows(ctx, pgUUID(tid))
 	if err != nil {
 		return err
@@ -424,25 +426,25 @@ func (r *Reader) extraKPIs(ctx context.Context, tid uuid.UUID, out *Overview) er
 	}
 	out.KPIs.TotalUsers = Metric{Value: float64(users.UsersNow), DeltaPct: pctChange(users.UsersNow, users.UsersPrev)}
 
-	// Average sessions per active user, last 30 days against the 30 before.
+	// Average sign-ins per person who signed in, last 30 days against the 30
+	// before.
 	var avgNow, avgPrev float64
 	if err := r.pool.QueryRow(ctx, `
 		SELECT
 			COALESCE(
-				CASE WHEN COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days') = 0 THEN 0
+				CASE WHEN COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days') = 0 THEN 0
 				     ELSE COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days')::float
-				          / NULLIF(COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days'), 0)
+				          / NULLIF(COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days'), 0)
 				END, 0),
 			COALESCE(
-				CASE WHEN COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '60 days'
-				                                            AND created_at <  NOW() - INTERVAL '30 days') = 0 THEN 0
-				     ELSE COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '60 days'
-				                            AND created_at <  NOW() - INTERVAL '30 days')::float
-				          / NULLIF(COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '60 days'
-				                                                      AND created_at <  NOW() - INTERVAL '30 days'), 0)
+				CASE WHEN COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at < NOW() - INTERVAL '30 days') = 0 THEN 0
+				     ELSE COUNT(*) FILTER (WHERE created_at < NOW() - INTERVAL '30 days')::float
+				          / NULLIF(COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at < NOW() - INTERVAL '30 days'), 0)
 				END, 0)
-		FROM auth.sessions
-		WHERE tenant_id = $1
+		FROM audit.events
+		WHERE tenant_id = $1 AND action = 'auth.login_succeeded'
+		  AND COALESCE(metadata->>'method', '') NOT IN ('tenant_switch', 'tenant_create', 'invite_accept')
+		  AND created_at >= NOW() - INTERVAL '60 days'
 	`, tid).Scan(&avgNow, &avgPrev); err != nil {
 		return err
 	}

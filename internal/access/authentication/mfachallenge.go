@@ -470,7 +470,7 @@ func (s *Service) CompleteMFALoginSessionWith(ctx context.Context, mfaToken stri
 	if !met.deferred && !met.riskVerified {
 		factor = secondFactorMFA
 	}
-	raw, err := s.createLoginSession(ctx, met.userID, ip, ua, factor)
+	raw, err := s.createLoginSession(ctx, met.userID, met.tenantID, ip, ua, met.method(), factor)
 	if err != nil {
 		return nil, err
 	}

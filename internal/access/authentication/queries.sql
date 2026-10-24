@@ -116,12 +116,13 @@ DELETE FROM auth.login_attempts a WHERE a.email = @email;
 -- is held to).
 SELECT tenant_id FROM auth.oidc_clients WHERE client_id = @client_id;
 
--- name: InsertLoginSession :exec
+-- name: InsertLoginSession :one
 -- second_factor: how the sign-in met a second factor (NULL: it didn't); see
 -- migration 0149.
 INSERT INTO auth.login_sessions (token_hash, user_id, expires_at, ip, user_agent, second_factor)
 VALUES (@token_hash, @user_id, @expires_at, NULLIF(@ip::text, '')::inet, @user_agent,
-        NULLIF(@second_factor::text, ''));
+        NULLIF(@second_factor::text, ''))
+RETURNING id;
 
 -- name: LoginSessionSecondFactor :one
 -- How the sign-in behind a live hosted-login session of the user's met a

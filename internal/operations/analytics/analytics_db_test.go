@@ -8,11 +8,121 @@ import (
 
 	"github.com/google/uuid"
 
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
+
+const testPassword = "Kx7mQ2vLp9Wz"
+
+// TestOverviewCountsPurgedSessionsSignIns checks that sign-ins and active
+// people are counted from the sign-in log, so a sign-in still counts once the
+// cleanup has deleted its ended session; that hosted sign-ins count; that
+// switching to the organisation makes a person active in it but is no
+// sign-in; and that each organisation counts only its own.
+func TestOverviewCountsPurgedSessionsSignIns(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
+	tenant, home := dbtest.Tenant(t), dbtest.Tenant(t)
+	account := func(home uuid.UUID, memberOf ...uuid.UUID) dbtest.Account {
+		a := dbtest.User(t, home, memberOf...)
+		dbtest.SetPassword(t, a.ID, testPassword)
+		return a
+	}
+	signIn := func(a dbtest.Account) *auth.TokenPair {
+		res, err := svc.Login(ctx, auth.LoginInput{Email: a.Email, Password: testPassword})
+		if err != nil || res.Pair == nil {
+			t.Fatalf("sign in: %+v, %v", res, err)
+		}
+		return res.Pair
+	}
+	earlier, lapsed, regular, hosted := account(tenant, tenant), account(tenant, tenant), account(tenant, tenant), account(tenant, tenant)
+	guest := account(home, home, tenant)
+
+	// Two sign-ins whose sessions ended when they began, 45 and 20 days ago,
+	// and have since been purged.
+	for a, days := range map[dbtest.Account]int{earlier: 45, lapsed: 20} {
+		pair := signIn(a)
+		if _, err := pool.Exec(ctx, `UPDATE auth.sessions SET created_at = NOW() - make_interval(days => $2),
+			revoked_at = NOW() - make_interval(days => $2) WHERE id = $1`, pair.SessionID, days); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `UPDATE audit.events SET created_at = NOW() - make_interval(days => $2)
+			WHERE action = 'auth.login_succeeded' AND resource_id = $1`, pair.SessionID, days); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := auth.PurgeEndedSessions(ctx, pool, auth.SessionRetention, nil); err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.sessions WHERE user_id = ANY($1)`, []uuid.UUID{earlier.ID, lapsed.ID}); n != 0 {
+		t.Fatalf("%d old sessions survived the purge", n)
+	}
+
+	signIn(regular)
+	signIn(regular)
+	if _, err := svc.CreateLoginSession(ctx, hosted.ID, "", "test"); err != nil {
+		t.Fatalf("hosted sign-in: %v", err)
+	}
+	if _, err := svc.SwitchTenant(ctx, auth.SwitchTenantInput{UserID: guest.ID, FromSessionID: signIn(guest).SessionID, TenantID: tenant}); err != nil {
+		t.Fatalf("switch: %v", err)
+	}
+
+	out, err := NewReader(pool).Overview(ctx, tenant)
+	if err != nil {
+		t.Fatalf("overview: %v", err)
+	}
+	k := out.KPIs
+	for _, c := range []struct {
+		name      string
+		got, want Metric
+	}{
+		// lapsed, regular, hosted and guest; earlier the 30 days before.
+		{"mau", k.MAU, Metric{Value: 4, DeltaPct: 300}},
+		{"dau", k.DAU, Metric{Value: 3, DeltaPct: 100}},
+		// regular twice and hosted; the switch is no sign-in.
+		{"logins_today", k.LoginsToday, Metric{Value: 3, DeltaPct: 100}},
+		// lapsed, regular twice and hosted, by three people; earlier once.
+		{"avg_sessions_per_user", k.AvgSessionsPerUser, Metric{Value: 4.0 / 3, DeltaPct: 100.0 / 3}},
+		{"stickiness_pct", k.StickinessPct, Metric{Value: 75, DeltaPct: 75}},
+		// The sessions play no part in these.
+		{"total_users", k.TotalUsers, Metric{Value: 4, DeltaPct: 100}},
+		{"mfa_adoption_pct", k.MFAAdoptionPct, Metric{}},
+	} {
+		if math.Abs(c.got.Value-c.want.Value) > 0.001 || math.Abs(c.got.DeltaPct-c.want.DeltaPct) > 0.001 {
+			t.Errorf("%s = %+v, want %+v", c.name, c.got, c.want)
+		}
+	}
+	var logins float64
+	for _, p := range out.LoginTrend14d {
+		logins += p.Value
+	}
+	if logins != 3 {
+		t.Errorf("login_trend_14d adds up to %v, want 3", logins)
+	}
+	if n := len(out.UserTrend14d); n != 14 || out.UserTrend14d[n-1].Value != 4 {
+		t.Errorf("user_trend_14d = %+v, want 14 days ending at 4", out.UserTrend14d)
+	}
+	var wau int64
+	for _, w := range out.WeeklyActivity8w {
+		wau += w.WAU
+	}
+	if n := len(out.WeeklyActivity8w); n != 8 || wau != 5 || out.WeeklyActivity8w[n-1] != (WeeklyActivityPoint{Week: out.WeeklyActivity8w[n-1].Week, WAU: 3, DAU: 3}) {
+		t.Errorf("weekly_activity_8w = %+v, want 8 weeks of 5 in all, 3 this week", out.WeeklyActivity8w)
+	}
+
+	other, err := NewReader(pool).Overview(ctx, home)
+	if err != nil {
+		t.Fatalf("overview of the guest's own organisation: %v", err)
+	}
+	if other.KPIs.MAU.Value != 1 || other.KPIs.LoginsToday.Value != 1 {
+		t.Errorf("the guest's own organisation counts mau %v and logins %v, want its one sign-in", other.KPIs.MAU.Value, other.KPIs.LoginsToday.Value)
+	}
+}
 
 // recordEvent writes an audit event for tenant as the authentication service
 // does.

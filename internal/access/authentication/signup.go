@@ -8,6 +8,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/dbgen"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
@@ -105,6 +106,9 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 		TokenHash: refreshHash,
 		ExpiresAt: s.refreshExpiry(bounds.ExpiresAt),
 	}); err != nil {
+		return nil, nil, nil, err
+	}
+	if err := audit.Record(ctx, tx, signInEvent(u.ID, uuid.Nil, "session", sessionID, in.IP, in.UserAgent, firstFactorPassword, nil)); err != nil {
 		return nil, nil, nil, err
 	}
 

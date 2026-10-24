@@ -13,11 +13,12 @@ import (
 
 const countDAUWindows = `-- name: CountDAUWindows :one
 SELECT
-    COUNT(DISTINCT user_id) FILTER (WHERE created_at >= date_trunc('day', NOW())) AS dau_now,
-    COUNT(DISTINCT user_id) FILTER (WHERE created_at >= date_trunc('day', NOW() - INTERVAL '1 day')
-                                    AND created_at <  date_trunc('day', NOW())) AS dau_prev
-FROM auth.sessions
+    COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at >= date_trunc('day', NOW())) AS dau_now,
+    COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at <  date_trunc('day', NOW())) AS dau_prev
+FROM audit.events
 WHERE tenant_id = $1
+  AND action = 'auth.login_succeeded'
+  AND created_at >= date_trunc('day', NOW() - INTERVAL '1 day')
 `
 
 type CountDAUWindowsRow struct {
@@ -25,6 +26,7 @@ type CountDAUWindowsRow struct {
 	DauPrev int64
 }
 
+// People who signed in to the organisation today, and yesterday.
 func (q *Queries) CountDAUWindows(ctx context.Context, tid pgtype.UUID) (CountDAUWindowsRow, error) {
 	row := q.db.QueryRow(ctx, countDAUWindows, tid)
 	var i CountDAUWindowsRow
@@ -56,10 +58,12 @@ func (q *Queries) CountFailedLogins24hWindows(ctx context.Context, tid pgtype.UU
 const countLoginsTodayWindows = `-- name: CountLoginsTodayWindows :one
 SELECT
     COUNT(*) FILTER (WHERE created_at >= date_trunc('day', NOW())) AS logins_today,
-    COUNT(*) FILTER (WHERE created_at >= date_trunc('day', NOW() - INTERVAL '1 day')
-                      AND created_at <  date_trunc('day', NOW())) AS logins_yday
-FROM auth.sessions
+    COUNT(*) FILTER (WHERE created_at <  date_trunc('day', NOW())) AS logins_yday
+FROM audit.events
 WHERE tenant_id = $1
+  AND action = 'auth.login_succeeded'
+  AND COALESCE(metadata->>'method', '') NOT IN ('tenant_switch', 'tenant_create', 'invite_accept')
+  AND created_at >= date_trunc('day', NOW() - INTERVAL '1 day')
 `
 
 type CountLoginsTodayWindowsRow struct {
@@ -67,6 +71,7 @@ type CountLoginsTodayWindowsRow struct {
 	LoginsYday  int64
 }
 
+// Sign-ins to the organisation today, and yesterday.
 func (q *Queries) CountLoginsTodayWindows(ctx context.Context, tid pgtype.UUID) (CountLoginsTodayWindowsRow, error) {
 	row := q.db.QueryRow(ctx, countLoginsTodayWindows, tid)
 	var i CountLoginsTodayWindowsRow
@@ -77,11 +82,12 @@ func (q *Queries) CountLoginsTodayWindows(ctx context.Context, tid pgtype.UUID) 
 const countMAUWindows = `-- name: CountMAUWindows :one
 
 SELECT
-    COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days') AS mau_now,
-    COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '60 days'
-                                       AND created_at <  NOW() - INTERVAL '30 days') AS mau_prev
-FROM auth.sessions
+    COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days') AS mau_now,
+    COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at <  NOW() - INTERVAL '30 days') AS mau_prev
+FROM audit.events
 WHERE tenant_id = $1
+  AND action = 'auth.login_succeeded'
+  AND created_at >= NOW() - INTERVAL '60 days'
 `
 
 type CountMAUWindowsRow struct {
@@ -103,6 +109,15 @@ type CountMAUWindowsRow struct {
 //     mis-inferred as int32 while the code scans int64 (narrowing/overflow risk).
 //   - loginMethodsMix(): COALESCE(metadata->>'method', ...) (jsonb ->>) is
 //     emitted as interface{} rather than string.
+//
+// Sign-ins and active users come from the sign-in log, the auth.login_succeeded
+// audit events, not from auth.sessions: ended sessions are purged after a
+// week, and the log is kept. Counts of people take every such event in the
+// organisation, switching to it, creating it and accepting an invitation to it
+// included; counts of sign-ins leave those three out, as they record no factor
+// of their own.
+// People who signed in to the organisation in the last 30 days, and in the 30
+// before.
 func (q *Queries) CountMAUWindows(ctx context.Context, tid pgtype.UUID) (CountMAUWindowsRow, error) {
 	row := q.db.QueryRow(ctx, countMAUWindows, tid)
 	var i CountMAUWindowsRow
@@ -140,12 +155,13 @@ func (q *Queries) CountMFATotpUsers(ctx context.Context, tid pgtype.UUID) (int64
 
 const countStickinessPriorWeek = `-- name: CountStickinessPriorWeek :one
 SELECT
-    COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '8 days'
-                                      AND created_at <  NOW() - INTERVAL '7 days') AS dau_prev_week,
-    COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '37 days'
-                                      AND created_at <  NOW() - INTERVAL '7 days') AS mau_prev_week
-FROM auth.sessions
+    COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '8 days') AS dau_prev_week,
+    COUNT(DISTINCT actor_user_id) AS mau_prev_week
+FROM audit.events
 WHERE tenant_id = $1
+  AND action = 'auth.login_succeeded'
+  AND created_at >= NOW() - INTERVAL '37 days'
+  AND created_at <  NOW() - INTERVAL '7 days'
 `
 
 type CountStickinessPriorWeekRow struct {
@@ -153,6 +169,7 @@ type CountStickinessPriorWeekRow struct {
 	MauPrevWeek int64
 }
 
+// DAU and MAU as they stood a week ago.
 func (q *Queries) CountStickinessPriorWeek(ctx context.Context, tid pgtype.UUID) (CountStickinessPriorWeekRow, error) {
 	row := q.db.QueryRow(ctx, countStickinessPriorWeek, tid)
 	var i CountStickinessPriorWeekRow
@@ -314,12 +331,18 @@ WITH weeks AS (
         '1 week'::interval
     ) AS d
 ),
+sign_ins AS (
+    SELECT created_at, actor_user_id AS user_id
+    FROM audit.events
+    WHERE tenant_id = $1
+      AND action = 'auth.login_succeeded'
+      AND created_at >= date_trunc('week', NOW() - INTERVAL '7 weeks')
+),
 w AS (
     SELECT
         date_trunc('week', created_at) AS week_start,
         COUNT(DISTINCT user_id) AS wau
-    FROM auth.sessions
-    WHERE sessions.tenant_id = $1 AND created_at >= date_trunc('week', NOW() - INTERVAL '7 weeks')
+    FROM sign_ins
     GROUP BY 1
 ),
 d AS (
@@ -330,8 +353,7 @@ d AS (
         SELECT
             date_trunc('day', created_at) AS day,
             COUNT(DISTINCT user_id) AS daily_users
-        FROM auth.sessions
-        WHERE tenant_id = $1 AND created_at >= date_trunc('week', NOW() - INTERVAL '7 weeks')
+        FROM sign_ins
         GROUP BY 1
     ) daily, LATERAL (SELECT date_trunc('week', daily.day) AS dw) lat
     GROUP BY 1
@@ -352,6 +374,8 @@ type GetWeeklyActivity8wRow struct {
 	Dau  int64
 }
 
+// People who signed in to the organisation per ISO week, and their daily
+// average, for the last 8 weeks.
 func (q *Queries) GetWeeklyActivity8w(ctx context.Context, tid pgtype.UUID) ([]GetWeeklyActivity8wRow, error) {
 	rows, err := q.db.Query(ctx, getWeeklyActivity8w, tid)
 	if err != nil {

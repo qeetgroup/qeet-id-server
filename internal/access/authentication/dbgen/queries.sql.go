@@ -304,10 +304,11 @@ func (q *Queries) GetSignInLocks(ctx context.Context, arg GetSignInLocksParams) 
 	return i, err
 }
 
-const insertLoginSession = `-- name: InsertLoginSession :exec
+const insertLoginSession = `-- name: InsertLoginSession :one
 INSERT INTO auth.login_sessions (token_hash, user_id, expires_at, ip, user_agent, second_factor)
 VALUES ($1, $2, $3, NULLIF($4::text, '')::inet, $5,
         NULLIF($6::text, ''))
+RETURNING id
 `
 
 type InsertLoginSessionParams struct {
@@ -321,8 +322,8 @@ type InsertLoginSessionParams struct {
 
 // second_factor: how the sign-in met a second factor (NULL: it didn't); see
 // migration 0149.
-func (q *Queries) InsertLoginSession(ctx context.Context, arg InsertLoginSessionParams) error {
-	_, err := q.db.Exec(ctx, insertLoginSession,
+func (q *Queries) InsertLoginSession(ctx context.Context, arg InsertLoginSessionParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, insertLoginSession,
 		arg.TokenHash,
 		arg.UserID,
 		arg.ExpiresAt,
@@ -330,7 +331,9 @@ func (q *Queries) InsertLoginSession(ctx context.Context, arg InsertLoginSession
 		arg.UserAgent,
 		arg.SecondFactor,
 	)
-	return err
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const insertPasswordCredential = `-- name: InsertPasswordCredential :exec
