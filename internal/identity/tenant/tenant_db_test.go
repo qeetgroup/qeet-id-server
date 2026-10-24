@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -255,9 +256,13 @@ func TestOrganisationPickerListsEveryOrganisation(t *testing.T) {
 	home, other, unrelated := dbtest.Tenant(t), dbtest.Tenant(t), dbtest.Tenant(t)
 	a := dbtest.User(t, home, other)
 	dbtest.User(t, unrelated, unrelated)
-	ids := dbtest.IDs(t, dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, home), h.Mount), http.MethodGet, "/me/organizations", nil))
+	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, home), h.Mount), http.MethodGet, "/me/organizations", nil)
+	ids := dbtest.IDs(t, rec)
 	if len(ids) != 2 || !slices.Contains(ids, home) || !slices.Contains(ids, other) {
 		t.Errorf("picker lists %v; want only %s and %s", ids, home, other)
+	}
+	if strings.Contains(rec.Body.String(), `"roles":null`) {
+		t.Errorf("picker gives a member with no role null roles, want []: %s", rec.Body.String())
 	}
 	listed, _, err := h.Repo.List(dbtest.Context(t), a.ID, 50, "")
 	if err != nil || len(listed) != 2 || !slices.ContainsFunc(listed, func(o Tenant) bool { return o.ID == home }) {
