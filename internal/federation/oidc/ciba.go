@@ -129,7 +129,8 @@ func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecr
 			if bindingMessage != "" {
 				desc = bindingMessage
 			}
-			_ = s.notifier.Notify(ctx, tenantID, userID, "info", title, desc, "/account/sign-in-requests")
+			// No console page lists pending requests, so the notice links nowhere.
+			_ = s.notifier.Notify(ctx, tenantID, userID, "info", title, desc, "")
 		}
 	}
 

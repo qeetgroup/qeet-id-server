@@ -130,6 +130,7 @@ var categoryPrefixes = []struct {
 	{"siem.", CategorySecurity},
 	{"retention.", CategorySecurity},
 	{"compliance.", CategorySecurity},
+	{"gdpr.", CategorySecurity},
 	{"user.", CategoryDirectory},
 	{"group.", CategoryDirectory},
 	{"group_template.", CategoryDirectory},

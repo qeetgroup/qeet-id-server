@@ -222,3 +222,86 @@ func TestHookSecretIsEncryptedOnUse(t *testing.T) {
 		t.Errorf("a hook at a private address: %v, want refused", err)
 	}
 }
+
+// TestEveryEnabledHookRuns checks that each of an organisation's enabled hooks
+// is called, oldest first, with all their claims added and a later hook's
+// winning a clash; that the first to deny ends the sign-in before the rest are
+// called; and that each hook's own fail_open decides when it gives no answer.
+func TestEveryEnabledHookRuns(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := hookService(t)
+	tenant := dbtest.Tenant(t)
+	a := dbtest.User(t, tenant, tenant)
+	first, second := newPolicyServer(t, "first-secret"), newPolicyServer(t, "second-secret")
+	older, err := svc.Create(ctx, tenant, first.URL, "first-secret", true, audit.Actor{Type: "user"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer, err := svc.Create(ctx, tenant, second.URL, "second-secret", true, audit.Actor{Type: "user"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE tenant.auth_hooks SET created_at = NOW() - INTERVAL '1 hour' WHERE id = $1 AND tenant_id = $2`, older.ID, tenant); err != nil {
+		t.Fatal(err)
+	}
+	calls := func() (int, int) {
+		first.mu.Lock()
+		defer first.mu.Unlock()
+		second.mu.Lock()
+		defer second.mu.Unlock()
+		return first.calls, second.calls
+	}
+
+	first.answer(http.StatusOK, `{"decision":"allow","claims":{"department":"finance","source":"first"}}`)
+	second.answer(http.StatusOK, `{"decision":"allow","claims":{"region":"in","source":"second"}}`)
+	claims, err := svc.Run(ctx, tenant, a.ID, a.Email)
+	if err != nil || claims["department"] != "finance" || claims["region"] != "in" || claims["source"] != "second" {
+		t.Errorf("both allow: %v, %v; want both hooks' claims, the newer winning a clash", claims, err)
+	}
+	first.mu.Lock()
+	second.mu.Lock()
+	f, s, bad := first.calls, second.calls, first.badSigns+second.badSigns
+	second.mu.Unlock()
+	first.mu.Unlock()
+	if f != 1 || s != 1 || bad != 0 {
+		t.Errorf("calls %d and %d, %d badly signed; want each hook called once, signed with its own secret", f, s, bad)
+	}
+
+	first.answer(http.StatusOK, `{"decision":"deny","message":"Blocked by the first hook."}`)
+	var denied *errs.Error
+	if _, err := svc.Run(ctx, tenant, a.ID, a.Email); !errors.As(err, &denied) || denied.Message != "Blocked by the first hook." {
+		t.Errorf("the older hook denies: %v; want its refusal", err)
+	}
+	if _, s := calls(); s != 1 {
+		t.Errorf("the newer hook was called after the older one denied")
+	}
+
+	first.answer(http.StatusBadGateway, "")
+	if claims, err := svc.Run(ctx, tenant, a.ID, a.Email); err != nil || claims["region"] != "in" {
+		t.Errorf("the older hook fails open: %v, %v; want the newer one to decide", claims, err)
+	}
+	if _, s := calls(); s != 2 || skips(t, tenant) != 1 {
+		t.Errorf("the newer hook called %d times, %d skips; want it called and the skip recorded", s, skips(t, tenant))
+	}
+
+	first.answer(http.StatusOK, `{"decision":"allow"}`)
+	second.answer(http.StatusBadGateway, "")
+	if err := svc.Update(ctx, newer.ID, tenant, true, false, audit.Actor{Type: "user"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Run(ctx, tenant, a.ID, a.Email); !errors.Is(err, errs.ErrAuthHookDenied) {
+		t.Errorf("the newer hook fails closed: %v, want refused", err)
+	}
+
+	if err := svc.Update(ctx, newer.ID, tenant, false, false, audit.Actor{Type: "user"}); err != nil {
+		t.Fatal(err)
+	}
+	f, s = calls()
+	if _, err := svc.Run(ctx, tenant, a.ID, a.Email); err != nil {
+		t.Errorf("only the older hook enabled: %v", err)
+	}
+	if f2, s2 := calls(); f2 != f+1 || s2 != s {
+		t.Errorf("a disabled hook was called, or an enabled one wasn't: %d and %d more calls", f2-f, s2-s)
+	}
+}

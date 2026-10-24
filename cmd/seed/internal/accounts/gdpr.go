@@ -54,7 +54,7 @@ func (s *seeder) erasures(o *world.Org) {
 		var req *gdpr.Request
 		w.At(filed, func() {
 			var err error
-			req, err = svc.Request(w.Ctx, gdpr.CreateInput{TenantID: o.ID, UserID: p.ID, Reason: erasureReason(o), By: &requester.ID})
+			req, err = svc.Request(w.Ctx, gdpr.CreateInput{TenantID: o.ID, UserID: p.ID, Reason: erasureReason(o)}, requester.Actor())
 			w.Check(err, "erasure request for "+p.Email)
 		})
 		// The service set the grace period's end from the clock, which At
@@ -88,9 +88,9 @@ func (s *seeder) erasures(o *world.Org) {
 		var cancelled uuid.UUID
 		w.At(filed, func() {
 			req, err := svc.Request(w.Ctx, gdpr.CreateInput{TenantID: o.ID, UserID: p.ID,
-				Reason: erasureReason(o) + " (filed in error: account on legal hold)", By: &requester.ID})
+				Reason: erasureReason(o) + " (filed in error: account on legal hold)"}, requester.Actor())
 			w.Check(err, "erasure request for "+p.Email)
-			w.Check(svc.Cancel(w.Ctx, o.ID, req.ID), "cancel erasure request for "+p.Email)
+			w.Check(svc.Cancel(w.Ctx, o.ID, req.ID, requester.Actor()), "cancel erasure request for "+p.Email)
 			cancelled = req.ID
 		})
 		w.Exec("grace of erasure request", `UPDATE "user".purge_requests SET grace_until = $3 WHERE id = $1 AND tenant_id = $2`,
@@ -155,7 +155,7 @@ func (s *seeder) exports(o *world.Org) {
 	var req *gdpr.ExportRequest
 	w.At(at, func() {
 		var err error
-		req, err = w.Deps.GDPR.Service.RequestExport(w.Ctx, gdpr.ExportInput{TenantID: o.ID, UserID: subject.ID, By: &requester.ID})
+		req, err = w.Deps.GDPR.Service.RequestExport(w.Ctx, gdpr.ExportInput{TenantID: o.ID, UserID: subject.ID}, requester.Actor())
 		w.Check(err, "export request for "+subject.Email)
 	})
 	if o.Spec.Slug == "qeet" {

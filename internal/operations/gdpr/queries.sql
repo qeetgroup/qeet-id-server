@@ -123,12 +123,13 @@ VALUES (@tenant_id, @user_id, @requested_by, @reason, @grace_until)
 RETURNING id, tenant_id, user_id, requested_by, reason, status,
           grace_until, completed_at, created_at;
 
--- name: CancelPurgeRequest :execrows
--- Cancel a pending purge request (e.g. the subject changed their mind).
--- Returns 0 rows affected when the request is already completed or not found.
+-- name: CancelPurgeRequest :one
+-- Cancel a pending purge request (e.g. the subject changed their mind),
+-- returning its user. No row when it is already completed or not found.
 UPDATE "user".purge_requests
 SET status = 'cancelled'
-WHERE id = @id AND tenant_id = @tenant_id AND status = 'pending';
+WHERE id = @id AND tenant_id = @tenant_id AND status = 'pending'
+RETURNING user_id;
 
 -- name: ListPurgeRequests :many
 -- List all purge requests for a tenant, most recent first.
@@ -195,10 +196,12 @@ SELECT id, tenant_id, user_id, requested_by, status, payload, error,
 FROM "user".export_requests
 WHERE id = @id AND tenant_id = @tenant_id;
 
--- name: FailExportRequest :exec
+-- name: FailExportRequest :execrows
+-- Mark an export request the worker holds the lease on as failed.
 UPDATE "user".export_requests
-SET status = 'failed', error = @error_msg, completed_at = NOW()
-WHERE id = @id;
+SET status = 'failed', error = @error_msg, completed_at = NOW(),
+    lease_owner = NULL, lease_until = NULL
+WHERE id = @id AND tenant_id = @tenant_id AND lease_owner = @lease_owner;
 
 -- name: ReadyExportRequest :exec
 UPDATE "user".export_requests

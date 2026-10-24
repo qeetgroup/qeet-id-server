@@ -240,3 +240,88 @@ func TestComplianceEvidence(t *testing.T) {
 		t.Errorf("another organisation reading the evidence: %d, want 404", rec.Code)
 	}
 }
+
+// recorded checks that one action event was recorded in tenant for request id,
+// by actor (nil: the system) and naming userID.
+func recorded(t *testing.T, tenant, id uuid.UUID, action string, actor *uuid.UUID, userID uuid.UUID) {
+	t.Helper()
+	var n int
+	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `
+		SELECT count(*) FROM audit.events
+		WHERE tenant_id = $1 AND resource_id = $2 AND action = $3
+		  AND actor_user_id IS NOT DISTINCT FROM $4
+		  AND actor_type = CASE WHEN $4::uuid IS NULL THEN 'system' ELSE 'user' END
+		  AND metadata->>'user_id' = $5
+	`, tenant, id, action, actor, userID.String()).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("%d %s events for %s by %v about %s, want 1", n, action, id, actor, userID)
+	}
+}
+
+// TestDataRequestsAreAudited checks that filing and cancelling an erasure and
+// queueing an export are recorded as the administrator's, and the sweep's
+// erasure, built export and failed export as the system's.
+func TestDataRequestsAreAudited(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	tenant := dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	due, cancelled, exported := account(t, tenant), account(t, tenant), account(t, tenant)
+	svc := NewService(pool, time.Nanosecond)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
+
+	file := func(path string, userID uuid.UUID) uuid.UUID {
+		t.Helper()
+		rec := dbtest.Do(t, asAdmin, http.MethodPost, path, map[string]any{"user_id": userID})
+		var out struct {
+			ID uuid.UUID `json:"id"`
+		}
+		dbtest.Decode(t, rec, &out)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("POST %s: %d %s", path, rec.Code, rec.Body.String())
+		}
+		return out.ID
+	}
+	dueReq := file("/gdpr/purge", due.ID)
+	recorded(t, tenant, dueReq, "gdpr.erasure_requested", &admin.ID, due.ID)
+	cancelledReq := file("/gdpr/purge", cancelled.ID)
+	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/gdpr/purge/"+cancelledReq.String(), nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("cancel: %d", rec.Code)
+	}
+	recorded(t, tenant, cancelledReq, "gdpr.erasure_canceled", &admin.ID, cancelled.ID)
+	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/gdpr/purge/"+cancelledReq.String(), nil); rec.Code != http.StatusNotFound {
+		t.Errorf("cancel twice: %d, want 404", rec.Code)
+	}
+	recorded(t, tenant, cancelledReq, "gdpr.erasure_canceled", &admin.ID, cancelled.ID)
+	if err := svc.tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	recorded(t, tenant, dueReq, "gdpr.erasure_completed", nil, due.ID)
+
+	built := file("/gdpr/export", exported.ID)
+	recorded(t, tenant, built, "gdpr.export_requested", &admin.ID, exported.ID)
+	if err := svc.exportSweepTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	recorded(t, tenant, built, "gdpr.export_completed", nil, exported.ID)
+
+	failed := file("/gdpr/export", exported.ID)
+	if err := svc.failExport(ctx, failed, tenant, exported.ID, "not leased"); err != nil {
+		t.Fatal(err)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".export_requests WHERE id = $1 AND status = 'pending'`, failed); n != 1 {
+		t.Error("an export request another worker holds was marked failed")
+	}
+	if _, err := pool.Exec(ctx, `UPDATE "user".export_requests SET lease_owner = $2, lease_until = NOW() + INTERVAL '1 minute' WHERE id = $1`, failed, svc.workerID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.failExport(ctx, failed, tenant, exported.ID, "the build failed"); err != nil {
+		t.Fatal(err)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".export_requests WHERE id = $1 AND status = 'failed' AND lease_owner IS NULL`, failed); n != 1 {
+		t.Error("a leased export request wasn't marked failed")
+	}
+	recorded(t, tenant, failed, "gdpr.export_failed", nil, exported.ID)
+}

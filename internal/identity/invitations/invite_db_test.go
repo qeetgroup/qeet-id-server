@@ -15,6 +15,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 )
@@ -47,7 +48,7 @@ func TestInvitesStayInTheirTenant(t *testing.T) {
 	h, _ := newHandler(t)
 	tenantA, tenantB := dbtest.Tenant(t), dbtest.Tenant(t)
 	adminB := dbtest.User(t, tenantB, tenantB)
-	inviteA, tokenA, err := h.Service.Create(ctx, CreateInput{TenantID: tenantA, Email: dbtest.Unique("invitee") + "@example.test"}, nil)
+	inviteA, tokenA, err := h.Service.Create(ctx, CreateInput{TenantID: tenantA, Email: dbtest.Unique("invitee") + "@example.test"}, audit.Actor{})
 	if err != nil {
 		t.Fatalf("invite in A: %v", err)
 	}
@@ -89,7 +90,7 @@ func TestInviteAccept(t *testing.T) {
 	tenant := dbtest.Tenant(t)
 	role := dbtest.Role(t, tenant)
 	email := dbtest.Unique("invitee") + "@example.test"
-	inv, token, err := h.Service.Create(ctx, CreateInput{TenantID: tenant, Email: email, RoleID: &role}, nil)
+	inv, token, err := h.Service.Create(ctx, CreateInput{TenantID: tenant, Email: email, RoleID: &role}, audit.Actor{})
 	if err != nil {
 		t.Fatalf("invite: %v", err)
 	}
@@ -166,13 +167,13 @@ func TestInviteAcceptWithOneConnection(t *testing.T) {
 	h, _ := newHandler(t)
 	h.Service.SetAcceptMethods(authpolicy.NewService(pool))
 	tenant := dbtest.Tenant(t)
-	_, token, err := h.Service.Create(ctx, CreateInput{TenantID: tenant, Email: dbtest.Unique("invitee") + "@example.test"}, nil)
+	_, token, err := h.Service.Create(ctx, CreateInput{TenantID: tenant, Email: dbtest.Unique("invitee") + "@example.test"}, audit.Actor{})
 	if err != nil {
 		t.Fatalf("invite: %v", err)
 	}
 
 	dbtest.LeaveOneConnection(t)
-	if res, err := h.Service.Accept(ctx, AcceptInput{Token: token, Password: testPassword}); err != nil || res.TenantID != tenant {
+	if res, err := h.Service.Accept(ctx, AcceptInput{Token: token, Password: testPassword}, audit.Actor{}); err != nil || res.TenantID != tenant {
 		t.Fatalf("accept: %+v, %v; want an account in %s", res, err, tenant)
 	}
 }
@@ -198,7 +199,7 @@ func TestInviteLookupOffersWhatAcceptAllows(t *testing.T) {
 				tenant, tc.password, tc.passkey); err != nil {
 				t.Fatalf("policy: %v", err)
 			}
-			_, token, err := h.Service.Create(ctx, CreateInput{TenantID: tenant, Email: dbtest.Unique("invitee") + "@example.test"}, nil)
+			_, token, err := h.Service.Create(ctx, CreateInput{TenantID: tenant, Email: dbtest.Unique("invitee") + "@example.test"}, audit.Actor{})
 			if err != nil {
 				t.Fatalf("invite: %v", err)
 			}
@@ -209,7 +210,7 @@ func TestInviteLookupOffersWhatAcceptAllows(t *testing.T) {
 			if preview.Methods.Password != tc.password || preview.Methods.Passkey != tc.passkey {
 				t.Errorf("lookup offers %+v, want password %v and passkey %v", preview.Methods, tc.password, tc.passkey)
 			}
-			_, err = h.Service.Accept(ctx, AcceptInput{Token: token, Password: testPassword})
+			_, err = h.Service.Accept(ctx, AcceptInput{Token: token, Password: testPassword}, audit.Actor{})
 			if accepted := err == nil; accepted != preview.Methods.Password {
 				t.Errorf("accept with a password: %v, but lookup offered a password: %v", err, preview.Methods.Password)
 			}
@@ -229,7 +230,7 @@ func TestAcceptAnotherOrganisationsInvitation(t *testing.T) {
 		t.Fatal(err)
 	}
 	role := dbtest.Role(t, other)
-	inv, _, err := h.Service.Create(ctx, CreateInput{TenantID: other, Email: a.Email, RoleID: &role}, nil)
+	inv, _, err := h.Service.Create(ctx, CreateInput{TenantID: other, Email: a.Email, RoleID: &role}, audit.Actor{})
 	if err != nil {
 		t.Fatalf("invite: %v", err)
 	}
@@ -242,5 +243,168 @@ func TestAcceptAnotherOrganisationsInvitation(t *testing.T) {
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2 AND role_id = $3`, a.ID, other, role); n != 1 {
 		t.Error("accepting didn't give the invitation's role in its organisation")
+	}
+}
+
+// inviteEvent is one audit event of an invitation: who acted, and its metadata.
+type inviteEvent struct {
+	Actor    *uuid.UUID
+	Metadata map[string]any
+}
+
+// inviteEvents returns the action events recorded in tenant for invitation id.
+func inviteEvents(t *testing.T, tenant, id uuid.UUID, action string) []inviteEvent {
+	t.Helper()
+	rows, err := dbtest.Pool(t).Query(dbtest.Context(t), `
+		SELECT actor_user_id, metadata FROM audit.events
+		WHERE tenant_id = $1 AND action = $2 AND resource_type = 'invite' AND resource_id = $3
+	`, tenant, action, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []inviteEvent
+	for rows.Next() {
+		var e inviteEvent
+		var raw []byte
+		if err := rows.Scan(&e.Actor, &raw); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(raw, &e.Metadata); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// wantInviteEvent checks that one action event was recorded for invitation id,
+// by actor and naming email, and returns its metadata.
+func wantInviteEvent(t *testing.T, tenant, id uuid.UUID, action string, actor uuid.UUID, email string) map[string]any {
+	t.Helper()
+	got := inviteEvents(t, tenant, id, action)
+	if len(got) != 1 || got[0].Actor == nil || *got[0].Actor != actor || got[0].Metadata["email"] != email {
+		t.Errorf("%s events of %s: %+v; want one by %s naming %s", action, id, got, actor, email)
+		return map[string]any{}
+	}
+	return got[0].Metadata
+}
+
+// TestInvitationsAreAudited checks that creating, resending, revoking,
+// accepting (with a password, a passkey, the emailed link while signed in, or
+// from the inbox) and declining an invitation are each recorded with the
+// change, by the administrator or the invitee, and never with the token.
+func TestInvitationsAreAudited(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	h, _ := newHandler(t)
+	tenant := dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	byAdmin := audit.Actor{UserID: &admin.ID, Type: "user"}
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.MountAuthed)
+	var tokens []string
+	invite := func(email string, roleID *uuid.UUID) (*Invite, string) {
+		t.Helper()
+		inv, token, err := h.Service.Create(ctx, CreateInput{TenantID: tenant, Email: email, RoleID: roleID}, byAdmin)
+		if err != nil {
+			t.Fatalf("invite %s: %v", email, err)
+		}
+		tokens = append(tokens, token)
+		return inv, token
+	}
+
+	email := dbtest.Unique("invitee") + "@example.test"
+	rec := dbtest.Do(t, asAdmin, http.MethodPost, "/invites", map[string]any{"email": email})
+	var created struct {
+		Invite Invite `json:"invite"`
+	}
+	dbtest.Decode(t, rec, &created)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	id := created.Invite.ID
+	wantInviteEvent(t, tenant, id, "invite.created", admin.ID, email)
+	if rec := dbtest.Do(t, asAdmin, http.MethodPost, "/invites/"+id.String()+"/resend", nil); rec.Code != http.StatusOK {
+		t.Fatalf("resend: %d %s", rec.Code, rec.Body.String())
+	}
+	wantInviteEvent(t, tenant, id, "invite.resent", admin.ID, email)
+	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/invites/"+id.String(), nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("revoke: %d %s", rec.Code, rec.Body.String())
+	}
+	wantInviteEvent(t, tenant, id, "invite.revoked", admin.ID, email)
+	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/invites/"+id.String(), nil); rec.Code != http.StatusNotFound || len(inviteEvents(t, tenant, id, "invite.revoked")) != 1 {
+		t.Errorf("revoke twice: %d; want 404 and nothing more recorded", rec.Code)
+	}
+
+	role := dbtest.Role(t, tenant)
+	email = dbtest.Unique("invitee") + "@example.test"
+	inv, token := invite(email, &role)
+	res, err := h.Service.Accept(ctx, AcceptInput{Token: token, Password: testPassword}, audit.Actor{Type: "system", IP: "203.0.113.7"})
+	if err != nil {
+		t.Fatalf("accept with a password: %v", err)
+	}
+	if meta := wantInviteEvent(t, tenant, inv.ID, "invite.accepted", res.UserID, email); meta["method"] != "password" || meta["role_id"] != role.String() {
+		t.Errorf("accepted with a password: %v; want the method and the role", meta)
+	}
+	if n := dbtest.Count(t, `
+		SELECT count(*) FROM audit.events
+		WHERE resource_id = $1 AND action = 'invite.accepted' AND actor_type = 'user' AND host(ip) = '203.0.113.7'
+	`, inv.ID); n != 1 {
+		t.Error("the acceptance isn't recorded as the invitee's, from the request's address")
+	}
+
+	email = dbtest.Unique("invitee") + "@example.test"
+	inv, _ = invite(email, nil)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	var newUser uuid.UUID
+	if err := tx.QueryRow(ctx, `INSERT INTO "user".users (tenant_id, email) VALUES ($1, $2) RETURNING id`, tenant, email).Scan(&newUser); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Service.AcceptForNewAccountTx(ctx, tx, inv.ID, tenant, newUser, email, "203.0.113.8", "test-agent"); err != nil {
+		t.Fatalf("accept with a passkey: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if meta := wantInviteEvent(t, tenant, inv.ID, "invite.accepted", newUser, email); meta["method"] != "passkey" {
+		t.Errorf("accepted with a passkey: %v", meta)
+	}
+
+	home := dbtest.Tenant(t)
+	member := dbtest.User(t, home, home)
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, member.ID); err != nil {
+		t.Fatal(err)
+	}
+	asMember := dbtest.Serve(dbtest.Principal(member.ID, home), h.MountAuthed)
+	byLink, linkToken := invite(member.Email, nil)
+	byInbox, _ := invite(member.Email, nil)
+	declined, _ := invite(member.Email, nil)
+	if rec := dbtest.Do(t, asMember, http.MethodPost, "/me/invites/accept", map[string]string{"token": linkToken}); rec.Code != http.StatusOK {
+		t.Fatalf("accept by link: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := dbtest.Do(t, asMember, http.MethodPost, "/me/invites/"+byInbox.ID.String()+"/accept", nil); rec.Code != http.StatusOK {
+		t.Fatalf("accept from the inbox: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := dbtest.Do(t, asMember, http.MethodPost, "/me/invites/"+declined.ID.String()+"/decline", nil); rec.Code != http.StatusOK {
+		t.Fatalf("decline: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, accepted := range []uuid.UUID{byLink.ID, byInbox.ID} {
+		if meta := wantInviteEvent(t, tenant, accepted, "invite.accepted", member.ID, member.Email); meta["method"] != "existing_account" {
+			t.Errorf("accepted as a signed-in account: %v", meta)
+		}
+	}
+	wantInviteEvent(t, tenant, declined.ID, "invite.declined", member.ID, member.Email)
+
+	for _, token := range tokens {
+		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND strpos(metadata::text, $2) > 0`, tenant, token); n != 0 {
+			t.Errorf("an invitation's token is in %d audit events", n)
+		}
 	}
 }

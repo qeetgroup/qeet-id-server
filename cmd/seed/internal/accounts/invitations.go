@@ -98,9 +98,9 @@ func (s *seeder) invitations(o *world.Org) {
 		role := o.Roles[p.Role]
 		var id uuid.UUID
 		w.At(sent, func() {
-			iv, token, err := svc.Create(ctx, invite.CreateInput{TenantID: o.ID, Email: p.Email, RoleID: &role}, &inviter.ID)
+			iv, token, err := svc.Create(ctx, invite.CreateInput{TenantID: o.ID, Email: p.Email, RoleID: &role}, inviter.Actor())
 			w.Check(err, "invite "+p.Email)
-			_, err = svc.AcceptAuthenticated(ctx, p.ID, token)
+			_, err = svc.AcceptAuthenticated(ctx, p.ID, token, p.Actor())
 			w.Check(err, "accept invitation as "+p.Email)
 			id = iv.ID
 		})
@@ -138,14 +138,14 @@ func (s *seeder) invitations(o *world.Org) {
 		var token string
 		var id uuid.UUID
 		w.At(sent, func() {
-			iv, raw, err := svc.Create(ctx, invite.CreateInput{TenantID: o.ID, Email: email, RoleID: &role}, &inviter.ID)
+			iv, raw, err := svc.Create(ctx, invite.CreateInput{TenantID: o.ID, Email: email, RoleID: &role}, inviter.Actor())
 			w.Check(err, "invite "+email+" to "+o.Spec.Slug)
 			id, token = iv.ID, raw
 			switch plan.state {
 			case "revoked":
-				w.Check(svc.Revoke(ctx, o.ID, iv.ID), "revoke invitation "+email)
+				w.Check(svc.Revoke(ctx, o.ID, iv.ID, inviter.Actor()), "revoke invitation "+email)
 			case "declined":
-				w.Check(svc.DeclineForUser(ctx, invitee.ID, iv.ID), "decline invitation as "+email)
+				w.Check(svc.DeclineForUser(ctx, invitee.ID, iv.ID, invitee.Actor()), "decline invitation as "+email)
 			}
 		})
 		// The service set the expiry from the clock, which At doesn't move.

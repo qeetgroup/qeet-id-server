@@ -20,8 +20,8 @@ import (
 
 // prompt is one out-of-band notice a Notifier was asked to deliver.
 type prompt struct {
-	tenantID, userID   uuid.UUID
-	title, description string
+	tenantID, userID         uuid.UUID
+	title, description, href string
 }
 
 // promptBox is a Notifier that keeps the prompts it is asked to deliver.
@@ -31,10 +31,10 @@ type promptBox struct {
 }
 
 // Notify records the prompt.
-func (b *promptBox) Notify(_ context.Context, tenantID, userID uuid.UUID, _, title, description, _ string) error {
+func (b *promptBox) Notify(_ context.Context, tenantID, userID uuid.UUID, _, title, description, href string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.sent = append(b.sent, prompt{tenantID: tenantID, userID: userID, title: title, description: description})
+	b.sent = append(b.sent, prompt{tenantID: tenantID, userID: userID, title: title, description: description, href: href})
 	return nil
 }
 
@@ -128,8 +128,8 @@ func TestBackchannelFlow(t *testing.T) {
 	}
 
 	authReqID := begin()
-	if len(prompts.sent) != 1 || prompts.sent[0].userID != person.ID || prompts.sent[0].tenantID != tenant || prompts.sent[0].description != "Till 4" {
-		t.Errorf("prompts %+v, want one to the person in the organisation with the binding message", prompts.sent)
+	if len(prompts.sent) != 1 || prompts.sent[0].userID != person.ID || prompts.sent[0].tenantID != tenant || prompts.sent[0].description != "Till 4" || prompts.sent[0].href != "" {
+		t.Errorf("prompts %+v, want one to the person in the organisation with the binding message, linking to no page", prompts.sent)
 	}
 	if got := pollError(authReqID); got != "authorization_pending" {
 		t.Errorf("poll before approval: %s, want authorization_pending", got)
