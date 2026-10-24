@@ -1,6 +1,6 @@
 // Package domainverify lets a tenant prove it owns an email domain with a DNS
-// TXT record, checked only when an admin asks, and reports the DNS state of its
-// custom login hostname.
+// TXT record, checked only when an admin asks, and reports the provisioning
+// state of its custom login hostname.
 package domainverify
 
 import (
@@ -24,25 +24,30 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 // dnsHostPrefix is the subdomain the TXT record lives under, so verification
 // never clobbers a tenant's apex TXT records (SPF, etc.).
 const dnsHostPrefix = "_qeet-verification."
 
-// Service manages the domains.
+// Service manages the domains. web checks a custom login hostname over HTTPS.
 type Service struct {
 	pool     *pgxpool.Pool
 	q        *dbgen.Queries
 	resolver interface {
 		LookupTXT(ctx context.Context, name string) ([]string, error)
 	}
+	web  *http.Client
 	gate PlanGate
 }
 
-// NewService returns the domain verification service.
-func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), resolver: net.DefaultResolver}
+// NewService returns the domain verification service. Its checks of a custom
+// login hostname reach only destinations the given policy (by default public
+// addresses over https) allows.
+func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
+	return &Service{pool: pool, q: dbgen.New(pool), resolver: net.DefaultResolver,
+		web: loginProbeClient(egress.PublicPolicy(policies...))}
 }
 
 // PlanGate reports whether a boolean plan feature is in the tenant's plan.

@@ -397,7 +397,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		invites: inviteService, oidc: oidcService, apikeys: apikeyService, rbacRepo: rbacRepo,
 	})
 	// custom domain — extracted from its inline handler so the gate can be wired.
-	domainVerifyService := domainverify.NewService(pool)
+	domainVerifyService := domainverify.NewService(pool, outboundPolicy)
 	domainVerifyService.SetPlanGate(entitlementSvc)
 
 	limits := newRateLimits(rootCtx, cfg, pool)

@@ -32,8 +32,9 @@ type InvitationAcceptor interface {
 	// AcceptForNewAccountTx accepts invitation id for userID, the account
 	// just created in tx for email in tenantID: the invitation, read under
 	// lock, must still be pending, unexpired and for that email and
-	// organisation. It grants the invited role and marks it accepted.
-	AcceptForNewAccountTx(ctx context.Context, tx pgx.Tx, id, tenantID, userID uuid.UUID, email string) error
+	// organisation. It grants the invited role and records the acceptance,
+	// made from ip with user agent ua.
+	AcceptForNewAccountTx(ctx context.Context, tx pgx.Tx, id, tenantID, userID uuid.UUID, email, ip, ua string) error
 }
 
 // SetInvitations wires invitation acceptance by passkey (nil turns it off).
@@ -82,7 +83,7 @@ func (s *Service) FinishInviteSignup(ctx context.Context, sessionID uuid.UUID, c
 		return nil, err
 	}
 	userID, err := s.createUserFromSignup(ctx, sess, cred, name, func(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
-		return s.invitations.AcceptForNewAccountTx(ctx, tx, sess.inviteID, sess.tenantID, userID, sess.email)
+		return s.invitations.AcceptForNewAccountTx(ctx, tx, sess.inviteID, sess.tenantID, userID, sess.email, ip, ua)
 	})
 	if errors.Is(err, errs.ErrAuthEmailExists) {
 		// An account took the address after the ceremony began.

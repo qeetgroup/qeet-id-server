@@ -94,7 +94,6 @@ internal/developer/agents/queries.sql#GetAgentForToken  secret-lookup: the agent
 internal/developer/agents/queries.sql#GetAgentStatusByID  session-scoped: agent named by the verified access token
 internal/developer/api-keys/queries.sql#TouchAPIKeyLastUsed  secret-lookup: the key just verified by its secret
 internal/developer/api-keys/queries.sql#VerifyAPIKey  secret-lookup: key found by prefix and checked against its secret hash
-internal/developer/auth-hooks/authhook.go#Service.Run  parent-scoped: hook ID from the tenant-scoped read above
 internal/developer/credentials/tokenvault/queries.sql#DeleteConnectState  secret-lookup: single-use random OAuth state
 internal/developer/credentials/vc/queries.sql#GetCredentialRevocation  parent-scoped: ID of a credential whose signature was just verified
 internal/developer/principal/queries.sql#GetServicePrincipalForAuth  secret-lookup: the client secret is verified against this row
@@ -206,7 +205,6 @@ internal/operations/gdpr/gdpr.go#Service.exportSweepTick  background-sweep: expo
 internal/operations/gdpr/gdpr.go#Service.purgeOne  background-sweep: purge worker holding the request lease
 internal/operations/gdpr/gdpr.go#Service.tick  background-sweep: purge worker claiming due requests
 internal/operations/gdpr/queries.sql#CompletePurgeRequest  pending-review: unused query; delete it or add a tenant condition
-internal/operations/gdpr/queries.sql#FailExportRequest  pending-review: unused query; delete it or add a tenant condition
 internal/operations/gdpr/queries.sql#PurgeUserPII  session-scoped: the caller erasing their own account
 internal/operations/gdpr/queries.sql#ReadyExportRequest  pending-review: unused query; delete it or add a tenant condition
 internal/operations/gdpr/queries.sql#RevokeUserSessions  pending-review: unused query; delete it or add a tenant condition

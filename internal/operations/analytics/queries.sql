@@ -12,22 +12,35 @@
 --     mis-inferred as int32 while the code scans int64 (narrowing/overflow risk).
 --   - loginMethodsMix(): COALESCE(metadata->>'method', ...) (jsonb ->>) is
 --     emitted as interface{} rather than string.
+--
+-- Sign-ins and active users come from the sign-in log, the auth.login_succeeded
+-- audit events, not from auth.sessions: ended sessions are purged after a
+-- week, and the log is kept. Counts of people take every such event in the
+-- organisation, switching to it, creating it and accepting an invitation to it
+-- included; counts of sign-ins leave those three out, as they record no factor
+-- of their own.
 
 -- name: CountMAUWindows :one
+-- People who signed in to the organisation in the last 30 days, and in the 30
+-- before.
 SELECT
-    COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days') AS mau_now,
-    COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '60 days'
-                                       AND created_at <  NOW() - INTERVAL '30 days') AS mau_prev
-FROM auth.sessions
-WHERE tenant_id = @tid;
+    COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days') AS mau_now,
+    COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at <  NOW() - INTERVAL '30 days') AS mau_prev
+FROM audit.events
+WHERE tenant_id = @tid
+  AND action = 'auth.login_succeeded'
+  AND created_at >= NOW() - INTERVAL '60 days';
 
 -- name: CountLoginsTodayWindows :one
+-- Sign-ins to the organisation today, and yesterday.
 SELECT
     COUNT(*) FILTER (WHERE created_at >= date_trunc('day', NOW())) AS logins_today,
-    COUNT(*) FILTER (WHERE created_at >= date_trunc('day', NOW() - INTERVAL '1 day')
-                      AND created_at <  date_trunc('day', NOW())) AS logins_yday
-FROM auth.sessions
-WHERE tenant_id = @tid;
+    COUNT(*) FILTER (WHERE created_at <  date_trunc('day', NOW())) AS logins_yday
+FROM audit.events
+WHERE tenant_id = @tid
+  AND action = 'auth.login_succeeded'
+  AND COALESCE(metadata->>'method', '') NOT IN ('tenant_switch', 'tenant_create', 'invite_accept')
+  AND created_at >= date_trunc('day', NOW() - INTERVAL '1 day');
 
 -- name: CountFailedLogins24hWindows :one
 SELECT
@@ -108,12 +121,14 @@ FROM hours LEFT JOIN grouped ON grouped.hour = hours.hour
 ORDER BY hours.hour ASC;
 
 -- name: CountDAUWindows :one
+-- People who signed in to the organisation today, and yesterday.
 SELECT
-    COUNT(DISTINCT user_id) FILTER (WHERE created_at >= date_trunc('day', NOW())) AS dau_now,
-    COUNT(DISTINCT user_id) FILTER (WHERE created_at >= date_trunc('day', NOW() - INTERVAL '1 day')
-                                    AND created_at <  date_trunc('day', NOW())) AS dau_prev
-FROM auth.sessions
-WHERE tenant_id = @tid;
+    COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at >= date_trunc('day', NOW())) AS dau_now,
+    COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at <  date_trunc('day', NOW())) AS dau_prev
+FROM audit.events
+WHERE tenant_id = @tid
+  AND action = 'auth.login_succeeded'
+  AND created_at >= date_trunc('day', NOW() - INTERVAL '1 day');
 
 -- name: CountTotalUsersWindows :one
 SELECT
@@ -123,15 +138,19 @@ FROM "user".users
 WHERE tenant_id = @tid;
 
 -- name: CountStickinessPriorWeek :one
+-- DAU and MAU as they stood a week ago.
 SELECT
-    COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '8 days'
-                                      AND created_at <  NOW() - INTERVAL '7 days') AS dau_prev_week,
-    COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '37 days'
-                                      AND created_at <  NOW() - INTERVAL '7 days') AS mau_prev_week
-FROM auth.sessions
-WHERE tenant_id = @tid;
+    COUNT(DISTINCT actor_user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '8 days') AS dau_prev_week,
+    COUNT(DISTINCT actor_user_id) AS mau_prev_week
+FROM audit.events
+WHERE tenant_id = @tid
+  AND action = 'auth.login_succeeded'
+  AND created_at >= NOW() - INTERVAL '37 days'
+  AND created_at <  NOW() - INTERVAL '7 days';
 
 -- name: GetWeeklyActivity8w :many
+-- People who signed in to the organisation per ISO week, and their daily
+-- average, for the last 8 weeks.
 WITH weeks AS (
     SELECT date_trunc('week', d) AS week_start
     FROM generate_series(
@@ -140,12 +159,18 @@ WITH weeks AS (
         '1 week'::interval
     ) AS d
 ),
+sign_ins AS (
+    SELECT created_at, actor_user_id AS user_id
+    FROM audit.events
+    WHERE tenant_id = @tid
+      AND action = 'auth.login_succeeded'
+      AND created_at >= date_trunc('week', NOW() - INTERVAL '7 weeks')
+),
 w AS (
     SELECT
         date_trunc('week', created_at) AS week_start,
         COUNT(DISTINCT user_id) AS wau
-    FROM auth.sessions
-    WHERE sessions.tenant_id = @tid AND created_at >= date_trunc('week', NOW() - INTERVAL '7 weeks')
+    FROM sign_ins
     GROUP BY 1
 ),
 d AS (
@@ -156,8 +181,7 @@ d AS (
         SELECT
             date_trunc('day', created_at) AS day,
             COUNT(DISTINCT user_id) AS daily_users
-        FROM auth.sessions
-        WHERE tenant_id = @tid AND created_at >= date_trunc('week', NOW() - INTERVAL '7 weeks')
+        FROM sign_ins
         GROUP BY 1
     ) daily, LATERAL (SELECT date_trunc('week', daily.day) AS dw) lat
     GROUP BY 1

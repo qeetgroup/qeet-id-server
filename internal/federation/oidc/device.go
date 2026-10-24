@@ -226,7 +226,7 @@ func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode s
 
 	// The approving user must be an active member of the client's active
 	// tenant, as at a browser sign-in to the application.
-	live, err := s.activeTenantPrincipal(ctx, tx, userID, row.TenantID)
+	live, err := s.activeTenantPrincipal(ctx, q, userID, row.TenantID)
 	if err != nil {
 		return err
 	}

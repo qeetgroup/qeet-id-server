@@ -188,7 +188,7 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 		return nil, errs.ErrOIDCSubjectTokenInvalid
 	}
 	// A suspended or deleted person, or a closed organisation, gets nothing.
-	live, err := s.activeTenantPrincipal(ctx, s.pool, userID, claims.TenantID)
+	live, err := s.activeTenantPrincipal(ctx, s.q, userID, claims.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -511,7 +511,7 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	}
 	// Nor does it renew once the person has left the application's
 	// organisation or the organisation has been suspended.
-	if live, err := s.activeTenantPrincipal(ctx, tx, rt.UserID, rt.TenantID); err != nil {
+	if live, err := s.activeTenantPrincipal(ctx, q, rt.UserID, rt.TenantID); err != nil {
 		return nil, err
 	} else if !live {
 		return nil, errs.ErrOIDCUserTenantMismatch
@@ -753,22 +753,8 @@ func (s *Service) tokenSubjectLive(ctx context.Context, claims *tokens.Claims) (
 		return false, err
 	}
 	if claims.UserID != uuid.Nil {
-		var member bool
-		if err := s.pool.QueryRow(ctx, `
-			SELECT EXISTS (
-				SELECT 1
-				FROM "user".users u
-				JOIN rbac.user_roles ur ON ur.user_id = u.id AND ur.tenant_id = $2
-				JOIN tenant.tenants t ON t.id = ur.tenant_id
-				WHERE u.id = $1
-				  AND u.status = 'active' AND u.deleted_at IS NULL
-				  AND t.status = 'active' AND t.deleted_at IS NULL
-			)
-		`, claims.UserID, claims.TenantID).Scan(&member); err != nil {
+		if member, err := s.activeTenantPrincipal(ctx, s.q, claims.UserID, claims.TenantID); err != nil || !member {
 			return false, err
-		}
-		if !member {
-			return false, nil
 		}
 	}
 	if claims.AgentID != "" && s.agentStatus != nil {
@@ -795,24 +781,11 @@ func (s *Service) tokenSessionLive(ctx context.Context, claims *tokens.Claims) (
 	return s.sessionLive(ctx, claims.SessionID, claims.UserID)
 }
 
-// activeTenantPrincipal reports whether userID is an active member (holding a
-// role) of tenantID and the tenant is active, so the user may receive a token for
-// it: the rule a browser sign-in to an application applies. db is the pool, or
-// the caller's transaction.
-func (s *Service) activeTenantPrincipal(ctx context.Context, db dbgen.DBTX, userID, tenantID uuid.UUID) (bool, error) {
-	var live bool
-	err := db.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM "user".users u
-			JOIN rbac.user_roles ur ON ur.user_id = u.id AND ur.tenant_id = $2
-			JOIN tenant.tenants t ON t.id = ur.tenant_id
-			WHERE u.id = $1
-			  AND u.status = 'active' AND u.deleted_at IS NULL
-			  AND t.status = 'active' AND t.deleted_at IS NULL
-		)
-	`, userID, tenantID).Scan(&live)
-	return live, err
+// activeTenantPrincipal reports whether userID is an active member of the
+// active tenantID (its own account, or holding a role there), so may receive a
+// token for it: the rule a browser sign-in to an application applies.
+func (s *Service) activeTenantPrincipal(ctx context.Context, q *dbgen.Queries, userID, tenantID uuid.UUID) (bool, error) {
+	return q.IsActiveTenantMember(ctx, dbgen.IsActiveTenantMemberParams{TenantID: tenantID, UserID: userID})
 }
 
 // resourcesOf is an audience without the platform's own entry: the resources

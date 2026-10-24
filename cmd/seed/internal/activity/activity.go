@@ -206,5 +206,4 @@ func (h *history) notes(surges []string) {
 	w.Note(section, "Each test account: 2–3 live sessions (computer, phone, home laptop), a trip abroad, ended ones — /account/sessions")
 	w.Note(section, "Failed sign-ins up on the day before (dashboard insight): %s", strings.Join(surges, ", "))
 	w.Note(section, "Invoices carry GST as if BILLING_TAX_ENABLED=true and BILLING_SELLER_STATE=%s; set both for new ones to match", sellerState)
-	w.Note(section, "The API's session cleanup deletes sessions ended over 7 days ago; start it with EMBEDDED_WORKERS=false to keep the 8-week charts")
 }

@@ -716,9 +716,9 @@ func grantGuest(w *world.World, p *world.Person, r world.GuestRole) {
 	w.At(r.Since, func() {
 		by := r.Org.Owner
 		role := r.Org.Roles[r.Role]
-		_, token, err := w.Deps.Invite.Service.Create(w.Ctx, invite.CreateInput{TenantID: r.Org.ID, Email: p.Email, RoleID: &role}, &by.ID)
+		_, token, err := w.Deps.Invite.Service.Create(w.Ctx, invite.CreateInput{TenantID: r.Org.ID, Email: p.Email, RoleID: &role}, by.Actor())
 		w.Check(err, "invite guest "+p.Email+" to "+r.Org.Spec.Slug)
-		_, err = w.Deps.Invite.Service.AcceptAuthenticated(w.Ctx, p.ID, token)
+		_, err = w.Deps.Invite.Service.AcceptAuthenticated(w.Ctx, p.ID, token, p.Actor())
 		w.Check(err, "accept as guest "+p.Email+" in "+r.Org.Spec.Slug)
 	})
 }

@@ -29,6 +29,51 @@ func (q *Queries) DeleteHook(ctx context.Context, arg DeleteHookParams) (int64, 
 	return result.RowsAffected(), nil
 }
 
+const listEnabledSignInHooks = `-- name: ListEnabledSignInHooks :many
+SELECT id, url, secret, secret_ct, secret_nonce, fail_open
+FROM tenant.auth_hooks
+WHERE tenant_id = $1 AND enabled AND trigger = 'post_login'
+ORDER BY created_at, id
+`
+
+type ListEnabledSignInHooksRow struct {
+	ID          uuid.UUID
+	Url         string
+	Secret      string
+	SecretCt    []byte
+	SecretNonce []byte
+	FailOpen    bool
+}
+
+// ListEnabledSignInHooks returns the tenant's enabled sign-in hooks with their
+// secrets, oldest first: the order Run calls them in.
+func (q *Queries) ListEnabledSignInHooks(ctx context.Context, tenantID uuid.UUID) ([]ListEnabledSignInHooksRow, error) {
+	rows, err := q.db.Query(ctx, listEnabledSignInHooks, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEnabledSignInHooksRow{}
+	for rows.Next() {
+		var i ListEnabledSignInHooksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Url,
+			&i.Secret,
+			&i.SecretCt,
+			&i.SecretNonce,
+			&i.FailOpen,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listHooks = `-- name: ListHooks :many
 
 SELECT id, trigger, url, enabled, fail_open, created_at
@@ -71,6 +116,30 @@ func (q *Queries) ListHooks(ctx context.Context, tenantID uuid.UUID) ([]ListHook
 		return nil, err
 	}
 	return items, nil
+}
+
+const sealHookSecret = `-- name: SealHookSecret :exec
+UPDATE tenant.auth_hooks
+SET secret = '', secret_ct = $1, secret_nonce = $2, encryption_version = 1
+WHERE id = $3 AND tenant_id = $4 AND secret_ct IS NULL
+`
+
+type SealHookSecretParams struct {
+	SecretCt    []byte
+	SecretNonce []byte
+	ID          uuid.UUID
+	TenantID    uuid.UUID
+}
+
+// SealHookSecret replaces a hook's plaintext secret with its encrypted form.
+func (q *Queries) SealHookSecret(ctx context.Context, arg SealHookSecretParams) error {
+	_, err := q.db.Exec(ctx, sealHookSecret,
+		arg.SecretCt,
+		arg.SecretNonce,
+		arg.ID,
+		arg.TenantID,
+	)
+	return err
 }
 
 const updateHook = `-- name: UpdateHook :execrows

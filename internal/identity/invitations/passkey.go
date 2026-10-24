@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/invitations/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -78,8 +79,8 @@ func (s *Service) InvitationForNewAccount(ctx context.Context, token string) (uu
 // AcceptForNewAccountTx accepts invitation id for userID, the account just
 // created in tx for email in tenantID. The invitation, read under lock, must be
 // pending, unexpired and for that email and tenant; then the invited role is
-// granted, the account activated and the invitation marked accepted.
-func (s *Service) AcceptForNewAccountTx(ctx context.Context, tx pgx.Tx, id, tenantID, userID uuid.UUID, email string) error {
+// granted, the account activated and the acceptance recorded from ip and ua.
+func (s *Service) AcceptForNewAccountTx(ctx context.Context, tx pgx.Tx, id, tenantID, userID uuid.UUID, email, ip, ua string) error {
 	qtx := s.q.WithTx(tx)
 	inv, err := qtx.GetInviteByIDForAccept(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -107,7 +108,10 @@ func (s *Service) AcceptForNewAccountTx(ctx context.Context, tx pgx.Tx, id, tena
 	if err := qtx.ActivateInvitedAccount(ctx, userID); err != nil {
 		return err
 	}
-	return qtx.MarkInviteAccepted(ctx, inv.ID)
+	if err := qtx.MarkInviteAccepted(ctx, inv.ID); err != nil {
+		return err
+	}
+	return recordAccepted(ctx, tx, audit.Actor{IP: ip, UserAgent: ua}, userID, pendingInvite(inv), "passkey")
 }
 
 // InvitationPreview is what the acceptance screen shows before the invitee

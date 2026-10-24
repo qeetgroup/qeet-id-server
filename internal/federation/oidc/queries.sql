@@ -286,12 +286,13 @@ RETURNING client_id, user_code;
 -- CIBA (OpenID Connect Client-Initiated Backchannel Authentication)
 -- ==========================================================================
 
--- GetUserByEmailInTenant finds the member (a role holder) of the tenant with
--- the address, as a browser sign-in to its applications would.
+-- GetUserByEmailInTenant finds the member of the tenant with the address (its
+-- own account, or one holding a role there), as a browser sign-in would.
 -- name: GetUserByEmailInTenant :one
 SELECT u.id FROM "user".users u
 WHERE LOWER(u.email) = LOWER(@email) AND u.deleted_at IS NULL
-  AND EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = @tenant_id);
+  AND (u.tenant_id = @tenant_id::uuid
+       OR EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.tenant_id = @tenant_id::uuid AND ur.user_id = u.id));
 
 -- name: InsertCIBARequest :exec
 INSERT INTO auth.oidc_ciba_requests (
@@ -357,6 +358,32 @@ RETURNING id, user_id, client_id, redirect_uri, scopes, state, nonce, code_chall
 -- the same suspended-or-deleted rule the first-party refresh applies.
 -- name: GetAccountStanding :one
 SELECT status, (deleted_at IS NOT NULL)::boolean AS deleted FROM "user".users WHERE id = @id;
+
+-- IsActiveTenantMember reports whether an active account is a member of an
+-- active tenant: the tenant's own account, or holding a role there.
+-- name: IsActiveTenantMember :one
+SELECT EXISTS (
+    SELECT 1 FROM "user".users u
+    JOIN tenant.tenants t ON t.id = @tenant_id::uuid
+    WHERE u.id = @user_id
+      AND u.status = 'active' AND u.deleted_at IS NULL
+      AND t.status = 'active' AND t.deleted_at IS NULL
+      AND (u.tenant_id = t.id
+           OR EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.tenant_id = t.id AND ur.user_id = u.id))
+) AS member;
+
+-- IsActiveClientMember is IsActiveTenantMember for the tenant of the client.
+-- name: IsActiveClientMember :one
+SELECT EXISTS (
+    SELECT 1 FROM auth.oidc_clients c
+    JOIN tenant.tenants t ON t.id = c.tenant_id
+    JOIN "user".users u ON u.id = @user_id
+    WHERE c.client_id = @client_id
+      AND u.status = 'active' AND u.deleted_at IS NULL
+      AND t.status = 'active' AND t.deleted_at IS NULL
+      AND (u.tenant_id = t.id
+           OR EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.tenant_id = t.id AND ur.user_id = u.id))
+) AS member;
 
 -- ==========================================================================
 -- Application secret lockout

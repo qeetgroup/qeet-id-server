@@ -657,3 +657,87 @@ func TestRememberedDeviceForAnotherOrganisationsApplication(t *testing.T) {
 		}
 	}
 }
+
+// TestHostedSignInsAreRecorded checks that every hosted sign-in records the
+// auth.login_succeeded event an API sign-in does, once, for its hosted-login
+// session, by method and against the organisation signed in to, so the
+// dashboard counts it; and that signing up, which signs the account in, does
+// too.
+func TestHostedSignInsAreRecorded(t *testing.T) {
+	ctx := dbtest.Context(t)
+	recorded := func(t *testing.T, a dbtest.Account, tenant uuid.UUID, method string) {
+		t.Helper()
+		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.login_succeeded' AND actor_user_id = $1`, a.ID); n != 1 {
+			t.Errorf("%d sign-ins recorded, want 1", n)
+		}
+		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events e
+			JOIN auth.login_sessions s ON s.id = e.resource_id AND s.user_id = e.actor_user_id
+			WHERE e.action = 'auth.login_succeeded' AND e.resource_type = 'login_session' AND e.actor_user_id = $1
+			  AND e.tenant_id = $2 AND e.metadata->>'method' = $3`, a.ID, tenant, method); n != 1 {
+			t.Errorf("the hosted sign-in is not recorded as %s to %s for its session", method, tenant)
+		}
+	}
+
+	t.Run("password", func(t *testing.T) {
+		svc := newService(t)
+		a, home := member(t)
+		res, err := svc.BeginLoginSession(ctx, SignInAttempt{Email: a.Email, Password: testPassword, IP: freshIP()}, testUserAgent, "", "")
+		if err != nil || res.RawCookie == "" {
+			t.Fatalf("hosted sign-in: %+v, %v", res, err)
+		}
+		recorded(t, a, home, "password")
+	})
+	t.Run("second factor", func(t *testing.T) {
+		svc := newService(t)
+		svc.SetMFA(heldFactor{code: "246810"})
+		a, home := member(t)
+		res, err := svc.BeginLoginSession(ctx, SignInAttempt{Email: a.Email, Password: testPassword, IP: freshIP()}, testUserAgent, "", "")
+		if err != nil || !res.MFARequired {
+			t.Fatalf("hosted sign-in holding a factor: %+v, %v; want a challenge", res, err)
+		}
+		if _, _, cookie, err := svc.CompleteMFALoginSession(ctx, res.MFAToken, "246810", freshIP(), testUserAgent); err != nil || cookie == "" {
+			t.Fatalf("complete the hosted challenge: %q, %v", cookie, err)
+		}
+		recorded(t, a, home, "password_mfa")
+	})
+	t.Run("passkey", func(t *testing.T) {
+		svc := newService(t)
+		a, home := member(t)
+		if _, err := svc.CreatePasskeyLoginSession(ctx, a.ID, freshIP(), testUserAgent); err != nil {
+			t.Fatal(err)
+		}
+		recorded(t, a, home, "passkey")
+	})
+	t.Run("social", func(t *testing.T) {
+		svc := newService(t)
+		a, _ := member(t)
+		served := dbtest.Tenant(t)
+		dbtest.Assign(t, a.ID, served, dbtest.Role(t, served))
+		res, err := svc.BeginSocialLoginSession(ctx, a.ID, served, freshIP(), testUserAgent, "", "")
+		if err != nil || res.RawCookie == "" {
+			t.Fatalf("hosted social sign-in: %+v, %v", res, err)
+		}
+		recorded(t, a, served, "social")
+	})
+	t.Run("magic link", func(t *testing.T) {
+		svc := newService(t)
+		a, tenant := member(t)
+		res, err := svc.BeginMagicLinkSession(ctx, a.ID, tenant, freshIP(), testUserAgent, "", "")
+		if err != nil || res.RawCookie == "" {
+			t.Fatalf("hosted magic link: %+v, %v", res, err)
+		}
+		recorded(t, a, tenant, "magic_link")
+	})
+	t.Run("sign-up", func(t *testing.T) {
+		svc := newService(t)
+		svc.SetRegistrationPolicy(anyPassword{})
+		pair, u, _, err := svc.Signup(ctx, SignupInput{Email: dbtest.Unique("signup") + "@example.test", Password: testPassword, IP: freshIP(), UserAgent: testUserAgent})
+		if err != nil {
+			t.Fatalf("sign up: %v", err)
+		}
+		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.login_succeeded' AND actor_user_id = $1
+			AND resource_type = 'session' AND resource_id = $2 AND tenant_id IS NULL AND metadata->>'method' = 'password'`, u.ID, pair.SessionID); n != 1 {
+			t.Error("signing up is not recorded as a password sign-in to no organisation")
+		}
+	})
+}

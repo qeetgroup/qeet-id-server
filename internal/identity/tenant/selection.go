@@ -59,9 +59,13 @@ func (r *Repository) EligibleOrganizations(ctx context.Context, userID, currentS
 		rows = rows[:limit]
 	}
 	for _, row := range rows {
+		roles := row.Roles
+		if roles == nil {
+			roles = []string{} // an organisation's own account may hold no role there
+		}
 		organization := EligibleOrganization{
 			ID: row.ID, Name: row.Name, Slug: row.Slug, Plan: row.Plan, Region: row.Region,
-			LogoURL: row.LogoUrl, Domain: row.Domain, Roles: row.Roles,
+			LogoURL: row.LogoUrl, Domain: row.Domain, Roles: roles,
 		}
 		if !row.LastUsedAt.IsZero() {
 			lastUsed := row.LastUsedAt

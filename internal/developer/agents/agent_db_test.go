@@ -17,12 +17,13 @@ func TestMain(m *testing.M) { dbtest.Main(m) }
 
 // TestAgentsStayInTheirTenant checks that one tenant can neither read nor
 // change another tenant's agent, nor make another tenant's user its sponsor,
-// and that its kill switch stops only its own agents.
+// and that its kill switch stops only its own agents. A tenant's own account
+// sponsors without holding a role.
 func TestAgentsStayInTheirTenant(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
 	tenantA, tenantB := dbtest.Tenant(t), dbtest.Tenant(t)
-	sponsorA := dbtest.User(t, tenantA, tenantA)
+	sponsorA := dbtest.User(t, tenantA)
 	adminB := dbtest.User(t, tenantB, tenantB)
 	agentA, err := svc.Create(ctx, tenantA, "triage-bot", nil, 0, sponsorA.ID, audit.Actor{Type: "system"})
 	if err != nil {

@@ -150,7 +150,7 @@ func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, t
 		}
 		return &LoginSessionResult{UserID: u.ID, MFAChallenge: challenge}, nil
 	}
-	raw, err := s.createLoginSession(ctx, u.ID, in.IP, ua, gate.skippedFactor())
+	raw, err := s.createLoginSession(ctx, u.ID, u.TenantID, in.IP, ua, firstFactorPassword, gate.skippedFactor())
 	if err != nil {
 		return nil, err
 	}

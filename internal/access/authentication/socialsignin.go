@@ -80,7 +80,7 @@ func (s *Service) BeginSocialLoginSession(ctx context.Context, userID, tenantID 
 		}
 		return &LoginSessionResult{UserID: userID, MFAChallenge: challenge}, nil
 	}
-	raw, err := s.createLoginSession(ctx, userID, ip, ua, gate.skippedFactor())
+	raw, err := s.createLoginSession(ctx, userID, tenantID, ip, ua, firstFactorSocial, gate.skippedFactor())
 	if err != nil {
 		return nil, err
 	}

@@ -30,9 +30,10 @@ WHERE tenant_id = $1
 ORDER BY created_at DESC
 LIMIT 200;
 
--- name: RevokeInvite :execrows
+-- name: RevokeInvite :one
 UPDATE tenant.invites SET status = 'revoked'
-WHERE id = $1 AND tenant_id = $2 AND status = 'pending';
+WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
+RETURNING email, role_id;
 
 -- RegenerateInvite rotates the token + extends the expiry for a resend (a fresh
 -- link; the old one stops working). Also revives an expired invite back to
@@ -64,9 +65,10 @@ FOR UPDATE;
 -- invitations" inbox for a user who may not belong to any org yet.
 -- DeclineInviteForEmail lets an invitee dismiss a pending invite addressed to
 -- their own email (scoped by email so one user can't decline another's).
--- name: DeclineInviteForEmail :execrows
+-- name: DeclineInviteForEmail :one
 UPDATE tenant.invites SET status = 'declined'
-WHERE id = @id AND email = @email AND status = 'pending';
+WHERE id = @id AND email = @email AND status = 'pending'
+RETURNING tenant_id, role_id;
 
 -- name: ListInvitesForEmail :many
 SELECT i.id, i.tenant_id, i.email, i.role_id, i.expires_at, i.created_at,

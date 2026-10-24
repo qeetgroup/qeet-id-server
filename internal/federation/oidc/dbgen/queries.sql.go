@@ -581,7 +581,8 @@ const getUserByEmailInTenant = `-- name: GetUserByEmailInTenant :one
 
 SELECT u.id FROM "user".users u
 WHERE LOWER(u.email) = LOWER($1) AND u.deleted_at IS NULL
-  AND EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $2)
+  AND (u.tenant_id = $2::uuid
+       OR EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.tenant_id = $2::uuid AND ur.user_id = u.id))
 `
 
 type GetUserByEmailInTenantParams struct {
@@ -592,8 +593,8 @@ type GetUserByEmailInTenantParams struct {
 // ==========================================================================
 // CIBA (OpenID Connect Client-Initiated Backchannel Authentication)
 // ==========================================================================
-// GetUserByEmailInTenant finds the member (a role holder) of the tenant with
-// the address, as a browser sign-in to its applications would.
+// GetUserByEmailInTenant finds the member of the tenant with the address (its
+// own account, or one holding a role there), as a browser sign-in would.
 func (q *Queries) GetUserByEmailInTenant(ctx context.Context, arg GetUserByEmailInTenantParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, getUserByEmailInTenant, arg.Email, arg.TenantID)
 	var id uuid.UUID
@@ -1038,6 +1039,58 @@ func (q *Queries) InsertRotatedRefreshToken(ctx context.Context, arg InsertRotat
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const isActiveClientMember = `-- name: IsActiveClientMember :one
+SELECT EXISTS (
+    SELECT 1 FROM auth.oidc_clients c
+    JOIN tenant.tenants t ON t.id = c.tenant_id
+    JOIN "user".users u ON u.id = $1
+    WHERE c.client_id = $2
+      AND u.status = 'active' AND u.deleted_at IS NULL
+      AND t.status = 'active' AND t.deleted_at IS NULL
+      AND (u.tenant_id = t.id
+           OR EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.tenant_id = t.id AND ur.user_id = u.id))
+) AS member
+`
+
+type IsActiveClientMemberParams struct {
+	UserID   uuid.UUID
+	ClientID string
+}
+
+// IsActiveClientMember is IsActiveTenantMember for the tenant of the client.
+func (q *Queries) IsActiveClientMember(ctx context.Context, arg IsActiveClientMemberParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isActiveClientMember, arg.UserID, arg.ClientID)
+	var member bool
+	err := row.Scan(&member)
+	return member, err
+}
+
+const isActiveTenantMember = `-- name: IsActiveTenantMember :one
+SELECT EXISTS (
+    SELECT 1 FROM "user".users u
+    JOIN tenant.tenants t ON t.id = $1::uuid
+    WHERE u.id = $2
+      AND u.status = 'active' AND u.deleted_at IS NULL
+      AND t.status = 'active' AND t.deleted_at IS NULL
+      AND (u.tenant_id = t.id
+           OR EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.tenant_id = t.id AND ur.user_id = u.id))
+) AS member
+`
+
+type IsActiveTenantMemberParams struct {
+	TenantID uuid.UUID
+	UserID   uuid.UUID
+}
+
+// IsActiveTenantMember reports whether an active account is a member of an
+// active tenant: the tenant's own account, or holding a role there.
+func (q *Queries) IsActiveTenantMember(ctx context.Context, arg IsActiveTenantMemberParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isActiveTenantMember, arg.TenantID, arg.UserID)
+	var member bool
+	err := row.Scan(&member)
+	return member, err
 }
 
 const listClientAuthFailures = `-- name: ListClientAuthFailures :many
