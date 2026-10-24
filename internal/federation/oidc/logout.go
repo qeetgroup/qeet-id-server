@@ -348,7 +348,7 @@ func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
 				q.Set(k, v)
 			}
 		}
-		http.Redirect(w, r, h.LoginBaseURL+"/logout?"+q.Encode(), http.StatusFound)
+		http.Redirect(w, r, h.LoginBaseURL+"/sign-out?"+q.Encode(), http.StatusFound)
 		return
 	}
 
@@ -381,7 +381,7 @@ func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, next, http.StatusFound) // #nosec G710 -- post-logout URI matched exactly against the registered list
 			return
 		}
-		http.Redirect(w, r, h.LoginBaseURL+"/logged-out", http.StatusFound)
+		http.Redirect(w, r, h.LoginBaseURL+"/sign-out/done", http.StatusFound)
 		return
 	}
 	// The hosted signed-out page loads each application's front-channel page,
@@ -396,7 +396,7 @@ func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
 		}
 		q.Set("continue", ticket)
 	}
-	http.Redirect(w, r, h.LoginBaseURL+"/logged-out?"+q.Encode(), http.StatusFound)
+	http.Redirect(w, r, h.LoginBaseURL+"/sign-out/done?"+q.Encode(), http.StatusFound)
 }
 
 // endSessionContinue (GET /v1/oauth/logout/continue) sends the browser on to
@@ -407,5 +407,5 @@ func (h *Handler) endSessionContinue(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, next, http.StatusFound) // #nosec G710 -- target from a ticket this server signed
 		return
 	}
-	http.Redirect(w, r, h.LoginBaseURL+"/logged-out", http.StatusFound)
+	http.Redirect(w, r, h.LoginBaseURL+"/sign-out/done", http.StatusFound)
 }

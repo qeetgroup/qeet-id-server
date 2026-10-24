@@ -186,7 +186,7 @@ func TestBrowserSignInToAnApplication(t *testing.T) {
 		t.Errorf("login context for an unknown client: %d %s", rec.Code, rec.Body.String())
 	}
 	to, q := redirected(t, browse(t, p.public, http.MethodGet, target, nil, nil))
-	if to != loginBase+"/login" || q.Get("return_to") != publicBase+target {
+	if to != loginBase+"/sign-in" || q.Get("return_to") != publicBase+target {
 		t.Errorf("signed out: sent to %s to return to %q, want the hosted login and back to the request", to, q.Get("return_to"))
 	}
 	to, q = redirected(t, browse(t, p.public, http.MethodGet, target, cookie, nil))
@@ -309,7 +309,7 @@ func TestAuthorizeRemembersConsentAndHonoursPrompt(t *testing.T) {
 		}
 	}
 	target, _ = authorizeURL(t, client.ClientID, "prompt", "login")
-	if to, q := redirected(t, browse(t, p.public, http.MethodGet, target, cookie, nil)); to != loginBase+"/login" || q.Get("prompt") != "login" ||
+	if to, q := redirected(t, browse(t, p.public, http.MethodGet, target, cookie, nil)); to != loginBase+"/sign-in" || q.Get("prompt") != "login" ||
 		!strings.Contains(q.Get("return_to"), loginAfterParam+"=") {
 		t.Errorf("prompt=login: sent to %s %v, want a fresh hosted sign-in that comes back", to, q)
 	}

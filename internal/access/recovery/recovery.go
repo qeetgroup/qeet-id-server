@@ -143,7 +143,7 @@ func (s *Service) resetLink(raw string, from ResetOrigin) string {
 		if len(q) > 0 {
 			prefix = q.Encode() + "&"
 		}
-		return fmt.Sprintf("%s/reset?%stoken=%s", s.loginBaseURL, prefix, url.QueryEscape(raw))
+		return fmt.Sprintf("%s/reset-password?%stoken=%s", s.loginBaseURL, prefix, url.QueryEscape(raw))
 	}
 	return fmt.Sprintf("%s/forgot-password?token=%s", s.baseAppURL, raw)
 }

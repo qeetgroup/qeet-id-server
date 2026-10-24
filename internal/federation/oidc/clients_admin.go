@@ -37,6 +37,7 @@ func (s *Service) ListClients(ctx context.Context, tenantID uuid.UUID) ([]Client
 			GrantTypes: r.GrantTypes, Scopes: r.Scopes, CreatedAt: r.CreatedAt,
 			PKCEExemptUntil:      timePtr(r.PkceExemptUntil),
 			BackchannelLogoutURI: derefStr(r.BackchannelLogoutUri), FrontchannelLogoutURI: derefStr(r.FrontchannelLogoutUri),
+			LogoURI: derefStr(r.LogoUri), ClientURI: derefStr(r.ClientUri),
 		}
 	}
 	return out, nil
@@ -57,6 +58,7 @@ func (s *Service) GetClient(ctx context.Context, tenantID, id uuid.UUID) (*Clien
 		GrantTypes: r.GrantTypes, Scopes: r.Scopes, CreatedAt: r.CreatedAt,
 		PKCEExemptUntil:      timePtr(r.PkceExemptUntil),
 		BackchannelLogoutURI: derefStr(r.BackchannelLogoutUri), FrontchannelLogoutURI: derefStr(r.FrontchannelLogoutUri),
+		LogoURI: derefStr(r.LogoUri), ClientURI: derefStr(r.ClientUri),
 	}
 	return &c, nil
 }
@@ -77,6 +79,10 @@ type UpdateClientInput struct {
 	// hears of a sign-out ("" clears; nil: unchanged).
 	BackchannelLogoutURI  *string `json:"backchannel_logout_uri"`
 	FrontchannelLogoutURI *string `json:"frontchannel_logout_uri"`
+	// LogoURI and ClientURI set the application's logo and home page ("" clears;
+	// nil: unchanged).
+	LogoURI   *string `json:"logo_uri"`
+	ClientURI *string `json:"client_uri"`
 }
 
 // UpdateClient applies a partial update to a tenant's client and returns the
@@ -130,6 +136,11 @@ func (s *Service) UpdateClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 			return nil, errs.ErrBadRequest.WithDetail("logout URIs must be absolute http(s) URLs without a fragment")
 		}
 	}
+	for _, u := range []*string{in.LogoURI, in.ClientURI} {
+		if u != nil && !validPresentationURI(*u) {
+			return nil, errs.ErrBadRequest.WithDetail(presentationURIRule)
+		}
+	}
 	r, err := q.UpdateOIDCClient(ctx, dbgen.UpdateOIDCClientParams{
 		Name:                     in.Name,
 		RedirectUris:             redirectUris,
@@ -142,6 +153,10 @@ func (s *Service) UpdateClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 		BackchannelLogoutUri:     derefStr(in.BackchannelLogoutURI),
 		SetFrontchannelLogoutUri: in.FrontchannelLogoutURI != nil,
 		FrontchannelLogoutUri:    derefStr(in.FrontchannelLogoutURI),
+		SetLogoUri:               in.LogoURI != nil,
+		LogoUri:                  derefStr(in.LogoURI),
+		SetClientUri:             in.ClientURI != nil,
+		ClientUri:                derefStr(in.ClientURI),
 		ID:                       id,
 		TenantID:                 tenantID,
 	})
@@ -157,6 +172,7 @@ func (s *Service) UpdateClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 		GrantTypes: r.GrantTypes, Scopes: r.Scopes, CreatedAt: r.CreatedAt,
 		PKCEExemptUntil:      timePtr(r.PkceExemptUntil),
 		BackchannelLogoutURI: derefStr(r.BackchannelLogoutUri), FrontchannelLogoutURI: derefStr(r.FrontchannelLogoutUri),
+		LogoURI: derefStr(r.LogoUri), ClientURI: derefStr(r.ClientUri),
 	}
 	return &c, nil
 }
@@ -207,6 +223,7 @@ func (s *Service) RotateClientSecret(ctx context.Context, tx pgx.Tx, tenantID, i
 		GrantTypes: r.GrantTypes, Scopes: r.Scopes, CreatedAt: r.CreatedAt,
 		PKCEExemptUntil:      timePtr(r.PkceExemptUntil),
 		BackchannelLogoutURI: derefStr(r.BackchannelLogoutUri), FrontchannelLogoutURI: derefStr(r.FrontchannelLogoutUri),
+		LogoURI: derefStr(r.LogoUri), ClientURI: derefStr(r.ClientUri),
 	}
 	return secret, &c, nil
 }

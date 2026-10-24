@@ -163,7 +163,7 @@ func TestIdPIssuesAssertionsAsRegistered(t *testing.T) {
 	for _, c := range []string{"", "not-a-session"} {
 		rec := idpGet(t, s.router, prefix+"/sso?sp="+sp.ID.String(), c)
 		login, err := url.Parse(rec.Header().Get("Location"))
-		if rec.Code != http.StatusFound || err != nil || !strings.HasPrefix(login.String(), "https://login.id.qeet.in/login?") ||
+		if rec.Code != http.StatusFound || err != nil || !strings.HasPrefix(login.String(), "https://login.id.qeet.in/sign-in?") ||
 			login.Query().Get("return_to") != issuer+"/sso?sp="+sp.ID.String() {
 			t.Errorf("SSO with session %q: %d %s; want the hosted login, returning here", c, rec.Code, rec.Header().Get("Location"))
 		}

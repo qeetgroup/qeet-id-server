@@ -39,6 +39,10 @@ type Client struct {
 	// the hosted signed-out page. "" for none.
 	BackchannelLogoutURI  string `json:"backchannel_logout_uri"`
 	FrontchannelLogoutURI string `json:"frontchannel_logout_uri"`
+	// LogoURI and ClientURI are the application's logo and home page, which
+	// the hosted sign-in page shows. "" for none.
+	LogoURI   string `json:"logo_uri"`
+	ClientURI string `json:"client_uri"`
 }
 
 // CreateClientInput is what RegisterClient takes.
@@ -53,6 +57,9 @@ type CreateClientInput struct {
 	// Where the application hears of a sign-out (see Client).
 	BackchannelLogoutURI  string `json:"backchannel_logout_uri"`
 	FrontchannelLogoutURI string `json:"frontchannel_logout_uri"`
+	// The application's logo and home page (see Client).
+	LogoURI   string `json:"logo_uri"`
+	ClientURI string `json:"client_uri"`
 }
 
 // PlanLimiter returns the numeric cap for a plan-gated resource (negative =
@@ -145,6 +152,8 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 		Scopes:                in.Scopes,
 		BackchannelLogoutUri:  in.BackchannelLogoutURI,
 		FrontchannelLogoutUri: in.FrontchannelLogoutURI,
+		LogoUri:               in.LogoURI,
+		ClientUri:             in.ClientURI,
 	})
 	if err != nil {
 		return nil, "", err
@@ -156,6 +165,7 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 		GrantTypes: row.GrantTypes, Scopes: row.Scopes, CreatedAt: row.CreatedAt,
 		PKCEExemptUntil:      timePtr(row.PkceExemptUntil),
 		BackchannelLogoutURI: derefStr(row.BackchannelLogoutUri), FrontchannelLogoutURI: derefStr(row.FrontchannelLogoutUri),
+		LogoURI: derefStr(row.LogoUri), ClientURI: derefStr(row.ClientUri),
 	}
 	return &c, raw, nil
 }
@@ -163,7 +173,6 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 var supportedClientGrantTypes = map[string]struct{}{
 	"authorization_code": {},
 	"refresh_token":      {},
-	"client_credentials": {},
 	"token_exchange":     {},
 	"urn:ietf:params:oauth:grant-type:device_code":    {},
 	"urn:ietf:params:oauth:grant-type:token-exchange": {},
@@ -175,6 +184,11 @@ func validateClientInput(in CreateClientInput) error {
 		return errs.ErrBadRequest.WithDetail("type must be public or confidential")
 	}
 	for _, grantType := range in.GrantTypes {
+		if grantType == "client_credentials" {
+			// The application token endpoint never serves it; a machine caller is
+			// a service principal, with its own token endpoint.
+			return errs.ErrOIDCGrantTypeUnsupported.WithDetail("client_credentials is for machine identities: create a service principal and use POST /v1/oauth/token")
+		}
 		if _, ok := supportedClientGrantTypes[grantType]; !ok {
 			return errs.ErrOIDCGrantTypeUnsupported.WithDetail("unsupported grant_type: " + grantType)
 		}
@@ -184,6 +198,9 @@ func validateClientInput(in CreateClientInput) error {
 	}
 	if !validLogoutURI(in.BackchannelLogoutURI) || !validLogoutURI(in.FrontchannelLogoutURI) {
 		return errs.ErrBadRequest.WithDetail("logout URIs must be absolute http(s) URLs without a fragment")
+	}
+	if !validPresentationURI(in.LogoURI) || !validPresentationURI(in.ClientURI) {
+		return errs.ErrBadRequest.WithDetail(presentationURIRule)
 	}
 	if contains(in.GrantTypes, "authorization_code") && len(in.RedirectURIs) == 0 {
 		return errs.ErrOIDCRedirectURIInvalid.WithDetail("authorization_code clients require a redirect URI")
@@ -270,8 +287,9 @@ type ShadowAICandidate struct {
 }
 
 // machineGrantTypes are the grant types that let a client obtain a token
-// without a human present in the loop.
-var machineGrantTypes = []string{"client_credentials", grantTypeTokenExchange}
+// without a human present in the loop, under either name for token exchange.
+// client_credentials is no longer registered but may remain on older clients.
+var machineGrantTypes = []string{"client_credentials", "token_exchange", grantTypeTokenExchange}
 
 // ShadowAICandidates lists tenantID's unreviewed OIDC clients whose
 // grant_types include a machine grant type, ordered by live-grant count so
@@ -330,14 +348,50 @@ func (s *Service) RegisteredRedirect(ctx context.Context, clientID, redirectURI 
 // used to render the hosted login/consent screens. Returns ErrNotFound for an
 // unknown client.
 func (s *Service) ClientName(ctx context.Context, clientID string) (name string, tenantID uuid.UUID, err error) {
-	row, err := s.q.GetClientName(ctx, clientID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", uuid.Nil, errs.ErrOIDCClientNotFound
-	}
+	b, err := s.ClientBrand(ctx, clientID)
 	if err != nil {
 		return "", uuid.Nil, err
 	}
-	return row.Name, row.TenantID, nil
+	return b.Name, b.TenantID, nil
+}
+
+// ClientBrand is how the hosted sign-in page presents an application: its
+// organisation and the name, logo and home page registered for it.
+type ClientBrand struct {
+	Name      string
+	TenantID  uuid.UUID
+	LogoURI   string
+	ClientURI string
+}
+
+// ClientBrand returns the application's registered presentation, never anything
+// from the request.
+func (s *Service) ClientBrand(ctx context.Context, clientID string) (*ClientBrand, error) {
+	row, err := s.q.GetClientName(ctx, clientID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrOIDCClientNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &ClientBrand{Name: row.Name, TenantID: row.TenantID, LogoURI: derefStr(row.LogoUri), ClientURI: derefStr(row.ClientUri)}, nil
+}
+
+// presentationURIRule is what logo_uri and client_uri must be.
+const presentationURIRule = "logo_uri and client_uri must be absolute https URLs of at most 2048 characters, without credentials or a fragment"
+
+// validPresentationURI reports whether raw may be an application's logo or
+// home page: empty, or an absolute https URL with a host and no credentials or
+// fragment. The hosted page shows only https images.
+func validPresentationURI(raw string) bool {
+	if raw == "" {
+		return true
+	}
+	if len(raw) > 2048 {
+		return false
+	}
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil && u.Fragment == ""
 }
 
 // ValidatePostLogoutRedirect reports whether uri is one of the client's

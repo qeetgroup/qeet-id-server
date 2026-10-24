@@ -15,10 +15,10 @@ import (
 const getSecurityEventSummary = `-- name: GetSecurityEventSummary :one
 
 SELECT
-    COUNT(*) FILTER (WHERE status = 'open')                                               AS open,
+    COUNT(*) FILTER (WHERE resolved_at IS NULL)                                           AS open,
     COUNT(*) FILTER (WHERE resolved_at >= NOW() - INTERVAL '24 hours')                   AS resolved_24h,
-    COUNT(DISTINCT user_id) FILTER (WHERE status = 'open' AND user_id IS NOT NULL)       AS affected_accounts,
-    COUNT(*) FILTER (WHERE severity = 'high' AND created_at >= NOW() - INTERVAL '24 hours') AS high_severity_24h
+    COUNT(DISTINCT user_id) FILTER (WHERE resolved_at IS NULL AND user_id IS NOT NULL)   AS affected_accounts,
+    COUNT(*) FILTER (WHERE severity IN ('high', 'critical') AND created_at >= NOW() - INTERVAL '24 hours') AS high_severity_24h
 FROM auth.security_events
 WHERE tenant_id = $1
 `
@@ -33,6 +33,9 @@ type GetSecurityEventSummaryRow struct {
 // ListSecurityEvents is intentionally hand-written in threat.go because
 // COALESCE(host(e.ip),”) causes sqlc to generate interface{} for the column,
 // making type-safe scanning impossible without runtime assertions.
+// GetSecurityEventSummary feeds the KPI cards. An event is open until it is
+// resolved, whatever its status says: the lockout detections record theirs as
+// rate-limited. High severity includes critical.
 func (q *Queries) GetSecurityEventSummary(ctx context.Context, tenantID uuid.UUID) (GetSecurityEventSummaryRow, error) {
 	row := q.db.QueryRow(ctx, getSecurityEventSummary, tenantID)
 	var i GetSecurityEventSummaryRow

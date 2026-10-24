@@ -74,11 +74,11 @@ func TestRPInitiatedLogout(t *testing.T) {
 
 	to, q := redirected(t, browse(t, p.public, http.MethodGet, logout, cookie, nil))
 	ticket := q.Get("logout_confirmation")
-	if to != loginBase+"/logout" || ticket == "" || q.Get("post_logout_redirect_uri") != signedOut || q.Get("state") != "s-1" || !live(cookie) {
+	if to != loginBase+"/sign-out" || ticket == "" || q.Get("post_logout_redirect_uri") != signedOut || q.Get("state") != "s-1" || !live(cookie) {
 		t.Fatalf("sign-out without a hint: sent to %s %v, want the hosted confirmation with the session kept", to, q)
 	}
 	confirmed := logout + "&logout_confirmation=" + url.QueryEscape(ticket)
-	if to, _ := redirected(t, browse(t, p.public, http.MethodGet, confirmed, someoneCookie, nil)); to != loginBase+"/logout" || !live(someoneCookie) {
+	if to, _ := redirected(t, browse(t, p.public, http.MethodGet, confirmed, someoneCookie, nil)); to != loginBase+"/sign-out" || !live(someoneCookie) {
 		t.Errorf("another session's confirmation: sent to %s, want to confirm again", to)
 	}
 	rec := browse(t, p.public, http.MethodGet, "/oauth/logout?id_token_hint="+url.QueryEscape(someoneHint), cookie, nil)
@@ -89,7 +89,7 @@ func TestRPInitiatedLogout(t *testing.T) {
 	rec = browse(t, p.public, http.MethodGet, confirmed, cookie, nil)
 	to, q = redirected(t, rec)
 	frontchannel := "https://app.example.test/frontchannel?iss=" + p.svc.issuer.JWTIssuer() + "&sid=" + sessionID.String()
-	if to != loginBase+"/logged-out" || !slices.Equal(q["frontchannel_logout"], []string{frontchannel}) || q.Get("continue") == "" {
+	if to != loginBase+"/sign-out/done" || !slices.Equal(q["frontchannel_logout"], []string{frontchannel}) || q.Get("continue") == "" {
 		t.Fatalf("confirmed sign-out: sent to %s %v, want the signed-out page with the front-channel page and a continuation", to, q)
 	}
 	if !slices.ContainsFunc(rec.Result().Cookies(), func(c *http.Cookie) bool { return c.Name == auth.LoginSessionCookie && c.MaxAge < 0 }) {
@@ -105,14 +105,14 @@ func TestRPInitiatedLogout(t *testing.T) {
 	if to != signedOut || q.Get("state") != "s-1" {
 		t.Errorf("continue: sent to %s %v, want the registered post-logout address with the state", to, q)
 	}
-	if to, _ := redirected(t, browse(t, p.public, http.MethodGet, "/oauth/logout/continue?ticket="+url.QueryEscape(ticket), nil, nil)); to != loginBase+"/logged-out" {
+	if to, _ := redirected(t, browse(t, p.public, http.MethodGet, "/oauth/logout/continue?ticket="+url.QueryEscape(ticket), nil, nil)); to != loginBase+"/sign-out/done" {
 		t.Errorf("continue with a confirmation ticket: sent to %s, want the signed-out page", to)
 	}
 
 	// The person's own hint signs out at once; an unregistered address isn't followed.
 	hint := signInThrough(t, p, client, secret, someone.ID, someoneSession).IDToken
 	unregistered := "/oauth/logout?" + url.Values{"id_token_hint": {hint}, "post_logout_redirect_uri": {"https://evil.example.test/"}}.Encode()
-	if to, q := redirected(t, browse(t, p.public, http.MethodGet, unregistered, someoneCookie, nil)); to != loginBase+"/logged-out" || q.Get("continue") != "" || live(someoneCookie) {
+	if to, q := redirected(t, browse(t, p.public, http.MethodGet, unregistered, someoneCookie, nil)); to != loginBase+"/sign-out/done" || q.Get("continue") != "" || live(someoneCookie) {
 		t.Errorf("sign-out with the person's own hint: sent to %s %v, want signed out to the signed-out page only", to, q)
 	}
 

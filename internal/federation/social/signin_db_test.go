@@ -238,7 +238,7 @@ func TestOrganisationSocialSignIn(t *testing.T) {
 	if rec.Header().Get("Location") != returnTo || !signedIn {
 		t.Errorf("hosted sign-in went to %q, signed in %v; want the application, signed in", rec.Header().Get("Location"), signedIn)
 	}
-	if rec := browse(t, f.public, http.MethodGet, start+"&return_to="+url.QueryEscape("https://evil.example.test/"), nil, nil); !strings.HasPrefix(rec.Header().Get("Location"), "https://login.example.test/login?error=social") {
+	if rec := browse(t, f.public, http.MethodGet, start+"&return_to="+url.QueryEscape("https://evil.example.test/"), nil, nil); !strings.HasPrefix(rec.Header().Get("Location"), "https://login.example.test/sign-in?error=social") {
 		t.Errorf("a return_to on another origin: %d %s, want refused", rec.Code, rec.Header().Get("Location"))
 	}
 
@@ -279,7 +279,7 @@ func TestOrganisationSocialSignIn(t *testing.T) {
 	if rec := dbtest.Do(t, asAdmin, http.MethodPatch, "/social/providers/okta", map[string]bool{"enabled": false}); rec.Code != http.StatusOK {
 		t.Fatalf("switch off: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := browse(t, f.public, http.MethodGet, start, nil, nil); !strings.HasPrefix(rec.Header().Get("Location"), "https://login.example.test/login?error=social") {
+	if rec := browse(t, f.public, http.MethodGet, start, nil, nil); !strings.HasPrefix(rec.Header().Get("Location"), "https://login.example.test/sign-in?error=social") {
 		t.Errorf("start with a switched-off provider: %s", rec.Header().Get("Location"))
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action LIKE 'social_provider.%'`, tenant); n != 3 {
