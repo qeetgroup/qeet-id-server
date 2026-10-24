@@ -44,14 +44,14 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		h.authorizeError(w, r, clientID, redirect, state, oauthErr("login_required", "no active sign-in"))
 		return
 	case !ok:
-		http.Redirect(w, r, h.LoginBaseURL+"/login?return_to="+url.QueryEscape(h.currentURL(r)), http.StatusFound)
+		http.Redirect(w, r, h.LoginBaseURL+"/sign-in?return_to="+url.QueryEscape(h.currentURL(r)), http.StatusFound)
 		return
 	case signInRequired(q, signedInAt, now) && silent:
 		h.authorizeError(w, r, clientID, redirect, state, oauthErr("login_required", "a fresh sign-in is required"))
 		return
 	case signInRequired(q, signedInAt, now):
 		// prompt=login or max_age: sign in again, then come back to this request.
-		http.Redirect(w, r, h.LoginBaseURL+"/login?prompt=login&return_to="+url.QueryEscape(h.reauthReturnTo(r, now)), http.StatusFound)
+		http.Redirect(w, r, h.LoginBaseURL+"/sign-in?prompt=login&return_to="+url.QueryEscape(h.reauthReturnTo(r, now)), http.StatusFound)
 		return
 	}
 
@@ -68,7 +68,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		h.authorizeError(w, r, clientID, redirect, state, oauthErr("interaction_required", "the organisation requires a second factor"))
 		return
 	case !signedInForRequest(q, signedInAt):
-		http.Redirect(w, r, h.LoginBaseURL+"/login?prompt=login&return_to="+url.QueryEscape(h.reauthReturnTo(r, now)), http.StatusFound)
+		http.Redirect(w, r, h.LoginBaseURL+"/sign-in?prompt=login&return_to="+url.QueryEscape(h.reauthReturnTo(r, now)), http.StatusFound)
 		return
 	default:
 		h.authorizeError(w, r, clientID, redirect, state, oauthErr("access_denied", "the organisation requires a second factor"))

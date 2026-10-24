@@ -890,7 +890,7 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, r, errs.ErrSAMLAuthnRequestInvalid)
 			return
 		}
-		http.Redirect(w, r, h.IdP.loginBaseURL+"/login?return_to="+url.QueryEscape(ret), http.StatusFound)
+		http.Redirect(w, r, h.IdP.loginBaseURL+"/sign-in?return_to="+url.QueryEscape(ret), http.StatusFound)
 		return
 	}
 

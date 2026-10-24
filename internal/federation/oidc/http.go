@@ -171,15 +171,16 @@ func (h *Handler) MountPublic(r chi.Router) {
 }
 
 // loginContext gives the hosted login app what it needs to render itself for a
-// given client_id: the client's display name, its tenant, and the tenant's
-// enabled social providers.
+// given client_id: the client's display name, logo and home page, its tenant,
+// and the tenant's enabled social providers.
 func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 	clientID := r.URL.Query().Get("client_id")
-	name, tenantID, err := h.Service.ClientName(r.Context(), clientID)
+	client, err := h.Service.ClientBrand(r.Context(), clientID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	tenantID := client.TenantID
 	providers := []string{}
 	if h.Providers != nil {
 		if p, perr := h.Providers.EnabledProviderNames(r.Context(), tenantID); perr == nil {
@@ -227,15 +228,23 @@ func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"client_name":               name,
+	out := map[string]any{
+		"client_name":               client.Name,
 		"tenant_id":                 tenantID,
 		"providers":                 providers,
 		"self_registration_enabled": selfRegistration,
 		"remember_device_enabled":   rememberDevice,
 		"sign_in_methods":           methods,
 		"branding":                  brand,
-	})
+	}
+	// The application's registered logo and home page, absent when not set.
+	if client.LogoURI != "" {
+		out["logo_uri"] = client.LogoURI
+	}
+	if client.ClientURI != "" {
+		out["client_uri"] = client.ClientURI
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 func (h *Handler) registerClient(w http.ResponseWriter, r *http.Request) {
