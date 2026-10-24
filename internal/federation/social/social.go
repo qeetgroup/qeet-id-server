@@ -1101,7 +1101,7 @@ func (h *Handler) redirectSocialError(w http.ResponseWriter, r *http.Request, er
 	if rt := r.URL.Query().Get("return_to"); rt != "" {
 		q.Set("return_to", rt)
 	}
-	http.Redirect(w, r, h.LoginBaseURL+"/login?"+q.Encode(), http.StatusFound)
+	http.Redirect(w, r, h.LoginBaseURL+"/sign-in?"+q.Encode(), http.StatusFound)
 }
 
 // binding ties a sign-in begun at start to the browser that began it, so the
@@ -1234,7 +1234,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		if res != nil && res.ReturnTo != "" {
 			q.Set("return_to", res.ReturnTo)
 		}
-		http.Redirect(w, r, h.LoginBaseURL+"/login?"+q.Encode(), http.StatusFound)
+		http.Redirect(w, r, h.LoginBaseURL+"/sign-in?"+q.Encode(), http.StatusFound)
 		return
 	}
 	if err != nil {
@@ -1248,7 +1248,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		if aerr := h.Service.CheckHostedSignIn(r.Context(), res.TenantID, res.UserID, httpx.ClientIP(r)); aerr != nil {
 			if errors.Is(aerr, errs.ErrAuthAddressNotAllowed) && h.LoginBaseURL != "" {
 				q := url.Values{"error": {"address_not_allowed"}, "return_to": {res.ReturnTo}}
-				http.Redirect(w, r, h.LoginBaseURL+"/login?"+q.Encode(), http.StatusFound)
+				http.Redirect(w, r, h.LoginBaseURL+"/sign-in?"+q.Encode(), http.StatusFound)
 				return
 			}
 			h.redirectSocialError(w, r, aerr)
@@ -1273,7 +1273,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 				h.redirectSocialError(w, r, errs.ErrInternalServer)
 				return
 			}
-			http.Redirect(w, r, h.LoginBaseURL+"/login?"+url.Values{"return_to": {res.ReturnTo}}.Encode()+"#"+challengeFragment(ls.MFAChallenge), http.StatusFound)
+			http.Redirect(w, r, h.LoginBaseURL+"/sign-in?"+url.Values{"return_to": {res.ReturnTo}}.Encode()+"#"+challengeFragment(ls.MFAChallenge), http.StatusFound)
 			return
 		}
 		auth.SetLoginSessionCookie(w, ls.RawCookie, h.CookieSecure)

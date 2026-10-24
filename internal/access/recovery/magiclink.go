@@ -186,7 +186,7 @@ func (s *Service) magicLink(raw, app, returnTo string) string {
 		if len(q) > 0 {
 			prefix = q.Encode() + "&"
 		}
-		return fmt.Sprintf("%s/magic?%stoken=%s", s.loginBaseURL, prefix, url.QueryEscape(raw))
+		return fmt.Sprintf("%s/magic-link?%stoken=%s", s.loginBaseURL, prefix, url.QueryEscape(raw))
 	}
 	return fmt.Sprintf("%s/magic?token=%s", s.baseAppURL, url.QueryEscape(raw))
 }

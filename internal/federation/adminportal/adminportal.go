@@ -167,13 +167,15 @@ func (s *Service) Generate(ctx context.Context, tx pgx.Tx, tenantID, createdBy u
 	return l, raw, nil
 }
 
-// URL builds the shareable link for a freshly-generated raw token.
+// URL builds the shareable link for a freshly-generated raw token: the hosted
+// enterprise-setup page, with the token in the fragment so it never reaches a
+// server log.
 func (s *Service) URL(rawToken string) string {
-	return s.loginBaseURL + "/admin-portal#token=" + rawToken
+	return s.PortalURL() + "#token=" + rawToken
 }
 
-// PortalURL returns the hosted admin portal's address.
-func (s *Service) PortalURL() string { return s.loginBaseURL + "/admin-portal" }
+// PortalURL returns the hosted enterprise-setup page's address.
+func (s *Service) PortalURL() string { return s.loginBaseURL + "/enterprise-setup" }
 
 // List returns the tenant's portal links.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Link, error) {

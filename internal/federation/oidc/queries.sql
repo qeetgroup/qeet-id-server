@@ -8,12 +8,14 @@
 -- name: InsertOIDCClient :one
 INSERT INTO auth.oidc_clients (
     tenant_id, client_id, client_secret_hash, type, name,
-    redirect_uris, post_logout_uris, grant_types, scopes, backchannel_logout_uri, frontchannel_logout_uri
+    redirect_uris, post_logout_uris, grant_types, scopes, backchannel_logout_uri, frontchannel_logout_uri,
+    logo_uri, client_uri
 ) VALUES (@tenant_id, @client_id, sqlc.narg('client_secret_hash'), @type, @name,
           @redirect_uris, @post_logout_uris, @grant_types, @scopes,
-          NULLIF(@backchannel_logout_uri::text, ''), NULLIF(@frontchannel_logout_uri::text, ''))
+          NULLIF(@backchannel_logout_uri::text, ''), NULLIF(@frontchannel_logout_uri::text, ''),
+          NULLIF(@logo_uri::text, ''), NULLIF(@client_uri::text, ''))
 RETURNING id, tenant_id, client_id, type, name, redirect_uris,
-          post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri;
+          post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri, logo_uri, client_uri;
 
 -- pkce_exempt is whether the client's PKCE exemption is in force now.
 -- name: GetClientForAuth :one
@@ -25,7 +27,7 @@ FROM auth.oidc_clients WHERE client_id = @client_id;
 SELECT tenant_id, scopes, grant_types FROM auth.oidc_clients WHERE client_id = @client_id;
 
 -- name: GetClientName :one
-SELECT name, tenant_id FROM auth.oidc_clients WHERE client_id = @client_id;
+SELECT name, tenant_id, logo_uri, client_uri FROM auth.oidc_clients WHERE client_id = @client_id;
 
 -- name: GetClientRedirectInfo :one
 SELECT tenant_id, type, scopes, redirect_uris, grant_types,
@@ -59,7 +61,7 @@ WHERE id = @id AND tenant_id = @tenant_id;
 
 -- name: ListOIDCClients :many
 SELECT id, tenant_id, client_id, type, name, redirect_uris,
-       post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri
+       post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri, logo_uri, client_uri
 FROM auth.oidc_clients WHERE tenant_id = @tenant_id ORDER BY created_at DESC;
 
 -- CountOIDCClientsByTenant counts a tenant's registered applications (relying
@@ -69,7 +71,7 @@ SELECT COUNT(*) FROM auth.oidc_clients WHERE tenant_id = @tenant_id;
 
 -- name: GetOIDCClient :one
 SELECT id, tenant_id, client_id, type, name, redirect_uris,
-       post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri
+       post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri, logo_uri, client_uri
 FROM auth.oidc_clients WHERE id = @id AND tenant_id = @tenant_id;
 
 -- name: UpdateOIDCClient :one
@@ -85,17 +87,19 @@ UPDATE auth.oidc_clients SET
     backchannel_logout_uri = CASE WHEN @set_backchannel_logout_uri::bool
                                   THEN NULLIF(@backchannel_logout_uri::text, '') ELSE backchannel_logout_uri END,
     frontchannel_logout_uri = CASE WHEN @set_frontchannel_logout_uri::bool
-                                   THEN NULLIF(@frontchannel_logout_uri::text, '') ELSE frontchannel_logout_uri END
+                                   THEN NULLIF(@frontchannel_logout_uri::text, '') ELSE frontchannel_logout_uri END,
+    logo_uri   = CASE WHEN @set_logo_uri::bool THEN NULLIF(@logo_uri::text, '') ELSE logo_uri END,
+    client_uri = CASE WHEN @set_client_uri::bool THEN NULLIF(@client_uri::text, '') ELSE client_uri END
 WHERE id = @id AND tenant_id = @tenant_id
 RETURNING id, tenant_id, client_id, type, name, redirect_uris,
-          post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri;
+          post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri, logo_uri, client_uri;
 
 -- name: DeleteOIDCClient :one
 DELETE FROM auth.oidc_clients WHERE id = @id AND tenant_id = @tenant_id RETURNING client_id;
 
 -- name: LockOIDCClientForUpdate :one
 SELECT id, tenant_id, client_id, type, name, redirect_uris,
-       post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri
+       post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri, logo_uri, client_uri
 FROM auth.oidc_clients WHERE id = @id AND tenant_id = @tenant_id FOR UPDATE;
 
 -- name: UpdateOIDCClientSecret :exec

@@ -100,7 +100,7 @@ func TestPortalLinkConfiguresOnlyWhatItGrants(t *testing.T) {
 			URL   string `json:"url"`
 		}
 		dbtest.Decode(t, rec, &out)
-		if rec.Code != http.StatusCreated || out.URL != "https://login.example.test/admin-portal#token="+out.Token {
+		if rec.Code != http.StatusCreated || out.URL != "https://login.example.test/enterprise-setup#token="+out.Token {
 			t.Fatalf("generate: %d %s", rec.Code, rec.Body.String())
 		}
 		if ttl := time.Until(out.Link.ExpiresAt); ttl < 14*time.Minute || ttl > 16*time.Minute {
