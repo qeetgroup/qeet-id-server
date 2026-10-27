@@ -22,6 +22,7 @@ func init() {
 		errs.CodeSAMLStatusInvalid:            http.StatusUnprocessableEntity,
 		errs.CodeSAMLConnectionDisabled:       http.StatusForbidden,
 		errs.CodeSAMLConnectionDraft:          http.StatusForbidden,
+		errs.CodeSAMLOtherBrowser:             http.StatusForbidden,
 		errs.CodeSAMLConnectionMisconfigured:  http.StatusInternalServerError,
 		errs.CodeSAMLRequestInvalid:           http.StatusBadRequest,
 		errs.CodeSAMLResponseMissing:          http.StatusBadRequest,

@@ -723,6 +723,20 @@ type Handler struct {
 	Service       *Service
 	IdP           *IdP
 	PublicBaseURL string
+	CookieSecure  bool // the browser-binding cookie's Secure attribute; off only in development
+}
+
+// binding ties an SP-initiated sign-in to the browser that began it, so the
+// ACS completes it only there, or whoever began one could post its answer
+// from someone else's browser and sign them in as themselves. SameSite=None,
+// as the IdP posts its answer cross-site; Lax where the cookie can't be Secure
+// (development).
+func (h *Handler) binding() httpx.BindingCookie {
+	sameSite := http.SameSiteNoneMode
+	if !h.CookieSecure {
+		sameSite = http.SameSiteLaxMode
+	}
+	return httpx.BindingCookie{Name: "qe_saml", Secure: h.CookieSecure, SameSite: sameSite, MaxAge: authnRequestTTL}
 }
 
 // Mount registers the SAML routes on r.
@@ -1040,6 +1054,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrInternalServer)
 		return
 	}
+	h.binding().Add(w, r, requestID)
 	http.Redirect(w, r, authURL, http.StatusFound) // #nosec G710 -- IdP SSO URL checked by validIdPSSOURL on save and above
 }
 
@@ -1116,6 +1131,16 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 	if err := h.Service.ConsumeValidatedResponse(r.Context(), conn.ID, requestID, response.ID, assertionIDs, allowIdPInitiated); err != nil {
 		httpx.WriteError(w, r, err)
 		return
+	}
+	// An answer to a request completes only in the browser that sent it, and
+	// spends the request either way. One the IdP sends unasked has no request
+	// to bind, so it is opt-in.
+	if requestID != "" {
+		if !h.binding().Holds(r, requestID) {
+			httpx.WriteError(w, r, errs.ErrSAMLOtherBrowser)
+			return
+		}
+		h.binding().Remove(w, r, requestID)
 	}
 	name := ""
 	if conn.NameAttribute != "" {

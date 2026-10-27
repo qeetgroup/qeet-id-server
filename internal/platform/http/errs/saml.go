@@ -15,6 +15,7 @@ const (
 	CodeSAMLStatusInvalid            = "saml.status_invalid"
 	CodeSAMLConnectionDisabled       = "saml.connection_disabled"
 	CodeSAMLConnectionDraft          = "saml.connection_draft"
+	CodeSAMLOtherBrowser             = "saml.other_browser"
 	CodeSAMLConnectionMisconfigured  = "saml.connection_misconfigured"
 	CodeSAMLRequestInvalid           = "saml.request_invalid"
 	CodeSAMLResponseMissing          = "saml.response_missing"
@@ -53,6 +54,7 @@ var (
 	ErrSAMLStatusInvalid            = New(CodeSAMLStatusInvalid, "Status must be draft, active or disabled.")
 	ErrSAMLConnectionDisabled       = New(CodeSAMLConnectionDisabled, "This SAML connection is disabled.")
 	ErrSAMLConnectionDraft          = New(CodeSAMLConnectionDraft, "This SAML connection is still being set up. Ask your administrator to turn it on.")
+	ErrSAMLOtherBrowser             = New(CodeSAMLOtherBrowser, "This sign-in was started in another browser. Sign in again from the browser you are using.")
 	ErrSAMLConnectionMisconfigured  = New(CodeSAMLConnectionMisconfigured, "This SAML connection isn't configured correctly. Contact your administrator.")
 	ErrSAMLRequestInvalid           = New(CodeSAMLRequestInvalid, "The SAML request was malformed.")
 	ErrSAMLResponseMissing          = New(CodeSAMLResponseMissing, "The SAML response is missing.")

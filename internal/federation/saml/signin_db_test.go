@@ -160,11 +160,40 @@ func (p *upstreamIdP) respond(t *testing.T, connID uuid.UUID, a answer) string {
 	return base64.StdEncoding.EncodeToString(raw)
 }
 
-// spSide is the SAML service provider, its auth service and public routes.
+// spSide is the SAML service provider, its auth service and public routes,
+// and the cookies of the one browser signing in.
 type spSide struct {
 	auth    *auth.Service
 	handler *Handler
 	public  chi.Router
+	browser []*http.Cookie
+}
+
+// keep stores the cookies rec sets, as a browser does.
+func (s *spSide) keep(rec *httptest.ResponseRecorder) {
+	for _, set := range rec.Result().Cookies() {
+		kept := s.browser[:0]
+		for _, c := range s.browser {
+			if c.Name != set.Name {
+				kept = append(kept, c)
+			}
+		}
+		s.browser = kept
+		if set.MaxAge >= 0 {
+			s.browser = append(s.browser, set)
+		}
+	}
+}
+
+// send serves req from the browser, holding its cookies.
+func (s *spSide) send(req *http.Request) *httptest.ResponseRecorder {
+	for _, c := range s.browser {
+		req.AddCookie(c)
+	}
+	rec := httptest.NewRecorder()
+	s.public.ServeHTTP(rec, req)
+	s.keep(rec)
+	return rec
 }
 
 // newSPSide returns the service provider, handing sign-ins to the console.
@@ -203,7 +232,7 @@ func (s *spSide) connect(t *testing.T, tenant uuid.UUID, idp *upstreamIdP) Conne
 // the AuthnRequest sent to the IdP.
 func (s *spSide) begin(t *testing.T, connID uuid.UUID) string {
 	t.Helper()
-	rec := dbtest.Do(t, s.public, http.MethodGet, "/saml/login/"+connID.String()+"?relay=state-1", nil)
+	rec := s.send(httptest.NewRequestWithContext(dbtest.Context(t), http.MethodGet, "/saml/login/"+connID.String()+"?relay=state-1", nil))
 	location, err := url.Parse(rec.Header().Get("Location"))
 	if rec.Code != http.StatusFound || err != nil || !strings.HasPrefix(location.String(), upstreamSSO+"?") {
 		t.Fatalf("login: %d %s %s; want a redirect to the IdP", rec.Code, rec.Header().Get("Location"), rec.Body.String())
@@ -225,9 +254,7 @@ func (s *spSide) post(t *testing.T, connID uuid.UUID, samlResponse string) *http
 	form := url.Values{"SAMLResponse": {samlResponse}, "RelayState": {"state-1"}}
 	req := httptest.NewRequestWithContext(dbtest.Context(t), http.MethodPost, "/saml/acs/"+connID.String(), strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec := httptest.NewRecorder()
-	s.public.ServeHTTP(rec, req)
-	return rec
+	return s.send(req)
 }
 
 // exchange trades a one-time login code at /saml/exchange.
@@ -790,5 +817,29 @@ func TestSAMLDraftConnectionSignsNobodyIn(t *testing.T) {
 	}
 	if rec := sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: pending, email: member.Email})); !strings.Contains(rec.Body.String(), errs.CodeSAMLConnectionDraft) {
 		t.Errorf("an answer through a draft connection: %d %s, want %s", rec.Code, rec.Body.String(), errs.CodeSAMLConnectionDraft)
+	}
+}
+
+// TestSAMLAnswerCompletesOnlyInTheBrowserThatAsked checks that an answer to
+// a sign-in request completes only in the browser that sent the request, so
+// whoever began one can't post its answer from someone else's browser.
+func TestSAMLAnswerCompletesOnlyInTheBrowserThatAsked(t *testing.T) {
+	sp := newSPSide(t)
+	idp := newUpstreamIdP(t)
+	tenant := dbtest.Tenant(t)
+	conn := sp.connect(t, tenant, idp)
+	attacker := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	verify(t, attacker.ID)
+	response := idp.respond(t, conn.ID, answer{inResponseTo: sp.begin(t, conn.ID), email: attacker.Email})
+
+	victim := &spSide{auth: sp.auth, handler: sp.handler, public: sp.public}
+	if rec := victim.post(t, conn.ID, response); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLOtherBrowser) {
+		t.Errorf("the answer posted from another browser: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeSAMLOtherBrowser)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.saml_login_codes WHERE user_id = $1`, attacker.ID); n != 0 {
+		t.Error("an answer from another browser was issued a login code")
+	}
+	if got := sp.signIn(t, idp, conn.ID, answer{email: attacker.Email}); got.UserID != attacker.ID {
+		t.Errorf("a sign-in begun and answered in one browser signed in %s, want %s", got.UserID, attacker.ID)
 	}
 }
