@@ -173,7 +173,7 @@ func (h *Handler) startPhone(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := h.Service.StartPhone(r.Context(), uid, in.Phone); err != nil {
+	if err := h.Service.StartPhone(r.Context(), uid, in.Phone, requesterOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -193,7 +193,7 @@ func (h *Handler) confirmPhone(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.ConfirmPhone(r.Context(), uid, in.Code); err != nil {
+	if err := h.Service.ConfirmPhone(r.Context(), uid, in.Code, requesterOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

@@ -245,7 +245,7 @@ func (s *Service) issueEmailCode(ctx context.Context, userID uuid.UUID, email, p
 // change, or before the address changed) is the invalid-code error.
 func (s *Service) ConfirmEmail(ctx context.Context, userID uuid.UUID, code string, who Requester) error {
 	err := s.confirmEmail(ctx, userID, code, who)
-	return s.auditRefusal(ctx, userID, purposeVerifyEmail, who, err)
+	return s.auditRefusal(ctx, "email.verification_failed", userID, map[string]any{"purpose": purposeVerifyEmail}, who, err)
 }
 
 func (s *Service) confirmEmail(ctx context.Context, userID uuid.UUID, code string, who Requester) error {
@@ -284,9 +284,9 @@ func (s *Service) confirmEmail(ctx context.Context, userID uuid.UUID, code strin
 }
 
 // auditRefusal records a refused confirm (a wrong, stale, used or exhausted
-// code) as email.verification_failed, in its own transaction since the
-// confirm's own has ended. Any other error, and success, pass through.
-func (s *Service) auditRefusal(ctx context.Context, userID uuid.UUID, purpose string, who Requester, err error) error {
+// code) as action, with metadata and the reason, in its own transaction since
+// the confirm's own has ended. Any other error, and success, pass through.
+func (s *Service) auditRefusal(ctx context.Context, action string, userID uuid.UUID, metadata map[string]any, who Requester, err error) error {
 	e := errs.As(err)
 	if e == nil || !isCodeRefusal(err) {
 		return err
@@ -296,8 +296,8 @@ func (s *Service) auditRefusal(ctx context.Context, userID uuid.UUID, purpose st
 		return txErr
 	}
 	defer tx.Rollback(ctx)
-	if aerr := audit.Record(ctx, tx, who.event("email.verification_failed", userID,
-		map[string]any{"purpose": purpose, "reason": e.Code})); aerr != nil {
+	metadata["reason"] = e.Code
+	if aerr := audit.Record(ctx, tx, who.event(action, userID, metadata)); aerr != nil {
 		return aerr
 	}
 	if cerr := tx.Commit(ctx); cerr != nil {
@@ -372,7 +372,7 @@ func (s *Service) noticeAddressInUse(ctx context.Context, email string) error {
 func (s *Service) ConfirmEmailChange(ctx context.Context, userID uuid.UUID, code string, who Requester) (string, error) {
 	oldEmail, newEmail, err := s.confirmEmailChange(ctx, userID, code, who)
 	if err != nil {
-		return "", s.auditRefusal(ctx, userID, purposeChangeEmail, who, err)
+		return "", s.auditRefusal(ctx, "email.verification_failed", userID, map[string]any{"purpose": purposeChangeEmail}, who, err)
 	}
 	if !strings.EqualFold(oldEmail, newEmail) {
 		s.noticeEmailChanged(ctx, userID, oldEmail, newEmail)
@@ -444,8 +444,9 @@ func (s *Service) noticeEmailChanged(ctx context.Context, userID uuid.UUID, oldE
 	}
 }
 
-// StartPhone sends a verification code to the user's phone number.
-func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string) error {
+// StartPhone sends a verification code to the user's phone number, recorded as
+// who's with the number masked.
+func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string, who Requester) error {
 	// Default to the number on file when the body omits it.
 	if strings.TrimSpace(phone) == "" {
 		stored, err := s.q.GetUserPhone(ctx, userID)
@@ -464,12 +465,24 @@ func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string
 	if err != nil {
 		return err
 	}
-	if err := s.q.InsertPhoneVerification(ctx, dbgen.InsertPhoneVerificationParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := s.q.WithTx(tx).InsertPhoneVerification(ctx, dbgen.InsertPhoneVerificationParams{
 		UserID:    userID,
 		Phone:     phone,
 		CodeHash:  codes.Hash(code),
 		ExpiresAt: time.Now().UTC().Add(s.ttl),
 	}); err != nil {
+		return err
+	}
+	if err := audit.Record(ctx, tx, who.event("phone.verification_started", userID,
+		map[string]any{"phone": maskPhone(phone)})); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 	return s.sender.Send(ctx, notifier.Message{
@@ -479,8 +492,22 @@ func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string
 	})
 }
 
-// ConfirmPhone verifies the user's phone number with the code sent to it.
-func (s *Service) ConfirmPhone(ctx context.Context, userID uuid.UUID, code string) error {
+// maskPhone keeps a number's last three digits, as audited: "*********567".
+func maskPhone(phone string) string {
+	if len(phone) <= 3 {
+		return phone
+	}
+	return strings.Repeat("*", len(phone)-3) + phone[len(phone)-3:]
+}
+
+// ConfirmPhone verifies the user's phone number with the code sent to it,
+// recorded as who's; a refused code is recorded as phone.verification_failed.
+func (s *Service) ConfirmPhone(ctx context.Context, userID uuid.UUID, code string, who Requester) error {
+	err := s.confirmPhone(ctx, userID, code, who)
+	return s.auditRefusal(ctx, "phone.verification_failed", userID, map[string]any{}, who, err)
+}
+
+func (s *Service) confirmPhone(ctx context.Context, userID uuid.UUID, code string, who Requester) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -507,6 +534,10 @@ func (s *Service) ConfirmPhone(ctx context.Context, userID uuid.UUID, code strin
 		Phone:  &row.value,
 		UserID: userID,
 	}); err != nil {
+		return err
+	}
+	if err := audit.Record(ctx, tx, who.event("phone.verified", userID,
+		map[string]any{"phone": maskPhone(row.value), "proof": "sms_code"})); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

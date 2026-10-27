@@ -143,6 +143,7 @@ var categoryPrefixes = []struct {
 	{"branding.", CategoryDirectory},
 	{"email.", CategoryDirectory},
 	{"email_template.", CategoryDirectory},
+	{"phone.", CategoryDirectory},
 	{"agent.", CategoryDeveloper},
 	{"apikey.", CategoryDeveloper},
 	{"api_key.", CategoryDeveloper},

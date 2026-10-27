@@ -301,6 +301,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	passkeyService := passkey.NewService(pool, wa, authService)
 	passkeyService.SetMethodPolicy(authPolicyService) // offer and accept new passkeys only where the tenant allows them
 	passkeyService.SetInvitations(inviteService)      // accept an invitation with a passkey
+	passkeyService.SetSender(sender)                  // tell the account holder a passkey was added or removed
 	mfaService.SetWebAuthn(passkeyService)            // a passkey can meet a sign-in's second-factor challenge
 	mfaService.SetPlan(entitlementSvc)                // SMS codes only on plans that include them
 	if mail.routed {

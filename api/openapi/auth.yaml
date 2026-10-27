@@ -1668,7 +1668,10 @@ paths:
         user's with 400 passkey.session_mismatch. Refused with 403
         passkey.disabled when the user's organization has switched passkeys off
         since the ceremony began. Accepts the hosted-login session cookie like
-        Register begin, with the same CSRF requirement.
+        Register begin, with the same CSRF requirement. The new passkey is
+        audited as passkey.registered (its id and name) in the audit trail of
+        the organization the session is in, and the account holder is emailed
+        that a passkey was added.
       responses:
         '204':
           description: 'Created'
@@ -1877,7 +1880,8 @@ paths:
         user's passkey, like an unknown id, is not found and is left unchanged.
         Also accepts the hosted-login session cookie (qe_ls), with the CSRF
         token, in place of a bearer token. Delete passkey does not: it takes a
-        bearer token only.
+        bearer token only. Audited as passkey.renamed, with the new and previous
+        name, in the audit trail of the organization the session is in.
       tags:
         - Passkeys
       parameters:
@@ -1938,7 +1942,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Deletes one of the caller''s passkeys. Needs a recent step-up.'
+      description: 'Deletes one of the caller''s passkeys. Needs a recent step-up. Audited as passkey.deleted (its id and name) in the audit trail of the organization the session is in, and the account holder is emailed that a passkey was removed. Removing the account''s only way to sign in is refused with 409 auth.last_sign_in_method and recorded there as auth.sign_in_method_removal_refused.'
       responses:
         '204':
           description: No Content

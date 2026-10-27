@@ -70,8 +70,9 @@ func (q *Queries) DeleteInviteWebAuthnSessions(ctx context.Context, inviteID pgt
 	return err
 }
 
-const deletePasskeyCredential = `-- name: DeletePasskeyCredential :execrows
+const deletePasskeyCredential = `-- name: DeletePasskeyCredential :one
 DELETE FROM auth.passkey_credentials WHERE id = $1 AND user_id = $2
+RETURNING name
 `
 
 type DeletePasskeyCredentialParams struct {
@@ -79,12 +80,13 @@ type DeletePasskeyCredentialParams struct {
 	UserID uuid.UUID
 }
 
-func (q *Queries) DeletePasskeyCredential(ctx context.Context, arg DeletePasskeyCredentialParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deletePasskeyCredential, arg.ID, arg.UserID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+// DeletePasskeyCredential returns the removed passkey's name; another user's
+// passkey matches no row.
+func (q *Queries) DeletePasskeyCredential(ctx context.Context, arg DeletePasskeyCredentialParams) (*string, error) {
+	row := q.db.QueryRow(ctx, deletePasskeyCredential, arg.ID, arg.UserID)
+	var name *string
+	err := row.Scan(&name)
+	return name, err
 }
 
 const getPasskeyCredentialsForCeremony = `-- name: GetPasskeyCredentialsForCeremony :many
@@ -160,9 +162,10 @@ func (q *Queries) GetUserIDByEmail(ctx context.Context, lower string) (uuid.UUID
 	return id, err
 }
 
-const insertPasskeyCredential = `-- name: InsertPasskeyCredential :exec
+const insertPasskeyCredential = `-- name: InsertPasskeyCredential :one
 INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, sign_count, aaguid, transports, name, backup_eligible, backup_state)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id
 `
 
 type InsertPasskeyCredentialParams struct {
@@ -177,8 +180,8 @@ type InsertPasskeyCredentialParams struct {
 	BackupState    bool
 }
 
-func (q *Queries) InsertPasskeyCredential(ctx context.Context, arg InsertPasskeyCredentialParams) error {
-	_, err := q.db.Exec(ctx, insertPasskeyCredential,
+func (q *Queries) InsertPasskeyCredential(ctx context.Context, arg InsertPasskeyCredentialParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, insertPasskeyCredential,
 		arg.UserID,
 		arg.CredentialID,
 		arg.PublicKey,
@@ -189,7 +192,9 @@ func (q *Queries) InsertPasskeyCredential(ctx context.Context, arg InsertPasskey
 		arg.BackupEligible,
 		arg.BackupState,
 	)
-	return err
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const insertSignupWebAuthnSession = `-- name: InsertSignupWebAuthnSession :one
@@ -317,6 +322,24 @@ func (q *Queries) ListPasskeyCredentials(ctx context.Context, userID uuid.UUID) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockPasskeyCredentialName = `-- name: LockPasskeyCredentialName :one
+SELECT name FROM auth.passkey_credentials WHERE id = $1 AND user_id = $2 FOR UPDATE
+`
+
+type LockPasskeyCredentialNameParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+// LockPasskeyCredentialName locks one of the user's passkeys for a rename and
+// returns its current name.
+func (q *Queries) LockPasskeyCredentialName(ctx context.Context, arg LockPasskeyCredentialNameParams) (*string, error) {
+	row := q.db.QueryRow(ctx, lockPasskeyCredentialName, arg.ID, arg.UserID)
+	var name *string
+	err := row.Scan(&name)
+	return name, err
 }
 
 const renamePasskeyCredential = `-- name: RenamePasskeyCredential :one
