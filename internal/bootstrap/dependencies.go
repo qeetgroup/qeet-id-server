@@ -416,7 +416,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 
 	v := newValidator()
 	deps := Deps{
-		Tenant:        &tenant.Handler{Repo: tenantRepo, Validate: v, AuthService: authService, Signals: sessionSignals},
+		Tenant:        &tenant.Handler{Repo: tenantRepo, Validate: v, AuthService: authService, Signals: sessionSignals, OwnerCheck: rbacRepo.IsOwner},
 		User:          &user.Handler{Repo: userRepo, Validate: v, PasswordPolicy: authPolicyService.ValidateForTenant, MFA: mfaService, SignIns: authService, Signals: sessionSignals, Mailer: sender, ActOnCheck: rbacRepo.CheckActOn},
 		AuthPolicy:    &authpolicy.Handler{Service: authPolicyService},
 		Auth:          &auth.Handler{Service: authService, Validate: v, CookieSecure: !cfg.IsDev(), Bot: botService, GeoCountryHeader: cfg.GeoCountryHeader},

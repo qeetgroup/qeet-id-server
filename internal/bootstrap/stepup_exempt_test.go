@@ -38,6 +38,7 @@ func stepUpExempt() map[string]string {
 		"POST /v1/webhooks/{id}/test":                                                       "sends a test event to the endpoint already configured",
 		"POST /v1/webhooks/{id}/deliveries/{deliveryID}/retry":                              "redelivers an event already sent",
 		"POST /v1/auth/sessions/revoke-all":                                                 "ends sessions; must stay instant in an incident",
+		"POST /v1/tenants/{tenantID}/deletion/cancel":                                       "keeps the organisation; scheduling its deletion is gated",
 		"POST /v1/auth/sessions/revoke-others":                                              "ends sessions; must stay instant in an incident",
 		"DELETE /v1/auth/sessions/{id}":                                                     "ends a session; must stay instant in an incident",
 		"POST /v1/users/{id}/sessions/revoke-all":                                           "ends sessions; must stay instant in an incident",

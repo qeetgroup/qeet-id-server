@@ -12,6 +12,7 @@ import (
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/risk"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
@@ -52,6 +53,18 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller) []wor
 				slog.Info("sessions cleaned", "sessions", purged.Sessions, "login_sessions", purged.LoginSessions,
 					"ceremonies", purged.Ceremonies, "trusted_devices", purged.TrustedDevices)
 				return nil
+			},
+		},
+		{
+			// An organisation whose scheduled deletion is due is deleted.
+			Name:     "tenant-deletions",
+			Interval: 15 * time.Minute,
+			Run: func(ctx context.Context) error {
+				n, err := tenant.DeleteDue(postgres.AcrossTenants(ctx), tenant.NewRepository(pool), signals)
+				if n > 0 {
+					slog.Info("organisations deleted as scheduled", "deleted", n)
+				}
+				return err
 			},
 		},
 		{

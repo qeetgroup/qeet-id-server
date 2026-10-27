@@ -13,9 +13,10 @@ import (
 func userPermissionMap() map[string]string {
 	return map[string]string{
 		// Tenants (GET /v1/tenants lists the caller's own memberships — ungated).
-		"GET /v1/tenants/{tenantID}":    "tenant.read",
-		"PATCH /v1/tenants/{tenantID}":  "tenant.write",
-		"DELETE /v1/tenants/{tenantID}": "tenant.write",
+		"GET /v1/tenants/{tenantID}":                  "tenant.read",
+		"PATCH /v1/tenants/{tenantID}":                "tenant.write",
+		"DELETE /v1/tenants/{tenantID}":               "tenant.write",
+		"POST /v1/tenants/{tenantID}/deletion/cancel": "tenant.write",
 
 		// Users.
 		"GET /v1/users":                    "user.read",

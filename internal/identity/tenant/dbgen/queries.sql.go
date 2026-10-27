@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const adoptHomeTenant = `-- name: AdoptHomeTenant :exec
@@ -27,9 +28,24 @@ func (q *Queries) AdoptHomeTenant(ctx context.Context, arg AdoptHomeTenantParams
 	return err
 }
 
+const cancelTenantDeletion = `-- name: CancelTenantDeletion :execrows
+UPDATE tenant.tenants SET deletion_due_at = NULL, updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL AND deletion_due_at IS NOT NULL
+`
+
+// CancelTenantDeletion calls off an organisation's scheduled deletion. 0
+// rows: none was scheduled.
+func (q *Queries) CancelTenantDeletion(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, cancelTenantDeletion, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getTenant = `-- name: GetTenant :one
 
-SELECT id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at, logo_url FROM tenant.tenants
+SELECT id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at, logo_url, deletion_due_at FROM tenant.tenants
 WHERE id = $1 AND deleted_at IS NULL
 `
 
@@ -51,12 +67,13 @@ func (q *Queries) GetTenant(ctx context.Context, id uuid.UUID) (TenantTenant, er
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.LogoUrl,
+		&i.DeletionDueAt,
 	)
 	return i, err
 }
 
 const getTenantBySlug = `-- name: GetTenantBySlug :one
-SELECT id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at, logo_url FROM tenant.tenants
+SELECT id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at, logo_url, deletion_due_at FROM tenant.tenants
 WHERE LOWER(slug) = LOWER($1) AND deleted_at IS NULL
 `
 
@@ -75,6 +92,7 @@ func (q *Queries) GetTenantBySlug(ctx context.Context, slug string) (TenantTenan
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.LogoUrl,
+		&i.DeletionDueAt,
 	)
 	return i, err
 }
@@ -126,7 +144,7 @@ func (q *Queries) InsertOwnerRole(ctx context.Context, tenantID uuid.UUID) (uuid
 const insertTenant = `-- name: InsertTenant :one
 INSERT INTO tenant.tenants (slug, name, plan, region, logo_url, metadata)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at, logo_url
+RETURNING id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at, logo_url, deletion_due_at
 `
 
 type InsertTenantParams struct {
@@ -160,6 +178,7 @@ func (q *Queries) InsertTenant(ctx context.Context, arg InsertTenantParams) (Ten
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.LogoUrl,
+		&i.DeletionDueAt,
 	)
 	return i, err
 }
@@ -257,6 +276,35 @@ func (q *Queries) ListEligibleOrganizations(ctx context.Context, arg ListEligibl
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTenantsDueForDeletion = `-- name: ListTenantsDueForDeletion :many
+SELECT id FROM tenant.tenants
+WHERE deleted_at IS NULL AND deletion_due_at IS NOT NULL AND deletion_due_at <= NOW()
+ORDER BY deletion_due_at
+LIMIT $1
+`
+
+// ListTenantsDueForDeletion lists organisations whose scheduled deletion is
+// due, oldest first.
+func (q *Queries) ListTenantsDueForDeletion(ctx context.Context, maxRows int32) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listTenantsDueForDeletion, maxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -422,6 +470,27 @@ func (q *Queries) ListTenantsForUserAfter(ctx context.Context, arg ListTenantsFo
 		return nil, err
 	}
 	return items, nil
+}
+
+const scheduleTenantDeletion = `-- name: ScheduleTenantDeletion :one
+UPDATE tenant.tenants SET deletion_due_at = $1::timestamptz, updated_at = NOW()
+WHERE id = $2 AND deleted_at IS NULL AND deletion_due_at IS NULL
+RETURNING deletion_due_at
+`
+
+type ScheduleTenantDeletionParams struct {
+	DueAt time.Time
+	ID    uuid.UUID
+}
+
+// ScheduleTenantDeletion schedules an organisation's deletion for @due_at,
+// unless one is already scheduled. No row: it is deleted or already
+// scheduled.
+func (q *Queries) ScheduleTenantDeletion(ctx context.Context, arg ScheduleTenantDeletionParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, scheduleTenantDeletion, arg.DueAt, arg.ID)
+	var deletion_due_at pgtype.Timestamptz
+	err := row.Scan(&deletion_due_at)
+	return deletion_due_at, err
 }
 
 const softDeleteTenant = `-- name: SoftDeleteTenant :execrows

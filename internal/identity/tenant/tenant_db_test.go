@@ -17,7 +17,9 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -55,6 +57,7 @@ func newHandler(t *testing.T) (*Handler, *auth.Service, *announced) {
 		Validate:    validator.New(validator.WithRequiredStructEnabled()),
 		AuthService: authSvc,
 		Signals:     sessionsignal.New(signals.enqueue),
+		OwnerCheck:  rbac.NewRepository(pool).IsOwner,
 	}, authSvc, signals
 }
 
@@ -180,12 +183,12 @@ func TestCreateOrganisation(t *testing.T) {
 	}
 }
 
-// TestSuspendAndDeleteEndSessions checks that suspending an organisation
-// ends and announces its sessions, so they can't be renewed, and is audited;
-// that reactivating it restores none; that a rename has no lifecycle effect;
-// that another organisation can't be changed; and that deleting it ends the
-// sessions opened since and hides it.
-func TestSuspendAndDeleteEndSessions(t *testing.T) {
+// TestOrganisationLifecycleIsTheOwners checks that only an owner changes an
+// organisation's status or deletes it; that it can't suspend itself; that a
+// suspension made another way ends and announces its sessions and is audited,
+// and reactivating restores none; and that deleting it is scheduled, can be
+// called off, and once due ends the sessions opened since and hides it.
+func TestOrganisationLifecycleIsTheOwners(t *testing.T) {
 	ctx := dbtest.Context(t)
 	h, authSvc, signals := newHandler(t)
 	owner := verifiedAccount(t)
@@ -194,7 +197,10 @@ func TestSuspendAndDeleteEndSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := dbtest.Tenant(t)
+	admin := dbtest.User(t, org.ID)
+	dbtest.Assign(t, admin.ID, org.ID, dbtest.Role(t, org.ID, "tenant.read", "tenant.write"))
 	asOwner := dbtest.Serve(dbtest.Principal(owner.ID, org.ID), h.Mount)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, org.ID), h.Mount)
 	path := "/tenants/" + org.ID.String()
 	signIn := func() *auth.TokenPair {
 		t.Helper()
@@ -210,10 +216,23 @@ func TestSuspendAndDeleteEndSessions(t *testing.T) {
 	audited := func(action string) int {
 		return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = $1 AND resource_id = $2`, action, org.ID)
 	}
+	refused := func(name string, rec *httptest.ResponseRecorder, status int, code string) {
+		t.Helper()
+		if got := errorCode(t, rec); rec.Code != status || got != code {
+			t.Errorf("%s: %d %s, want %d %s", name, rec.Code, got, status, code)
+		}
+	}
+
+	refused("the owner suspends it", dbtest.Do(t, asOwner, http.MethodPatch, path, map[string]any{"status": "suspended"}), http.StatusForbidden, errs.CodeTenantSelfSuspend)
+	refused("an admin changes its status", dbtest.Do(t, asAdmin, http.MethodPatch, path, map[string]any{"status": "active"}), http.StatusForbidden, errs.CodeTenantOwnerOnly)
+	refused("an admin deletes it", dbtest.Do(t, asAdmin, http.MethodDelete, path, nil), http.StatusForbidden, errs.CodeTenantOwnerOnly)
+	if rec := dbtest.Do(t, asOwner, http.MethodPatch, "/tenants/"+other.String(), map[string]any{"status": "active"}); rec.Code != http.StatusForbidden {
+		t.Errorf("changing another organisation: %d, want 403", rec.Code)
+	}
 
 	before := signIn()
-	if rec := dbtest.Do(t, asOwner, http.MethodPatch, path, map[string]any{"status": "suspended"}); rec.Code != http.StatusOK {
-		t.Fatalf("suspend: %d %s", rec.Code, rec.Body.String())
+	if _, err := h.Repo.Update(ctx, org.ID, UpdateInput{Status: ptr("suspended")}, statusChange(h.Signals, org.ID, audit.Actor{Type: "system"})); err != nil {
+		t.Fatalf("suspend: %v", err)
 	}
 	if !ended(before) {
 		t.Error("suspending the organisation left its session live")
@@ -227,26 +246,49 @@ func TestSuspendAndDeleteEndSessions(t *testing.T) {
 	if audited("tenant.suspended") != 1 || dbtest.Count(t, `SELECT count(*) FROM platform.outbox WHERE event_type = 'tenant.suspended' AND aggregate_id = $1`, org.ID) != 1 {
 		t.Error("the suspension was not audited and queued as an event")
 	}
-
 	if rec := dbtest.Do(t, asOwner, http.MethodPatch, path, map[string]any{"status": "active"}); rec.Code != http.StatusOK || audited("tenant.reactivated") != 1 {
 		t.Fatalf("reactivate: %d %s, audited %d times", rec.Code, rec.Body.String(), audited("tenant.reactivated"))
 	}
 	if !ended(before) {
 		t.Error("reactivating the organisation restored a session it ended")
 	}
-	rec := dbtest.Do(t, asOwner, http.MethodPatch, path, map[string]any{"name": "Acme Ltd"})
+	rec := dbtest.Do(t, asAdmin, http.MethodPatch, path, map[string]any{"name": "Acme Ltd"})
 	var renamed Tenant
 	dbtest.Decode(t, rec, &renamed)
 	if rec.Code != http.StatusOK || renamed.Name != "Acme Ltd" || len(signals.reasons) != 1 {
-		t.Errorf("rename: %d %s, %d announcements; want the new name and no lifecycle effect", rec.Code, rec.Body.String(), len(signals.reasons))
-	}
-	if rec := dbtest.Do(t, asOwner, http.MethodPatch, "/tenants/"+other.String(), map[string]any{"status": "suspended"}); rec.Code != http.StatusForbidden {
-		t.Errorf("suspending another organisation: %d, want 403", rec.Code)
+		t.Errorf("an admin renames it: %d %s, %d announcements; want the new name and no lifecycle effect", rec.Code, rec.Body.String(), len(signals.reasons))
 	}
 
 	since := signIn()
-	if rec := dbtest.Do(t, asOwner, http.MethodDelete, path, nil); rec.Code != http.StatusNoContent {
+	if rec := dbtest.Do(t, asOwner, http.MethodDelete, path, nil); rec.Code != http.StatusAccepted || audited("tenant.deletion_scheduled") != 1 {
 		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
+	}
+	var scheduled Tenant
+	dbtest.Decode(t, dbtest.Do(t, asOwner, http.MethodGet, path, nil), &scheduled)
+	if scheduled.DeletionDueAt == nil || ended(since) {
+		t.Errorf("after scheduling: %+v, session ended %v; want it working with its deletion due", scheduled, ended(since))
+	}
+	refused("delete it twice", dbtest.Do(t, asOwner, http.MethodDelete, path, nil), http.StatusConflict, errs.CodeTenantDeletionScheduled)
+	refused("an admin calls it off", dbtest.Do(t, asAdmin, http.MethodPost, path+"/deletion/cancel", nil), http.StatusForbidden, errs.CodeTenantOwnerOnly)
+	rec = dbtest.Do(t, asOwner, http.MethodPost, path+"/deletion/cancel", nil)
+	var kept Tenant
+	dbtest.Decode(t, rec, &kept)
+	if rec.Code != http.StatusOK || kept.DeletionDueAt != nil || audited("tenant.deletion_cancelled") != 1 {
+		t.Errorf("call it off: %d %s", rec.Code, rec.Body.String())
+	}
+	refused("call it off twice", dbtest.Do(t, asOwner, http.MethodPost, path+"/deletion/cancel", nil), http.StatusConflict, errs.CodeTenantDeletionNotScheduled)
+
+	if rec := dbtest.Do(t, asOwner, http.MethodDelete, path, nil); rec.Code != http.StatusAccepted {
+		t.Fatalf("delete again: %d %s", rec.Code, rec.Body.String())
+	}
+	if n, err := DeleteDue(ctx, h.Repo, h.Signals); err != nil || n != 0 || ended(since) {
+		t.Errorf("before it is due: deleted %d, %v, session ended %v; want nothing deleted", n, err, ended(since))
+	}
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE tenant.tenants SET deletion_due_at = NOW() - INTERVAL '1 minute' WHERE id = $1`, org.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := DeleteDue(ctx, h.Repo, h.Signals); err != nil || n != 1 {
+		t.Fatalf("once due: deleted %d, %v; want the organisation", n, err)
 	}
 	if !ended(since) || audited("tenant.deleted") != 1 {
 		t.Error("deleting the organisation left its session live or was not audited")
@@ -255,6 +297,9 @@ func TestSuspendAndDeleteEndSessions(t *testing.T) {
 		t.Errorf("a deleted organisation: %d, want 404", rec.Code)
 	}
 }
+
+// ptr is a pointer to v.
+func ptr[T any](v T) *T { return &v }
 
 // TestCreateOrganisationFromAnother checks that a member signed in to one
 // organisation, and so scoped to it by row-level security, creates another

@@ -52,6 +52,28 @@ INSERT INTO tenant.tenants (slug, name, plan, region, logo_url, metadata)
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
+-- ScheduleTenantDeletion schedules an organisation's deletion for @due_at,
+-- unless one is already scheduled. No row: it is deleted or already
+-- scheduled.
+-- name: ScheduleTenantDeletion :one
+UPDATE tenant.tenants SET deletion_due_at = @due_at::timestamptz, updated_at = NOW()
+WHERE id = @id AND deleted_at IS NULL AND deletion_due_at IS NULL
+RETURNING deletion_due_at;
+
+-- CancelTenantDeletion calls off an organisation's scheduled deletion. 0
+-- rows: none was scheduled.
+-- name: CancelTenantDeletion :execrows
+UPDATE tenant.tenants SET deletion_due_at = NULL, updated_at = NOW()
+WHERE id = @id AND deleted_at IS NULL AND deletion_due_at IS NOT NULL;
+
+-- ListTenantsDueForDeletion lists organisations whose scheduled deletion is
+-- due, oldest first.
+-- name: ListTenantsDueForDeletion :many
+SELECT id FROM tenant.tenants
+WHERE deleted_at IS NULL AND deletion_due_at IS NOT NULL AND deletion_due_at <= NOW()
+ORDER BY deletion_due_at
+LIMIT @max_rows;
+
 -- name: SoftDeleteTenant :execrows
 UPDATE tenant.tenants
 SET deleted_at = NOW(), status = 'deleted', updated_at = NOW()

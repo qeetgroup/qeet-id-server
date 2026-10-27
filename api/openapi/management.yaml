@@ -180,7 +180,7 @@ paths:
   /v1/tenants/{tenantID}:
     delete:
       operationId: delete_v1_tenants_ByTenantID
-      description: 'Soft-deletes the tenant. This is a destructive, owner-only action: members lose access and tenant-scoped calls stop resolving once it completes. Users who belonged only to this tenant are left without one and must create or join another. In the same transaction every session in the tenant ends (session.revoked with reason tenant_deleted) and the deletion is audited (tenant.deleted, naming who) and queued as an event; refresh and every sign-in refuse the tenant from then on (403 auth.tenant_inactive). The sessions'' access tokens stop working on this API at once; a service that verifies tokens offline accepts one until it expires.'
+      description: 'Schedules the tenant''s deletion seven days from now (202 with deletion_due_at), audited as tenant.deletion_scheduled. Only a person who owns the tenant may (403 tenant.owner_only otherwise), and 409 tenant.deletion_scheduled answers one already scheduled. Until it is due the tenant keeps working and shows deletion_due_at, and an owner can call it off (POST /v1/tenants/{tenantID}/deletion/cancel). Once due, a background job soft-deletes it: members lose access and tenant-scoped calls stop resolving. Users who belonged only to this tenant are left without one and must create or join another. In the same transaction every session in the tenant ends (session.revoked with reason tenant_deleted) and the deletion is audited (tenant.deleted, by the system) and queued as an event; refresh and every sign-in refuse the tenant from then on (403 auth.tenant_inactive). The sessions'' access tokens stop working on this API at once; a service that verifies tokens offline accepts one until it expires.'
       summary: Delete tenant
       tags:
         - Tenants
@@ -194,14 +194,27 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '204':
-          description: Deleted
+        '202':
+          description: Deletion scheduled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenant_id:
+                    type: string
+                    format: uuid
+                  deletion_due_at:
+                    type: string
+                    format: date-time
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
     get:
       operationId: get_v1_tenants_ByTenantID
       description: 'Returns a single tenant by id. The caller must be a member of the tenant; requests for a tenant the principal does not belong to are rejected rather than disclosed.'
@@ -232,7 +245,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_tenants_ByTenantID
-      description: 'Updates mutable tenant attributes such as name and slug. Requires an administrative role within the tenant. Only the fields supplied in the request body are changed. Setting status to suspended ends every session in the tenant in the same transaction (session.revoked with reason tenant_suspended), and refresh and every sign-in refuse it until it is active again (403 auth.tenant_inactive); the sessions'' access tokens stop working on this API at once, and one a service verifies offline lasts out its short lifetime. Suspending and reactivating are audited (tenant.suspended, tenant.reactivated, naming who and the status it had) and queued as events.'
+      description: 'Updates mutable tenant attributes such as name and slug. Requires an administrative role within the tenant. Only the fields supplied in the request body are changed. Changing status is an owner''s (403 tenant.owner_only otherwise), and a tenant can''t suspend itself (403 tenant.self_suspend): that would lock out every member, its owners too, with nobody left to reactivate it; delete it instead. A tenant suspended another way that is reactivated is audited as tenant.reactivated and queued as an event.'
       summary: Update tenant
       tags:
         - Tenants
@@ -268,6 +281,37 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/deletion/cancel:
+    post:
+      operationId: post_v1_tenants_ByTenantID_deletion_cancel
+      description: 'Calls off the tenant''s scheduled deletion and returns the tenant, audited as tenant.deletion_cancelled. Only a person who owns the tenant may (403 tenant.owner_only otherwise); 409 tenant.deletion_not_scheduled when none is.'
+      summary: Cancel tenant deletion
+      tags:
+        - Tenants
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Deletion cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v1/tenants/{tenantID}/login-domain:
     get:
       operationId: get_v1_tenants_ByTenantID_login_domain
@@ -3419,6 +3463,11 @@ components:
         updated_at:
           type: string
           format: date-time
+        deletion_due_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When a scheduled deletion takes effect; null when none is.
         member_count:
           type: integer
           description: List-only. Distinct members (rbac.user_roles holders) in this org.

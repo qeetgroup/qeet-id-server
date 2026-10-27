@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant/dbgen"
@@ -37,17 +38,27 @@ func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 // ([]byte) via the dbutil helper.
 func toDomain(row dbgen.TenantTenant) *Tenant {
 	return &Tenant{
-		ID:        row.ID,
-		Slug:      row.Slug,
-		Name:      row.Name,
-		Status:    row.Status,
-		Plan:      row.Plan,
-		Region:    row.Region,
-		LogoURL:   row.LogoUrl,
-		Metadata:  dbutil.Metadata(row.Metadata),
-		CreatedAt: row.CreatedAt,
-		UpdatedAt: row.UpdatedAt,
+		ID:            row.ID,
+		Slug:          row.Slug,
+		Name:          row.Name,
+		Status:        row.Status,
+		Plan:          row.Plan,
+		Region:        row.Region,
+		LogoURL:       row.LogoUrl,
+		Metadata:      dbutil.Metadata(row.Metadata),
+		CreatedAt:     row.CreatedAt,
+		UpdatedAt:     row.UpdatedAt,
+		DeletionDueAt: timeOrNil(row.DeletionDueAt),
 	}
+}
+
+// timeOrNil is t's time, or nil when t is NULL.
+func timeOrNil(t pgtype.Timestamptz) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	v := t.Time
+	return &v
 }
 
 // listRowToTenant maps an enriched list row (tenant columns + the two per-org
@@ -333,6 +344,68 @@ func (r *Repository) SoftDelete(ctx context.Context, id uuid.UUID, onDeleted Sta
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+// DeletionGrace is how long a scheduled deletion waits, during which an owner
+// can call it off.
+const DeletionGrace = 7 * 24 * time.Hour
+
+// ScheduleDeletion schedules tenant id's deletion DeletionGrace from now and
+// runs onScheduled in the same transaction; it returns when the deletion is
+// due. ErrTenantDeletionScheduled when one already is; ErrNotFound when the
+// tenant is gone.
+func (r *Repository) ScheduleDeletion(ctx context.Context, id uuid.UUID, onScheduled func(ctx context.Context, tx pgx.Tx, due time.Time) error) (time.Time, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer tx.Rollback(ctx)
+	due, err := r.q.WithTx(tx).ScheduleTenantDeletion(ctx, dbgen.ScheduleTenantDeletionParams{ID: id, DueAt: time.Now().UTC().Add(DeletionGrace)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, gerr := r.q.WithTx(tx).GetTenant(ctx, id); errors.Is(gerr, pgx.ErrNoRows) {
+			return time.Time{}, errs.ErrNotFound
+		}
+		return time.Time{}, errs.ErrTenantDeletionScheduled
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	if onScheduled != nil {
+		if err := onScheduled(ctx, tx, due.Time); err != nil {
+			return time.Time{}, err
+		}
+	}
+	return due.Time, tx.Commit(ctx)
+}
+
+// CancelDeletion calls off tenant id's scheduled deletion and runs
+// onCancelled in the same transaction. ErrTenantDeletionNotScheduled when
+// none is.
+func (r *Repository) CancelDeletion(ctx context.Context, id uuid.UUID, onCancelled func(ctx context.Context, tx pgx.Tx) error) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	n, err := r.q.WithTx(tx).CancelTenantDeletion(ctx, id)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errs.ErrTenantDeletionNotScheduled
+	}
+	if onCancelled != nil {
+		if err := onCancelled(ctx, tx); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// DueForDeletion lists up to maxRows organisations whose scheduled deletion
+// is due. It reads every organisation, for the background job.
+func (r *Repository) DueForDeletion(ctx context.Context, maxRows int32) ([]uuid.UUID, error) {
+	return r.q.ListTenantsDueForDeletion(ctx, maxRows)
 }
 
 // IsEmailVerified reports whether the user has a verified email — the gate for

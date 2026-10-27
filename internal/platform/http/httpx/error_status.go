@@ -70,8 +70,12 @@ var statusByCode = map[string]int{
 	errs.CodePasskeyLoginFailed: http.StatusUnauthorized,
 
 	// Organization / tenant.
-	errs.CodeOrgSlugTaken:    http.StatusConflict,
-	errs.CodeTenantLastOwner: http.StatusConflict,
+	errs.CodeOrgSlugTaken:               http.StatusConflict,
+	errs.CodeTenantLastOwner:            http.StatusConflict,
+	errs.CodeTenantOwnerOnly:            http.StatusForbidden,
+	errs.CodeTenantSelfSuspend:          http.StatusForbidden,
+	errs.CodeTenantDeletionScheduled:    http.StatusConflict,
+	errs.CodeTenantDeletionNotScheduled: http.StatusConflict,
 }
 
 // registerStatuses adds a domain's code→status entries to statusByCode; each
