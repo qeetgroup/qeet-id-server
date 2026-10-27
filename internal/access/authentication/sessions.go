@@ -275,6 +275,12 @@ func endOtherSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (SignInsE
 	return ended, nil
 }
 
+// ExpireRecoveryLinks ends, inside tx, userID's unused password-reset links
+// and the unused sign-in links to their address, as a change of address does.
+func ExpireRecoveryLinks(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
+	return dbgen.New(tx).ExpireRecoveryLinksForUser(ctx, userID)
+}
+
 // SignInMethods counts the user's ways to sign in (see user.SignInMethods).
 func (s *Service) SignInMethods(ctx context.Context, userID uuid.UUID) (user.SignInMethods, error) {
 	return user.CountSignInMethods(ctx, s.pool, userID)

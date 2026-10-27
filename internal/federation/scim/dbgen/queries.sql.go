@@ -218,6 +218,25 @@ func (q *Queries) GetScimTokenTenant(ctx context.Context, tokenHash string) (uui
 	return tenant_id, err
 }
 
+const homeUserByEmail = `-- name: HomeUserByEmail :one
+SELECT id FROM "user".users
+WHERE tenant_id = $1::uuid AND LOWER(email) = LOWER($2) AND deleted_at IS NULL
+`
+
+type HomeUserByEmailParams struct {
+	TenantID uuid.UUID
+	Email    string
+}
+
+// HomeUserByEmail finds a live account whose home is @tenant_id by its
+// address, whoever created it.
+func (q *Queries) HomeUserByEmail(ctx context.Context, arg HomeUserByEmailParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, homeUserByEmail, arg.TenantID, arg.Email)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const insertScimGroup = `-- name: InsertScimGroup :one
 INSERT INTO tenant.groups (tenant_id, name, external_id, provisioned_via)
 VALUES ($1, $2, $3, 'scim')

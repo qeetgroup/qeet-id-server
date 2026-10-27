@@ -26,6 +26,8 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
@@ -205,12 +207,18 @@ func (s *Service) getProvisioned(ctx context.Context, tenantID, id uuid.UUID) (*
 	}, nil
 }
 
+// listProvisioned lists the organisation's directory-provisioned users. A
+// userName lookup finds any account at home there, whoever created it, so an
+// identity provider can match and link the people who are already members.
 func (s *Service) listProvisioned(ctx context.Context, tenantID uuid.UUID, emailFilter string, start, count int) ([]userRow, int, error) {
-	args := []any{tenantID, provisionedScim}
-	where := `tenant_id = $1 AND provisioned_via = $2 AND deleted_at IS NULL`
+	args := []any{tenantID}
+	where := `tenant_id = $1 AND deleted_at IS NULL`
 	if emailFilter != "" {
 		args = append(args, emailFilter)
-		where += ` AND LOWER(email) = LOWER($3)`
+		where += ` AND LOWER(email) = LOWER($2)`
+	} else {
+		args = append(args, provisionedScim)
+		where += ` AND provisioned_via = $2`
 	}
 
 	var total int
@@ -665,6 +673,30 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	// Someone already at home in the organisation (invited, or signed in with
+	// single sign-on) is adopted rather than refused as a duplicate.
+	if existing, err := h.Service.q.HomeUserByEmail(ctx, dbgen.HomeUserByEmailParams{TenantID: tid, Email: email}); err == nil {
+		c := userChange{profile: profile, tag: &p.ExternalID, adopted: true}
+		if display != "" {
+			c.in.DisplayName = &display
+		}
+		if st := statusFromActive(p.Active); st != "" {
+			c.in.Status = &st
+		}
+		if !h.applyUserChange(w, r, tid, existing, c, "user.updated") {
+			return
+		}
+		row, err := h.Service.getProvisioned(ctx, tid, existing)
+		if err != nil {
+			writeSCIMErr(w, http.StatusNotFound, "user not found")
+			return
+		}
+		writeSCIM(w, http.StatusCreated, h.toResource(r, row))
+		return
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		writeSCIMErr(w, http.StatusInternalServerError, "create failed")
+		return
+	}
 	if err := domainverify.CheckNewAccount(ctx, h.Service.users.Pool(), tid, email); err != nil {
 		if errors.Is(err, errs.ErrUserDomainManaged) {
 			writeSCIMErr(w, http.StatusConflict, "userName is on a domain another organization manages")
@@ -685,7 +717,7 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		DisplayName: display,
 	}, "")
 	if err != nil {
-		if errors.Is(err, errs.ErrConflict) {
+		if errors.Is(err, errs.ErrAuthEmailExists) || errors.Is(err, errs.ErrConflict) {
 			writeSCIMErr(w, http.StatusConflict, "userName already exists")
 			return
 		}
@@ -760,15 +792,17 @@ func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request) {
 		writeSCIMTypedErr(w, http.StatusBadRequest, "invalidValue", "Directory mapping validation failed")
 		return
 	}
-	in := user.UpdateInput{}
+	c := userChange{profile: profile, email: p.email()}
 	if d := p.display(); d != "" {
-		in.DisplayName = &d
+		c.in.DisplayName = &d
 	}
 	status := statusFromActive(p.Active)
 	if status != "" {
-		in.Status = &status
+		c.in.Status = &status
 	}
-	if !h.applyUserUpdate(w, r, tid, id, in, "user.updated", profile) {
+	ext := p.ExternalID // PUT is a full replace: externalId is authoritative
+	c.tag = &ext
+	if !h.applyUserChange(w, r, tid, id, c, "user.updated") {
 		return
 	}
 	row, err := h.Service.getProvisioned(r.Context(), tid, id)
@@ -804,45 +838,9 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 		writeSCIMTypedErr(w, http.StatusBadRequest, "invalidValue", "Directory mapping validation failed")
 		return
 	}
-	in := user.UpdateInput{}
-	for _, op := range body.Operations {
-		if !strings.EqualFold(op.Op, "replace") && !strings.EqualFold(op.Op, "add") {
-			continue
-		}
-		switch strings.ToLower(strings.Trim(op.Path, `"`)) {
-		case "active":
-			var b bool
-			if json.Unmarshal(op.Value, &b) == nil {
-				st := statusFromActive(&b)
-				in.Status = &st
-			}
-		case "displayname":
-			var dn string
-			if json.Unmarshal(op.Value, &dn) == nil {
-				in.DisplayName = &dn
-			}
-		case "":
-			// Path-less replace: value is an object of attributes.
-			var obj map[string]json.RawMessage
-			if json.Unmarshal(op.Value, &obj) != nil {
-				continue
-			}
-			if raw, exists := obj["active"]; exists {
-				var b bool
-				if json.Unmarshal(raw, &b) == nil {
-					st := statusFromActive(&b)
-					in.Status = &st
-				}
-			}
-			if raw, exists := obj["displayName"]; exists {
-				var dn string
-				if json.Unmarshal(raw, &dn) == nil {
-					in.DisplayName = &dn
-				}
-			}
-		}
-	}
-	if !h.applyUserUpdate(w, r, tid, id, in, "user.updated", profile) {
+	c := parseUserPatch(body)
+	c.profile = profile
+	if !h.applyUserChange(w, r, tid, id, c, "user.updated") {
 		return
 	}
 	row, err := h.Service.getProvisioned(r.Context(), tid, id)
@@ -888,6 +886,113 @@ func (h *Handler) scimTarget(w http.ResponseWriter, r *http.Request) (uuid.UUID,
 		return uuid.Nil, uuid.Nil, false
 	}
 	return tid, id, true
+}
+
+// parseUserPatch resolves a PatchOp body into a userChange: active (a
+// boolean, or the string Entra sends), displayName, name parts, userName or
+// the primary email, and externalId, by path or in a path-less value object.
+// Other attributes are left to the directory mapping.
+func parseUserPatch(body patchBody) userChange {
+	var c userChange
+	var given, family, formatted *string
+	set := func(path string, raw json.RawMessage) {
+		switch strings.ToLower(path) {
+		case "active":
+			if b, ok := scimBool(raw); ok {
+				st := statusFromActive(&b)
+				c.in.Status = &st
+			}
+		case "displayname":
+			if v, ok := scimString(raw); ok {
+				c.in.DisplayName = &v
+			}
+		case "username", `emails[primary eq true].value`, `emails[type eq "work"].value`:
+			if v, ok := scimString(raw); ok && v != "" {
+				c.email = v
+			}
+		case "emails":
+			var emails []scimEmail
+			if json.Unmarshal(raw, &emails) == nil {
+				if v := (scimUserPayload{Emails: emails}).email(); v != "" {
+					c.email = v
+				}
+			}
+		case "externalid":
+			if v, ok := scimString(raw); ok {
+				c.tag = &v
+			}
+		case "name":
+			var n scimName
+			if json.Unmarshal(raw, &n) == nil {
+				given, family, formatted = &n.GivenName, &n.FamilyName, &n.Formatted
+			}
+		case "name.givenname":
+			if v, ok := scimString(raw); ok {
+				given = &v
+			}
+		case "name.familyname":
+			if v, ok := scimString(raw); ok {
+				family = &v
+			}
+		case "name.formatted":
+			if v, ok := scimString(raw); ok {
+				formatted = &v
+			}
+		}
+	}
+	for _, op := range body.Operations {
+		if !strings.EqualFold(op.Op, "replace") && !strings.EqualFold(op.Op, "add") {
+			continue
+		}
+		path := strings.Trim(op.Path, `"`)
+		if path != "" {
+			set(path, op.Value)
+			continue
+		}
+		var obj map[string]json.RawMessage
+		if json.Unmarshal(op.Value, &obj) != nil {
+			continue
+		}
+		for key, raw := range obj {
+			set(key, raw)
+		}
+	}
+	if c.in.DisplayName == nil {
+		switch {
+		case formatted != nil && *formatted != "":
+			c.in.DisplayName = formatted
+		case given != nil && family != nil:
+			if full := strings.TrimSpace(*given + " " + *family); full != "" {
+				c.in.DisplayName = &full
+			}
+		}
+	}
+	return c
+}
+
+// scimBool reads a SCIM boolean, which Entra sends as the string "True" or
+// "False".
+func scimBool(raw json.RawMessage) (bool, bool) {
+	var b bool
+	if json.Unmarshal(raw, &b) == nil {
+		return b, true
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		if v, err := strconv.ParseBool(strings.TrimSpace(s)); err == nil {
+			return v, true
+		}
+	}
+	return false, false
+}
+
+// scimString reads a SCIM string attribute.
+func scimString(raw json.RawMessage) (string, bool) {
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		return "", false
+	}
+	return strings.TrimSpace(s), true
 }
 
 // statusFromActive maps the SCIM active flag to a user status. nil → "" so
@@ -1048,15 +1153,46 @@ func recordUserEvidence(ctx context.Context, tx pgx.Tx, r *http.Request, tenantI
 	})
 }
 
-// applyUserUpdate runs a SCIM-driven user update and its evidence in one
-// transaction, so a provisioning change is never durable without a record of it.
-func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenantID, userID uuid.UUID, in user.UpdateInput, action string, profiles ...map[string]any) bool {
+// userChange is a SCIM change to a user: the update, the directory's mapped
+// profile (nil: none), an external ID tagging the account as provisioned (nil:
+// keep the tag), a new address ("": keep it), and whether a create adopted the
+// existing account.
+type userChange struct {
+	in      user.UpdateInput
+	profile map[string]any
+	tag     *string
+	email   string
+	adopted bool
+}
+
+// applyUserChange runs a SCIM-driven user change and its evidence in one
+// transaction, so a provisioning change is never durable without a record of
+// it. A new address must be on a domain the organisation manages; it counts as
+// verified, as the organisation's directory vouches for it, and links sent to
+// the old one stop working.
+func (h *Handler) applyUserChange(w http.ResponseWriter, r *http.Request, tenantID, userID uuid.UUID, c userChange, action string) bool {
 	ctx := r.Context()
+	in := c.in
 	// UpdateTx matches on the user ID alone, so without this check one tenant's
 	// SCIM token could suspend or rename a user in any tenant.
-	if _, err := h.Service.getProvisioned(ctx, tenantID, userID); err != nil {
+	current, err := h.Service.getProvisioned(ctx, tenantID, userID)
+	if err != nil {
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return false
+	}
+	if strings.EqualFold(c.email, current.Email) {
+		c.email = ""
+	}
+	if c.email != "" {
+		manager, managed, err := domainverify.ManagerOf(postgres.AcrossTenants(ctx), h.Service.users.Pool(), c.email)
+		if err != nil {
+			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
+			return false
+		}
+		if !managed || manager != tenantID {
+			writeSCIMTypedErr(w, http.StatusBadRequest, "invalidValue", "userName must be on a domain the organization has verified")
+			return false
+		}
 	}
 	tx, err := h.Service.users.Pool().Begin(ctx)
 	if err != nil {
@@ -1083,6 +1219,28 @@ func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenant
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return false
 	}
+	if c.tag != nil {
+		if err := h.Service.tagProvisionedTx(ctx, tx, userID, *c.tag); err != nil {
+			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
+			return false
+		}
+	}
+	if c.email != "" {
+		if err := auth.ExpireRecoveryLinks(ctx, tx, userID); err != nil {
+			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
+			return false
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE "user".users SET email = $3, email_verified_at = NOW(), updated_at = NOW()
+			WHERE id = $1 AND tenant_id = $2`, userID, tenantID, c.email); err != nil {
+			if pgxerr.IsUnique(err) {
+				writeSCIMTypedErr(w, http.StatusConflict, "uniqueness", "userName already exists")
+				return false
+			}
+			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
+			return false
+		}
+	}
 	if in.Status != nil && *in.Status == "suspended" {
 		if _, err := tx.Exec(ctx, `UPDATE "user".users SET suspension_source='scim',suspension_reason='provider' WHERE tenant_id=$1 AND id=$2 AND suspension_source='unknown'`, tenantID, userID); err != nil {
 			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
@@ -1095,8 +1253,8 @@ func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenant
 			return false
 		}
 	}
-	if h.Service.mapper != nil && len(profiles) > 0 {
-		if err := h.Service.mapper.StoreProfile(ctx, tx, tenantID, userID, "scim:"+tenantID.String(), profiles[0]); err != nil {
+	if h.Service.mapper != nil && c.profile != nil {
+		if err := h.Service.mapper.StoreProfile(ctx, tx, tenantID, userID, "scim:"+tenantID.String(), c.profile); err != nil {
 			writeSCIMErr(w, http.StatusInternalServerError, "Profile mapping could not be saved")
 			return false
 		}
@@ -1107,6 +1265,12 @@ func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenant
 	}
 	if in.DisplayName != nil {
 		metadata["display_name_changed"] = true
+	}
+	if c.email != "" {
+		metadata["email_changed"] = true
+	}
+	if c.adopted {
+		metadata["adopted"] = true
 	}
 	if err := recordUserEvidence(ctx, tx, r, tenantID, userID, action, metadata); err != nil {
 		writeSCIMErr(w, http.StatusInternalServerError, "update failed")

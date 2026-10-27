@@ -3804,7 +3804,7 @@ paths:
   /scim/v2/Users:
     get:
       operationId: get_scim_v2_Users
-      description: 'Lists provisioned users for the tenant identified by the SCIM bearer token, with optional SCIM filtering (for example userName eq) and pagination, returning a SCIM 2.0 ListResponse, with Qeet acting as the SCIM server. Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope rather than the standard Qeet error shape.'
+      description: 'Lists provisioned users for the tenant identified by the SCIM bearer token, with optional SCIM filtering (for example userName eq) and pagination; a userName eq lookup finds any account at home in the tenant, whoever created it, so an identity provider can match and link existing members, returning a SCIM 2.0 ListResponse, with Qeet acting as the SCIM server. Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope rather than the standard Qeet error shape.'
       summary: "[scim] List users"
       tags:
         - SCIM
@@ -3839,7 +3839,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
     post:
       operationId: post_scim_v2_Users
-      description: 'Provisions a new user in the tenant identified by the SCIM bearer token, with Qeet acting as the SCIM 2.0 server for an external IdP. Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope, not the standard Qeet error shape. A userName already taken, or on a domain another organisation has verified, is refused with 409.'
+      description: 'Provisions a new user in the tenant identified by the SCIM bearer token, with Qeet acting as the SCIM 2.0 server for an external IdP. Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope, not the standard Qeet error shape. A userName belonging to an account already at home in the tenant (invited, or signed in with single sign-on) adopts that account: it is tagged as provisioned with the externalId and updated, and answered 201. A userName taken elsewhere, or on a domain another organisation has verified, is refused with 409.'
       summary: "[scim] Create user"
       tags:
         - SCIM
@@ -3949,7 +3949,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_scim_v2_Users_ById
-      description: 'Applies a SCIM PatchOp to a user for the tenant identified by the SCIM bearer token; setting active to false is the deprovisioning path IdPs rely on and suspends the account, ending every way it signs in as an administrator''s suspension does, and displayName may also be updated, with Qeet acting as the SCIM server. Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope, not the standard Qeet error shape. An account that owns the organisation is never changed or deleted by the directory (403). Setting active to true lifts only a suspension the directory set: one an administrator, a policy or another directory set stands, while the rest of the change applies.'
+      description: 'Applies a SCIM PatchOp to a user for the tenant identified by the SCIM bearer token; setting active to false (a boolean, or the string Entra sends) is the deprovisioning path IdPs rely on and suspends the account, ending every way it signs in as an administrator''s suspension does; displayName, name.givenName/familyName/formatted, externalId and userName (or the primary email) are applied too, a new userName only on a domain the tenant has verified (400 invalidValue otherwise), counted verified, with links sent to the old address ending; and displayName may also be updated, with Qeet acting as the SCIM server. Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope, not the standard Qeet error shape. An account that owns the organisation is never changed or deleted by the directory (403). Setting active to true lifts only a suspension the directory set: one an administrator, a policy or another directory set stands, while the rest of the change applies.'
       summary: "[scim] Patch user (deprovision)"
       tags:
         - SCIM

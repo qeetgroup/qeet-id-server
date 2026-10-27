@@ -61,6 +61,12 @@ FROM "user".users u
 WHERE u.id = @id AND u.tenant_id = @tenant_id AND u.deleted_at IS NULL
 FOR UPDATE OF u;
 
+-- HomeUserByEmail finds a live account whose home is @tenant_id by its
+-- address, whoever created it.
+-- name: HomeUserByEmail :one
+SELECT id FROM "user".users
+WHERE tenant_id = @tenant_id::uuid AND LOWER(email) = LOWER(@email) AND deleted_at IS NULL;
+
 -- name: TagProvisionedUser :exec
 UPDATE "user".users
     SET external_id    = sqlc.narg('external_id'),
