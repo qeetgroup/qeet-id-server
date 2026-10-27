@@ -265,6 +265,35 @@ func TestLoad_SignInLockoutDefaults(t *testing.T) {
 	}
 }
 
+// TestLoad_BreachedPasswordCheckOnByDefault checks that a deployment that
+// doesn't set BREACHED_PASSWORD_CHECK checks passwords against known breaches,
+// and that setting it false turns the check off.
+func TestLoad_BreachedPasswordCheckOnByDefault(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("BREACHED_PASSWORD_CHECK", "")
+	if err := os.Unsetenv("BREACHED_PASSWORD_CHECK"); err != nil {
+		t.Fatal(err)
+	}
+	for _, env := range []string{EnvProd, EnvLocal} {
+		t.Setenv("SERVICE_ENV", env)
+		c, err := Load()
+		if err != nil {
+			t.Fatalf("SERVICE_ENV=%s: defaults should load: %v", env, err)
+		}
+		if !c.BreachedPasswordCheck {
+			t.Errorf("SERVICE_ENV=%s: breached-password check is off by default, want on", env)
+		}
+	}
+	t.Setenv("BREACHED_PASSWORD_CHECK", "false")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if c.BreachedPasswordCheck {
+		t.Error("BREACHED_PASSWORD_CHECK=false left the check on")
+	}
+}
+
 func TestLoad_RejectsUnsafeSignInLockout(t *testing.T) {
 	for name, env := range map[string][2]string{
 		"default above its maximum":   {"LOGIN_LOCKOUT_THRESHOLD", "50"},

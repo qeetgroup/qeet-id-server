@@ -293,11 +293,11 @@ type Config struct {
 	// sandbox mock-checkout URL the browser is redirected to.
 	PaymentSandboxBaseURL string `envconfig:"PAYMENT_SANDBOX_BASE_URL" default:"http://localhost:4001"`
 
-	// BreachedPasswordCheck turns on breached-password detection (the Have I Been
-	// Pwned k-anonymity range API) in every password-setting flow. It is off by
-	// default and fails open, so a HIBP outage never blocks sign-up (see
-	// internal/platform/crypto/hibp).
-	BreachedPasswordCheck bool `envconfig:"BREACHED_PASSWORD_CHECK" default:"false"`
+	// BreachedPasswordCheck checks every new password against known breaches (the
+	// Have I Been Pwned k-anonymity range API). It is on by default; the
+	// development .env template turns it off. It fails open, so a HIBP outage
+	// never blocks sign-up (see internal/platform/crypto/hibp).
+	BreachedPasswordCheck bool `envconfig:"BREACHED_PASSWORD_CHECK" default:"true"`
 	// BreachedPasswordMinCount is the breach-sighting threshold at or above
 	// which a password is rejected (1 = reject anything seen even once).
 	BreachedPasswordMinCount int `envconfig:"BREACHED_PASSWORD_MIN_COUNT" default:"1"`

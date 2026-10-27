@@ -1,7 +1,7 @@
 // Package hibp checks passwords against the Have I Been Pwned range API with
 // k-anonymity: only the first 5 hex characters of the password's SHA-1 are sent
-// and the rest is matched locally. The check is off unless enabled and fails
-// open (see PwnedAllowOnError), so an outage never blocks a password change.
+// and the rest is matched locally. The check fails open (see
+// PwnedAllowOnError), so an outage never blocks a password change.
 package hibp
 
 import (

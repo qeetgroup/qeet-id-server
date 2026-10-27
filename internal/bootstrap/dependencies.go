@@ -158,14 +158,16 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	inviteService.SetPasswordRules(authPolicyService)     // invite accept
 	inviteService.SetAcceptMethods(authPolicyService)     // which ways of accepting the acceptance screen offers
 
-	// Breached-password check (Have I Been Pwned k-anonymity), off by default. It
-	// fails open on a HIBP outage, counted in
-	// breached_password_check_allowed_on_error_total, and only the 5-character
-	// SHA-1 prefix leaves the process.
+	// Breached-password check (Have I Been Pwned k-anonymity), on unless
+	// BREACHED_PASSWORD_CHECK turns it off. It fails open on a HIBP outage,
+	// counted in breached_password_check_allowed_on_error_total, and only the
+	// 5-character SHA-1 prefix leaves the process.
 	if cfg.BreachedPasswordCheck {
 		breachChecker := hibp.New(&http.Client{Timeout: 3 * time.Second}, cfg.BreachedPasswordAPIURL, cfg.BreachedPasswordMinCount)
 		authPolicyService.SetBreachChecker(breachChecker)
 		slog.Info("breached-password check enabled (HIBP k-anonymity; fail-open)", "min_count", cfg.BreachedPasswordMinCount)
+	} else if !cfg.IsDev() {
+		slog.Warn("breached-password check is off (BREACHED_PASSWORD_CHECK=false): new passwords are not checked against known breaches")
 	}
 	apikeyService := apikey.NewService(pool)
 	principalService := principal.NewService(pool, issuer)
