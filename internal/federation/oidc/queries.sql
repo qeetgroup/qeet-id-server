@@ -37,9 +37,6 @@ FROM auth.oidc_clients WHERE client_id = @client_id;
 -- name: GetClientPostLogoutURIs :one
 SELECT post_logout_uris FROM auth.oidc_clients WHERE client_id = @client_id;
 
--- name: GetClientGrantTypes :one
-SELECT grant_types FROM auth.oidc_clients WHERE client_id = @client_id;
-
 -- name: ListShadowAICandidates :many
 SELECT c.id, c.client_id, c.name, c.grant_types, c.created_at,
        COALESCE(g.live, 0)::bigint AS live_grants

@@ -275,17 +275,6 @@ func (q *Queries) GetClientForAuth(ctx context.Context, clientID string) (GetCli
 	return i, err
 }
 
-const getClientGrantTypes = `-- name: GetClientGrantTypes :one
-SELECT grant_types FROM auth.oidc_clients WHERE client_id = $1
-`
-
-func (q *Queries) GetClientGrantTypes(ctx context.Context, clientID string) ([]string, error) {
-	row := q.db.QueryRow(ctx, getClientGrantTypes, clientID)
-	var grant_types []string
-	err := row.Scan(&grant_types)
-	return grant_types, err
-}
-
 const getClientLockedUntil = `-- name: GetClientLockedUntil :one
 
 SELECT locked_until FROM auth.oidc_client_auth_lockouts

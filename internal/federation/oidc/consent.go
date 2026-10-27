@@ -49,7 +49,7 @@ func (s *Service) StartConsentRequest(ctx context.Context, loginSessionID, userI
 		return uuid.Nil, err
 	}
 	for _, sc := range in.Scopes {
-		if !contains(info.Scopes, sc) {
+		if !scopePermitted(info.Scopes, info.GrantTypes, sc) {
 			return uuid.Nil, errs.ErrOIDCScopeNotPermitted
 		}
 	}

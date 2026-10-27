@@ -577,6 +577,81 @@ func TestLoopbackRedirectOnAnyPort(t *testing.T) {
 	}
 }
 
+// TestOfflineAccessControlsRefreshTokens checks that offline_access is
+// accepted from any application registered for refresh, that one which didn't
+// register it gets a refresh token with every grant as before, that one which
+// did gets one only when it asks, on the code and device flows alike, and that
+// an application not registered for refresh is refused the scope.
+func TestOfflineAccessControlsRefreshTokens(t *testing.T) {
+	ctx := dbtest.Context(t)
+	p := newProvider(t)
+	tenant := dbtest.Tenant(t)
+	person := dbtest.User(t, tenant, tenant)
+	standard, standardSecret := registerClient(t, p.svc, tenant)
+	optedIn, optedInSecret := registerClientWith(t, p.svc, CreateClientInput{TenantID: tenant, Scopes: []string{"openid", "email", "offline_access"}})
+	codeOnly, _ := registerClientWith(t, p.svc, CreateClientInput{TenantID: tenant, GrantTypes: []string{"authorization_code"}})
+	redeem := func(c *Client, secret string, scopes ...string) *TokenResponse {
+		t.Helper()
+		verifier, challenge, _ := codes.URLToken()
+		code, _, err := p.svc.Authorize(ctx, person.ID, c.ClientID, testRedirect, scopes, "", challenge, "S256")
+		if err != nil {
+			t.Fatalf("authorize %v: %v", scopes, err)
+		}
+		issued, err := p.svc.ExchangeCode(ctx, c.ClientID, secret, code, testRedirect, verifier, "")
+		if err != nil {
+			t.Fatalf("redeem %v: %v", scopes, err)
+		}
+		return issued
+	}
+
+	for _, tc := range []struct {
+		name    string
+		client  *Client
+		secret  string
+		scopes  []string
+		refresh bool
+	}{
+		{"an application that didn't register offline_access, asking for it", standard, standardSecret, []string{"openid", "offline_access"}, true},
+		{"an application that didn't register offline_access, not asking", standard, standardSecret, []string{"openid"}, true},
+		{"an application that registered offline_access, asking for it", optedIn, optedInSecret, []string{"openid", "offline_access"}, true},
+		{"an application that registered offline_access, not asking", optedIn, optedInSecret, []string{"openid"}, false},
+	} {
+		issued := redeem(tc.client, tc.secret, tc.scopes...)
+		if (issued.RefreshToken != "") != tc.refresh || issued.Scope != strings.Join(tc.scopes, " ") {
+			t.Errorf("%s: refresh token %q, scope %q; want one %v, scope %v", tc.name, issued.RefreshToken, issued.Scope, tc.refresh, tc.scopes)
+			continue
+		}
+		if tc.refresh {
+			if renewed, err := p.svc.RefreshToken(ctx, tc.client.ClientID, tc.secret, issued.RefreshToken, ""); err != nil || renewed.RefreshToken == "" || renewed.Scope != issued.Scope {
+				t.Errorf("%s: renew %+v, %v; want a new pair for the same scope", tc.name, renewed, err)
+			}
+		}
+	}
+	_, challenge, _ := codes.URLToken()
+	if _, _, err := p.svc.Authorize(ctx, person.ID, codeOnly.ClientID, testRedirect, []string{"openid", "offline_access"}, "", challenge, "S256"); !errors.Is(err, errs.ErrOIDCScopeNotPermitted) {
+		t.Errorf("offline_access from an application not registered for refresh: %v, want %v", err, errs.ErrOIDCScopeNotPermitted)
+	}
+
+	device, _ := registerClientWith(t, p.svc, CreateClientInput{
+		TenantID: tenant, Type: "public", GrantTypes: []string{grantTypeDeviceCode, "refresh_token"}, Scopes: []string{"openid", "offline_access"},
+	})
+	cookie, _ := p.signIn(t, person.ID)
+	for scope, refresh := range map[string]bool{"openid": false, "openid offline_access": true, "": true} {
+		rec := postForm(t, p.public, "/oauth/device_authorization", url.Values{"client_id": {device.ClientID}, "scope": {scope}}, "", "")
+		var started DeviceAuthResponse
+		dbtest.Decode(t, rec, &started)
+		if rec := browse(t, p.public, http.MethodPost, "/oauth/device/decision", cookie, map[string]any{"user_code": started.UserCode, "approve": true}); rec.Code != http.StatusOK {
+			t.Fatalf("device scope %q: approve: %d %s", scope, rec.Code, rec.Body.String())
+		}
+		rec = postForm(t, p.public, "/oauth/token-code", url.Values{"grant_type": {grantTypeDeviceCode}, "client_id": {device.ClientID}, "device_code": {started.DeviceCode}}, "", "")
+		var issued TokenResponse
+		dbtest.Decode(t, rec, &issued)
+		if rec.Code != http.StatusOK || (issued.RefreshToken != "") != refresh {
+			t.Errorf("device scope %q: %d %s, want a refresh token %v", scope, rec.Code, rec.Body.String(), refresh)
+		}
+	}
+}
+
 // TestRefreshedIDTokenKeepsTheSignIn checks that an ID token issued again on a
 // refresh, and on the refresh after it, reports the original sign-in's
 // auth_time and hosted-login session (OIDC Core 12.2), and no nonce.

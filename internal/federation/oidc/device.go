@@ -121,7 +121,7 @@ func (s *Service) DeviceAuthorize(ctx context.Context, clientID string, scopes [
 		scopes = dbScopes
 	}
 	for _, sc := range scopes {
-		if !contains(dbScopes, sc) {
+		if !scopePermitted(dbScopes, info.GrantTypes, sc) {
 			return "", "", uuid.Nil, errs.ErrOIDCScopeNotPermitted
 		}
 	}
@@ -379,9 +379,9 @@ func (s *Service) DeviceToken(ctx context.Context, clientID, clientSecret, rawDe
 		}
 		return nil, oauthErr("access_denied", "address_not_allowed")
 	}
-	// The client's grant_types tell us whether to mint a refresh token, the same
+	// The client's registration tells whether to mint a refresh token, the same
 	// way ExchangeCode does.
-	grantTypes, err := q.GetClientGrantTypes(ctx, clientID)
+	registered, err := q.GetClientTenantAndScopes(ctx, clientID)
 	if err != nil {
 		return nil, err
 	}
@@ -405,7 +405,7 @@ func (s *Service) DeviceToken(ctx context.Context, clientID, clientSecret, rawDe
 		idTok = t
 	}
 	refresh := ""
-	if contains(grantTypes, "refresh_token") {
+	if issuesRefreshToken(registered.Scopes, registered.GrantTypes, scopes) {
 		// Device grant doesn't collect a resource indicator today (RFC 8707
 		// support there is unscoped work) — issued with no bound resource.
 		refresh, err = s.issueRefreshToken(ctx, s.q, clientID, *userID, tenantID, scopes, "", pgtype.UUID{}, "", pgtype.Timestamptz{})

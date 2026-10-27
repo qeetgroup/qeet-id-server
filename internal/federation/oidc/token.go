@@ -400,7 +400,7 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	// the hosted-login session the code came from either spends the code first
 	// (and this redemption fails) or waits and then ends the grant.
 	refresh := ""
-	if contains(client.GrantTypes, "refresh_token") {
+	if issuesRefreshToken(clientInfo.Scopes, client.GrantTypes, scopes) {
 		refresh, err = s.issueRefreshToken(ctx, q, clientID, userID, tenantID, scopes, resource, ac.LoginSessionID, hash, ac.AuthTime)
 		if err != nil {
 			return nil, err
