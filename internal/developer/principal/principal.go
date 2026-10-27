@@ -221,6 +221,9 @@ func joinScopes(in []string) string {
 // Handler serves the service principal HTTP API.
 type Handler struct {
 	Service *Service
+	// GrantCheck refuses a credential carrying a scope the caller doesn't hold
+	// (rbac.Repository.CheckGrantScopes). Without it creating one is refused.
+	GrantCheck func(ctx context.Context, caller *httpx.Principal, tenantID uuid.UUID, scopes []string) error
 }
 
 // Mount registers the service principal routes on r.
@@ -248,6 +251,14 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.TenantID = tid
+	if h.GrantCheck == nil {
+		httpx.WriteError(w, r, errs.ErrNotImplemented)
+		return
+	}
+	if err := h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tid, in.Scopes); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	ctx := r.Context()
 	tx, err := h.Service.Pool().Begin(ctx)
 	if err != nil {

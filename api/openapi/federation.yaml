@@ -1024,7 +1024,7 @@ paths:
   /v1/service-principals:
     post:
       operationId: post_v1_service_principals
-      description: 'Creates a service principal, a non-human machine identity, in the caller''s tenant and returns its client id and one-time client secret, which cannot be retrieved afterward. The principal authenticates for machine-to-machine access at the client-credentials token endpoint (POST /v1/oauth/token). Creation is audited; disable the principal when it is no longer needed. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress.'
+      description: 'Creates a service principal, a non-human machine identity, in the caller''s tenant and returns its client id and one-time client secret, which cannot be retrieved afterward. The principal authenticates for machine-to-machine access at the client-credentials token endpoint (POST /v1/oauth/token). Creation is audited; disable the principal when it is no longer needed. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress. A credential carries only authority its creator holds: every scope must be one the caller holds (a vault scope needs secret.read; a machine caller, a scope of its own), or the request is refused with 403 rbac.grant_exceeds_caller naming the scope.'
       summary: Create service principal
       tags:
         - OIDC

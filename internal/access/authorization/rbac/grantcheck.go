@@ -3,6 +3,7 @@ package rbac
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -13,8 +14,11 @@ import (
 
 // Nobody hands out authority they don't hold. Granting a permission to a role
 // needs the caller to hold it; giving a role (directly, by group or by
-// invitation) needs every permission it carries; only an owner gives the owner
-// role. An owner may give anything; a machine caller holds only its scopes.
+// invitation) needs every permission it carries; issuing a machine credential
+// needs every scope it carries; only an owner gives the owner role. A person
+// holds their permissions, an owner everything; a credential (API key, service
+// principal, agent) holds only its scopes, and no more than the person it acts
+// for holds now.
 
 // CheckGrantPermission refuses, with ErrRBACGrantExceedsCaller naming it, the
 // caller granting permID to a role of tenantID without holding it there.
@@ -55,41 +59,103 @@ func (r *Repository) CheckGrantRole(ctx context.Context, caller *httpx.Principal
 	return r.checkGrant(ctx, caller, tenantID, keys, ownerRole)
 }
 
-// checkGrant applies the rule above to the permissions being given.
+// CheckGrantScopes refuses the caller issuing a machine credential of tenantID
+// that carries a scope the caller doesn't hold, with ErrRBACGrantExceedsCaller
+// naming it. A vault scope needs secret.read, or for a credential a vault scope
+// covering it.
+func (r *Repository) CheckGrantScopes(ctx context.Context, caller *httpx.Principal, tenantID uuid.UUID, scopes []string) error {
+	return r.checkGrant(ctx, caller, tenantID, scopes, false)
+}
+
+// checkGrant applies the rule above to the permissions or scopes being given.
 func (r *Repository) checkGrant(ctx context.Context, caller *httpx.Principal, tenantID uuid.UUID, keys []string, ownerRole bool) error {
 	if caller == nil {
 		return errs.ErrRBACPermissionDenied
 	}
-	held := map[string]bool{}
-	if caller.UserID != nil {
-		owner, err := r.IsOwner(ctx, *caller.UserID, tenantID)
-		if err != nil {
-			return err
-		}
-		if owner {
-			return nil
-		}
-		perms, err := r.EffectivePermissions(ctx, *caller.UserID, tenantID)
-		if err != nil {
-			return err
-		}
-		for _, p := range perms {
-			held[p] = true
-		}
-	} else {
-		for _, s := range caller.Scopes {
-			held[s] = true
-		}
+	g, err := r.grantorOf(ctx, caller, tenantID)
+	if err != nil {
+		return err
+	}
+	if g.all {
+		return nil
 	}
 	if ownerRole {
 		return errs.ErrRBACOwnerOnly
 	}
 	for _, k := range keys {
-		if !held[k] {
+		if !g.holds(k) {
 			return errs.ErrRBACGrantExceedsCaller.WithMetadata(map[string]any{"permission": k})
 		}
 	}
 	return nil
+}
+
+// grantor is what a caller may hand out.
+type grantor struct {
+	all     bool // an owner, acting in person
+	machine bool // a credential: held are its scopes
+	held    map[string]bool
+}
+
+// holds reports whether the grantor may hand out key, a permission or scope.
+func (g grantor) holds(key string) bool {
+	if g.all || g.held[key] {
+		return true
+	}
+	if name, ok := strings.CutPrefix(key, "vault:"); ok && name != "" {
+		if g.machine {
+			return g.held["vault:read"]
+		}
+		return g.held["secret.read"]
+	}
+	return false
+}
+
+// grantorOf is what caller may hand out in tenantID.
+func (r *Repository) grantorOf(ctx context.Context, caller *httpx.Principal, tenantID uuid.UUID) (grantor, error) {
+	person := func(userID uuid.UUID) (grantor, error) {
+		owner, err := r.IsOwner(ctx, userID, tenantID)
+		if err != nil || owner {
+			return grantor{all: owner}, err
+		}
+		perms, err := r.EffectivePermissions(ctx, userID, tenantID)
+		if err != nil {
+			return grantor{}, err
+		}
+		g := grantor{held: make(map[string]bool, len(perms))}
+		for _, p := range perms {
+			g.held[p] = true
+		}
+		return g, nil
+	}
+	if caller.UserID != nil && !machineActor(caller.ActorType) {
+		return person(*caller.UserID)
+	}
+	g := grantor{machine: true, held: make(map[string]bool, len(caller.Scopes))}
+	var bound *grantor
+	if caller.UserID != nil {
+		p, err := person(*caller.UserID)
+		if err != nil {
+			return grantor{}, err
+		}
+		bound = &p
+	}
+	for _, s := range caller.Scopes {
+		if bound == nil || bound.holds(s) {
+			g.held[s] = true
+		}
+	}
+	return g, nil
+}
+
+// machineActor reports whether actorType is a credential's, which acts by its
+// scopes rather than as a person signed in.
+func machineActor(actorType string) bool {
+	switch actorType {
+	case "api_key", "service", "service_principal", "agent":
+		return true
+	}
+	return false
 }
 
 // IsOwner reports whether userID holds tenantID's owner role, directly or

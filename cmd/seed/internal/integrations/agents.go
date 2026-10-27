@@ -77,7 +77,7 @@ func (d *dev) agents(o *world.Org) {
 	for _, s := range agentSpecs[o.Spec.Slug] {
 		days := d.jitter(s.created)
 		at := d.when(o, days)
-		by := person(o, at, s.by...)
+		by := d.issuer(o, at, s.scopes, s.by...)
 		sponsor := person(o, at, s.sponsor...)
 		at = d.when(o, days, by, sponsor)
 		var a *agent.Agent

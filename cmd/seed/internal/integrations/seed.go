@@ -17,6 +17,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/bootstrap"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // Seed builds every organisation's integrations in the order its people set
@@ -167,6 +168,30 @@ func person(o *world.Org, t time.Time, prefs ...who) *world.Person {
 		}
 		for _, g := range o.Guests {
 			if g.Status == world.StatusActive && pref(g) && guestSince(o, g).Before(t) {
+				return g
+			}
+		}
+	}
+	return o.Owner
+}
+
+// issuer is who creates a credential carrying scopes at t: the first preferred
+// person allowed to (the API refuses a scope its creator doesn't hold), else an
+// administrator who is, else the owner.
+func (d *dev) issuer(o *world.Org, t time.Time, scopes []string, prefs ...who) *world.Person {
+	allowed := func(p *world.Person) bool {
+		caller := &httpx.Principal{UserID: &p.ID, TenantID: &o.ID, ActorType: "user"}
+		return d.w.Deps.RBAC.Repo.CheckGrantScopes(d.w.Ctx, caller, o.ID, scopes) == nil
+	}
+	admin := func(p *world.Person) bool { return p.Role == world.RoleAdmin }
+	for _, pref := range append(append([]who{}, prefs...), admin) {
+		for _, p := range people(o, t, pref) {
+			if allowed(p) {
+				return p
+			}
+		}
+		for _, g := range o.Guests {
+			if g.Status == world.StatusActive && pref(g) && guestSince(o, g).Before(t) && allowed(g) {
 				return g
 			}
 		}

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -29,7 +30,7 @@ func TestAPIKeysStayInTheirTenant(t *testing.T) {
 		t.Fatalf("create key in A: %v", err)
 	}
 
-	asB := dbtest.Serve(dbtest.Principal(adminB.ID, tenantB), (&Handler{Service: svc}).Mount)
+	asB := dbtest.Serve(dbtest.Principal(adminB.ID, tenantB), (&Handler{Service: svc, GrantCheck: rbac.NewRepository(dbtest.Pool(t)).CheckGrantScopes}).Mount)
 	if rec := dbtest.Do(t, asB, http.MethodDelete, "/api-keys/"+keyA.ID.String(), nil); rec.Code != http.StatusNotFound {
 		t.Errorf("tenant B revokes tenant A's key: status %d, want 404", rec.Code)
 	}

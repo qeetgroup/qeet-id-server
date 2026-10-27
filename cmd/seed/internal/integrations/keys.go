@@ -96,7 +96,7 @@ func (d *dev) apiKeys(o *world.Org) {
 	for _, k := range keys[o.Spec.Slug] {
 		days := d.jitter(k.created)
 		at := d.when(o, days)
-		by := person(o, at, k.by...)
+		by := d.issuer(o, at, k.scopes, k.by...)
 		at = d.when(o, days, by)
 		in := apikey.CreateInput{TenantID: o.ID, Name: k.name, Scopes: k.scopes, Actor: d.as(by)}
 		if k.personal {
@@ -220,7 +220,7 @@ func (d *dev) principals(o *world.Org) {
 	for _, s := range principals[o.Spec.Slug] {
 		days := d.jitter(s.created)
 		at := d.when(o, days)
-		by := person(o, at, s.by...)
+		by := d.issuer(o, at, s.scopes, s.by...)
 		at = d.when(o, days, by)
 		var p *principal.Principal
 		var secret string

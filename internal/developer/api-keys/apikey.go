@@ -1,6 +1,6 @@
 // Package apikey issues long-lived bearer tokens for programmatic access.
 // A key is `<prefix>.<secret>`; we store the prefix (for lookup) and the
-// bcrypt hash of the secret. The plaintext is shown to the caller exactly
+// SHA-256 hash of the secret. The plaintext is shown to the caller exactly
 // once at creation.
 package apikey
 
@@ -332,6 +332,9 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 // Handler serves the API key HTTP API.
 type Handler struct {
 	Service *Service
+	// GrantCheck refuses a credential carrying a scope the caller doesn't hold
+	// (rbac.Repository.CheckGrantScopes). Without it creating one is refused.
+	GrantCheck func(ctx context.Context, caller *httpx.Principal, tenantID uuid.UUID, scopes []string) error
 }
 
 // Mount registers the API key routes on r.
@@ -356,6 +359,14 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	in.Actor = audit.ActorOf(r)
 	if in.Name == "" {
 		httpx.WriteError(w, r, errs.ErrAPIKeyNameRequired)
+		return
+	}
+	if h.GrantCheck == nil {
+		httpx.WriteError(w, r, errs.ErrNotImplemented)
+		return
+	}
+	if err := h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tid, in.Scopes); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	k, raw, err := h.Service.Create(r.Context(), in)

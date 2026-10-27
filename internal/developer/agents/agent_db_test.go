@@ -8,6 +8,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -30,7 +31,7 @@ func TestAgentsStayInTheirTenant(t *testing.T) {
 		t.Fatalf("create agent in A: %v", err)
 	}
 
-	asB := dbtest.Serve(dbtest.Principal(adminB.ID, tenantB), (&Handler{Service: svc}).Mount)
+	asB := dbtest.Serve(dbtest.Principal(adminB.ID, tenantB), (&Handler{Service: svc, GrantCheck: rbac.NewRepository(dbtest.Pool(t)).CheckGrantScopes}).Mount)
 	inB := "/tenants/" + tenantB.String() + "/agents"
 	for _, tc := range []struct {
 		method, path string

@@ -504,6 +504,9 @@ func (s *Service) IssueToken(ctx context.Context, agentID, secret string) (*Toke
 // Handler serves the agent HTTP API.
 type Handler struct {
 	Service *Service
+	// GrantCheck refuses a credential carrying a scope the caller doesn't hold
+	// (rbac.Repository.CheckGrantScopes). Without it creating one is refused.
+	GrantCheck func(ctx context.Context, caller *httpx.Principal, tenantID uuid.UUID, scopes []string) error
 }
 
 // Mount registers tenant-scoped admin endpoints (require a user JWT/API key).
@@ -557,6 +560,14 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		SponsorUserID   uuid.UUID `json:"sponsor_user_id"`
 	}
 	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if h.GrantCheck == nil {
+		httpx.WriteError(w, r, errs.ErrNotImplemented)
+		return
+	}
+	if err := h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, in.Scopes); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
