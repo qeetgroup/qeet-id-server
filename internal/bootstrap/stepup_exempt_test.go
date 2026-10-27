@@ -41,7 +41,6 @@ func stepUpExempt() map[string]string {
 		"POST /v1/auth/sessions/revoke-others":                                              "ends sessions; must stay instant in an incident",
 		"DELETE /v1/auth/sessions/{id}":                                                     "ends a session; must stay instant in an incident",
 		"POST /v1/users/{id}/sessions/revoke-all":                                           "ends sessions; must stay instant in an incident",
-		"POST /v1/auth/password":                                                            "needs the current password",
 		"POST /v1/account/export":                                                           "exports the caller's own data to the caller",
 		"POST /v1/gdpr/export":                                                              "exports a person's data for a subject-access request",
 		"DELETE /v1/gdpr/purge/{id}":                                                        "cancels a scheduled purge",

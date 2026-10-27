@@ -4,8 +4,9 @@ import "github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 
 // StepUpRoutes lists the authenticated routes that need a recent step-up, so a
 // stolen access token alone can't change factors, credentials, secrets, policy or
-// authority. StepUpWhenFactorHeld applies to a person's own factors; everything
-// else is StepUpAlways, which machine principals can never meet.
+// authority. StepUpOrRecentSignIn applies to a person's own factors and sign-in
+// methods; everything else is StepUpAlways, which machine principals can never
+// meet.
 func StepUpRoutes() map[string]mfa.StepUpRule {
 	routes := map[string]mfa.StepUpRule{}
 	for _, route := range []string{
@@ -19,11 +20,12 @@ func StepUpRoutes() map[string]mfa.StepUpRule {
 		"POST /v1/passkeys/register/begin",
 		"DELETE /v1/passkeys/{id}",
 		"POST /v1/social/{provider}/link/start",
+		"POST /v1/auth/password",
 		"POST /v1/account/delete",
 		// The address password resets and invitations go to.
 		"POST /v1/me/email/change/start",
 	} {
-		routes[route] = mfa.StepUpWhenFactorHeld
+		routes[route] = mfa.StepUpOrRecentSignIn
 	}
 	for _, route := range []string{
 		// Switching the authenticator app off, or replacing its recovery codes.

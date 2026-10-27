@@ -22,12 +22,13 @@ import (
 
 // tokenIssuer is the part of auth.Service this handler needs.
 type tokenIssuer interface {
-	IssuePair(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, method string) (*auth.TokenPair, error)
+	EnterCreatedTenant(ctx context.Context, userID, tenantID, fromSessionID uuid.UUID, ip, ua string) (*auth.TokenPair, error)
 }
 
 // Handler serves the /tenants routes and /me/organizations. AuthService, if
 // set, issues a token pair for a newly created tenant so the client can switch
-// in; a nil Signals announces no ended sessions.
+// in, continuing the caller's session; a nil Signals announces no ended
+// sessions.
 type Handler struct {
 	Repo        *Repository
 	Validate    *validator.Validate
@@ -136,14 +137,16 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Mint a pair scoped to the new tenant so the caller switches in; tenant still returned if it fails.
+	// Mint a pair scoped to the new tenant so the caller switches in; tenant
+	// still returned if it fails. It continues the caller's session, so
+	// creating an organisation never lengthens a sign-in.
 	resp := map[string]any{
 		"tenant":    t,
 		"tenant_id": t.ID,
 		"roles":     []string{"owner"},
 	}
-	if h.AuthService != nil {
-		if pair, err := h.AuthService.IssuePair(r.Context(), *p.UserID, t.ID, httpx.ClientIP(r), r.UserAgent(), "tenant_create"); err == nil {
+	if h.AuthService != nil && p.SessionID != nil {
+		if pair, err := h.AuthService.EnterCreatedTenant(r.Context(), *p.UserID, t.ID, *p.SessionID, httpx.ClientIP(r), r.UserAgent()); err == nil {
 			resp["access_token"] = pair.AccessToken
 			resp["token_type"] = pair.TokenType
 			resp["expires_at"] = pair.ExpiresAt

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -268,8 +269,8 @@ func TestAttemptsAreLimited(t *testing.T) {
 
 // TestStepUpGate checks that a route always needing a step-up refuses a
 // session until it meets a second factor, that one needing it while a factor
-// is held asks it only of someone holding one, and that a step-up belongs to
-// its session alone.
+// is held asks it only of someone holding one and a recent sign-in of anyone
+// else, and that a step-up belongs to its session alone.
 func TestStepUpGate(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mfaSvc, authSvc := services(t, notifier.LogSender{})
@@ -282,7 +283,7 @@ func TestStepUpGate(t *testing.T) {
 		}
 		return pair
 	}
-	gate := mfaSvc.StepUpGate(map[string]StepUpRule{"POST /always": StepUpAlways, "POST /when-held": StepUpWhenFactorHeld})
+	gate := mfaSvc.StepUpGate(map[string]StepUpRule{"POST /always": StepUpAlways, "POST /when-held": StepUpOrRecentSignIn})
 	ok := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
 	serve := func(session uuid.UUID) http.Handler {
 		p := dbtest.Principal(a.ID, tenant)
@@ -306,6 +307,13 @@ func TestStepUpGate(t *testing.T) {
 	expect(h, "/open", http.StatusOK)
 	expect(h, "/always", http.StatusForbidden)
 	expect(h, "/when-held", http.StatusOK)
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE auth.sessions SET signed_in_at = NOW() - INTERVAL '1 hour' WHERE id = $1`, session); err != nil {
+		t.Fatal(err)
+	}
+	if rec := dbtest.Do(t, h, http.MethodPost, "/when-held", nil); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeRecentSignIn) {
+		t.Errorf("a sign-in an hour old with no factor: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeRecentSignIn)
+	}
+	expect(serve(signIn().SessionID), "/when-held", http.StatusOK)
 
 	enrolTOTP(t, mfaSvc, a)
 	expect(h, "/when-held", http.StatusForbidden)

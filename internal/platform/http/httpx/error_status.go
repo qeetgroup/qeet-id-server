@@ -15,6 +15,7 @@ var statusByCode = map[string]int{
 	errs.CodeUnauthorized:        http.StatusUnauthorized,
 	errs.CodeForbidden:           http.StatusForbidden,
 	errs.CodeStepUpRequired:      http.StatusForbidden,
+	errs.CodeRecentSignIn:        http.StatusForbidden,
 	errs.CodeNotFound:            http.StatusNotFound,
 	errs.CodeConflict:            http.StatusConflict,
 	errs.CodeUnprocessable:       http.StatusUnprocessableEntity,

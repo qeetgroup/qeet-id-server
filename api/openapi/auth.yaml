@@ -969,7 +969,7 @@ paths:
     post:
       operationId: post_v1_auth_password
       summary: Change or set my password
-      description: 'Rotates (or sets) the signed-in user''s password. current_password is required only when one is already set; a social/passkey account may set one by omitting it. Other sessions are revoked. The new password must meet the rules of the organisation the account belongs to (not the session''s tenant; the platform baseline of 8 characters for an account with no organisation), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed. Self-service. Every hosted sign-in (browser) session of the person ends too, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey; the audit record counts them (revoked_login_sessions). The session the change is made from is kept.'
+      description: 'Rotates (or sets) the signed-in user''s password. current_password is required only when one is already set; a social/passkey account may set one by omitting it. It needs a step-up while the caller holds a second factor (403 step_up_required), and otherwise a recent sign-in (403 recent_sign_in_required). Other sessions are revoked. The new password must meet the rules of the organisation the account belongs to (not the session''s tenant; the platform baseline of 8 characters for an account with no organisation), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed. Self-service. Every hosted sign-in (browser) session of the person ends too, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey; the audit record counts them (revoked_login_sessions). The session the change is made from is kept.'
       tags:
         - Auth
       security:
@@ -2258,7 +2258,9 @@ paths:
         These need a step-up, and answer 403 step_up_required without one
         (with window_seconds and, when the organisation limits them,
         allowed_methods): adding or removing the caller's own factors and
-        sign-in methods while they hold a factor their organisation counts;
+        sign-in methods, setting or changing their password, starting a
+        change of their email address and deleting their account, while they
+        hold a factor their organisation counts;
         switching the authenticator app off or replacing recovery codes;
         creating, changing or revoking API keys, service principals, agents,
         OAuth clients and their secrets, SCIM tokens, credentials, webhooks
@@ -2271,10 +2273,14 @@ paths:
         retention, anomaly settings and log streaming; granting or revoking a
         role's permissions, assigning or removing user and group roles,
         creating invitations, and writing relationship tuples and attribute
-        policies; reactivating or restoring a user; starting a change of the
-        caller's own email address while they hold a factor; and updating or
-        deleting the organisation, deleting or purging a user, or deleting
-        one's own account. An API key, service principal or agent holds no
+        policies; reactivating or restoring a user; and updating or deleting
+        the organisation, or deleting or purging a user. A caller holding no
+        such factor has nothing to step up with, so the changes to their own
+        account need a sign-in within the organisation's step-up window
+        instead, and answer 403 recent_sign_in_required (with window_seconds)
+        otherwise: sign in again, then retry. A session opened by switching
+        to, joining or creating an organisation continues the sign-in it came
+        from. An API key, service principal or agent holds no
         session, so it cannot perform these. The hosted login's own sign-in
         counts as a step-up for the organisation's window after it happens,
         when that sign-in proved a second factor itself (a met challenge or a
@@ -2768,7 +2774,8 @@ paths:
         nobody copies an access token. The code is returned only in this response, shown grouped for
         reading (ABCDE-FGHJK); it links one phone, once, within five minutes, and asking for a new one
         stops the caller's earlier unused codes working. Needs a recent step-up when the caller already
-        holds a second factor (403 step_up_required). At most ten an hour (429 with retry_after).
+        holds a second factor (403 step_up_required), and otherwise a recent sign-in (403
+        recent_sign_in_required). At most ten an hour (429 with retry_after).
         Audited as mfa.push_pairing_created. The phone exchanges the code with the claim call; the
         status call tells the screen showing it when it has been used.
       tags: [MFA]

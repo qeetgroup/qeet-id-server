@@ -21,6 +21,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
@@ -68,6 +69,36 @@ func verifiedAccount(t *testing.T) dbtest.Account {
 	return a
 }
 
+// signedIn returns userID's principal in tenant (uuid.Nil: none) with a live
+// session that signed in an hour ago and ends in two.
+func signedIn(t *testing.T, userID, tenant uuid.UUID) *httpx.Principal {
+	t.Helper()
+	var tenantArg any
+	if tenant != uuid.Nil {
+		tenantArg = tenant
+	}
+	var session uuid.UUID
+	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `
+		INSERT INTO auth.sessions (user_id, tenant_id, signed_in_at, expires_at)
+		VALUES ($1, $2, NOW() - INTERVAL '1 hour', NOW() + INTERVAL '2 hours') RETURNING id
+	`, userID, tenantArg).Scan(&session); err != nil {
+		t.Fatal(err)
+	}
+	p := dbtest.Principal(userID, tenant)
+	p.SessionID = &session
+	return p
+}
+
+// continues reports whether session continues from's sign-in: the same
+// sign-in time, and an end no later.
+func continues(t *testing.T, session, from uuid.UUID) bool {
+	t.Helper()
+	return dbtest.Count(t, `
+		SELECT count(*) FROM auth.sessions s JOIN auth.sessions f ON f.id = $2
+		WHERE s.id = $1 AND s.signed_in_at = f.signed_in_at AND s.expires_at <= f.expires_at
+	`, session, from) == 1
+}
+
 // errorCode returns the error code of a JSON error answer.
 func errorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
@@ -106,7 +137,8 @@ func TestCreateOrganisation(t *testing.T) {
 	}
 
 	owner := verifiedAccount(t)
-	asOwner := dbtest.Serve(dbtest.Principal(owner.ID, uuid.Nil), h.Mount)
+	ownerP := signedIn(t, owner.ID, uuid.Nil)
+	asOwner := dbtest.Serve(ownerP, h.Mount)
 	rec := dbtest.Do(t, asOwner, http.MethodPost, "/tenants", map[string]any{"slug": slug, "name": "Acme"})
 	var created struct {
 		Tenant      Tenant    `json:"tenant"`
@@ -121,6 +153,9 @@ func TestCreateOrganisation(t *testing.T) {
 	}
 	if created.AccessToken == "" || dbtest.Count(t, `SELECT count(*) FROM auth.sessions WHERE id = $1 AND tenant_id = $2`, created.SessionID, id) != 1 {
 		t.Error("no token pair for a session in the new organisation")
+	}
+	if !continues(t, created.SessionID, *ownerP.SessionID) {
+		t.Error("the new organisation's session doesn't continue the caller's sign-in")
 	}
 	if missing := dbtest.Count(t, `
 		SELECT count(*) FROM rbac.permissions p WHERE NOT EXISTS (
@@ -229,7 +264,7 @@ func TestCreateOrganisationFromAnother(t *testing.T) {
 	home := dbtest.Tenant(t)
 	a := verifiedAccount(t)
 	dbtest.Assign(t, a.ID, home, dbtest.Role(t, home))
-	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, home), h.Mount), http.MethodPost, "/tenants",
+	rec := dbtest.Do(t, dbtest.Serve(signedIn(t, a.ID, home), h.Mount), http.MethodPost, "/tenants",
 		map[string]any{"slug": dbtest.Unique("org"), "name": "Second"})
 	var created struct {
 		TenantID    uuid.UUID `json:"tenant_id"`
@@ -244,6 +279,12 @@ func TestCreateOrganisationFromAnother(t *testing.T) {
 		WHERE ur.user_id = $1 AND ur.tenant_id = $2 AND r.name = 'owner'
 	`, a.ID, created.TenantID); n != 1 {
 		t.Error("the creator is not the new organisation's owner")
+	}
+
+	rec = dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, home), h.Mount), http.MethodPost, "/tenants",
+		map[string]any{"slug": dbtest.Unique("org"), "name": "Third"})
+	if rec.Code != http.StatusCreated || strings.Contains(rec.Body.String(), "access_token") {
+		t.Errorf("create without a session: %d %s; want the organisation and no token pair", rec.Code, rec.Body.String())
 	}
 }
 

@@ -20,11 +20,12 @@ func (h *history) write() {
 	for _, s := range h.sessions {
 		sessions = append(sessions, []any{
 			s.id, s.p.ID, s.org.ID, addr(s.dev.IP), s.dev.UserAgent, us(s.created), us(s.lastSeen), optTime(s.ended),
-			optID(s.superseded), us(s.expires), s.idle, optString(s.dev.Country), optString(s.factor),
+			optID(s.superseded), us(s.expires), s.idle, optString(s.dev.Country), optString(s.factor), us(s.signedIn()),
 		})
 	}
 	h.copy("sessions", pgx.Identifier{"auth", "sessions"}, []string{"id", "user_id", "tenant_id", "ip", "user_agent",
-		"created_at", "last_seen_at", "revoked_at", "superseded_by", "expires_at", "idle_timeout", "country", "second_factor"}, sessions)
+		"created_at", "last_seen_at", "revoked_at", "superseded_by", "expires_at", "idle_timeout", "country", "second_factor",
+		"signed_in_at"}, sessions)
 
 	events := make([][]any, 0, len(h.events))
 	for _, ev := range h.events {

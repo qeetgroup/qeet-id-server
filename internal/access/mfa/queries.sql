@@ -75,6 +75,16 @@ SELECT
 
 -- OrgStepUpPolicy is how long a step-up lasts in an organisation and whether
 -- it counts every factor type (no organisation, or none set: 5 minutes, yes).
+-- SessionSignedInRecently says whether the user's live session continues a
+-- sign-in made within its organisation's step-up window, and that window.
+-- name: SessionSignedInRecently :one
+SELECT COALESCE(s.signed_in_at > NOW() - COALESCE(sp.step_up_window, INTERVAL '5 minutes'), FALSE)::bool AS recent,
+       EXTRACT(EPOCH FROM COALESCE(sp.step_up_window, INTERVAL '5 minutes'))::bigint AS window_seconds
+FROM (SELECT @session_id::uuid AS id, @user_id::uuid AS user_id) q
+LEFT JOIN auth.sessions s ON s.id = q.id AND s.user_id = q.user_id AND s.revoked_at IS NULL
+  AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
+LEFT JOIN tenant.security_policies sp ON sp.tenant_id = s.tenant_id;
+
 -- name: OrgStepUpPolicy :one
 SELECT EXTRACT(EPOCH FROM COALESCE(sp.step_up_window, INTERVAL '5 minutes'))::bigint AS window_seconds,
        (sp.step_up_methods IS NULL)::bool AS every_factor

@@ -10,6 +10,7 @@ const (
 	CodeUnauthorized        = "unauthorized"
 	CodeForbidden           = "forbidden"
 	CodeStepUpRequired      = "step_up_required"
+	CodeRecentSignIn        = "recent_sign_in_required"
 	CodeNotFound            = "not_found"
 	CodeConflict            = "conflict"
 	CodeUnprocessable       = "unprocessable"
@@ -28,6 +29,7 @@ var (
 	ErrUnauthorized        = New(CodeUnauthorized, "Please sign in to continue.")
 	ErrForbidden           = New(CodeForbidden, "You don't have permission to do that.")
 	ErrStepUpRequired      = New(CodeStepUpRequired, "Additional verification is required to continue.")
+	ErrRecentSignIn        = New(CodeRecentSignIn, "Sign in again to make this change.")
 	ErrNotFound            = New(CodeNotFound, "We couldn't find what you're looking for.")
 	ErrConflict            = New(CodeConflict, "That conflicts with something that already exists.")
 	ErrUnprocessable       = New(CodeUnprocessable, "We couldn't process that request.")

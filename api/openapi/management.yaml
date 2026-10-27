@@ -122,7 +122,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
     post:
       operationId: post_v1_tenants
-      description: 'Creates a tenant and makes the calling user its owner. A newly registered user has no tenant until this succeeds; every tenant-scoped endpoint requires one. A verified email is required before a tenant can be provisioned. The response includes a tenant-scoped token pair so the client can immediately switch into the new tenant.'
+      description: 'Creates a tenant and makes the calling user its owner. A newly registered user has no tenant until this succeeds; every tenant-scoped endpoint requires one. A verified email is required before a tenant can be provisioned. The response includes a tenant-scoped token pair so the client can immediately switch into the new tenant; it continues the caller''s session (its sign-in, second factor and end), and is left out for a caller without one.'
       summary: Create tenant
       tags:
         - Tenants
@@ -2684,7 +2684,7 @@ paths:
                   type: string
               required:
                 - token
-      description: 'Joins the caller''s existing account to the invited tenant (no new user, no password) and returns a tenant-scoped token pair. The invite must be addressed to the caller''s own email (`invite.email_mismatch` otherwise). An organisation that requires a second factor of the caller (its security policy, or administrators-only for its administrators) is entered (the pair issued) only by a session whose sign-in met one, or that holds a fresh step-up; otherwise 403 step_up_required (step up, then switch in) or 403 mfa.enrollment_required (set a factor up first), unless the organisation''s grace period still lets the caller put the setup off. The new session carries the factor on. The invite stays accepted when the pair is refused.'
+      description: 'Joins the caller''s existing account to the invited tenant (no new user, no password) and returns a tenant-scoped token pair. The invite must be addressed to the caller''s own email (`invite.email_mismatch` otherwise). An organisation that requires a second factor of the caller (its security policy, or administrators-only for its administrators) is entered (the pair issued) only by a session whose sign-in met one, or that holds a fresh step-up; otherwise 403 step_up_required (step up, then switch in) or 403 mfa.enrollment_required (set a factor up first), unless the organisation''s grace period still lets the caller put the setup off. The new session carries the factor on, and continues the caller''s sign-in: it ends when the caller''s session would. The invite stays accepted when the pair is refused.'
       responses:
         '200':
           description: OK

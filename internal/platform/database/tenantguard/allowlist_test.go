@@ -68,7 +68,7 @@ internal/access/authentication/password.go#Service.ChangePassword  session-scope
 internal/access/authentication/sessions.go#Service.ListSessionsPageFor  session-scoped: the caller's own sessions
 internal/access/authentication/mfachallenge.go#Service.deferEnrollment  secret-lookup: challenge found by its random MFA token
 internal/access/authentication/mfachallenge.go#Service.verifyAndConsumeMFAChallenge  secret-lookup: challenge found by its random MFA token
-internal/access/authentication/switch.go#carrySecondFactor  session-scoped: the session issued in the same transaction
+internal/access/authentication/switch.go#continueSession  session-scoped: the session issued in the same transaction, from one of the same person's
 internal/access/authentication/sessionlimit.go#Service.enforceSessionLimit  parent-scoped: session IDs from the tenant-scoped list above
 internal/access/authentication/signinaudit.go#Service.homeTenant  pre-tenant: files a failed sign-in under the account's home tenant
 internal/access/authorization/rbac/queries.sql#GetRoleTenant  parent-scoped: scopedRole compares the role's tenant to httpx.RequireTenant

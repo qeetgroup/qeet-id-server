@@ -545,8 +545,6 @@ type OrgStepUpPolicyRow struct {
 	EveryFactor   bool
 }
 
-// OrgStepUpPolicy is how long a step-up lasts in an organisation and whether
-// it counts every factor type (no organisation, or none set: 5 minutes, yes).
 func (q *Queries) OrgStepUpPolicy(ctx context.Context, tenantID uuid.UUID) (OrgStepUpPolicyRow, error) {
 	row := q.db.QueryRow(ctx, orgStepUpPolicy, tenantID)
 	var i OrgStepUpPolicyRow
@@ -632,6 +630,36 @@ type RecordStepUpParams struct {
 func (q *Queries) RecordStepUp(ctx context.Context, arg RecordStepUpParams) error {
 	_, err := q.db.Exec(ctx, recordStepUp, arg.Method, arg.SessionID, arg.UserID)
 	return err
+}
+
+const sessionSignedInRecently = `-- name: SessionSignedInRecently :one
+SELECT COALESCE(s.signed_in_at > NOW() - COALESCE(sp.step_up_window, INTERVAL '5 minutes'), FALSE)::bool AS recent,
+       EXTRACT(EPOCH FROM COALESCE(sp.step_up_window, INTERVAL '5 minutes'))::bigint AS window_seconds
+FROM (SELECT $1::uuid AS id, $2::uuid AS user_id) q
+LEFT JOIN auth.sessions s ON s.id = q.id AND s.user_id = q.user_id AND s.revoked_at IS NULL
+  AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
+LEFT JOIN tenant.security_policies sp ON sp.tenant_id = s.tenant_id
+`
+
+type SessionSignedInRecentlyParams struct {
+	SessionID uuid.UUID
+	UserID    uuid.UUID
+}
+
+type SessionSignedInRecentlyRow struct {
+	Recent        bool
+	WindowSeconds int64
+}
+
+// OrgStepUpPolicy is how long a step-up lasts in an organisation and whether
+// it counts every factor type (no organisation, or none set: 5 minutes, yes).
+// SessionSignedInRecently says whether the user's live session continues a
+// sign-in made within its organisation's step-up window, and that window.
+func (q *Queries) SessionSignedInRecently(ctx context.Context, arg SessionSignedInRecentlyParams) (SessionSignedInRecentlyRow, error) {
+	row := q.db.QueryRow(ctx, sessionSignedInRecently, arg.SessionID, arg.UserID)
+	var i SessionSignedInRecentlyRow
+	err := row.Scan(&i.Recent, &i.WindowSeconds)
+	return i, err
 }
 
 const spendPushChallenge = `-- name: SpendPushChallenge :exec
