@@ -217,13 +217,14 @@ type Config struct {
 	// Use "ses-api" in regions that offer the SES API but no SMTP endpoint
 	// (e.g. ap-south-2). The SES API path uses the AWS credential chain +
 	// AWS_REGION and only needs SMTP_FROM (SMTP host/creds are ignored).
+	// Outside dev one of the two must be configured (see Validate).
 	EmailProvider string `envconfig:"EMAIL_PROVIDER" default:"smtp"`
 	// AWSRegion is used by the SES-API email provider (and any other AWS SDK
 	// client) so endpoint resolution never fails on a missing region.
 	AWSRegion string `envconfig:"AWS_REGION" default:""`
 
 	// Email (SMTP) — provider-agnostic (Amazon SES, SendGrid, Mailgun, Postmark).
-	// Empty SMTPHost leaves email on the log-only fallback (dev).
+	// In dev, an empty SMTPHost logs emails instead of sending them.
 	SMTPHost     string `envconfig:"SMTP_HOST" default:""`
 	SMTPPort     string `envconfig:"SMTP_PORT" default:"587"`
 	SMTPUsername string `envconfig:"SMTP_USERNAME" default:""`
@@ -503,8 +504,9 @@ func (c *Config) checkEnvironment() error {
 
 // Validate refuses, outside SERVICE_ENV=dev, any dev-only convenience or
 // insecure default still in place, such as CSRF off, dev trust headers, the
-// payment sandbox, weak or missing keys, wildcard origins, or hosts wrong for
-// the environment. In dev it only checks SERVICE_ENV and SERVICE_PROFILE.
+// payment sandbox, weak or missing keys, wildcard origins, hosts wrong for
+// the environment, or no email provider. In dev it only checks SERVICE_ENV and
+// SERVICE_PROFILE.
 func (c *Config) Validate() error {
 	if err := c.checkEnvironment(); err != nil {
 		return err
@@ -560,6 +562,20 @@ func (c *Config) Validate() error {
 			problems = append(problems, "RELAY_KEYS: every key must be at least 32 characters and not a placeholder (`openssl rand -base64 32`)")
 			break
 		}
+	}
+	// Without an email provider, password resets, invitations and verification
+	// codes reach nobody.
+	switch c.EmailProvider {
+	case "", "smtp":
+		if strings.TrimSpace(c.SMTPHost) == "" || strings.TrimSpace(c.SMTPFrom) == "" {
+			problems = append(problems, "an email provider is required: set SMTP_HOST and SMTP_FROM, or EMAIL_PROVIDER=ses-api with SMTP_FROM and AWS_REGION")
+		}
+	case "ses-api":
+		if strings.TrimSpace(c.SMTPFrom) == "" || strings.TrimSpace(c.AWSRegion) == "" {
+			problems = append(problems, "SMTP_FROM and AWS_REGION are required with EMAIL_PROVIDER=ses-api")
+		}
+	default:
+		problems = append(problems, fmt.Sprintf("EMAIL_PROVIDER %q is invalid (want \"smtp\" or \"ses-api\")", c.EmailProvider))
 	}
 	if o := strings.TrimSpace(c.AllowedOriginsRaw); o == "" || o == "*" {
 		problems = append(problems, "ALLOWED_ORIGINS must list explicit origins (a wildcard is unsafe with credentialed CORS)")

@@ -21,6 +21,8 @@ func prodOK() *Config {
 		AllowedOriginsRaw:            "https://app.acme.com",
 		AppBaseURL:                   "https://app.acme.com",
 		PublicBaseURL:                "https://api.acme.com",
+		SMTPHost:                     "smtp.acme.com",
+		SMTPFrom:                     "Acme <no-reply@acme.com>",
 	}
 }
 
@@ -61,6 +63,11 @@ func TestValidate_ProdRejectsInsecure(t *testing.T) {
 		"public base url query":    func(c *Config) { c.PublicBaseURL = "https://api.acme.com?" },
 		"public base url fragment": func(c *Config) { c.PublicBaseURL = "https://api.acme.com#" },
 		"public base url no host":  func(c *Config) { c.PublicBaseURL = "https://:443" },
+		"no email provider":        func(c *Config) { c.SMTPHost = "" },
+		"smtp without a sender":    func(c *Config) { c.SMTPFrom = "" },
+		"ses without a sender":     func(c *Config) { c.EmailProvider, c.AWSRegion, c.SMTPFrom = "ses-api", "ap-south-2", "" },
+		"ses without a region":     func(c *Config) { c.EmailProvider = "ses-api" },
+		"unknown email provider":   func(c *Config) { c.EmailProvider = "sendgrid" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -70,6 +77,30 @@ func TestValidate_ProdRejectsInsecure(t *testing.T) {
 				t.Errorf("expected %q to fail validation", name)
 			}
 		})
+	}
+}
+
+// TestValidate_EmailProvider checks that outside dev either email provider is
+// accepted once configured, and that dev starts with none.
+func TestValidate_EmailProvider(t *testing.T) {
+	c := prodOK()
+	c.EmailProvider = "smtp"
+	if err := c.Validate(); err != nil {
+		t.Errorf("smtp provider should pass: %v", err)
+	}
+	c = prodOK()
+	c.EmailProvider, c.SMTPHost, c.AWSRegion = "ses-api", "", "ap-south-2"
+	if err := c.Validate(); err != nil {
+		t.Errorf("ses-api provider should pass: %v", err)
+	}
+	c = prodOK()
+	c.SMTPHost = ""
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "email provider") {
+		t.Errorf("prod without an email provider: err = %v, want one naming the email provider", err)
+	}
+	dev := &Config{ServiceEnv: EnvDev, EmailProvider: "smtp"}
+	if err := dev.Validate(); err != nil {
+		t.Errorf("dev must start without an email provider, got: %v", err)
 	}
 }
 
@@ -191,6 +222,7 @@ func TestValidate_LocalRejectsInsecureAndPublicHosts(t *testing.T) {
 		"qa is not a profile":    func(c *Config) { c.ServiceProfile = "qa" },
 		"uat is not a profile":   func(c *Config) { c.ServiceProfile = "uat" },
 		"stage is not a profile": func(c *Config) { c.ServiceProfile = "stage" },
+		"no email provider":      func(c *Config) { c.SMTPHost = "" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
