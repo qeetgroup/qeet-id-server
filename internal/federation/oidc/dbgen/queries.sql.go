@@ -1754,6 +1754,29 @@ func (q *Queries) RecordClientAuthFailure(ctx context.Context, arg RecordClientA
 	return failures, err
 }
 
+const resourceHostClaimedElsewhere = `-- name: ResourceHostClaimedElsewhere :one
+SELECT EXISTS (
+    SELECT 1 FROM tenant.domains d
+    WHERE d.tenant_id <> $1 AND d.verified_at IS NOT NULL
+      AND (lower($2::text) = lower(d.domain) OR lower($2::text) LIKE '%.' || lower(d.domain))
+)::bool
+`
+
+type ResourceHostClaimedElsewhereParams struct {
+	TenantID uuid.UUID
+	Host     string
+}
+
+// ResourceHostClaimedElsewhere reports whether another organisation has
+// verified the host of a resource identifier, or a domain above it: only that
+// organisation may name a service there.
+func (q *Queries) ResourceHostClaimedElsewhere(ctx context.Context, arg ResourceHostClaimedElsewhereParams) (bool, error) {
+	row := q.db.QueryRow(ctx, resourceHostClaimedElsewhere, arg.TenantID, arg.Host)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const resourceRegistered = `-- name: ResourceRegistered :one
 
 SELECT EXISTS (

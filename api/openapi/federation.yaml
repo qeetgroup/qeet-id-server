@@ -1443,7 +1443,7 @@ paths:
     post:
       operationId: post_v1_tenants_ByTenantID_oidc_resources
       summary: Register a resource
-      description: 'Registers a resource: identifier is an absolute URI without a fragment (422 oidc.resource_invalid), unique in the organisation (409 oidc.resource_exists); server_client_id, optional, must be one of the organisation''s applications. Audited as oidc.resource_registered.'
+      description: 'Registers a resource: identifier is an absolute URI without a fragment (422 oidc.resource_invalid), unique on the platform (409 oidc.resource_exists) and not on a domain another organization has verified (409 oidc.resource_domain_taken); server_client_id, optional, must be one of the organisation''s applications. Audited as oidc.resource_registered. Every organization''s tokens share one issuer, so a resource server should also check the token''s tenant_id claim is its own organization.'
       tags:
         - OIDC
       parameters:

@@ -443,6 +443,16 @@ SELECT EXISTS (
 SELECT id, tenant_id, identifier, name, server_client_id, created_at
 FROM auth.oidc_resources WHERE tenant_id = @tenant_id ORDER BY identifier;
 
+-- ResourceHostClaimedElsewhere reports whether another organisation has
+-- verified the host of a resource identifier, or a domain above it: only that
+-- organisation may name a service there.
+-- name: ResourceHostClaimedElsewhere :one
+SELECT EXISTS (
+    SELECT 1 FROM tenant.domains d
+    WHERE d.tenant_id <> @tenant_id AND d.verified_at IS NOT NULL
+      AND (lower(@host::text) = lower(d.domain) OR lower(@host::text) LIKE '%.' || lower(d.domain))
+)::bool;
+
 -- name: InsertResource :one
 INSERT INTO auth.oidc_resources (tenant_id, identifier, name, server_client_id)
 VALUES (@tenant_id, @identifier, @name, sqlc.narg('server_client_id'))

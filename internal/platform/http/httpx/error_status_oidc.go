@@ -43,6 +43,7 @@ func init() {
 		errs.CodeOIDCExchangeDepthExceeded:          http.StatusBadRequest,
 		errs.CodeOIDCInsufficientScope:              http.StatusForbidden,
 		errs.CodeOIDCResourceExists:                 http.StatusConflict,
+		errs.CodeOIDCResourceDomainTaken:            http.StatusConflict,
 		errs.CodeOIDCResourceNotFound:               http.StatusNotFound,
 
 		// Token exchange (RFC 8693) subject/actor tokens.
