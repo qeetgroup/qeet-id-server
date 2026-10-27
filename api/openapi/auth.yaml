@@ -235,7 +235,7 @@ paths:
         challenge's factors), to complete the challenge with. At most five per challenge (429).
         Used by both sign-in flows. For a risky sign-in by someone with no second factor, the challenge's
         one factor is their verified email address, named by the challenge's own id: send its code here
-        with factor_id set to the mfa_token, then submit it to complete the challenge. A code to one factor can be sent at most every 30 seconds, ten an hour to one person and five an hour to one address or number over every account; past that the call answers 429 mfa.code_send_limited with retry_after (seconds). A new code makes the factor's earlier unused code stop working. An SMS code needs an organisation whose plan includes SMS (403 upgrade_required). Each code sent is audited as mfa.otp_sent.
+        with factor_id set to the mfa_token, then submit it to complete the challenge. A code to one factor can be sent at most every 30 seconds, ten an hour to one person and five an hour to one address or number over every account; past that the call answers 429 mfa.code_send_limited with retry_after (seconds). A new code makes the factor's earlier unused code stop working. A code sent here only completes a sign-in, never a step-up. An SMS code needs an organisation whose plan includes SMS (403 upgrade_required). Each code sent is audited as mfa.otp_sent.
       tags:
         - Auth
       security: []
@@ -2003,7 +2003,7 @@ paths:
       description: >-
         Adds an email or SMS factor (or returns the one already held for that address, untouched) and
         sends a code to confirm it at /v1/mfa/otp/factors/{id}/confirm. A person may hold five email and
-        SMS factors (409 mfa.factor_limit). A code to one factor can be sent at most every 30 seconds, ten an hour to one person and five an hour to one address or number over every account; past that the call answers 429 mfa.code_send_limited with retry_after (seconds). A new code makes the factor's earlier unused code stop working. An SMS code needs an organisation whose plan includes SMS (403 upgrade_required). Each code sent is audited as mfa.otp_sent.
+        SMS factors (409 mfa.factor_limit). A code to one factor can be sent at most every 30 seconds, ten an hour to one person and five an hour to one address or number over every account; past that the call answers 429 mfa.code_send_limited with retry_after (seconds). A new code makes the factor's earlier unused code stop working. A code sent here only confirms the new factor. An SMS code needs an organisation whose plan includes SMS (403 upgrade_required). Each code sent is audited as mfa.otp_sent.
       responses:
         '201':
           description: Created
@@ -2074,7 +2074,7 @@ paths:
         - apiKeyAuth: []
       description: >-
         Sends a step-up code to one of the caller's confirmed email or SMS factors, to verify at
-        /v1/mfa/otp/verify. A code to one factor can be sent at most every 30 seconds, ten an hour to one person and five an hour to one address or number over every account; past that the call answers 429 mfa.code_send_limited with retry_after (seconds). A new code makes the factor's earlier unused code stop working. An SMS code needs an organisation whose plan includes SMS (403 upgrade_required). Each code sent is audited as mfa.otp_sent.
+        /v1/mfa/otp/verify. A code to one factor can be sent at most every 30 seconds, ten an hour to one person and five an hour to one address or number over every account; past that the call answers 429 mfa.code_send_limited with retry_after (seconds). A new code makes the factor's earlier unused code stop working. A step-up code works only for a step-up, and a code sent for a sign-in or to confirm a new factor never counts here; its message says what it is for. An SMS code needs an organisation whose plan includes SMS (403 upgrade_required). Each code sent is audited as mfa.otp_sent.
       responses:
         '201':
           description: Created

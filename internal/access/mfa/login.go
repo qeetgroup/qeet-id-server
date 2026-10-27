@@ -73,12 +73,13 @@ func (s *Service) SendLoginCode(ctx context.Context, userID uuid.UUID, tenantID 
 	return s.challengeOTP(ctx, userID, tenantID, factorID, "sign_in")
 }
 
-// verifyLoginOTP consumes an email/SMS code of the user's inside tx; false
-// when no live code matches.
+// verifyLoginOTP consumes a sign-in code sent to one of the user's email or
+// SMS factors, inside tx; false when no live one matches.
 func (s *Service) verifyLoginOTP(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) (bool, error) {
 	codeID, err := s.q.WithTx(tx).GetOTPCodeForVerify(ctx, dbgen.GetOTPCodeForVerifyParams{
 		UserID:   userID,
 		CodeHash: codes.Hash(strings.TrimSpace(code)),
+		Purpose:  "sign_in",
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil

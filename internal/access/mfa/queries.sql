@@ -96,8 +96,8 @@ LEFT JOIN tenant.security_policies sp ON sp.tenant_id = q.id;
 DELETE FROM auth.mfa_otp_factors WHERE user_id = $1;
 
 -- name: InsertMFAOTPCode :exec
-INSERT INTO auth.mfa_otp_codes (factor_id, code_hash, expires_at)
-VALUES ($1, $2, $3);
+INSERT INTO auth.mfa_otp_codes (factor_id, code_hash, expires_at, purpose)
+VALUES (@factor_id, @code_hash, @expires_at, @purpose);
 
 -- UpsertMFAOTPFactor adds an email or SMS factor, or returns the one already
 -- held for that address or number untouched: asking for a new code to an
@@ -114,7 +114,7 @@ RETURNING id;
 SELECT c.id
 FROM auth.mfa_otp_codes c
 JOIN auth.mfa_otp_factors f ON f.id = c.factor_id
-WHERE f.id = $1 AND f.user_id = $2 AND c.code_hash = $3
+WHERE f.id = $1 AND f.user_id = $2 AND c.code_hash = $3 AND c.purpose = 'enrollment'
   AND c.used_at IS NULL AND c.expires_at > NOW()
 ORDER BY c.created_at DESC LIMIT 1
 FOR UPDATE;
@@ -183,12 +183,14 @@ UPDATE auth.mfa_push_challenges
 SET status = $2, responded_at = NOW()
 WHERE id = $1;
 
+-- GetOTPCodeForVerify finds a live code of the user's sent for purpose
+-- (sign_in or step_up), so one sent for the other never counts.
 -- name: GetOTPCodeForVerify :one
 SELECT c.id
 FROM auth.mfa_otp_codes c
 JOIN auth.mfa_otp_factors f ON f.id = c.factor_id
-WHERE f.user_id = $1 AND f.verified_at IS NOT NULL AND c.code_hash = $2
-  AND c.used_at IS NULL AND c.expires_at > NOW()
+WHERE f.user_id = @user_id AND f.verified_at IS NOT NULL AND c.code_hash = @code_hash
+  AND c.purpose = @purpose AND c.used_at IS NULL AND c.expires_at > NOW()
 ORDER BY c.created_at DESC LIMIT 1
 FOR UPDATE;
 

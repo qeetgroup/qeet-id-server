@@ -168,7 +168,8 @@ func TestDisablingTheApp(t *testing.T) {
 
 // TestEmailCodes checks that an email factor is confirmed only by the code
 // sent to it, shown masked, completes a sign-in with a code sent then, and
-// can be removed.
+// can be removed; and that a step-up code never completes a sign-in, nor a
+// sign-in code a step-up.
 func TestEmailCodes(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mail := &dbtest.Mailbox{}
@@ -208,14 +209,36 @@ func TestEmailCodes(t *testing.T) {
 	}
 
 	// The resend wait is per factor: let it pass.
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE auth.mfa_otp_codes SET created_at = created_at - interval '1 minute' WHERE factor_id = $1`, factor); err != nil {
-		t.Fatal(err)
+	pastWait := func() {
+		t.Helper()
+		if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE auth.mfa_otp_codes SET created_at = created_at - interval '1 minute' WHERE factor_id = $1`, factor); err != nil {
+			t.Fatal(err)
+		}
 	}
+	pastWait()
 	token := challenge(t, authSvc, a)
+	if err := mfaSvc.ChallengeOTP(ctx, a.ID, &tenant, factor); err != nil {
+		t.Fatalf("send step-up code: %v", err)
+	}
+	stepUp := mail.Last(t)
+	if !strings.Contains(stepUp.Body, "confirm a change") {
+		t.Errorf("step-up mail %q; want it to say what the code is for", stepUp.Body)
+	}
+	if _, err := authSvc.CompleteMFALogin(ctx, token, sixDigits.FindString(stepUp.Body), "", ""); err == nil {
+		t.Error("a step-up code completed a sign-in")
+	}
+	pastWait()
 	if err := authSvc.SendMFACode(ctx, token, factor); err != nil {
 		t.Fatalf("send sign-in code: %v", err)
 	}
 	signInCode := sixDigits.FindString(mail.Last(t).Body)
+	attempt, err := mfaSvc.ReserveAttempt(ctx, a.ID, PurposeOTPVerify)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := inTx(t, func(tx pgx.Tx) error { _, err := mfaSvc.VerifyOTP(ctx, tx, attempt, signInCode); return err }); !errors.Is(err, errs.ErrMFACodeInvalid) {
+		t.Errorf("a sign-in code as a step-up: %v, want %v", err, errs.ErrMFACodeInvalid)
+	}
 	if pair, err := authSvc.CompleteMFALogin(ctx, token, signInCode, "", ""); err != nil || pair.UserID != a.ID {
 		t.Fatalf("sign in with the emailed code: %+v, %v", pair, err)
 	}

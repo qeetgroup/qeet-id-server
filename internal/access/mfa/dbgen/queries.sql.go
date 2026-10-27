@@ -157,7 +157,7 @@ const getOTPCodeForConfirm = `-- name: GetOTPCodeForConfirm :one
 SELECT c.id
 FROM auth.mfa_otp_codes c
 JOIN auth.mfa_otp_factors f ON f.id = c.factor_id
-WHERE f.id = $1 AND f.user_id = $2 AND c.code_hash = $3
+WHERE f.id = $1 AND f.user_id = $2 AND c.code_hash = $3 AND c.purpose = 'enrollment'
   AND c.used_at IS NULL AND c.expires_at > NOW()
 ORDER BY c.created_at DESC LIMIT 1
 FOR UPDATE
@@ -182,7 +182,7 @@ SELECT c.id
 FROM auth.mfa_otp_codes c
 JOIN auth.mfa_otp_factors f ON f.id = c.factor_id
 WHERE f.user_id = $1 AND f.verified_at IS NOT NULL AND c.code_hash = $2
-  AND c.used_at IS NULL AND c.expires_at > NOW()
+  AND c.purpose = $3 AND c.used_at IS NULL AND c.expires_at > NOW()
 ORDER BY c.created_at DESC LIMIT 1
 FOR UPDATE
 `
@@ -190,10 +190,13 @@ FOR UPDATE
 type GetOTPCodeForVerifyParams struct {
 	UserID   uuid.UUID
 	CodeHash string
+	Purpose  string
 }
 
+// GetOTPCodeForVerify finds a live code of the user's sent for purpose
+// (sign_in or step_up), so one sent for the other never counts.
 func (q *Queries) GetOTPCodeForVerify(ctx context.Context, arg GetOTPCodeForVerifyParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getOTPCodeForVerify, arg.UserID, arg.CodeHash)
+	row := q.db.QueryRow(ctx, getOTPCodeForVerify, arg.UserID, arg.CodeHash, arg.Purpose)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
@@ -278,18 +281,24 @@ func (q *Queries) GetPushChallengeForUpdate(ctx context.Context, id uuid.UUID) (
 }
 
 const insertMFAOTPCode = `-- name: InsertMFAOTPCode :exec
-INSERT INTO auth.mfa_otp_codes (factor_id, code_hash, expires_at)
-VALUES ($1, $2, $3)
+INSERT INTO auth.mfa_otp_codes (factor_id, code_hash, expires_at, purpose)
+VALUES ($1, $2, $3, $4)
 `
 
 type InsertMFAOTPCodeParams struct {
 	FactorID  uuid.UUID
 	CodeHash  string
 	ExpiresAt time.Time
+	Purpose   string
 }
 
 func (q *Queries) InsertMFAOTPCode(ctx context.Context, arg InsertMFAOTPCodeParams) error {
-	_, err := q.db.Exec(ctx, insertMFAOTPCode, arg.FactorID, arg.CodeHash, arg.ExpiresAt)
+	_, err := q.db.Exec(ctx, insertMFAOTPCode,
+		arg.FactorID,
+		arg.CodeHash,
+		arg.ExpiresAt,
+		arg.Purpose,
+	)
 	return err
 }
 
