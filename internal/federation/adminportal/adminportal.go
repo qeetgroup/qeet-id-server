@@ -374,12 +374,14 @@ type PortalBranding struct {
 
 // PortalContext is what the hosted admin-portal page fetches before rendering
 // the SAML/SCIM forms: who it's configuring for, what it may touch, and how
-// long it has left.
+// long it has left. SCIMBaseURL, where the IdP provisions to, is set only for
+// a link that may set up SCIM.
 type PortalContext struct {
 	TenantName   string          `json:"tenant_name"`
 	Capabilities []string        `json:"capabilities"`
 	ExpiresAt    time.Time       `json:"expires_at"`
 	Branding     *PortalBranding `json:"branding,omitempty"`
+	SCIMBaseURL  string          `json:"scim_base_url,omitempty"`
 }
 
 // Context returns what the portal shows for a link: the tenant's name, the
@@ -406,7 +408,14 @@ type samlService interface {
 	Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, in saml.UpdateInput) (*saml.Connection, error)
 	Delete(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID) error
 	TestConnection(ctx context.Context, id, tenantID uuid.UUID) (*saml.TestResult, error)
+	TestSignIn(ctx context.Context, id, connectionID, tenantID uuid.UUID) (*saml.TestSignIn, error)
 	Pool() *pgxpool.Pool
+}
+
+// samlSignIn is the slice of saml.Handler the portal needs to begin a test
+// sign-in in the IT admin's browser.
+type samlSignIn interface {
+	BeginTestSignIn(w http.ResponseWriter, r *http.Request, tx pgx.Tx, tenantID, id uuid.UUID, returnURL string) (*saml.TestSignIn, error)
 }
 
 // scimService is the slice of scim.Service the portal needs to manage the
@@ -418,12 +427,16 @@ type scimService interface {
 	Pool() *pgxpool.Pool
 }
 
-// Handler serves the admin portal HTTP API.
+// Handler serves the admin portal HTTP API. PublicBaseURL is this API's
+// public origin, or "" to build the addresses an IdP needs from the request's
+// Host, as the SAML and SCIM handlers do.
 type Handler struct {
-	Service      *Service
-	SAML         samlService
-	SCIM         scimService
-	CookieSecure bool
+	Service       *Service
+	SAML          samlService
+	SAMLSignIn    samlSignIn
+	SCIM          scimService
+	PublicBaseURL string
+	CookieSecure  bool
 }
 
 // Mount registers the authed link-management endpoints (generate/list/revoke)
@@ -450,6 +463,8 @@ func (h *Handler) MountPublic(r chi.Router) {
 		r.Get("/admin-portal/saml/{id}", h.samlGet)
 		r.Patch("/admin-portal/saml/{id}", h.samlUpdate)
 		r.Post("/admin-portal/saml/{id}/test", h.samlTest)
+		r.Post("/admin-portal/saml/{id}/test-sign-ins", h.samlTestSignInBegin)
+		r.Get("/admin-portal/saml/{id}/test-sign-ins/{testID}", h.samlTestSignInGet)
 		r.Delete("/admin-portal/saml/{id}", h.samlDelete)
 
 		r.Get("/admin-portal/scim", h.scimConfig)
@@ -639,7 +654,7 @@ func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	portalContext, err := h.Service.Context(r.Context(), link)
+	portalContext, err := h.portalContext(r, link)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -690,15 +705,45 @@ func (h *Handler) context(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	ctx, err := h.Service.Context(r.Context(), l)
+	pc, err := h.portalContext(r, l)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, ctx)
+	httpx.WriteJSON(w, http.StatusOK, pc)
+}
+
+// portalContext returns link l's context, with the SCIM base URL when l may
+// set up SCIM.
+func (h *Handler) portalContext(r *http.Request, l *Link) (*PortalContext, error) {
+	pc, err := h.Service.Context(r.Context(), l)
+	if err != nil {
+		return nil, err
+	}
+	if l.Has(CapabilitySCIM) {
+		pc.SCIMBaseURL = scim.BaseURL(h.origin(r))
+	}
+	return pc, nil
+}
+
+// origin returns the API's public origin, which the SAML and SCIM addresses
+// are built on.
+func (h *Handler) origin(r *http.Request) string {
+	return httpx.PublicOrigin(r, h.PublicBaseURL)
 }
 
 // --- public: SAML ---
+
+// portalConnection is a SAML connection as the portal shows it: with the
+// addresses the IT admin enters at their IdP.
+type portalConnection struct {
+	saml.Connection
+	saml.SPAddresses
+}
+
+func (h *Handler) withAddresses(r *http.Request, c *saml.Connection) portalConnection {
+	return portalConnection{Connection: *c, SPAddresses: saml.Addresses(h.origin(r), c.ID)}
+}
 
 func (h *Handler) samlList(w http.ResponseWriter, r *http.Request) {
 	l, err := h.resolve(r, CapabilitySAML)
@@ -706,10 +751,14 @@ func (h *Handler) samlList(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.SAML.List(r.Context(), l.TenantID)
+	conns, err := h.SAML.List(r.Context(), l.TenantID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
+	}
+	out := make([]portalConnection, len(conns))
+	for i := range conns {
+		out[i] = h.withAddresses(r, &conns[i])
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }
@@ -771,7 +820,7 @@ func (h *Handler) samlGet(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, conn)
+	httpx.WriteJSON(w, http.StatusOK, h.withAddresses(r, conn))
 }
 
 func (h *Handler) samlUpdate(w http.ResponseWriter, r *http.Request) {
@@ -814,7 +863,7 @@ func (h *Handler) samlUpdate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, conn)
+	httpx.WriteJSON(w, http.StatusOK, h.withAddresses(r, conn))
 }
 
 func (h *Handler) samlTest(w http.ResponseWriter, r *http.Request) {
@@ -834,6 +883,67 @@ func (h *Handler) samlTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// samlTestSignInBegin starts a test sign-in through a connection in this
+// browser: it answers with the IdP address to send the browser to, and the
+// IdP's answer returns the browser to the portal page to read the result.
+func (h *Handler) samlTestSignInBegin(w http.ResponseWriter, r *http.Request) {
+	l, err := h.resolve(r, CapabilitySAML)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrAdminPortalIDInvalid)
+		return
+	}
+	ctx := r.Context()
+	tx, err := h.SAML.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	test, err := h.SAMLSignIn.BeginTestSignIn(w, r, tx, l.TenantID, id, h.Service.PortalURL())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := portalAudit("saml.test_sign_in_started", &id)(ctx, tx, l, r, map[string]any{"test_sign_in_id": test.ID}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, test)
+}
+
+func (h *Handler) samlTestSignInGet(w http.ResponseWriter, r *http.Request) {
+	l, err := h.resolve(r, CapabilitySAML)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrAdminPortalIDInvalid)
+		return
+	}
+	testID, err := uuid.Parse(chi.URLParam(r, "testID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrAdminPortalIDInvalid)
+		return
+	}
+	test, err := h.SAML.TestSignIn(r.Context(), testID, id, l.TenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, test)
 }
 
 func (h *Handler) samlDelete(w http.ResponseWriter, r *http.Request) {

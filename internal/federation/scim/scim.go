@@ -490,10 +490,14 @@ func writeSCIMTypedErr(w http.ResponseWriter, status int, scimType, detail strin
 	})
 }
 
+// BaseURL returns the SCIM 2.0 base URL an IdP provisions to, on origin, the
+// API's public origin.
+func BaseURL(origin string) string { return origin + "/scim/v2" }
+
 // location returns the absolute URL of the SCIM endpoint at suffix, a path
 // under /scim/v2.
 func (h *Handler) location(r *http.Request, suffix string) string {
-	return httpx.PublicOrigin(r, h.PublicBaseURL) + "/scim/v2" + suffix
+	return BaseURL(httpx.PublicOrigin(r, h.PublicBaseURL)) + suffix
 }
 
 // toResource renders a user row as a SCIM core User.

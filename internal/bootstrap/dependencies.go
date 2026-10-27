@@ -365,6 +365,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		os.Exit(1)
 	}
 
+	samlHandler := &saml.Handler{Service: samlService, IdP: samlIdP, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev()}
 	adminPortalService := adminportal.NewService(pool, brandingRepo, cfg.LoginBaseURL)
 
 	ldapService := ldap.NewService(pool, authService, outboundPolicy)
@@ -452,8 +453,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		SCIM:          &scim.Handler{Service: scimService, PublicBaseURL: cfg.PublicBaseURL},
 		Secret:        &secret.Handler{Service: secretService},
 		TokenVault:    &tokenvault.Handler{Service: tokenVaultService, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev()},
-		SAML:          &saml.Handler{Service: samlService, IdP: samlIdP, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev()},
-		AdminPortal:   &adminportal.Handler{Service: adminPortalService, SAML: samlService, SCIM: scimService, CookieSecure: !cfg.IsDev()},
+		SAML:          samlHandler,
+		AdminPortal:   &adminportal.Handler{Service: adminPortalService, SAML: samlService, SAMLSignIn: samlHandler, SCIM: scimService, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev()},
 		LDAP:          &ldap.Handler{Service: ldapService},
 		Directory:     &directory.Handler{Service: directoryService},
 		IPAllow:       &ipallow.Handler{Service: ipAllowService},

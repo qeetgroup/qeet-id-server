@@ -59,7 +59,7 @@ tags:
   - name: SCIM
     description: 'SCIM 2.0 user/group provisioning (per-tenant bearer token presented by the IdP) plus tenant-admin token management. The /scim/v2 surface returns the RFC 7644 error envelope, not the standard Qeet error shape.'
   - name: Admin Portal
-    description: A unique, time-limited, capability-scoped link a tenant admin can hand to their own IT admin — no Qeet ID account required — to configure the tenant's SAML connection and/or roll its SCIM token directly.
+    description: A unique, time-limited, capability-scoped link a tenant admin can hand to their own IT admin — no Qeet ID account required — to configure the tenant's SAML connection and test it, and/or roll its SCIM token directly.
 paths:
   /.well-known/jwks.json:
     get:
@@ -4319,7 +4319,7 @@ paths:
     get:
       operationId: get_v1_admin_portal_context
       summary: Get portal context
-      description: Returns the tenant name, granted capabilities, session expiry, and branding for the cookie-authenticated portal.
+      description: Returns the tenant name, granted capabilities, session expiry, and branding for the cookie-authenticated portal, and, when the link's capabilities include scim, the SCIM base URL to enter at the IdP.
       tags:
         - Admin Portal
       security:
@@ -4337,7 +4337,7 @@ paths:
     get:
       operationId: get_v1_admin_portal_saml
       summary: List connections (portal)
-      description: Requires the link's capabilities to include "saml".
+      description: Requires the link's capabilities to include "saml". Each connection carries the service-provider addresses the IT admin enters at their IdP.
       tags:
         - Admin Portal
       security:
@@ -4353,7 +4353,7 @@ paths:
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/SAMLConnection'
+                      $ref: '#/components/schemas/AdminPortalSAMLConnection'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4402,11 +4402,11 @@ paths:
             type: string
       responses:
         '200':
-          description: Connection
+          description: Connection, with the service-provider addresses to enter at the IdP
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SAMLConnection'
+                $ref: '#/components/schemas/AdminPortalSAMLConnection'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4435,11 +4435,11 @@ paths:
               $ref: '#/components/schemas/SAMLConnectionCreate'
       responses:
         '200':
-          description: Updated
+          description: Updated, with the service-provider addresses to enter at the IdP
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SAMLConnection'
+                $ref: '#/components/schemas/AdminPortalSAMLConnection'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4493,6 +4493,75 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TestResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/admin-portal/saml/{id}/test-sign-ins:
+    post:
+      operationId: post_v1_admin_portal_saml_ById_test_sign_ins
+      summary: Begin a test sign-in (portal)
+      description: >-
+        Starts a real sign-in through the connection in the IT admin's browser that signs nobody in: no account is created or changed and no session is issued, and a draft connection can be tested. Requires the link's capabilities to include saml; the connection must belong to the tenant bound to the portal session. Send the browser to redirect_url. The IdP's answer is validated exactly as a sign-in's (signature, issuer, audience, destination, validity period, correlation, replay) and only in the browser that began the test; the browser then returns to the hosted enterprise-setup page with `#saml_test={test id}&saml_connection={connection id}` in its fragment, and the result is read from the test-sign-in endpoint below. The test waits ten minutes for the answer, and the result is kept for an hour. Audited as saml.test_sign_in_started. An IdP SSO URL that is not an absolute https URL answers 422 saml.sso_url_invalid, a certificate that does not parse 422 saml.certificate_invalid.
+      tags:
+        - Admin Portal
+      security:
+        - adminPortalCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Test begun; send the browser to redirect_url
+          headers:
+            Set-Cookie:
+              description: Binds the test to this browser.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SAMLTestSignIn'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/admin-portal/saml/{id}/test-sign-ins/{testID}:
+    get:
+      operationId: get_v1_admin_portal_saml_ById_test_sign_ins_ByTestID
+      summary: Get a test sign-in (portal)
+      description: Returns a test sign-in of the connection and what it found. Requires the link's capabilities to include saml; the connection must belong to the tenant bound to the portal session. A test no answer reached within ten minutes reads as expired.
+      tags:
+        - Admin Portal
+      security:
+        - adminPortalCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: testID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The test and its findings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SAMLTestSignIn'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -5383,6 +5452,94 @@ components:
             background_color:
               type: string
               description: Optional hosted-login page background from tenant branding settings.
+        scim_base_url:
+          type: string
+          format: uri
+          description: The SCIM 2.0 base URL the IT admin enters at their IdP. Present only when the link's capabilities include scim.
+    AdminPortalSAMLConnection:
+      description: A SAML connection as the admin portal shows it, with the service-provider addresses the IT admin enters at their IdP.
+      allOf:
+        - $ref: '#/components/schemas/SAMLConnection'
+        - type: object
+          required: [acs_url, sp_entity_id, sp_metadata_url]
+          properties:
+            sp_entity_id:
+              type: string
+              description: The service provider's entity ID (audience) for this connection.
+            acs_url:
+              type: string
+              format: uri
+              description: The assertion consumer service URL the IdP posts its answers to.
+            sp_metadata_url:
+              type: string
+              format: uri
+              description: Where the service provider's SAML metadata for this connection is served.
+    SAMLTestSignIn:
+      type: object
+      description: A test sign-in through a connection and what it found. The findings (name_id to attributes) are present once the IdP's answer validated.
+      required: [connection_id, created_at, email_domain_verified, expires_at, id, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        connection_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, succeeded, failed, expired]
+          description: succeeded means a sign-in with the same answer would pass the IdP and domain checks.
+        redirect_url:
+          type: string
+          format: uri
+          description: The IdP address to send the browser to. Only when the test begins.
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: [string, 'null']
+          format: date-time
+        error_code:
+          type: string
+          description: Why the test failed, as the error code a sign-in would answer with.
+        error_message:
+          type: string
+        error_detail:
+          type: string
+          description: What the validation found, for the IT admin. Plain text.
+        name_id:
+          type: string
+        name_id_format:
+          type: string
+        email:
+          type: string
+          description: The address a sign-in would use, from the connection's email attribute or else the NameID.
+        name:
+          type: string
+          description: The name a sign-in would use, from the connection's name attribute.
+        attributes:
+          type: array
+          description: The attributes the IdP asserted, by name; at most 64, each with at most 32 values.
+          items:
+            $ref: '#/components/schemas/SAMLTestAttribute'
+        email_domain_verified:
+          type: boolean
+          description: Whether the address is on a domain the organisation verified, without which a sign-in is refused.
+    SAMLTestAttribute:
+      type: object
+      required: [name, values]
+      properties:
+        name:
+          type: string
+        friendly_name:
+          type: string
+        values:
+          type: array
+          items:
+            type: string
     SCIMUser:
       type: object
       required:
@@ -5680,6 +5837,10 @@ components:
         expires_at:
           type: string
           format: date-time
+        scim_base_url:
+          type: string
+          format: uri
+          description: The SCIM 2.0 base URL the IT admin enters at their IdP. Present only when the link's capabilities include scim.
         tenant_name:
           type: string
     Principal:

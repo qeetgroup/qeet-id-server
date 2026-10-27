@@ -445,6 +445,20 @@ func (h *Handler) publicBase(r *http.Request) string {
 func spEntityID(base string, id uuid.UUID) string { return base + "/saml/metadata/" + id.String() }
 func acsURL(base string, id uuid.UUID) string     { return base + "/saml/acs/" + id.String() }
 
+// SPAddresses are what an IdP is told about a connection's service provider:
+// its entity ID, where it receives assertions, and where its metadata is.
+type SPAddresses struct {
+	EntityID    string `json:"sp_entity_id"`
+	ACSURL      string `json:"acs_url"`
+	MetadataURL string `json:"sp_metadata_url"`
+}
+
+// Addresses returns connection id's service provider addresses on base, the
+// API's public origin. The entity ID is the metadata's own URL.
+func Addresses(base string, id uuid.UUID) SPAddresses {
+	return SPAddresses{EntityID: spEntityID(base, id), ACSURL: acsURL(base, id), MetadataURL: spEntityID(base, id)}
+}
+
 // buildSP returns the gosaml2 service provider for conn, with its entity ID,
 // audience and ACS URL built on base.
 func (s *Service) buildSP(base string, conn *Connection) (*saml2.SAMLServiceProvider, error) {
