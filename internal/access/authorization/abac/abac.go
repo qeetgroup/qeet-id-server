@@ -356,10 +356,11 @@ func compare(op string, attrVal, value any) (bool, error) {
 	}
 }
 
-// truth is a condition's three-valued result. A leaf comparing two attributes
-// is unknown when either is absent or null; all, any and not combine unknown
-// as Kleene logic does, so all with a false child is false and any with a true
-// child is true. truth.applies turns the result into a policy match.
+// truth is a condition's three-valued result. A leaf is unknown when the
+// attribute it compares, or one its value references, is absent or null; only
+// exists, which tests presence, is always known. all, any and not combine
+// unknown as Kleene logic does, so all with a false child is false and any with
+// a true child is true. truth.applies turns the result into a policy match.
 type truth uint8
 
 const (
@@ -460,10 +461,10 @@ func evalLeaf(m map[string]json.RawMessage, bag AttributeBag) (truth, error) {
 		return truthOf(ok), err
 	}
 
-	// Absent attribute: fail-closed for all comparison ops except 'nin'
-	// (an absent value is not a member of any set).
-	if !present {
-		return truthOf(op == "nin"), nil
+	// A missing attribute decides nothing either, whatever the op: ne and nin
+	// would otherwise hold for it and let an allow grant or lift a deny.
+	if !present || attrVal == nil {
+		return isUnknown, nil
 	}
 
 	var value any
@@ -551,9 +552,10 @@ func evaluateNode(raw json.RawMessage, bag AttributeBag) (truth, error) {
 }
 
 // EvaluateCondition reports whether a policy with effect and condition node
-// applies to attrs. A node is {"all": [...]}, {"any": [...]}, {"not": node} or
-// a leaf such as {"attr": "subject.dept", "op": "eq", "value": "eng"}; an empty
-// tree applies. An error means the tree is invalid: callers must deny.
+// applies to attrs: a tree of all, any, not and leaves such as {"attr":
+// "subject.dept", "op": "eq", "value": "eng"}, {} always applying. One left
+// unknown by a missing attribute (see truth) fails closed: it applies to a deny
+// and not to an allow. An error means the tree is invalid: callers must deny.
 func EvaluateCondition(node json.RawMessage, effect string, attrs AttributeBag) (bool, error) {
 	t, err := evaluateNode(node, attrs)
 	return err == nil && t.applies(effect), err

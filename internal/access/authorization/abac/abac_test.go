@@ -352,42 +352,64 @@ func TestEvaluateCondition_Nested(t *testing.T) {
 
 // Missing / absent attributes
 
-func TestEvaluateCondition_MissingAttr_FailClosed(t *testing.T) {
-	empty := AttributeBag{"subject": {}}
-
-	// All comparison ops on a missing attribute return false.
-	for _, op := range []string{"eq", "ne", "gt", "gte", "lt", "lte", "contains", "prefix", "suffix", "regex", "in"} {
+// TestEvaluateCondition_MissingAttr_Unknown checks that comparing an absent or
+// null attribute with a literal is unknown for every operator, ne and nin
+// included: an allow never applies, so grants nothing, and a deny always does.
+func TestEvaluateCondition_MissingAttr_Unknown(t *testing.T) {
+	for _, op := range []string{"eq", "ne", "gt", "gte", "lt", "lte", "contains", "prefix", "suffix", "regex", "in", "nin"} {
 		val := `"anything"`
-		if op == "in" {
+		if op == "in" || op == "nin" {
 			val = `["a","b"]`
 		}
-		cond := `{"attr":"subject.missing","op":"` + op + `","value":` + val + `}`
-		if eval(t, cond, empty) {
-			t.Errorf("op %q on absent attr must return false (fail-closed)", op)
+		cond := `{"attr":"subject.x","op":"` + op + `","value":` + val + `}`
+		for name, b := range map[string]AttributeBag{
+			"attribute absent": {"subject": {}},
+			"attribute null":   {"subject": {"x": nil}},
+			"namespace absent": {"resource": {"x": "anything"}},
+		} {
+			if got := truthIn(t, cond, b); got != isUnknown {
+				t.Errorf("%s, %s: got %v, want unknown", op, name, got)
+			}
+			if allow, err := EvaluateCondition(json.RawMessage(cond), "allow", b); allow || err != nil {
+				t.Errorf("%s, %s: an allow applies (%v, %v)", op, name, allow, err)
+			}
+			if deny, err := EvaluateCondition(json.RawMessage(cond), "deny", b); !deny || err != nil {
+				t.Errorf("%s, %s: a deny does not apply (%v, %v)", op, name, deny, err)
+			}
 		}
 	}
 }
 
+// TestEvaluateCondition_MissingAttr_Exists checks that exists, which tests
+// presence, stays known: false for an absent attribute, true for a null one.
 func TestEvaluateCondition_MissingAttr_Exists(t *testing.T) {
-	b := AttributeBag{"subject": {}}
-	if eval(t, `{"attr":"subject.missing","op":"exists"}`, b) {
+	if eval(t, `{"attr":"subject.missing","op":"exists"}`, AttributeBag{"subject": {}}) {
 		t.Error("exists on absent attr must be false")
 	}
-}
-
-func TestEvaluateCondition_MissingAttr_Nin(t *testing.T) {
-	b := AttributeBag{"subject": {}}
-	// An absent attr is not a member of any set → nin returns true.
-	if !eval(t, `{"attr":"subject.missing","op":"nin","value":["a","b"]}`, b) {
-		t.Error("nin on absent attr must be true (absent is not-in any set)")
+	if !eval(t, `{"attr":"subject.x","op":"exists"}`, AttributeBag{"subject": {"x": nil}}) {
+		t.Error("exists on a null attr must be true")
 	}
 }
 
-func TestEvaluateCondition_MissingNamespace(t *testing.T) {
-	// Bag has no "resource" namespace at all.
-	b := subjectBag(map[string]any{"role": "admin"})
-	if eval(t, `{"attr":"resource.type","op":"eq","value":"doc"}`, b) {
-		t.Error("missing namespace must be treated as absent (false)")
+// TestEvaluateCondition_MissingAttr_Negated checks that negating a comparison
+// with a missing attribute still decides nothing, so "not a contractor" grants
+// nothing to someone whose department is unknown, and that exists guards a
+// deny meant only for requests that carry the attribute.
+func TestEvaluateCondition_MissingAttr_Negated(t *testing.T) {
+	b := AttributeBag{"subject": {"id": "u1"}, "resource": {}}
+	notContractor := `{"not":{"attr":"subject.department","op":"eq","value":"contractors"}}`
+	if allow, _ := EvaluateCondition(json.RawMessage(notContractor), "allow", b); allow {
+		t.Error("an allow on a negated comparison applied to an absent attribute")
+	}
+	if deny, _ := EvaluateCondition(json.RawMessage(notContractor), "deny", b); !deny {
+		t.Error("a deny on a negated comparison did not apply to an absent attribute")
+	}
+	guarded := `{"all":[{"attr":"resource.classification","op":"exists"},{"attr":"resource.classification","op":"eq","value":"secret"}]}`
+	if deny, _ := EvaluateCondition(json.RawMessage(guarded), "deny", b); deny {
+		t.Error("a deny guarded by exists applied without the attribute")
+	}
+	if deny, _ := EvaluateCondition(json.RawMessage(guarded), "deny", AttributeBag{"resource": {"classification": "secret"}}); !deny {
+		t.Error("a deny guarded by exists did not apply with the attribute")
 	}
 }
 
@@ -882,6 +904,8 @@ func TestDecisionReasonCodes(t *testing.T) {
 	deny := candidate{id: uuid.New(), name: "deny_prod", effect: "deny", priority: 9, condition: []byte(`{"attr":"resource.name","op":"prefix","value":"prod-"}`)}
 	absent := candidate{id: uuid.New(), name: "deny_owner", effect: "deny", priority: 7, condition: []byte(`{"attr":"resource.owner","op":"eq","value":{"attr":"subject.id"}}`)}
 	broken := candidate{id: uuid.New(), name: "broken", effect: "allow", priority: 3, condition: []byte(`{"attr":"resource.name","op":"bogus","value":"x"}`)}
+	notEng := candidate{id: uuid.New(), name: "deny_outside_eng", effect: "deny", priority: 6, condition: []byte(`{"attr":"subject.department","op":"ne","value":"eng"}`)}
+	allowNotEng := candidate{id: uuid.New(), name: "allow_outside_eng", effect: "allow", priority: 6, condition: notEng.condition}
 	for _, tc := range []struct {
 		name     string
 		policies []candidate
@@ -891,6 +915,8 @@ func TestDecisionReasonCodes(t *testing.T) {
 		{"an allow policy matches", []candidate{allow}, ReasonAllowedByPolicy, &allow},
 		{"a deny policy matches", []candidate{deny, allow}, ReasonDeniedByPolicy, &deny},
 		{"a deny compares an absent attribute", []candidate{absent}, ReasonAttributeAbsent, &absent},
+		{"a deny compares an absent attribute with a literal", []candidate{notEng, allow}, ReasonAttributeAbsent, &notEng},
+		{"an allow compares an absent attribute with a literal", []candidate{allowNotEng}, ReasonNoMatchingAllow, nil},
 		{"a condition fails to evaluate", []candidate{broken}, ReasonConditionError, &broken},
 		{"nothing matches", nil, ReasonNoMatchingAllow, nil},
 	} {

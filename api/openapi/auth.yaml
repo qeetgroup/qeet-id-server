@@ -5533,10 +5533,16 @@ components:
             suffix or exists). The reference is exactly
             {"attr":"<subject|resource|context>.<path>"}, names an attribute other
             than the leaf's own, and is the whole value, never an array element. A
-            string value is always a literal, even "resource.region". When either
-            attribute a reference compares is absent or null, an allow policy does
-            not match and a deny policy does. A comparison with a literal against an
-            absent attribute is false, except nin, which holds. prefix and suffix
+            string value is always a literal, even "resource.region". A comparison
+            with a missing attribute (absent or null), on either side and with any
+            operator, ne and nin included, is unknown; not of unknown is unknown,
+            all is unknown unless a child is false, and any unknown unless a child
+            is true. A condition left unknown fails closed: a deny policy applies
+            (reason authz.attribute_absent) and an allow policy grants nothing.
+            exists alone tests presence and is never unknown, so a deny meant only
+            for requests that carry an attribute guards it with exists in an all
+            (otherwise a deny for "*" on an attribute the platform's own route
+            check doesn't supply refuses every request there). prefix and suffix
             need a non-empty string value and match only string attributes; any
             other value is refused with 422 abac.condition_invalid, as is contains
             or regex with an empty value.
