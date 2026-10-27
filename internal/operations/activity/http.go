@@ -48,7 +48,7 @@ func (h *Handler) Mount(r chi.Router) {
 
 // stream serves GET /v1/activity/stream as Server-Sent Events. It replays audit
 // events newer than Last-Event-ID, then forwards live hub events until the
-// client disconnects; the query filters apply to both.
+// client disconnects or the hub shuts down; the query filters apply to both.
 func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	tenantID, _, ok := h.requireTenantUser(w, r)
 	if !ok {
@@ -91,6 +91,12 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	sse.startKeepAlive(donePing, 20*time.Second)
 
 	ctx := r.Context()
+	select {
+	case <-h.Hub.stopping:
+		sse.retryLater()
+		return
+	default:
+	}
 
 	// Subscribe before replaying, so a live event published during the replay
 	// waits in the channel instead of being lost. Live events come from the
@@ -109,6 +115,9 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-h.Hub.stopping:
+			sse.retryLater()
+			return
 		case ev := <-evCh:
 			// Defence in depth: drop an event whose own TenantID is not the
 			// connection's, in case the hub ever mis-routes one.
@@ -125,6 +134,10 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+
+// shutdownRetry is how long the client of a stopping server waits before it
+// reconnects, sending its Last-Event-ID so it misses nothing.
+const shutdownRetry = 3 * time.Second
 
 // outboxLag is how far a live event may trail the audit record it reports: the
 // outbox's poll interval, with margin. A live frame's cursor is set back by it,
@@ -887,6 +900,12 @@ func (s *sseWriter) sendActivity(ev ActivityEvent, cursorAt time.Time) {
 		return
 	}
 	s.write(fmt.Sprintf("id: %s\nevent: activity\ndata: %s\n\n", encodeCursor(cursorAt, ev.ID), raw))
+}
+
+// retryLater sets the client's reconnect delay to shutdownRetry, for a stream
+// about to end because the server is stopping.
+func (s *sseWriter) retryLater() {
+	s.write(fmt.Sprintf("retry: %d\n\n", shutdownRetry.Milliseconds()))
 }
 
 // keepAlive sends an SSE comment frame so proxies do not close an idle

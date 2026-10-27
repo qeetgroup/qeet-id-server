@@ -299,6 +299,9 @@ func TestLoad_SessionLifetimeDefaults(t *testing.T) {
 	if c.RefreshTokenReuseGrace != 30*time.Second {
 		t.Errorf("refresh reuse grace default = %v, want 30s", c.RefreshTokenReuseGrace)
 	}
+	if c.ShutdownTimeout != 20*time.Second || c.ShutdownDrainDelay != 5*time.Second {
+		t.Errorf("shutdown defaults = %v / %v, want 20s / 5s", c.ShutdownTimeout, c.ShutdownDrainDelay)
+	}
 }
 
 func TestLoad_RejectsUnusableSessionLifetime(t *testing.T) {
@@ -311,6 +314,9 @@ func TestLoad_RejectsUnusableSessionLifetime(t *testing.T) {
 		"a refresh reuse grace over a minute": {"REFRESH_TOKEN_REUSE_GRACE", "61s"},
 		"a negative refresh reuse grace":      {"REFRESH_TOKEN_REUSE_GRACE", "-1s"},
 		"a drain delay over 30 seconds":       {"SHUTDOWN_DRAIN_DELAY", "31s"},
+		"a drain delay over half the stop":    {"SHUTDOWN_DRAIN_DELAY", "11s"},
+		"a shutdown timeout under 5 seconds":  {"SHUTDOWN_TIMEOUT", "4s"},
+		"a shutdown timeout over 2 minutes":   {"SHUTDOWN_TIMEOUT", "3m"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			setRequiredEnv(t)

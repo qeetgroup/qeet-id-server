@@ -155,6 +155,7 @@ type Deps struct {
 	// an Idempotency-Key.
 	Idempotency *idempotency.Store
 
+	endStreams    []func() // run as shutdown begins, so open event streams end
 	shutdownHooks []func() // run once the HTTP server has drained
 }
 

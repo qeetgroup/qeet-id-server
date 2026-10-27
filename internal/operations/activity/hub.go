@@ -26,6 +26,9 @@ type subscriber struct {
 type Hub struct {
 	mu   sync.RWMutex                // guards subs
 	subs map[uuid.UUID][]*subscriber // tenantID → active subscribers
+
+	stopping chan struct{} // closed by Shutdown
+	stopOnce sync.Once
 }
 
 // NewHub returns a Hub subscribed to every NATS subject (">"). With a nil nc it
@@ -33,7 +36,8 @@ type Hub struct {
 // replay.
 func NewHub(nc *nats.Conn) *Hub {
 	h := &Hub{
-		subs: make(map[uuid.UUID][]*subscriber),
+		subs:     make(map[uuid.UUID][]*subscriber),
+		stopping: make(chan struct{}),
 	}
 	if nc != nil {
 		// Outbox topics are dot-namespaced ("user.events", "auth", …).
@@ -47,6 +51,11 @@ func NewHub(nc *nats.Conn) *Hub {
 	}
 	return h
 }
+
+// Shutdown ends every open stream, and any opened later at once, each with a
+// reconnect hint, so a stopping server's streams don't hold up its drain. It
+// is safe to call more than once.
+func (h *Hub) Shutdown() { h.stopOnce.Do(func() { close(h.stopping) }) }
 
 // Subscribe registers a subscriber for tenantID and returns its event channel
 // and an unsubscribe func the caller must call when the connection closes.

@@ -1,12 +1,16 @@
 package activity
 
 import (
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // TestCursorRoundTrip checks that a cursor decodes to the time and id it was
@@ -49,4 +53,58 @@ func TestSendActivityWritesCursorAsID(t *testing.T) {
 	if !strings.Contains(frame, "\nevent: activity\ndata: ") || !strings.HasSuffix(frame, "\n\n") {
 		t.Errorf("malformed frame:\n%s", frame)
 	}
+}
+
+// TestStreamEndsWhenTheHubShutsDown checks that an open stream, and one opened
+// after, ends with a reconnect hint once the hub shuts down, so a stopping
+// server's streams don't hold up its drain.
+func TestStreamEndsWhenTheHubShutsDown(t *testing.T) {
+	hub := NewHub(nil)
+	h := NewHandler(nil, hub)
+	tenantID, userID := uuid.New(), uuid.New()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := &httpx.Principal{TenantID: &tenantID, UserID: &userID}
+		h.stream(w, r.WithContext(httpx.WithPrincipal(r.Context(), p)))
+	}))
+	defer srv.Close()
+	client := &http.Client{Timeout: 5 * time.Second}
+	read := func() (string, error) {
+		resp, err := client.Get(srv.URL)
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		return string(body), err
+	}
+	const want = "retry: 3000\n\n"
+
+	got := make(chan string, 1)
+	go func() {
+		body, err := read()
+		if err != nil {
+			body = err.Error()
+		}
+		got <- body
+	}()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		hub.mu.RLock()
+		subscribed := len(hub.subs[tenantID]) > 0
+		hub.mu.RUnlock()
+		if subscribed {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the stream never subscribed")
+		}
+	}
+	hub.Shutdown()
+	if body := <-got; body != want {
+		t.Errorf("open stream at shutdown sent %q, want %q", body, want)
+	}
+
+	if body, err := read(); err != nil || body != want {
+		t.Errorf("stream opened after shutdown sent %q (%v), want %q", body, err, want)
+	}
+	hub.Shutdown() // a second call is harmless
 }

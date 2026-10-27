@@ -132,7 +132,6 @@ func Run() {
 		slog.Error("connect db", "err", err)
 		os.Exit(1)
 	}
-	defer pool.Close()
 
 	// Outbox event publisher: NATS when NATS_URL is set, else log-only.
 	outboxPub, closeOutboxPub, err := outbox.NewPublisher(cfg.NATSURL)
@@ -140,7 +139,6 @@ func Run() {
 		slog.Error("outbox publisher", "err", err)
 		os.Exit(1)
 	}
-	defer func() { _ = closeOutboxPub() }()
 	if cfg.NATSURL != "" {
 		slog.Info("outbox publishing to NATS", "url", logging.StripURLCredentials(cfg.NATSURL))
 	}
@@ -168,7 +166,8 @@ func Run() {
 	srv := startHTTPServer(cfg, router, stop)
 
 	<-rootCtx.Done()
-	gracefulShutdown(srv, deps, waitWorkers, tracerShutdown, pool, cfg)
+	stop() // a second signal ends the process at once
+	gracefulShutdown(srv, deps, waitWorkers, closeOutboxPub, tracerShutdown, pool, cfg)
 }
 
 // RunWorkers runs the background workers the API embeds, without the API, for
@@ -192,13 +191,11 @@ func RunWorkers() {
 		slog.Error("connect db", "err", err)
 		os.Exit(1)
 	}
-	defer pool.Close()
 	outboxPub, closeOutboxPub, err := outbox.NewPublisher(cfg.NATSURL)
 	if err != nil {
 		slog.Error("outbox publisher", "err", err)
 		os.Exit(1)
 	}
-	defer func() { _ = closeOutboxPub() }()
 
 	// Only the API serves the live activity feed, so the workers' wiring leaves
 	// out its NATS subscription; the outbox above still publishes to NATS.
@@ -212,16 +209,21 @@ func RunWorkers() {
 	waitWorkers := sup.Start(rootCtx)
 
 	<-rootCtx.Done()
+	stop() // a second signal ends the process at once
 	slog.Info("worker shutdown initiated")
-	done := make(chan struct{})
-	go func() { waitWorkers(); close(done) }()
-	select {
-	case <-done:
+	// The workers may take all of SHUTDOWN_TIMEOUT but the share kept for
+	// closing the pool.
+	end := time.Now().Add(cfg.ShutdownTimeout)
+	if within(end.Add(-newShutdownBudget(cfg.ShutdownTimeout, 0).close), waitWorkers) {
 		slog.Info("worker shutdown complete")
-	case <-time.After(workerDrainTimeout):
+	} else {
 		slog.Warn("worker drain timed out; leased jobs are picked up again")
 	}
 	for _, hook := range deps.shutdownHooks {
 		hook()
+	}
+	_ = closeOutboxPub()
+	if !within(end, pool.Close) {
+		slog.Warn("database pool close timed out")
 	}
 }

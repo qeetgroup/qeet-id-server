@@ -489,6 +489,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		APIKeyLim:        tenantAPIKeyLim,
 		Idempotency:      idempotency.NewStore(pool, sharedCipher),
 	}
+	deps.endStreams = append(deps.endStreams, activityHub.Shutdown)
 	if activityNATSConn != nil {
 		deps.shutdownHooks = append(deps.shutdownHooks, func() { _ = activityNATSConn.Drain() })
 	}
