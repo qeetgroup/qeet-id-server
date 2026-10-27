@@ -11,6 +11,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // Failed sign-ins are recorded in the organisation's audit trail as
@@ -64,7 +65,7 @@ func newFailureBound() failureBound {
 
 func (b failureBound) allow(ctx context.Context, f SignInFailure) bool {
 	org := f.TenantID.String()
-	if ok, _ := b.perSource.Take(ctx, org+"|"+SourceNetwork(f.IP)); !ok {
+	if ok, _ := b.perSource.Take(ctx, org+"|"+httpx.SourceNetwork(f.IP)); !ok {
 		return false
 	}
 	ok, _ := b.perTenant.Take(ctx, org)
@@ -85,7 +86,7 @@ func (s *Service) RecordSignInFailure(ctx context.Context, f SignInFailure) {
 		return
 	}
 	meta := map[string]any{"method": f.Method, "reason": f.Reason}
-	if network := SourceNetwork(f.IP); network != "" {
+	if network := httpx.SourceNetwork(f.IP); network != "" {
 		meta["network"] = network
 	}
 	for k, v := range f.Metadata {

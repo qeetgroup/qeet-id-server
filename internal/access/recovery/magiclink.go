@@ -16,6 +16,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
@@ -60,7 +61,11 @@ func (s *Service) magicLinkAllowed(ctx context.Context, req MagicLinkRequest) bo
 		}
 	}
 	if s.magicPerCaller != nil && req.Caller != "" {
-		if ok, _ := s.magicPerCaller.Take(ctx, "magic-link:caller:"+req.Caller); !ok {
+		caller := req.Caller
+		if network := httpx.SourceNetwork(caller); network != "" {
+			caller = network
+		}
+		if ok, _ := s.magicPerCaller.Take(ctx, "magic-link:caller:"+caller); !ok {
 			return false
 		}
 	}

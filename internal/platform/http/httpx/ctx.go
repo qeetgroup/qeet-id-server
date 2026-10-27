@@ -5,6 +5,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -89,7 +90,9 @@ func ClientIP(r *http.Request) string {
 		return ip
 	}
 	if hops := int(trustedProxyHops.Load()); hops > 0 {
-		if v := r.Header.Get("X-Forwarded-For"); v != "" {
+		// Every line: a proxy may append its own line rather than extend the
+		// caller's, which would leave the caller's value read as the client.
+		if v := strings.Join(r.Header.Values("X-Forwarded-For"), ","); v != "" {
 			parts := strings.Split(v, ",")
 			// The right-most `hops` entries were appended by our proxies; the
 			// client is the entry immediately to their left.
@@ -108,6 +111,25 @@ func ClientIP(r *http.Request) string {
 		return normalizeIP(strings.TrimSpace(r.RemoteAddr))
 	}
 	return normalizeIP(host)
+}
+
+// SourceNetwork is the network an address belongs to: an IPv4 address, or
+// the /64 of an IPv6 one (one subscriber's allocation, so rotating addresses
+// inside it is still one source). "" when ip is not an address.
+func SourceNetwork(ip string) string {
+	addr, err := netip.ParseAddr(strings.TrimSpace(ip))
+	if err != nil {
+		return ""
+	}
+	addr = addr.Unmap().WithZone("")
+	if addr.Is4() {
+		return addr.String()
+	}
+	prefix, err := addr.Prefix(64)
+	if err != nil {
+		return ""
+	}
+	return prefix.String()
 }
 
 // normalizeIP unwraps IPv4-mapped IPv6 addresses and strips CR/LF for logging.

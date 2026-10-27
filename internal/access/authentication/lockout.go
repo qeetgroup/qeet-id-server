@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +23,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // The counters a lock or throttle can come from, as named in signals and metrics.
@@ -184,7 +184,7 @@ func (s *Service) newSignInAttempt(ctx context.Context, in SignInAttempt) (signI
 func (s *Service) signInAttemptIn(ctx context.Context, tenantID uuid.UUID, account, ip string) (signInAttempt, error) {
 	a := signInAttempt{
 		email:   strings.ToLower(strings.TrimSpace(account)),
-		network: SourceNetwork(ip),
+		network: httpx.SourceNetwork(ip),
 		lockout: s.lockout.Defaults,
 		// Microseconds, as PostgreSQL stores them, so a lock this attempt sets
 		// reads back equal to the one it asked for.
@@ -200,25 +200,6 @@ func (s *Service) signInAttemptIn(ctx context.Context, tenantID uuid.UUID, accou
 		return a, lockoutFailed(stageSettings, err)
 	}
 	return a, nil
-}
-
-// SourceNetwork is the network a sign-in comes from: an IPv4 address, or the
-// /64 an IPv6 address belongs to (one subscriber's allocation, so rotating
-// addresses inside it is still one source). "" when ip is not an address.
-func SourceNetwork(ip string) string {
-	addr, err := netip.ParseAddr(strings.TrimSpace(ip))
-	if err != nil {
-		return ""
-	}
-	addr = addr.Unmap().WithZone("")
-	if addr.Is4() {
-		return addr.String()
-	}
-	prefix, err := addr.Prefix(64)
-	if err != nil {
-		return ""
-	}
-	return prefix.String()
 }
 
 func lockoutContext(ctx context.Context) (context.Context, context.CancelFunc) {
