@@ -279,7 +279,7 @@ func (q *Queries) InsertUserWithEmail(ctx context.Context, arg InsertUserWithEma
 const linkExternalIdentity = `-- name: LinkExternalIdentity :exec
 INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email)
 VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (tenant_id, provider, subject) DO NOTHING
+ON CONFLICT (tenant_id, provider, connection_id, subject) DO NOTHING
 `
 
 type LinkExternalIdentityParams struct {

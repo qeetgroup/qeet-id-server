@@ -134,7 +134,7 @@ func TestLoginAppliesSignInChecks(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
 	tenant := dbtest.Tenant(t)
-	a := dbtest.User(t, tenant, tenant)
+	a := dbtest.UserAt(t, dbtest.Unique("alice")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
 	const userDN = "uid=alice,dc=example,dc=test"
 	dir := &directory{
 		binds:   map[string]string{"cn=service,dc=example,dc=test": "service-secret", userDN: "alice-secret"},
@@ -184,5 +184,72 @@ func TestLoginAppliesSignInChecks(t *testing.T) {
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM auth.sessions WHERE user_id = $1`, a.ID); n != 1 {
 		t.Errorf("%d sessions, want only the first sign-in's", n)
+	}
+}
+
+// TestLoginSpeaksOnlyForTheOrganisation checks that a directory sign-in
+// creates or adopts an account only on a domain the organisation has
+// verified, adopts no administrator by address, and that a DN linked through
+// one connection signs nobody in through another.
+func TestLoginSpeaksOnlyForTheOrganisation(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	tenant := dbtest.Tenant(t)
+	domain := dbtest.Domain(t, tenant)
+	admin := dbtest.UserAt(t, dbtest.Unique("root")+"@"+domain, tenant)
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, admin.ID); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.Assign(t, admin.ID, tenant, dbtest.Role(t, tenant, "policy.write"))
+	newcomer := dbtest.Unique("alice") + "@" + domain
+	const service, aliceDN, bobDN, rootDN = "cn=service,dc=example,dc=test", "uid=alice,dc=example,dc=test", "uid=bob,dc=example,dc=test", "uid=root,dc=example,dc=test"
+	binds := map[string]string{service: "service-secret", aliceDN: "alice-secret", bobDN: "bob-secret", rootDN: "root-secret"}
+	connect := func(entries map[string]dirEntry) uuid.UUID {
+		dir := &directory{binds: binds, entries: entries}
+		var id uuid.UUID
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO tenant.ldap_connections (tenant_id, name, server_url, bind_dn, bind_password, base_dn, status)
+			VALUES ($1, 'Directory', $2, $3, 'service-secret', 'dc=example,dc=test', 'active')
+			RETURNING id
+		`, tenant, dir.start(t), service).Scan(&id); err != nil {
+			t.Fatalf("connection: %v", err)
+		}
+		return id
+	}
+	conn := connect(map[string]dirEntry{
+		"alice": {dn: aliceDN, attrs: map[string]string{"mail": newcomer, "cn": "Alice"}},
+		"bob":   {dn: bobDN, attrs: map[string]string{"mail": dbtest.Unique("bob") + "@example.test", "cn": "Bob"}},
+		"root":  {dn: rootDN, attrs: map[string]string{"mail": admin.Email, "cn": "Root"}},
+	})
+	rogue := connect(map[string]dirEntry{
+		"alice": {dn: aliceDN, attrs: map[string]string{"mail": dbtest.Unique("rogue") + "@example.test", "cn": "Alice"}},
+	})
+	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
+	authSvc.SetMFA(noFactors{})
+	svc := NewService(pool, authSvc, egress.DevelopmentPolicy())
+
+	res, err := svc.Login(ctx, conn, "alice", "alice-secret", "192.0.2.21", "test")
+	if err != nil || res.Pair == nil || dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND tenant_id = $2 AND email = $3`, res.Pair.UserID, tenant, newcomer) != 1 {
+		t.Fatalf("a newcomer on the organisation's domain: %+v, %v; want an account in it", res, err)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1 AND connection_id = $2 AND subject = $3`, res.Pair.UserID, conn, aliceDN); n != 1 {
+		t.Errorf("%d identities linked to the connection, want 1", n)
+	}
+	for _, c := range []struct {
+		name     string
+		conn     uuid.UUID
+		username string
+		want     error
+	}{
+		{"a newcomer on a domain nobody verified", conn, "bob", errs.ErrLDAPEmailDomainUnverified},
+		{"an administrator's address", conn, "root", errs.ErrLDAPAccountAdministers},
+		{"another connection's linked DN", rogue, "alice", errs.ErrLDAPEmailDomainUnverified},
+	} {
+		if _, err := svc.Login(ctx, c.conn, c.username, c.username+"-secret", "192.0.2.21", "test"); !errors.Is(err, c.want) {
+			t.Errorf("%s: %v, want %v", c.name, err, c.want)
+		}
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1`, admin.ID); n != 0 {
+		t.Errorf("the administrator was linked to the directory")
 	}
 }

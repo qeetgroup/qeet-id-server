@@ -74,20 +74,27 @@ func (q *Queries) DeleteSamlSP(ctx context.Context, arg DeleteSamlSPParams) (int
 const getExternalIdentityUser = `-- name: GetExternalIdentityUser :one
 
 SELECT user_id FROM "user".external_identities
-WHERE tenant_id = $1 AND provider = $2 AND subject = $3
+WHERE tenant_id = $1 AND provider = $2 AND connection_id = $3::uuid
+  AND subject = $4
 `
 
 type GetExternalIdentityUserParams struct {
-	TenantID uuid.UUID
-	Provider string
-	Subject  string
+	TenantID     uuid.UUID
+	Provider     string
+	ConnectionID uuid.UUID
+	Subject      string
 }
 
 // ==========================================================================
 // findOrCreateUser — same pattern as ldap (cross-schema "user" tables)
 // ==========================================================================
 func (q *Queries) GetExternalIdentityUser(ctx context.Context, arg GetExternalIdentityUserParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getExternalIdentityUser, arg.TenantID, arg.Provider, arg.Subject)
+	row := q.db.QueryRow(ctx, getExternalIdentityUser,
+		arg.TenantID,
+		arg.Provider,
+		arg.ConnectionID,
+		arg.Subject,
+	)
 	var user_id uuid.UUID
 	err := row.Scan(&user_id)
 	return user_id, err
@@ -459,17 +466,18 @@ func (q *Queries) IsTenantActive(ctx context.Context, id uuid.UUID) (bool, error
 }
 
 const linkExternalIdentity = `-- name: LinkExternalIdentity :exec
-INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (tenant_id, provider, subject) DO NOTHING
+INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject, email)
+VALUES ($1, $2, $3, $4::uuid, $5, $6)
+ON CONFLICT (tenant_id, provider, connection_id, subject) DO NOTHING
 `
 
 type LinkExternalIdentityParams struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
-	Provider string
-	Subject  string
-	Email    *string
+	UserID       uuid.UUID
+	TenantID     uuid.UUID
+	Provider     string
+	ConnectionID uuid.UUID
+	Subject      string
+	Email        *string
 }
 
 func (q *Queries) LinkExternalIdentity(ctx context.Context, arg LinkExternalIdentityParams) error {
@@ -477,6 +485,7 @@ func (q *Queries) LinkExternalIdentity(ctx context.Context, arg LinkExternalIden
 		arg.UserID,
 		arg.TenantID,
 		arg.Provider,
+		arg.ConnectionID,
 		arg.Subject,
 		arg.Email,
 	)

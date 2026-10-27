@@ -32,6 +32,8 @@ const (
 	CodeSAMLUserTenantMismatch       = "saml.user_tenant_mismatch"
 	CodeSAMLAccountUnverified        = "saml.account_unverified"
 	CodeSAMLSPEntityIDTaken          = "saml.sp_entity_id_taken"
+	CodeSAMLEmailDomainUnverified    = "saml.email_domain_unverified"
+	CodeSAMLAccountAdministers       = "saml.account_administers"
 )
 
 // SAML errors. Message is the end-user-facing text; edit wording here. Handlers
@@ -67,5 +69,9 @@ var (
 	ErrSAMLUserTenantMismatch       = New(CodeSAMLUserTenantMismatch, "You aren't a member of this service provider's tenant.")
 	ErrSAMLAccountUnverified        = New(CodeSAMLAccountUnverified,
 		"An account already uses this email address, but the address hasn't been verified. Verify it, or reset the password from the link we email you, then sign in with single sign-on.")
-	ErrSAMLSPEntityIDTaken = New(CodeSAMLSPEntityIDTaken, "A service provider with this entity ID is already registered.")
+	ErrSAMLSPEntityIDTaken       = New(CodeSAMLSPEntityIDTaken, "A service provider with this entity ID is already registered.")
+	ErrSAMLEmailDomainUnverified = New(CodeSAMLEmailDomainUnverified,
+		"Single sign-on can't sign in this address: its domain isn't one this organization has verified. Ask your administrator to verify it.")
+	ErrSAMLAccountAdministers = New(CodeSAMLAccountAdministers,
+		"This account administers the organization, so single sign-on can't take it over by its email address. Sign in with the account's own password or passkey.")
 )

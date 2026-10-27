@@ -15,6 +15,8 @@ const (
 	CodeLDAPAccountNotInTenant       = "ldap.account_not_in_tenant"
 	CodeLDAPAccountUnverified        = "ldap.account_unverified"
 	CodeLDAPTLSVerifyRequired        = "ldap.tls_verify_required"
+	CodeLDAPEmailDomainUnverified    = "ldap.email_domain_unverified"
+	CodeLDAPAccountAdministers       = "ldap.account_administers"
 )
 
 // LDAP errors. The Message is what the end user (or admin configuring a
@@ -36,4 +38,8 @@ var (
 		"An account already uses this email address, but the address hasn't been verified. Verify it, or reset the password from the link we email you, then sign in with your directory account.")
 	ErrLDAPTLSVerifyRequired = New(CodeLDAPTLSVerifyRequired,
 		"Directory connections must verify the server's certificate. Turn off skip_tls_verify and give the server a certificate it can be verified with.")
+	ErrLDAPEmailDomainUnverified = New(CodeLDAPEmailDomainUnverified,
+		"Your directory account's email address isn't on a domain this organization has verified. Ask your administrator to verify it.")
+	ErrLDAPAccountAdministers = New(CodeLDAPAccountAdministers,
+		"This account administers the organization, so a directory sign-in can't take it over by its email address. Sign in with the account's own password or passkey.")
 )

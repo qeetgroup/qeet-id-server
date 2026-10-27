@@ -69,7 +69,8 @@ UPDATE auth.saml_login_codes SET used_at = NOW() WHERE code_hash = @code_hash;
 
 -- name: GetExternalIdentityUser :one
 SELECT user_id FROM "user".external_identities
-WHERE tenant_id = @tenant_id AND provider = @provider AND subject = @subject;
+WHERE tenant_id = @tenant_id AND provider = @provider AND connection_id = @connection_id::uuid
+  AND subject = @subject;
 
 -- name: GetUserByEmail :one
 SELECT id FROM "user".users WHERE LOWER(email) = LOWER(@email) AND deleted_at IS NULL;
@@ -80,9 +81,9 @@ VALUES (@tenant_id, @email, NOW(), sqlc.narg('display_name'), 'active')
 RETURNING id;
 
 -- name: LinkExternalIdentity :exec
-INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email)
-VALUES (@user_id, @tenant_id, @provider, @subject, @email)
-ON CONFLICT (tenant_id, provider, subject) DO NOTHING;
+INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject, email)
+VALUES (@user_id, @tenant_id, @provider, @connection_id::uuid, @subject, @email)
+ON CONFLICT (tenant_id, provider, connection_id, subject) DO NOTHING;
 
 -- ==========================================================================
 -- IdP-side: Qeet as SAML provider (idp.go)

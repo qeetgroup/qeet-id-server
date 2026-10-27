@@ -288,7 +288,8 @@ func TestSAMLSignIn(t *testing.T) {
 	idp := newUpstreamIdP(t)
 	tenant := dbtest.Tenant(t)
 	conn := sp.connect(t, tenant, idp)
-	member := dbtest.User(t, tenant, tenant)
+	domain := dbtest.Domain(t, tenant)
+	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, tenant, tenant)
 	verify(t, member.ID)
 
 	meta := dbtest.Do(t, sp.public, http.MethodGet, "/saml/metadata/"+conn.ID.String(), nil)
@@ -321,8 +322,8 @@ func TestSAMLSignIn(t *testing.T) {
 	if rec := sp.post(t, conn.ID, response); !strings.Contains(rec.Body.String(), errs.CodeSAMLReplayDetected) {
 		t.Errorf("the same answer posted again: %d %s, want %s", rec.Code, rec.Body.String(), errs.CodeSAMLReplayDetected)
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1 AND tenant_id = $2 AND provider = 'saml' AND subject = 'okta|asha'`, member.ID, tenant); n != 1 {
-		t.Errorf("%d identities linked for the member, want 1", n)
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1 AND tenant_id = $2 AND provider = 'saml' AND connection_id = $3 AND subject = 'okta|asha'`, member.ID, tenant, conn.ID); n != 1 {
+		t.Errorf("%d identities linked for the member to the connection, want 1", n)
 	}
 	var got Connection
 	dbtest.Decode(t, dbtest.Do(t, sp.asAdmin(t, tenant), http.MethodGet, "/tenants/"+tenant.String()+"/saml/"+conn.ID.String(), nil), &got)
@@ -335,7 +336,7 @@ func TestSAMLSignIn(t *testing.T) {
 		t.Errorf("the linked subject signed in %s, want the member %s", again.UserID, member.ID)
 	}
 
-	newcomer := dbtest.Unique("newcomer") + "@example.test"
+	newcomer := dbtest.Unique("newcomer") + "@" + domain
 	joined := sp.signIn(t, idp, conn.ID, answer{nameID: "okta|newcomer", email: newcomer})
 	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND tenant_id = $2 AND email = $3 AND email_verified_at IS NOT NULL AND display_name = 'Asha Rao'`, joined.UserID, tenant, newcomer); n != 1 {
 		t.Errorf("the newcomer was not provisioned into the organisation, verified and named")
@@ -368,7 +369,7 @@ func TestSAMLIdPInitiatedSignIn(t *testing.T) {
 	idp := newUpstreamIdP(t)
 	tenant := dbtest.Tenant(t)
 	conn := sp.connect(t, tenant, idp)
-	member := dbtest.User(t, tenant, tenant)
+	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
 	verify(t, member.ID)
 
 	unsolicited := idp.respond(t, conn.ID, answer{email: member.Email, signResponse: true})
@@ -538,8 +539,8 @@ func TestSAMLSignInAcrossOrganisations(t *testing.T) {
 	idp := newUpstreamIdP(t)
 	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
 	conn, otherConn := sp.connect(t, tenant, idp), sp.connect(t, other, idp)
-	member := dbtest.User(t, tenant, tenant)
-	outsider := dbtest.User(t, other, other)
+	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	outsider := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, other), other, other)
 	verify(t, member.ID)
 	verify(t, outsider.ID)
 	issued := func() int {
@@ -578,13 +579,14 @@ func TestSAMLSignInAcrossOrganisations(t *testing.T) {
 }
 
 // TestSAMLNamesAnotherOrganisationsAccount checks that the refusal of another
-// organisation's account says why.
+// organisation's account on the organisation's own domain says why.
 func TestSAMLNamesAnotherOrganisationsAccount(t *testing.T) {
 	sp := newSPSide(t)
 	idp := newUpstreamIdP(t)
 	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
 	conn := sp.connect(t, tenant, idp)
-	outsider := dbtest.User(t, other, other)
+	outsider := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), other, other)
+	verify(t, outsider.ID)
 	rec := sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: sp.begin(t, conn.ID), email: outsider.Email}))
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLUserTenantMismatch) {
 		t.Errorf("an assertion of another organisation's account: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeSAMLUserTenantMismatch)
@@ -599,11 +601,11 @@ func TestSAMLDoesNotAdoptAnUnverifiedAccount(t *testing.T) {
 	idp := newUpstreamIdP(t)
 	tenant := dbtest.Tenant(t)
 	conn := sp.connect(t, tenant, idp)
-	squatted := dbtest.User(t, tenant)
+	squatted := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant)
 	dbtest.SetPassword(t, squatted.ID, "squatter-password")
 	rec := sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: sp.begin(t, conn.ID), nameID: "okta|real-owner", email: squatted.Email}))
-	if rec.Code == http.StatusFound {
-		t.Errorf("an assertion of an unverified account with a password: %d, want refused", rec.Code)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLAccountUnverified) {
+		t.Errorf("an assertion of an unverified account with a password: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeSAMLAccountUnverified)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1`, squatted.ID); n != 0 {
 		t.Errorf("the IdP user was linked to the squatted account")
@@ -622,8 +624,8 @@ func TestSAMLLinkSignsInOnlyHomeAccounts(t *testing.T) {
 	guest := dbtest.User(t, home, home, tenant)
 	verify(t, guest.ID)
 	if _, err := dbtest.Pool(t).Exec(ctx, `
-		INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email) VALUES ($1, $2, 'saml', 'okta|guest', $3)
-	`, guest.ID, tenant, guest.Email); err != nil {
+		INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject, email) VALUES ($1, $2, 'saml', $3, 'okta|guest', $4)
+	`, guest.ID, tenant, conn.ID, guest.Email); err != nil {
 		t.Fatal(err)
 	}
 	rec := sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: sp.begin(t, conn.ID), nameID: "okta|guest", email: guest.Email}))
@@ -640,7 +642,7 @@ func TestSAMLRefusesAGuest(t *testing.T) {
 	idp := newUpstreamIdP(t)
 	tenant, home := dbtest.Tenant(t), dbtest.Tenant(t)
 	conn := sp.connect(t, tenant, idp)
-	guest := dbtest.User(t, home, home, tenant)
+	guest := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), home, home, tenant)
 	verify(t, guest.ID)
 	rec := sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: sp.begin(t, conn.ID), nameID: "attacker-controlled", email: guest.Email}))
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLUserTenantMismatch) {
@@ -648,5 +650,123 @@ func TestSAMLRefusesAGuest(t *testing.T) {
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1`, guest.ID); n != 0 {
 		t.Errorf("the guest was linked to the organisation's IdP")
+	}
+}
+
+// TestSAMLSpeaksOnlyForTheOrganisationsDomains checks that a connection adopts
+// or creates an account only on a domain its organisation has verified, or one
+// below it, and not where another organisation verified a closer domain.
+func TestSAMLSpeaksOnlyForTheOrganisationsDomains(t *testing.T) {
+	ctx := dbtest.Context(t)
+	sp := newSPSide(t)
+	idp := newUpstreamIdP(t)
+	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	conn := sp.connect(t, tenant, idp)
+	domain := dbtest.Domain(t, tenant)
+	team := "team." + domain
+	if _, err := dbtest.Pool(t).Exec(ctx, `
+		INSERT INTO tenant.domains (tenant_id, domain, verification_token, verified_at) VALUES ($1, $2, 'test', NOW())
+	`, other, team); err != nil {
+		t.Fatal(err)
+	}
+	member := dbtest.User(t, tenant, tenant)
+	verify(t, member.ID)
+
+	for name, email := range map[string]string{
+		"an account on a domain nobody verified":                    member.Email,
+		"a newcomer on a domain nobody verified":                    dbtest.Unique("new") + "@example.test",
+		"a newcomer on another organisation's domain":               dbtest.Unique("new") + "@" + dbtest.Domain(t, other),
+		"a newcomer on another organisation's subdomain of the own": dbtest.Unique("new") + "@" + team,
+	} {
+		rec := sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: sp.begin(t, conn.ID), email: email}))
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLEmailDomainUnverified) {
+			t.Errorf("%s: %d %s, want 403 %s", name, rec.Code, rec.Body.String(), errs.CodeSAMLEmailDomainUnverified)
+		}
+		if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE tenant_id = $1 AND subject = $2`, tenant, email); n != 0 {
+			t.Errorf("%s: the address was linked", name)
+		}
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE tenant_id = $1`, tenant); n != 2 {
+		t.Errorf("%d accounts in the organisation, want its member and its admin only", n)
+	}
+
+	below := dbtest.Unique("new") + "@eu." + domain
+	if joined := sp.signIn(t, idp, conn.ID, answer{email: below}); dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND tenant_id = $2 AND email = $3`, joined.UserID, tenant, below) != 1 {
+		t.Errorf("a newcomer below the organisation's domain was not provisioned into it")
+	}
+}
+
+// TestSAMLLinkBelongsToItsConnection checks that a subject linked through one
+// connection signs nobody in through another connection of the organisation.
+func TestSAMLLinkBelongsToItsConnection(t *testing.T) {
+	sp := newSPSide(t)
+	idp, rogue := newUpstreamIdP(t), newUpstreamIdP(t)
+	tenant := dbtest.Tenant(t)
+	conn, rogueConn := sp.connect(t, tenant, idp), sp.connect(t, tenant, rogue)
+	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	verify(t, member.ID)
+	if got := sp.signIn(t, idp, conn.ID, answer{nameID: "okta|asha", email: member.Email}); got.UserID != member.ID {
+		t.Fatalf("signed in %s, want the member %s", got.UserID, member.ID)
+	}
+
+	rec := sp.post(t, rogueConn.ID, rogue.respond(t, rogueConn.ID, answer{inResponseTo: sp.begin(t, rogueConn.ID), nameID: "okta|asha", email: dbtest.Unique("rogue") + "@example.test"}))
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLEmailDomainUnverified) {
+		t.Errorf("another connection asserting the linked subject: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeSAMLEmailDomainUnverified)
+	}
+}
+
+// TestSAMLDoesNotAdoptAnAdministrator checks that an assertion adopts no
+// account that owns the organisation or holds an admin permission there,
+// directly or through a group, and that one linked before keeps signing in.
+func TestSAMLDoesNotAdoptAnAdministrator(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	sp := newSPSide(t)
+	idp := newUpstreamIdP(t)
+	tenant := dbtest.Tenant(t)
+	conn := sp.connect(t, tenant, idp)
+	domain := dbtest.Domain(t, tenant)
+	account := func(roles ...uuid.UUID) dbtest.Account {
+		a := dbtest.UserAt(t, dbtest.Unique("user")+"@"+domain, tenant)
+		verify(t, a.ID)
+		for _, role := range roles {
+			dbtest.Assign(t, a.ID, tenant, role)
+		}
+		return a
+	}
+	var ownerRole uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+		t.Fatal(err)
+	}
+	grouped := account()
+	if _, err := pool.Exec(ctx, `
+		WITH g AS (INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Identity team') RETURNING id),
+		     r AS (INSERT INTO rbac.group_roles (group_id, tenant_id, role_id) SELECT id, $1, $3 FROM g)
+		INSERT INTO tenant.group_members (group_id, user_id, tenant_id) SELECT id, $2, $1 FROM g
+	`, tenant, grouped.ID, dbtest.Role(t, tenant, "role.write")); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, a := range map[string]dbtest.Account{
+		"an owner":                               account(ownerRole),
+		"an account holding connection.write":    account(dbtest.Role(t, tenant, "user.read", "connection.write")),
+		"a member of a group holding role.write": grouped,
+	} {
+		rec := sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: sp.begin(t, conn.ID), email: a.Email}))
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLAccountAdministers) {
+			t.Errorf("%s: %d %s, want 403 %s", name, rec.Code, rec.Body.String(), errs.CodeSAMLAccountAdministers)
+		}
+		if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1`, a.ID); n != 0 {
+			t.Errorf("%s was linked to the connection", name)
+		}
+	}
+
+	reader := account(dbtest.Role(t, tenant, "user.read", "audit.read"))
+	if got := sp.signIn(t, idp, conn.ID, answer{email: reader.Email}); got.UserID != reader.ID {
+		t.Errorf("an account holding only read permissions: signed in %s, want %s", got.UserID, reader.ID)
+	}
+	dbtest.Assign(t, reader.ID, tenant, dbtest.Role(t, tenant, "user.write"))
+	if got := sp.signIn(t, idp, conn.ID, answer{email: reader.Email}); got.UserID != reader.ID {
+		t.Errorf("an administrator linked before: signed in %s, want %s", got.UserID, reader.ID)
 	}
 }

@@ -4,6 +4,7 @@ package invite
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"slices"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
@@ -406,5 +408,29 @@ func TestInvitationsAreAudited(t *testing.T) {
 		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND strpos(metadata::text, $2) > 0`, tenant, token); n != 0 {
 			t.Errorf("an invitation's token is in %d audit events", n)
 		}
+	}
+}
+
+// TestInviteCreatesNoAccountOnAnotherOrganisationsDomain checks that an
+// invitation to an address on a domain another organisation has verified
+// can't be accepted with a new account, by password or passkey, since the
+// inviter also holds the link.
+func TestInviteCreatesNoAccountOnAnotherOrganisationsDomain(t *testing.T) {
+	ctx := dbtest.Context(t)
+	h, _ := newHandler(t)
+	tenant := dbtest.Tenant(t)
+	claimed := dbtest.Unique("invitee") + "@" + dbtest.Domain(t, dbtest.Tenant(t))
+	_, token, err := h.Service.Create(ctx, CreateInput{TenantID: tenant, Email: claimed}, audit.Actor{})
+	if err != nil {
+		t.Fatalf("invite: %v", err)
+	}
+	if _, err := h.Service.Accept(ctx, AcceptInput{Token: token, Password: testPassword}, audit.Actor{}); !errors.Is(err, errs.ErrUserDomainManaged) {
+		t.Errorf("accept with a password: %v, want %v", err, errs.ErrUserDomainManaged)
+	}
+	if _, _, _, err := h.Service.InvitationForNewAccount(ctx, token); !errors.Is(err, errs.ErrUserDomainManaged) {
+		t.Errorf("start accepting with a passkey: %v, want %v", err, errs.ErrUserDomainManaged)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, claimed); n != 0 {
+		t.Errorf("the account was created")
 	}
 }

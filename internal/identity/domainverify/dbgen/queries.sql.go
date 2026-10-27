@@ -30,6 +30,26 @@ func (q *Queries) DeleteDomain(ctx context.Context, arg DeleteDomainParams) (int
 	return result.RowsAffected(), nil
 }
 
+const emailDomainManager = `-- name: EmailDomainManager :one
+SELECT d.tenant_id
+FROM tenant.domains d
+WHERE d.verified_at IS NOT NULL
+  AND (lower(d.domain) = $1::text
+       OR right($1::text, length(d.domain) + 1) = '.' || lower(d.domain))
+ORDER BY length(d.domain) DESC
+LIMIT 1
+`
+
+// EmailDomainManager returns the organisation managing accounts on @domain:
+// the one that verified it, or the closest domain above it. @domain is
+// lower-case.
+func (q *Queries) EmailDomainManager(ctx context.Context, domain string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, emailDomainManager, domain)
+	var tenant_id uuid.UUID
+	err := row.Scan(&tenant_id)
+	return tenant_id, err
+}
+
 const getDomainForVerify = `-- name: GetDomainForVerify :one
 SELECT id, domain, verification_token, verified_at, created_at
 FROM tenant.domains WHERE id = $1 AND tenant_id = $2

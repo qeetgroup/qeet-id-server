@@ -60,8 +60,9 @@ func directoryService(t *testing.T) *Service {
 // organisation only, until it is disabled.
 func TestDirectoryConnectionsOverHTTP(t *testing.T) {
 	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	domain := dbtest.Domain(t, tenant)
 	admin := dbtest.User(t, tenant, tenant)
-	outsider := dbtest.User(t, other, other)
+	outsider := dbtest.UserAt(t, dbtest.Unique("eve")+"@"+domain, other, other)
 	dir := &directory{
 		binds: map[string]string{
 			"cn=service,dc=example,dc=test": "service-secret",
@@ -70,7 +71,7 @@ func TestDirectoryConnectionsOverHTTP(t *testing.T) {
 			"uid=nomail,dc=example,dc=test": "nomail-secret",
 		},
 		entries: map[string]dirEntry{
-			"bob":    {dn: "uid=bob,dc=example,dc=test", attrs: map[string]string{"mail": dbtest.Unique("bob") + "@example.test", "cn": "Bob"}},
+			"bob":    {dn: "uid=bob,dc=example,dc=test", attrs: map[string]string{"mail": dbtest.Unique("bob") + "@" + domain, "cn": "Bob"}},
 			"eve":    {dn: "uid=eve,dc=example,dc=test", attrs: map[string]string{"mail": outsider.Email, "cn": "Eve"}},
 			"nomail": {dn: "uid=nomail,dc=example,dc=test", attrs: map[string]string{"cn": "No Mail"}},
 		},

@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/invitations/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
@@ -47,6 +48,21 @@ func (s *Service) acceptMethods(ctx context.Context, tenantID uuid.UUID) (passwo
 // invitation token names when a new account may accept it now; otherwise the
 // refusal Accept gives. An invitation found expired is marked so.
 func (s *Service) InvitationForNewAccount(ctx context.Context, token string) (uuid.UUID, uuid.UUID, string, error) {
+	id, tenantID, email, err := s.pendingForNewAccount(ctx, token)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, "", err
+	}
+	// The link is also handed to the inviter, so accepting it proves nothing
+	// about who owns the address: on a domain another organisation manages,
+	// only that organisation creates the account.
+	if err := domainverify.CheckNewAccount(ctx, s.pool, tenantID, email); err != nil {
+		return uuid.Nil, uuid.Nil, "", err
+	}
+	return id, tenantID, email, nil
+}
+
+// pendingForNewAccount is InvitationForNewAccount before the domain check.
+func (s *Service) pendingForNewAccount(ctx context.Context, token string) (uuid.UUID, uuid.UUID, string, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return uuid.Nil, uuid.Nil, "", err

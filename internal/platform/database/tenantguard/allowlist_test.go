@@ -162,6 +162,7 @@ internal/federation/social/queries.sql#ListExternalIdentitiesForUser  pending-re
 internal/federation/social/queries.sql#MarkSocialLoginCodeUsed  secret-lookup: by login code hash
 internal/federation/social/social.go#requireVerifiedAddress  pre-tenant: social sign-in checks the account it found
 
+internal/identity/domainverify/queries.sql#EmailDomainManager  platform-wide: a domain is verified by one organisation; callers compare it with their own
 internal/identity/invitations/queries.sql#ActivateInvitedAccount  parent-scoped: account created for the invite in the same transaction
 internal/identity/invitations/queries.sql#DeclineInviteForEmail  session-scoped: only invites to the caller's verified email
 internal/identity/invitations/queries.sql#FindUserIDByEmail  pre-tenant: email is unique across all accounts

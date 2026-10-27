@@ -38,6 +38,8 @@ func init() {
 		errs.CodeSAMLSPFieldsRequired:         http.StatusUnprocessableEntity,
 		errs.CodeSAMLUserTenantMismatch:       http.StatusForbidden,
 		errs.CodeSAMLAccountUnverified:        http.StatusForbidden,
+		errs.CodeSAMLEmailDomainUnverified:    http.StatusForbidden,
+		errs.CodeSAMLAccountAdministers:       http.StatusForbidden,
 		errs.CodeSAMLSPEntityIDTaken:          http.StatusConflict,
 	})
 }

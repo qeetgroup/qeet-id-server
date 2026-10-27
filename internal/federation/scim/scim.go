@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
@@ -663,6 +664,14 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	if err := domainverify.CheckNewAccount(ctx, h.Service.users.Pool(), tid, email); err != nil {
+		if errors.Is(err, errs.ErrUserDomainManaged) {
+			writeSCIMErr(w, http.StatusConflict, "userName is on a domain another organization manages")
+			return
+		}
+		writeSCIMErr(w, http.StatusInternalServerError, "create failed")
+		return
+	}
 	tx, err := h.Service.users.Pool().Begin(ctx)
 	if err != nil {
 		writeSCIMErr(w, http.StatusInternalServerError, "create failed")

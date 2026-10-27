@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
@@ -461,6 +462,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) createWithEvidence(r *http.Request, in CreateInput, passwordHash string) (*User, error) {
 	ctx := r.Context()
+	if err := domainverify.CheckNewAccount(ctx, h.Repo.Pool(), in.TenantID, in.Email); err != nil {
+		return nil, err
+	}
 	tx, err := h.Repo.Pool().Begin(ctx)
 	if err != nil {
 		return nil, err

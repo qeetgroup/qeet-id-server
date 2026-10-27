@@ -30,7 +30,9 @@ import (
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -545,11 +547,18 @@ func (s *Service) ConsumeValidatedResponse(ctx context.Context, connectionID uui
 	return tx.Commit(ctx)
 }
 
-// findOrCreateUser returns the user linked to the NameID subject, else the user
-// with the asserted email, else a new user, and links the subject. The account
-// must have tenantID as its home, and an adopted one a verified address. One
-// transaction, so concurrent logins can't duplicate rows.
-func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, subject, email, name string) (uuid.UUID, error) {
+// findOrCreateUser returns the user the connection linked to the NameID
+// subject, else the user with the asserted email, else a new user, and links
+// the subject to the connection. An address is adopted or given an account
+// only on a domain the organisation manages, and an adopted account must have
+// tenantID as its home, a verified address, and not administer the
+// organisation. One transaction, so concurrent logins can't duplicate rows.
+func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UUID, subject, email, name string) (uuid.UUID, error) {
+	// Read before the transaction: it reads every organisation's domains.
+	manager, managed, err := domainverify.ManagerOf(postgres.AcrossTenants(ctx), s.pool, email)
+	if err != nil {
+		return uuid.Nil, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return uuid.Nil, err
@@ -558,9 +567,10 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, subj
 	q := s.q.WithTx(tx)
 
 	userID, err := q.GetExternalIdentityUser(ctx, dbgen.GetExternalIdentityUserParams{
-		TenantID: tenantID,
-		Provider: provider,
-		Subject:  subject,
+		TenantID:     tenantID,
+		Provider:     provider,
+		ConnectionID: connID,
+		Subject:      subject,
 	})
 	if err == nil {
 		// A linked subject signs in only while this organisation is still the
@@ -576,6 +586,12 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, subj
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, err
+	}
+	// The assertion proves only that this connection's IdP vouched for the
+	// address. Anyone who can configure a connection runs one, so it speaks
+	// only for the organisation's own domains.
+	if !managed || manager != tenantID {
+		return uuid.Nil, errs.ErrSAMLEmailDomainUnverified
 	}
 
 	userID, err = q.GetUserByEmail(ctx, email)
@@ -595,10 +611,9 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, subj
 	} else if err != nil {
 		return uuid.Nil, err
 	} else {
-		// The email may be another tenant's user's (emails are globally unique), and
-		// the assertion only proves this connection's IdP vouched for it. Otherwise
-		// anyone with a connection to an IdP they control could assert a victim's
-		// address and receive the victim's tokens.
+		// Emails are globally unique, so the address may be another tenant's
+		// user's; and an administrator keeps the credentials they have, or the
+		// connection's IdP could take over an owner.
 		home, herr := identitylink.HomeIn(ctx, tx, userID, tenantID)
 		if herr != nil {
 			return uuid.Nil, herr
@@ -613,14 +628,22 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, subj
 		if !verified {
 			return uuid.Nil, errs.ErrSAMLAccountUnverified
 		}
+		admin, aerr := identitylink.Administers(ctx, tx, userID, tenantID)
+		if aerr != nil {
+			return uuid.Nil, aerr
+		}
+		if admin {
+			return uuid.Nil, errs.ErrSAMLAccountAdministers
+		}
 	}
 
 	if err := q.LinkExternalIdentity(ctx, dbgen.LinkExternalIdentityParams{
-		UserID:   userID,
-		TenantID: tenantID,
-		Provider: provider,
-		Subject:  subject,
-		Email:    &email,
+		UserID:       userID,
+		TenantID:     tenantID,
+		Provider:     provider,
+		ConnectionID: connID,
+		Subject:      subject,
+		Email:        &email,
 	}); err != nil {
 		return uuid.Nil, err
 	}
@@ -1087,7 +1110,7 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	userID, err := h.Service.findOrCreateUser(ctx, conn.TenantID, info.NameID, email, name)
+	userID, err := h.Service.findOrCreateUser(ctx, conn.TenantID, conn.ID, info.NameID, email, name)
 	if e := errs.As(err); e != nil && e.Code != errs.CodeInternal {
 		httpx.WriteError(w, r, err)
 		return

@@ -101,4 +101,4 @@ RETURNING id;
 -- name: LinkExternalIdentity :exec
 INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email)
 VALUES (@user_id, @tenant_id, @provider, @subject, @email)
-ON CONFLICT (tenant_id, provider, subject) DO NOTHING;
+ON CONFLICT (tenant_id, provider, connection_id, subject) DO NOTHING;

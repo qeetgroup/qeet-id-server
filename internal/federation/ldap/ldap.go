@@ -23,8 +23,10 @@ import (
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
@@ -553,11 +555,18 @@ func (s *Service) authenticate(ctx context.Context, c *connFull, username, passw
 	return &ldapUser{DN: entry.DN, Email: email, Name: name, ConnectionID: c.ID.String(), Profile: profile}, nil
 }
 
-// findOrCreateUser returns the user linked to the directory DN, else the user
-// with the directory's email, else a new user, then links the DN and stores the
-// mapped profile, in one transaction. The account must have tenantID as its
-// home, and an adopted one a verified address.
-func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *ldapUser) (uuid.UUID, error) {
+// findOrCreateUser returns the user the connection linked to the directory
+// DN, else the user with the directory's email, else a new user, then links
+// the DN to the connection and stores the mapped profile, in one transaction.
+// An address is adopted or given an account only on a domain the organisation
+// manages, and an adopted account must have tenantID as its home, a verified
+// address, and not administer the organisation.
+func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UUID, u *ldapUser) (uuid.UUID, error) {
+	// Read before the transaction: it reads every organisation's domains.
+	manager, managed, err := domainverify.ManagerOf(postgres.AcrossTenants(ctx), s.pool, u.Email)
+	if err != nil {
+		return uuid.Nil, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return uuid.Nil, err
@@ -566,9 +575,10 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *l
 	q := s.q.WithTx(tx)
 
 	userID, err := q.GetExternalIdentityUser(ctx, dbgen.GetExternalIdentityUserParams{
-		TenantID: tenantID,
-		Provider: provider,
-		Subject:  u.DN,
+		TenantID:     tenantID,
+		Provider:     provider,
+		ConnectionID: connID,
+		Subject:      u.DN,
 	})
 	if err == nil {
 		// A linked DN signs in only while this organisation is still the
@@ -588,6 +598,12 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *l
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, err
 	}
+	// A bind proves only that this connection's directory accepted the
+	// credentials. Anyone who can configure a connection can point it at a
+	// directory they run, so it speaks only for the organisation's own domains.
+	if !managed || manager != tenantID {
+		return uuid.Nil, errs.ErrLDAPEmailDomainUnverified
+	}
 
 	userID, err = q.GetUserByEmail(ctx, u.Email)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -606,10 +622,9 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *l
 	} else if err != nil {
 		return uuid.Nil, err
 	} else {
-		// The email may be another tenant's user's (emails are globally unique), and a
-		// bind only proves this connection's directory accepted the credentials.
-		// Otherwise an admin pointing a connection at a directory they run could assert
-		// a victim's address and receive the victim's tokens.
+		// Emails are globally unique, so the address may be another tenant's
+		// user's; and an administrator keeps the credentials they have, or the
+		// connection's directory could take over an owner.
 		home, herr := identitylink.HomeIn(ctx, tx, userID, tenantID)
 		if herr != nil {
 			return uuid.Nil, herr
@@ -624,15 +639,23 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *l
 		if !verified {
 			return uuid.Nil, errs.ErrLDAPAccountUnverified
 		}
+		admin, aerr := identitylink.Administers(ctx, tx, userID, tenantID)
+		if aerr != nil {
+			return uuid.Nil, aerr
+		}
+		if admin {
+			return uuid.Nil, errs.ErrLDAPAccountAdministers
+		}
 	}
 
 	email := u.Email
 	if err := q.LinkExternalIdentity(ctx, dbgen.LinkExternalIdentityParams{
-		UserID:   userID,
-		TenantID: tenantID,
-		Provider: provider,
-		Subject:  u.DN,
-		Email:    &email,
+		UserID:       userID,
+		TenantID:     tenantID,
+		Provider:     provider,
+		ConnectionID: connID,
+		Subject:      u.DN,
+		Email:        &email,
 	}); err != nil {
 		return uuid.Nil, err
 	}
@@ -670,7 +693,7 @@ func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, passwor
 		if err != nil {
 			return uuid.Nil, errors.Is(err, errs.ErrLDAPInvalidCredentials), err
 		}
-		userID, err := s.findOrCreateUser(ctx, c.TenantID, du)
+		userID, err := s.findOrCreateUser(ctx, c.TenantID, connID, du)
 		return userID, false, err
 	})
 	if err != nil {

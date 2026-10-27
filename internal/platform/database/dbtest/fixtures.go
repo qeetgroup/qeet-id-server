@@ -41,15 +41,34 @@ func Tenant(t testing.TB) uuid.UUID {
 	return id
 }
 
+// Domain verifies a new domain for tenant and returns it, for addresses only
+// that tenant manages.
+func Domain(t testing.TB, tenant uuid.UUID) string {
+	t.Helper()
+	domain := Unique("org") + ".example.test"
+	if _, err := Pool(t).Exec(context.Background(), `
+		INSERT INTO tenant.domains (tenant_id, domain, verification_token, verified_at) VALUES ($1, $2, 'test', NOW())
+	`, tenant, domain); err != nil {
+		t.Fatalf("dbtest: verify domain: %v", err)
+	}
+	return domain
+}
+
 // User creates an active user whose home is tenant home (uuid.Nil: none) and
 // gives them a role in each tenant of memberOf.
 func User(t testing.TB, home uuid.UUID, memberOf ...uuid.UUID) Account {
+	t.Helper()
+	return UserAt(t, Unique("user")+"@example.test", home, memberOf...)
+}
+
+// UserAt is User with the address email.
+func UserAt(t testing.TB, email string, home uuid.UUID, memberOf ...uuid.UUID) Account {
 	t.Helper()
 	var homeArg any
 	if home != uuid.Nil {
 		homeArg = home
 	}
-	a := Account{Email: Unique("user") + "@example.test"}
+	a := Account{Email: email}
 	if err := Pool(t).QueryRow(context.Background(), `
 		INSERT INTO "user".users (tenant_id, email) VALUES ($1, $2) RETURNING id
 	`, homeArg, a.Email).Scan(&a.ID); err != nil {

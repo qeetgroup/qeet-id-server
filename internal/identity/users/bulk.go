@@ -34,7 +34,7 @@ const (
 // importErrorCodes is every code a BulkImportError can carry.
 var importErrorCodes = []string{
 	CodeImportFieldMissing, CodeImportFieldInvalid, CodeImportFieldTooLong, CodeImportRowMalformed,
-	errs.CodeUserImportSourceInvalid, errs.CodeAuthEmailExists,
+	errs.CodeUserImportSourceInvalid, errs.CodeAuthEmailExists, errs.CodeUserDomainManaged,
 	errs.CodeAuthPolicyPasswordTooShort, errs.CodeAuthPolicyPasswordNoUppercase,
 	errs.CodeAuthPolicyPasswordNoNumber, errs.CodeAuthPolicyPasswordNoSymbol,
 	errs.CodeAuthPolicyPasswordBreached, errs.CodeAuthPasswordWeak,
@@ -78,6 +78,8 @@ func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUI
 			// stable code rather than identity.
 			if e := errs.As(err); e != nil && e.Code == errs.ErrAuthEmailExists.Code {
 				rowErr.Code, rowErr.Field, rowErr.Message = e.Code, "email", "a user with this email already exists"
+			} else if e != nil && e.Code == errs.CodeUserDomainManaged {
+				rowErr.Code, rowErr.Field, rowErr.Message = e.Code, "email", e.Message
 			} else if e != nil && isPasswordRefusal(e.Code) {
 				// Name the rule the row's password broke, so the operator can
 				// fix that row and resubmit it alone.

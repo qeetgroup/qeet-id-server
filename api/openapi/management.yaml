@@ -671,7 +671,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
     post:
       operationId: post_v1_users
-      description: 'Creates a user within the caller''s tenant. An initial password may be supplied, otherwise the account is created without a password credential and the user signs in via passkey, magic link, or an admin-triggered reset. The password must meet the organisation''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). A refused password writes nothing. Requires an existing tenant. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress.'
+      description: 'Creates a user within the caller''s tenant. An initial password may be supplied, otherwise the account is created without a password credential and the user signs in via passkey, magic link, or an admin-triggered reset. The password must meet the organisation''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). A refused password writes nothing. An address on a domain another organization has verified is refused with 409 user.domain_managed_elsewhere: only that organization creates accounts there. Requires an existing tenant. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress.'
       summary: Create user
       tags:
         - Users
@@ -707,7 +707,7 @@ paths:
     post:
       operationId: post_v1_users_bulk
       summary: Bulk-create users
-      description: Create many users in one call. Each row is attempted independently — a bad or duplicate row, or one whose password the tenant's password rules refuse, is reported in the response with its reason rather than failing the whole batch (partial success).
+      description: Create many users in one call. Each row is attempted independently — a bad or duplicate row, one on a domain another organization has verified, or one whose password the tenant's password rules refuse, is reported in the response with its reason rather than failing the whole batch (partial success).
       tags:
         - Users
       security:
@@ -2450,7 +2450,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/AcceptInput'
-      description: 'Creates the invited account and signs it in. Its address is not verified by this: the account proves it later with a code or link sent to it (its invitations inbox stays closed until then). The response is a token pair, or, where the organisation requires a second factor, the sign-in''s challenge instead (mfa_required, mfa_token and, for an account with no factor yet, enrollment_required), met as at sign-in. Where the inviting organisation has password sign-in switched off, accepting with a password is refused with 403 auth.method_disabled and nothing is created.'
+      description: 'Creates the invited account and signs it in. Its address is not verified by this: the account proves it later with a code or link sent to it (its invitations inbox stays closed until then). The response is a token pair, or, where the organisation requires a second factor, the sign-in''s challenge instead (mfa_required, mfa_token and, for an account with no factor yet, enrollment_required), met as at sign-in. Where the inviting organisation has password sign-in switched off, accepting with a password is refused with 403 auth.method_disabled and nothing is created. An address on a domain another organisation has verified gets no new account here (409 user.domain_managed_elsewhere): that organisation creates it, and the invitee then signs in and accepts as themselves.'
       responses:
         '200':
           description: A token pair, or the second-factor challenge to complete first.
@@ -2538,9 +2538,9 @@ paths:
         options. The account's email and organisation come from the invitation,
         never from the request. Refused like POST /v1/invites/accept
         (invite.link_invalid, invite.invalid, invite.expired,
-        invite.account_exists — the invitee signs in and accepts as themselves),
-        and with passkey.disabled when the organisation has passkeys switched
-        off. Starting again replaces an unfinished ceremony for the same
+        invite.account_exists — the invitee signs in and accepts as themselves,
+        user.domain_managed_elsewhere), and with passkey.disabled when the
+        organisation has passkeys switched off. Starting again replaces an unfinished ceremony for the same
         invitation; the invitation stays pending until one finishes.
       tags:
         - Invites
@@ -3333,7 +3333,7 @@ components:
                 type: string
               code:
                 type: string
-                description: Stable reason the row failed; word the error from this. Password and duplicate refusals reuse the API error codes.
+                description: Stable reason the row failed; word the error from this. Password, duplicate and domain refusals reuse the API error codes.
                 enum:
                   - user.import_field_missing
                   - user.import_field_invalid
@@ -3341,6 +3341,7 @@ components:
                   - user.import_row_malformed
                   - user.import_source_invalid
                   - auth.email_exists
+                  - user.domain_managed_elsewhere
                   - authpolicy.password_too_short
                   - authpolicy.password_no_uppercase
                   - authpolicy.password_no_number

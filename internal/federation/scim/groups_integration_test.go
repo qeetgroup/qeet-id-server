@@ -554,3 +554,23 @@ func TestSCIMUserWriteTenantIsolation(t *testing.T) {
 		t.Fatalf("A PATCH its own user: status %d, want 200", rec.Code)
 	}
 }
+
+// TestSCIMCreatesNoAccountOnAnotherOrganisationsDomain checks that a
+// directory provisions no account on a domain another organisation has
+// verified, and still provisions its own.
+func TestSCIMCreatesNoAccountOnAnotherOrganisationsDomain(t *testing.T) {
+	ctx := dbtest.Context(t)
+	f := newSCIMFixture(t, ctx)
+	theirs := dbtest.Domain(t, dbtest.Tenant(t))
+	claimed := dbtest.Unique("scim") + "@" + theirs
+	if rec := f.do(t, http.MethodPost, "/scim/v2/Users", map[string]any{"userName": claimed, "active": true}); rec.Code != http.StatusConflict {
+		t.Errorf("provision on another organisation's domain: %d %s, want 409", rec.Code, rec.Body.String())
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, claimed); n != 0 {
+		t.Errorf("the account was created")
+	}
+	own := dbtest.Unique("scim") + "@" + dbtest.Domain(t, f.tenantID)
+	if rec := f.do(t, http.MethodPost, "/scim/v2/Users", map[string]any{"userName": own, "active": true}); rec.Code != http.StatusCreated {
+		t.Errorf("provision on the organisation's domain: %d %s, want 201", rec.Code, rec.Body.String())
+	}
+}
