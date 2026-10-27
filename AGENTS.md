@@ -168,7 +168,8 @@ make dev              # run the API on :4001 (persistent JWT + SAML keys from .s
 make dev-secrets      # generate local dev key material
 make build            # go build -o bin/qeet-id ./cmd/api
 make test             # go test ./...
-make test-db          # database tests against PostgreSQL (needs Docker)
+make test-db          # every test, database ones too, race detector on, one shared PostgreSQL (needs Docker)
+make ci               # everything CI checks: build, test-db, lint, sqlc-check, vuln, sast
 make lint             # go vet + golangci-lint, as CI runs it
 make sqlc             # regenerate dbgen/ from queries.sql
 make sqlc-check       # fail if dbgen/ is stale
