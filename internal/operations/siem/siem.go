@@ -17,8 +17,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/siem/dbgen"
@@ -35,7 +38,22 @@ const (
 	typeHTTP      = "http"
 )
 
-const forwardBatch = 100
+const (
+	forwardBatch  = 100              // events per request to a sink
+	forwardLease  = 2 * time.Minute  // how long an instance holds a sink; a crashed one's lapses
+	forwardBudget = 30 * time.Second // one sink's round of batches, so a busy one doesn't hold up the rest
+)
+
+var (
+	forwardLag = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "siem_forward_lag_seconds",
+		Help: "How far behind the audit log the furthest-behind log sink was at the last round, 0 when every sink caught up.",
+	})
+	forwardFailures = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "siem_forward_failures_total",
+		Help: "Batches a log sink refused or couldn't be reached for.",
+	})
+)
 
 // Sink is a tenant's configured log destination. Its token is stored encrypted
 // and never returned.
@@ -51,16 +69,18 @@ type Sink struct {
 
 // AuditEvent is the forwarded form of an audit row.
 type AuditEvent struct {
-	ID           string    `json:"id"`
-	TenantID     string    `json:"tenant_id"`
-	Action       string    `json:"action"`
-	ActorType    string    `json:"actor_type"`
-	ActorUserID  *string   `json:"actor_user_id,omitempty"`
-	ResourceType string    `json:"resource_type,omitempty"`
-	ResourceID   *string   `json:"resource_id,omitempty"`
-	IP           *string   `json:"ip,omitempty"`
-	RequestID    string    `json:"request_id,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID           string          `json:"id"`
+	TenantID     string          `json:"tenant_id"`
+	Action       string          `json:"action"`
+	ActorType    string          `json:"actor_type"`
+	ActorUserID  *string         `json:"actor_user_id,omitempty"`
+	ResourceType string          `json:"resource_type,omitempty"`
+	ResourceID   *string         `json:"resource_id,omitempty"`
+	IP           *string         `json:"ip,omitempty"`
+	UserAgent    string          `json:"user_agent,omitempty"`
+	RequestID    string          `json:"request_id,omitempty"`
+	Metadata     json.RawMessage `json:"metadata,omitempty"`
+	CreatedAt    time.Time       `json:"created_at"`
 }
 
 // Service manages tenants' log sinks and forwards audit events to them. Sink
@@ -259,8 +279,6 @@ type sinkRow struct {
 	id, tenantID  uuid.UUID
 	typ, endpoint string
 	token         string
-	cursorAt      time.Time
-	cursorID      uuid.UUID
 }
 
 type storedSink struct {
@@ -268,16 +286,13 @@ type storedSink struct {
 	typ, endpoint       string
 	legacyToken         string
 	tokenCT, tokenNonce []byte
-	cursorAt            pgtype.Timestamptz
-	cursorID            pgtype.UUID
 }
 
 // forwardDue forwards new events to every enabled sink, first encrypting any
 // token still stored in plaintext.
 func (s *Service) forwardDue(ctx context.Context) error {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, tenant_id, type, endpoint, token, token_ct, token_nonce,
-		       cursor_created_at, cursor_id
+		SELECT id, tenant_id, type, endpoint, token, token_ct, token_nonce
 		FROM tenant.log_sinks
 		WHERE enabled
 	`)
@@ -288,7 +303,7 @@ func (s *Service) forwardDue(ctx context.Context) error {
 	for rows.Next() {
 		var r storedSink
 		if err := rows.Scan(&r.id, &r.tenantID, &r.typ, &r.endpoint, &r.legacyToken,
-			&r.tokenCT, &r.tokenNonce, &r.cursorAt, &r.cursorID); err != nil {
+			&r.tokenCT, &r.tokenNonce); err != nil {
 			rows.Close()
 			return err
 		}
@@ -325,52 +340,75 @@ func (s *Service) forwardDue(ctx context.Context) error {
 				return updateErr
 			}
 		}
-		sk := sinkRow{
-			id: r.id, tenantID: r.tenantID,
-			typ: r.typ, endpoint: r.endpoint, token: tokenValue,
-			// A NULL cursor means "from now", with the zero UUID, as the INSERT
-			// default does.
-			cursorAt: time.Now(),
-			cursorID: uuid.UUID{},
-		}
-		if r.cursorAt.Valid {
-			sk.cursorAt = r.cursorAt.Time
-		}
-		if r.cursorID.Valid {
-			sk.cursorID = uuid.UUID(r.cursorID.Bytes)
-		}
-		sinks = append(sinks, sk)
+		sinks = append(sinks, sinkRow{id: r.id, tenantID: r.tenantID, typ: r.typ, endpoint: r.endpoint, token: tokenValue})
 	}
+	var lag time.Duration
 	for _, sk := range sinks {
-		s.forwardSink(ctx, sk)
+		lag = max(lag, s.forwardSink(ctx, sk))
 	}
+	forwardLag.Set(lag.Seconds())
 	return nil
 }
 
-func (s *Service) forwardSink(ctx context.Context, sk sinkRow) {
-	events, lastAt, lastID, err := s.fetchEvents(ctx, sk.tenantID, sk.cursorAt, sk.cursorID)
+// forwardSink sends sk its new events in batches, while they come full and
+// within forwardBudget, holding a lease on the sink so no other instance sends
+// them too. It returns how far behind the audit log the sink is left, 0 when
+// caught up. A sink another instance holds, or one backing off, is skipped.
+func (s *Service) forwardSink(ctx context.Context, sk sinkRow) time.Duration {
+	claim, err := s.q.ClaimLogSink(ctx, dbgen.ClaimLogSinkParams{ID: sk.id, LeasedUntil: time.Now().Add(forwardLease)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0
+	}
 	if err != nil {
-		slog.Warn("siem fetch events", "sink", sk.id, "err", err)
-		return
+		slog.Warn("siem claim sink", "sink", sk.id, "err", err)
+		return 0
 	}
-	if len(events) == 0 {
-		return
+	defer func() { _ = s.q.ReleaseLogSink(context.WithoutCancel(ctx), sk.id) }()
+	// A NULL cursor means "from now", with the zero UUID, as the INSERT
+	// default does.
+	cursorAt, cursorID := time.Now(), uuid.UUID{}
+	if claim.CursorCreatedAt.Valid {
+		cursorAt = claim.CursorCreatedAt.Time
 	}
-	body, headers, err := buildRequest(sk.typ, sk.token, events)
-	if err != nil {
-		s.recordError(ctx, sk.id, err.Error())
-		return
+	if claim.CursorID.Valid {
+		cursorID = uuid.UUID(claim.CursorID.Bytes)
 	}
-	if err := s.post(ctx, sk.endpoint, headers, body); err != nil {
-		s.recordError(ctx, sk.id, err.Error())
-		return
+	deadline := time.Now().Add(forwardBudget)
+	for {
+		events, lastAt, lastID, err := s.fetchEvents(ctx, sk.tenantID, cursorAt, cursorID)
+		if err != nil {
+			slog.Warn("siem fetch events", "sink", sk.id, "err", err)
+			return 0
+		}
+		if len(events) == 0 {
+			return 0
+		}
+		body, headers, err := buildRequest(sk.typ, sk.token, events)
+		if err == nil {
+			err = s.post(ctx, sk.endpoint, headers, body)
+		}
+		if err != nil {
+			forwardFailures.Inc()
+			s.recordError(ctx, sk.id, err.Error())
+			return time.Since(events[0].CreatedAt)
+		}
+		// Advance the cursor; on error, the next attempt resends the batch.
+		if err := s.q.AdvanceLogSinkCursor(ctx, dbgen.AdvanceLogSinkCursorParams{
+			CursorCreatedAt: pgtype.Timestamptz{Time: lastAt, Valid: true},
+			CursorID:        pgtype.UUID{Bytes: lastID, Valid: true},
+			ID:              sk.id,
+		}); err != nil {
+			slog.Warn("siem advance cursor", "sink", sk.id, "err", err)
+			return time.Since(lastAt)
+		}
+		cursorAt, cursorID = lastAt, lastID
+		if len(events) < forwardBatch {
+			return 0
+		}
+		if time.Now().After(deadline) {
+			return time.Since(lastAt)
+		}
 	}
-	// Advance the cursor; on error, the next tick resends the batch.
-	_ = s.q.AdvanceLogSinkCursor(ctx, dbgen.AdvanceLogSinkCursorParams{
-		CursorCreatedAt: pgtype.Timestamptz{Time: lastAt, Valid: true},
-		CursorID:        pgtype.UUID{Bytes: lastID, Valid: true},
-		ID:              sk.id,
-	})
 }
 
 func (s *Service) fetchEvents(ctx context.Context, tenantID uuid.UUID, afterAt time.Time, afterID uuid.UUID) ([]AuditEvent, time.Time, uuid.UUID, error) {
@@ -414,6 +452,12 @@ func (s *Service) fetchEvents(ctx context.Context, tenantID uuid.UUID, afterAt t
 		// request_id is nullable; nil means none was recorded.
 		if r.RequestID != nil {
 			e.RequestID = *r.RequestID
+		}
+		if r.UserAgent != nil {
+			e.UserAgent = *r.UserAgent
+		}
+		if len(r.Metadata) > 0 && string(r.Metadata) != "{}" {
+			e.Metadata = r.Metadata
 		}
 		e.CreatedAt = r.CreatedAt
 		out = append(out, e)

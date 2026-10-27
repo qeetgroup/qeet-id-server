@@ -162,3 +162,95 @@ func TestSinksForwardTheOrganisationsEvents(t *testing.T) {
 		t.Error("a sink to a private address was accepted")
 	}
 }
+
+// TestForwardingKeepsUpOnceAndBacksOff checks that a sink receives a backlog
+// larger than one batch in one round, with each event's metadata and user
+// agent; that a sink another instance holds is left to it; and that a failing
+// sink isn't tried again until its back-off passes.
+func TestForwardingKeepsUpOnceAndBacksOff(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	box, err := envelope.New([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(pool, egress.DevelopmentPolicy())
+	svc.SetCipher(box)
+	tenant := dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	sink := newCollector(t)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
+	rec := dbtest.Do(t, h, http.MethodPost, "/tenants/"+tenant.String()+"/log-sinks", map[string]string{"type": "http", "endpoint": sink.URL + "/http", "token": "tok"})
+	var created Sink
+	dbtest.Decode(t, rec, &created)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	record := func(n int) {
+		t.Helper()
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range n {
+			e := audit.Actor{Type: "user", UserAgent: "Mozilla/5.0 test"}.Event(tenant, "user.updated", "user", uuid.New(), map[string]any{"field": "name"})
+			if err := audit.Record(ctx, tx, e); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	events := func() int {
+		n := 0
+		for _, r := range sink.received("/http") {
+			n += strings.Count(r, `"action":"user.updated"`)
+		}
+		return n
+	}
+
+	record(2*forwardBatch + 7)
+	if err := svc.forwardDue(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := events(); n != 2*forwardBatch+7 {
+		t.Errorf("one round forwarded %d of %d events", n, 2*forwardBatch+7)
+	}
+	if got := sink.received("/http"); len(got) == 0 || !strings.Contains(got[0], `"user_agent":"Mozilla/5.0 test"`) || !strings.Contains(got[0], `"metadata":{"field":"name"}`) {
+		t.Errorf("forwarded %q; want each event's user agent and metadata", got)
+	}
+
+	record(1)
+	if _, err := pool.Exec(ctx, `UPDATE tenant.log_sinks SET leased_until = NOW() + INTERVAL '1 minute' WHERE id = $1`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	before := events()
+	if err := svc.forwardDue(ctx); err != nil || events() != before {
+		t.Errorf("a sink another instance holds was forwarded to (%v)", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE tenant.log_sinks SET leased_until = NULL WHERE id = $1`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	sink.mu.Lock()
+	sink.status = http.StatusServiceUnavailable
+	sink.mu.Unlock()
+	if err := svc.forwardDue(ctx); err != nil {
+		t.Fatal(err)
+	}
+	attempts := len(sink.received("/http"))
+	sink.mu.Lock()
+	sink.status = http.StatusOK
+	sink.mu.Unlock()
+	if err := svc.forwardDue(ctx); err != nil || len(sink.received("/http")) != attempts {
+		t.Errorf("a failing sink was tried again before its back-off passed (%v)", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE tenant.log_sinks SET next_attempt_at = NOW() - INTERVAL '1 second' WHERE id = $1`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The collector keeps the refused request too: the held event, twice.
+	if err := svc.forwardDue(ctx); err != nil || events() != before+2 {
+		t.Errorf("after the back-off: %d events, want the held one delivered (%v)", events(), err)
+	}
+}

@@ -98,12 +98,12 @@ SELECT count(*) FROM tenant.secrets WHERE tenant_id = @tenant_id;
 SELECT count(*) FROM audit.events
 WHERE tenant_id = @tenant_id AND created_at >= now() - interval '30 days';
 
+-- CheckLogSinksCount counts the enabled log sinks, and of those the ones
+-- delivering: forwarded within a day and not failing now.
 -- name: CheckLogSinksCount :one
-SELECT count(*) FROM tenant.log_sinks WHERE tenant_id = @tenant_id AND enabled;
-
--- name: CheckWebhookSubscriptionsCount :one
-SELECT count(*) FROM tenant.webhook_subscriptions
-WHERE tenant_id = @tenant_id AND disabled_at IS NULL;
+SELECT count(*) AS enabled,
+       count(*) FILTER (WHERE last_error = '' AND last_forwarded_at > NOW() - INTERVAL '1 day') AS delivering
+FROM tenant.log_sinks WHERE tenant_id = @tenant_id AND enabled;
 
 -- name: CheckPurgeRequestCount :one
 SELECT count(*) FROM "user".purge_requests WHERE tenant_id = @tenant_id;

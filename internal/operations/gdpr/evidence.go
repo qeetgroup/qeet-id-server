@@ -339,23 +339,21 @@ func checkAuditLogCoverage(ctx context.Context, svc *EvidenceService, tenantID u
 	return ControlPass, fmt.Sprintf("%d audit event(s) recorded in the last 30 days", count)
 }
 
-// checkSIEMForwarding checks that at least one enabled log sink or active
-// webhook subscription forwards events outside the system.
+// checkSIEMForwarding checks that a log sink is delivering the audit log
+// outside the system: enabled, forwarded within a day and not failing. A
+// webhook subscription doesn't count, as webhooks don't carry the audit log.
 func checkSIEMForwarding(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) (ControlStatus, string) {
-	sinkCount, _ := svc.q.CheckLogSinksCount(ctx, tenantID)
-	webhookCount, _ := svc.q.CheckWebhookSubscriptionsCount(ctx, tenantID)
-
-	if sinkCount == 0 && webhookCount == 0 {
-		return ControlFail, "no SIEM log sinks or webhook subscriptions configured; set up log forwarding for external monitoring"
+	sinks, err := svc.q.CheckLogSinksCount(ctx, tenantID)
+	if err != nil {
+		return ControlFail, "the log sinks could not be read"
 	}
-	var parts []string
-	if sinkCount > 0 {
-		parts = append(parts, fmt.Sprintf("%d active SIEM log sink(s)", sinkCount))
+	switch {
+	case sinks.Enabled == 0:
+		return ControlFail, "no SIEM log sinks configured; set up log forwarding for external monitoring"
+	case sinks.Delivering == 0:
+		return ControlFail, fmt.Sprintf("%d SIEM log sink(s) configured, none delivered in the last day or all are failing", sinks.Enabled)
 	}
-	if webhookCount > 0 {
-		parts = append(parts, fmt.Sprintf("%d active webhook subscription(s)", webhookCount))
-	}
-	return ControlPass, "audit forwarding configured: " + strings.Join(parts, ", ")
+	return ControlPass, fmt.Sprintf("audit forwarding delivering to %d of %d SIEM log sink(s)", sinks.Delivering, sinks.Enabled)
 }
 
 // checkGDPRProcesses checks that erasure or data-export requests have been

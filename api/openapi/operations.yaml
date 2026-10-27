@@ -1453,7 +1453,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_log_sinks
-      description: 'Registers a destination that forwards the tenant''s audit events to an external SIEM (Splunk HEC, Datadog, or a generic HTTP endpoint). The endpoint must be valid and the sink type recognized, otherwise the request is rejected as unprocessable. Any supplied token is encrypted at rest; forwarding starts from creation time with no backfill of historical events, and delivery is at-least-once.'
+      description: 'Registers a destination that forwards the tenant''s audit events to an external SIEM (Splunk HEC, Datadog, or a generic HTTP endpoint). The endpoint must be valid and the sink type recognized, otherwise the request is rejected as unprocessable. Any supplied token is encrypted at rest; forwarding starts from creation time with no backfill of historical events, and delivery is at-least-once. Each event carries its actor, resource, address, user agent, request id and metadata. One instance at a time forwards a sink, in batches until it catches up; a sink that refuses or can''t be reached waits longer after each failure (10 seconds, doubling, up to an hour) and shows last_error until a batch is delivered.'
       summary: Create log sink
       tags:
         - Log Sinks

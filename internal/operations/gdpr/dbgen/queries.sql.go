@@ -80,14 +80,23 @@ func (q *Queries) CheckIPRulesCount(ctx context.Context, tenantID uuid.UUID) (in
 }
 
 const checkLogSinksCount = `-- name: CheckLogSinksCount :one
-SELECT count(*) FROM tenant.log_sinks WHERE tenant_id = $1 AND enabled
+SELECT count(*) AS enabled,
+       count(*) FILTER (WHERE last_error = '' AND last_forwarded_at > NOW() - INTERVAL '1 day') AS delivering
+FROM tenant.log_sinks WHERE tenant_id = $1 AND enabled
 `
 
-func (q *Queries) CheckLogSinksCount(ctx context.Context, tenantID uuid.UUID) (int64, error) {
+type CheckLogSinksCountRow struct {
+	Enabled    int64
+	Delivering int64
+}
+
+// CheckLogSinksCount counts the enabled log sinks, and of those the ones
+// delivering: forwarded within a day and not failing now.
+func (q *Queries) CheckLogSinksCount(ctx context.Context, tenantID uuid.UUID) (CheckLogSinksCountRow, error) {
 	row := q.db.QueryRow(ctx, checkLogSinksCount, tenantID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+	var i CheckLogSinksCountRow
+	err := row.Scan(&i.Enabled, &i.Delivering)
+	return i, err
 }
 
 const checkMFAEnforcement = `-- name: CheckMFAEnforcement :one
@@ -229,18 +238,6 @@ func (q *Queries) CheckSessionTimeout(ctx context.Context, tenantID uuid.UUID) (
 	var session_seconds float64
 	err := row.Scan(&session_seconds)
 	return session_seconds, err
-}
-
-const checkWebhookSubscriptionsCount = `-- name: CheckWebhookSubscriptionsCount :one
-SELECT count(*) FROM tenant.webhook_subscriptions
-WHERE tenant_id = $1 AND disabled_at IS NULL
-`
-
-func (q *Queries) CheckWebhookSubscriptionsCount(ctx context.Context, tenantID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, checkWebhookSubscriptionsCount, tenantID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
 }
 
 const completePurgeRequest = `-- name: CompletePurgeRequest :exec

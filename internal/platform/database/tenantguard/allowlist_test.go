@@ -222,6 +222,8 @@ internal/operations/notifications/queries.sql#MarkAllNotificationsRead  session-
 internal/operations/retention/queries.sql#ListEnabledRetentionPolicies  background-sweep: retention job
 internal/operations/siem/queries.sql#AdvanceLogSinkCursor  background-sweep: log forwarding job
 internal/operations/siem/queries.sql#SetLogSinkError  background-sweep: log forwarding job
+internal/operations/siem/queries.sql#ClaimLogSink  background-sweep: log forwarding job, by sink id
+internal/operations/siem/queries.sql#ReleaseLogSink  background-sweep: log forwarding job, by sink id
 internal/operations/siem/siem.go#Service.forwardDue  background-sweep: log forwarding job
 
 internal/platform/cache/ratelimit/tenant.go#TenantLimiter.GetAll  pending-review: unused method; lists every tenant's overrides
