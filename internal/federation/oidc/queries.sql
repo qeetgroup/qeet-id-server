@@ -148,7 +148,8 @@ ON CONFLICT (user_id, client_id) DO UPDATE SET scopes = EXCLUDED.scopes, granted
 -- ==========================================================================
 
 -- login_session_id is the hosted-login session the grant was started through
--- (NULL when there was none); renewals carry it forward.
+-- and auth_time when the person signed in there (NULL when there was none);
+-- renewals carry both forward.
 -- InsertRefreshToken starts a grant. However often it is renewed, it ends at
 -- grant_expires_at: the organisation's maximum session age from now, or the
 -- platform's when the organisation sets none. No token outlives the grant.
@@ -156,9 +157,10 @@ ON CONFLICT (user_id, client_id) DO UPDATE SET scopes = EXCLUDED.scopes, granted
 -- name: InsertRefreshToken :exec
 INSERT INTO auth.oidc_refresh_tokens
     (id, grant_id, token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id,
-     grant_expires_at, authorization_code_hash)
+     grant_expires_at, authorization_code_hash, auth_time)
 SELECT @id, @id, @token_hash, @client_id, @user_id, @tenant_id, @scopes, LEAST(@expires_at::timestamptz, g.ends),
-       sqlc.narg('resource'), sqlc.narg('login_session_id'), g.ends, sqlc.narg('authorization_code_hash')
+       sqlc.narg('resource'), sqlc.narg('login_session_id'), g.ends, sqlc.narg('authorization_code_hash'),
+       sqlc.narg('auth_time')
 FROM (
     SELECT NOW() + COALESCE(
         (SELECT sp.session_max_age FROM tenant.security_policies sp WHERE sp.tenant_id = @tenant_id),
@@ -167,7 +169,8 @@ FROM (
 
 -- name: LockRefreshToken :one
 SELECT id, client_id, user_id, tenant_id, scopes, expires_at,
-       used_at, revoked_at, resource, login_session_id, grant_expires_at, authorization_code_hash, grant_id
+       used_at, revoked_at, resource, login_session_id, grant_expires_at, authorization_code_hash, grant_id,
+       auth_time
 FROM auth.oidc_refresh_tokens WHERE token_hash = @token_hash FOR UPDATE;
 
 -- InsertRotatedRefreshToken continues a grant: it keeps the grant's end, and
@@ -175,11 +178,11 @@ FROM auth.oidc_refresh_tokens WHERE token_hash = @token_hash FOR UPDATE;
 -- name: InsertRotatedRefreshToken :one
 INSERT INTO auth.oidc_refresh_tokens
     (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id, grant_expires_at,
-     authorization_code_hash, grant_id)
+     authorization_code_hash, grant_id, auth_time)
 VALUES (@token_hash, @client_id, @user_id, @tenant_id, @scopes,
         LEAST(@expires_at::timestamptz, @grant_expires_at::timestamptz),
         sqlc.narg('resource'), sqlc.narg('login_session_id'), @grant_expires_at::timestamptz,
-        sqlc.narg('authorization_code_hash'), sqlc.narg('grant_id'))
+        sqlc.narg('authorization_code_hash'), sqlc.narg('grant_id'), sqlc.narg('auth_time'))
 RETURNING id;
 
 -- name: MarkRefreshTokenUsed :exec

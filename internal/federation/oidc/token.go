@@ -401,7 +401,7 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	// (and this redemption fails) or waits and then ends the grant.
 	refresh := ""
 	if contains(client.GrantTypes, "refresh_token") {
-		refresh, err = s.issueRefreshToken(ctx, q, clientID, userID, tenantID, scopes, resource, ac.LoginSessionID, hash)
+		refresh, err = s.issueRefreshToken(ctx, q, clientID, userID, tenantID, scopes, resource, ac.LoginSessionID, hash, ac.AuthTime)
 		if err != nil {
 			return nil, err
 		}
@@ -441,9 +441,10 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 
 // issueRefreshToken stores a refresh token for the client and user and returns
 // it. resource is the RFC 8707 resource bound to the access token ("" for none),
-// loginSessionID the hosted-login session (NULL for none) and codeHash the
-// redeemed code ("" for none). q lets it run in the caller's transaction.
-func (s *Service) issueRefreshToken(ctx context.Context, q *dbgen.Queries, clientID string, userID, tenantID uuid.UUID, scopes []string, resource string, loginSessionID pgtype.UUID, codeHash string) (string, error) {
+// loginSessionID the hosted-login session and authTime when the person signed
+// in there (NULL for none), and codeHash the redeemed code ("" for none). q
+// lets it run in the caller's transaction.
+func (s *Service) issueRefreshToken(ctx context.Context, q *dbgen.Queries, clientID string, userID, tenantID uuid.UUID, scopes []string, resource string, loginSessionID pgtype.UUID, codeHash string, authTime pgtype.Timestamptz) (string, error) {
 	raw, hash, err := tokens.NewRefreshToken()
 	if err != nil {
 		return "", err
@@ -458,6 +459,7 @@ func (s *Service) issueRefreshToken(ctx context.Context, q *dbgen.Queries, clien
 		TokenHash: hash, ClientID: clientID, UserID: userID, TenantID: tenantID,
 		Scopes: scopes, ExpiresAt: exp, Resource: res, LoginSessionID: loginSessionID,
 		DefaultMaxAgeSeconds: s.grantMaxAge.Seconds(), AuthorizationCodeHash: optionalString(codeHash),
+		AuthTime: authTime,
 	}); err != nil {
 		return "", err
 	}
@@ -563,7 +565,7 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 		TokenHash: newHash, ClientID: clientID, UserID: rt.UserID, TenantID: rt.TenantID,
 		Scopes: rt.Scopes, ExpiresAt: newExp, Resource: newRes, LoginSessionID: rt.LoginSessionID,
 		GrantExpiresAt: rt.GrantExpiresAt, AuthorizationCodeHash: rt.AuthorizationCodeHash,
-		GrantID: rt.GrantID,
+		GrantID: rt.GrantID, AuthTime: rt.AuthTime,
 	})
 	if err != nil {
 		return nil, err
@@ -589,7 +591,11 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	}
 	idTok := ""
 	if contains(scopes, "openid") {
-		t, err := s.signIDToken(ctx, idToken{UserID: userID, TenantID: tenantID, Audience: clientID, Scopes: scopes})
+		// The original sign-in's time and session (OIDC Core 12.2), not now's.
+		t, err := s.signIDToken(ctx, idToken{
+			UserID: userID, TenantID: tenantID, Audience: clientID, Scopes: scopes,
+			AuthTime: timeOrZero(rt.AuthTime), SessionID: uuidOrNil(rt.LoginSessionID),
+		})
 		if err != nil {
 			return nil, err
 		}

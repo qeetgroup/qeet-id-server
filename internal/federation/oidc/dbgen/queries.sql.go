@@ -915,13 +915,14 @@ const insertRefreshToken = `-- name: InsertRefreshToken :exec
 
 INSERT INTO auth.oidc_refresh_tokens
     (id, grant_id, token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id,
-     grant_expires_at, authorization_code_hash)
+     grant_expires_at, authorization_code_hash, auth_time)
 SELECT $1, $1, $2, $3, $4, $5, $6, LEAST($7::timestamptz, g.ends),
-       $8, $9, g.ends, $10
+       $8, $9, g.ends, $10,
+       $11
 FROM (
     SELECT NOW() + COALESCE(
         (SELECT sp.session_max_age FROM tenant.security_policies sp WHERE sp.tenant_id = $5),
-        make_interval(secs => $11::float8)) AS ends
+        make_interval(secs => $12::float8)) AS ends
 ) g
 `
 
@@ -936,6 +937,7 @@ type InsertRefreshTokenParams struct {
 	Resource              *string
 	LoginSessionID        pgtype.UUID
 	AuthorizationCodeHash *string
+	AuthTime              pgtype.Timestamptz
 	DefaultMaxAgeSeconds  float64
 }
 
@@ -943,7 +945,8 @@ type InsertRefreshTokenParams struct {
 // Refresh tokens
 // ==========================================================================
 // login_session_id is the hosted-login session the grant was started through
-// (NULL when there was none); renewals carry it forward.
+// and auth_time when the person signed in there (NULL when there was none);
+// renewals carry both forward.
 // InsertRefreshToken starts a grant. However often it is renewed, it ends at
 // grant_expires_at: the organisation's maximum session age from now, or the
 // platform's when the organisation sets none. No token outlives the grant.
@@ -960,6 +963,7 @@ func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshToken
 		arg.Resource,
 		arg.LoginSessionID,
 		arg.AuthorizationCodeHash,
+		arg.AuthTime,
 		arg.DefaultMaxAgeSeconds,
 	)
 	return err
@@ -1000,11 +1004,11 @@ func (q *Queries) InsertResource(ctx context.Context, arg InsertResourceParams) 
 const insertRotatedRefreshToken = `-- name: InsertRotatedRefreshToken :one
 INSERT INTO auth.oidc_refresh_tokens
     (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id, grant_expires_at,
-     authorization_code_hash, grant_id)
+     authorization_code_hash, grant_id, auth_time)
 VALUES ($1, $2, $3, $4, $5,
         LEAST($6::timestamptz, $7::timestamptz),
         $8, $9, $7::timestamptz,
-        $10, $11)
+        $10, $11, $12)
 RETURNING id
 `
 
@@ -1020,6 +1024,7 @@ type InsertRotatedRefreshTokenParams struct {
 	LoginSessionID        pgtype.UUID
 	AuthorizationCodeHash *string
 	GrantID               pgtype.UUID
+	AuthTime              pgtype.Timestamptz
 }
 
 // InsertRotatedRefreshToken continues a grant: it keeps the grant's end, and
@@ -1037,6 +1042,7 @@ func (q *Queries) InsertRotatedRefreshToken(ctx context.Context, arg InsertRotat
 		arg.LoginSessionID,
 		arg.AuthorizationCodeHash,
 		arg.GrantID,
+		arg.AuthTime,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -1631,7 +1637,8 @@ func (q *Queries) LockOIDCClientForUpdate(ctx context.Context, arg LockOIDCClien
 
 const lockRefreshToken = `-- name: LockRefreshToken :one
 SELECT id, client_id, user_id, tenant_id, scopes, expires_at,
-       used_at, revoked_at, resource, login_session_id, grant_expires_at, authorization_code_hash, grant_id
+       used_at, revoked_at, resource, login_session_id, grant_expires_at, authorization_code_hash, grant_id,
+       auth_time
 FROM auth.oidc_refresh_tokens WHERE token_hash = $1 FOR UPDATE
 `
 
@@ -1649,6 +1656,7 @@ type LockRefreshTokenRow struct {
 	GrantExpiresAt        time.Time
 	AuthorizationCodeHash *string
 	GrantID               pgtype.UUID
+	AuthTime              pgtype.Timestamptz
 }
 
 func (q *Queries) LockRefreshToken(ctx context.Context, tokenHash string) (LockRefreshTokenRow, error) {
@@ -1668,6 +1676,7 @@ func (q *Queries) LockRefreshToken(ctx context.Context, tokenHash string) (LockR
 		&i.GrantExpiresAt,
 		&i.AuthorizationCodeHash,
 		&i.GrantID,
+		&i.AuthTime,
 	)
 	return i, err
 }

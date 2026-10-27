@@ -577,6 +577,50 @@ func TestLoopbackRedirectOnAnyPort(t *testing.T) {
 	}
 }
 
+// TestRefreshedIDTokenKeepsTheSignIn checks that an ID token issued again on a
+// refresh, and on the refresh after it, reports the original sign-in's
+// auth_time and hosted-login session (OIDC Core 12.2), and no nonce.
+func TestRefreshedIDTokenKeepsTheSignIn(t *testing.T) {
+	ctx := dbtest.Context(t)
+	p := newProvider(t)
+	tenant := dbtest.Tenant(t)
+	person := dbtest.User(t, tenant, tenant)
+	client, secret := registerClient(t, p.svc, tenant)
+	cookie, sessionID := p.signIn(t, person.ID)
+	if err := p.svc.GrantConsent(ctx, person.ID, client.ClientID, []string{"openid"}); err != nil {
+		t.Fatalf("consent: %v", err)
+	}
+	target, verifier := authorizeURL(t, client.ClientID)
+	_, q := redirected(t, browse(t, p.public, http.MethodGet, target, cookie, nil))
+	issued, err := p.svc.ExchangeCode(ctx, client.ClientID, secret, q.Get("code"), testRedirect, verifier, "")
+	if err != nil {
+		t.Fatalf("redeem the code: %v", err)
+	}
+	first, err := p.svc.issuer.VerifySigned(issued.IDToken)
+	if err != nil || first["auth_time"] == nil || first["sid"] != sessionID.String() {
+		t.Fatalf("first ID token %v, %v; want auth_time and the session", first, err)
+	}
+
+	refresh := issued.RefreshToken
+	for i := 1; i <= 2; i++ {
+		renewed, err := p.svc.RefreshToken(ctx, client.ClientID, secret, refresh, "")
+		if err != nil {
+			t.Fatalf("refresh %d: %v", i, err)
+		}
+		id, err := p.svc.issuer.VerifySigned(renewed.IDToken)
+		if err != nil {
+			t.Fatalf("refresh %d: verify the ID token: %v", i, err)
+		}
+		if id["auth_time"] != first["auth_time"] || id["sid"] != first["sid"] || id["sub"] != first["sub"] || id["aud"] != first["aud"] {
+			t.Errorf("refresh %d: ID token %v, want the first one's auth_time, sid, sub and aud (%v)", i, id, first)
+		}
+		if _, ok := id["nonce"]; ok {
+			t.Errorf("refresh %d: the ID token carries a nonce", i)
+		}
+		refresh = renewed.RefreshToken
+	}
+}
+
 // TestAuthorizeRefusesScopesBeforeConsent checks that a request for a scope
 // the application may not have goes back to it as invalid_scope, before the
 // person is asked to consent to it.
