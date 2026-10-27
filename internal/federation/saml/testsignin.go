@@ -232,18 +232,14 @@ func (s *Service) checkTestAnswer(ctx context.Context, base string, conn *Connec
 	if len(certs) == 0 {
 		return fail(errs.ErrSAMLCertificateInvalid, nil)
 	}
-	response, info, err := s.validateResponse(base, conn, certs, encoded)
+	response, info, err := s.validateResponse(base, conn, certs, encoded, time.Now())
+	if e := errs.As(err); e != nil {
+		return fail(e, e.Unwrap())
+	}
 	if err != nil {
-		return fail(errs.ErrSAMLAssertionInvalid, err)
+		return "", res, err
 	}
 	res.NameID, res.NameIDFormat, res.Attributes = info.NameID, info.NameIDFormat, testAttributes(info.Values)
-	if warn := info.WarningInfo; warn != nil && (warn.InvalidTime || warn.NotInAudience) {
-		why := "the assertion is outside its validity period"
-		if warn.NotInAudience {
-			why = "the assertion's audience isn't this connection's SP entity ID"
-		}
-		return fail(errs.ErrSAMLAssertionConditions, errors.New(why))
-	}
 	trusted, assertionIDs, err := trustedCorrelation(response)
 	if e := errs.As(err); e != nil {
 		return fail(e, nil)

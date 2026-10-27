@@ -224,6 +224,37 @@ func TestServiceRefusesInvalidConnections(t *testing.T) {
 	}
 }
 
+// TestWithinValidityAllowsClockSkew checks that an assertion's Conditions are
+// met up to assertionClockSkew before NotBefore and after NotOnOrAfter, and
+// that one without readable Conditions is not.
+func TestWithinValidityAllowsClockSkew(t *testing.T) {
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	window := func(notBefore, notOnOrAfter time.Duration) []samltypes.Assertion {
+		return []samltypes.Assertion{{Conditions: &samltypes.Conditions{
+			NotBefore: now.Add(notBefore).Format(time.RFC3339), NotOnOrAfter: now.Add(notOnOrAfter).Format(time.RFC3339),
+		}}}
+	}
+	for _, c := range []struct {
+		name       string
+		assertions []samltypes.Assertion
+		want       bool
+	}{
+		{"current", window(-time.Minute, 5*time.Minute), true},
+		{"two minutes early", window(2*time.Minute, 10*time.Minute), true},
+		{"five minutes early", window(5*time.Minute, 10*time.Minute), false},
+		{"expired two minutes ago", window(-10*time.Minute, -2*time.Minute), true},
+		{"expired five minutes ago", window(-10*time.Minute, -5*time.Minute), false},
+		{"one current, one expired", append(window(-time.Minute, 5*time.Minute), window(-10*time.Minute, -5*time.Minute)...), false},
+		{"no conditions", []samltypes.Assertion{{}}, false},
+		{"unreadable times", []samltypes.Assertion{{Conditions: &samltypes.Conditions{NotBefore: "soon", NotOnOrAfter: "later"}}}, false},
+		{"no assertions", nil, false},
+	} {
+		if got := withinValidity(c.assertions, now); got != c.want {
+			t.Errorf("%s: withinValidity = %t, want %t", c.name, got, c.want)
+		}
+	}
+}
+
 func TestTrustedCorrelationIgnoresUnsignedResponseEnvelope(t *testing.T) {
 	response := &samltypes.Response{
 		InResponseTo: "_forged-envelope-request",

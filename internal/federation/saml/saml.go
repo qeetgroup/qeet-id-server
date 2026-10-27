@@ -600,14 +600,27 @@ func (s *Service) buildSP(base string, conn *Connection, certs []*x509.Certifica
 	}
 }
 
+// assertionClockSkew is how far the IdP's clock may be from ours: an assertion
+// is accepted this long before its NotBefore and after its NotOnOrAfter.
+const assertionClockSkew = 3 * time.Minute
+
 // validateResponse checks the encoded SAMLResponse against each of the IdP's
-// certificates in turn, so one signed with any of them is accepted, and returns
-// the response and its assertion. Each attempt trusts a single certificate, so
-// a signature without KeyInfo is checked against every one.
-func (s *Service) validateResponse(base string, conn *Connection, certs []*x509.Certificate, encoded string) (*samltypes.Response, *saml2.AssertionInfo, error) {
+// certificates valid at now in turn, so one signed with any of them is
+// accepted, and returns the response and its assertion. Each attempt trusts a
+// single certificate, so a signature without KeyInfo is checked against each.
+//
+// gosaml2 checks the expiry times on a clock assertionClockSkew behind now, and
+// withinValidity the whole window either way; the signature, issuer, audience,
+// recipient and destination checks are unchanged.
+func (s *Service) validateResponse(base string, conn *Connection, certs []*x509.Certificate, encoded string, now time.Time) (*samltypes.Response, *saml2.AssertionInfo, error) {
 	var failures []error
 	for _, cert := range certs {
+		if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
+			failures = append(failures, fmt.Errorf("certificate %s is outside its validity period", fingerprint(cert)))
+			continue
+		}
 		sp := s.buildSP(base, conn, []*x509.Certificate{cert})
+		sp.Clock = dsig.NewFakeClockAt(now.Add(-assertionClockSkew))
 		response, err := sp.ValidateEncodedResponse(encoded)
 		if err != nil {
 			failures = append(failures, err)
@@ -616,17 +629,48 @@ func (s *Service) validateResponse(base string, conn *Connection, certs []*x509.
 		info, err := sp.RetrieveAssertionInfo(encoded)
 		if err != nil {
 			slog.Warn("saml acs: assertion validation failed", "err", err, "connection", conn.ID)
-			return nil, nil, errs.ErrSAMLAssertionInvalid
+			return nil, nil, errs.ErrSAMLAssertionInvalid.Wrap(err)
 		}
-		if info.WarningInfo != nil && (info.WarningInfo.InvalidTime || info.WarningInfo.NotInAudience) {
+		current := withinValidity(info.Assertions, now)
+		elsewhere := info.WarningInfo != nil && info.WarningInfo.NotInAudience
+		if !current || elsewhere {
 			slog.Warn("saml acs: assertion conditions not met", "connection", conn.ID,
-				"invalid_time", info.WarningInfo.InvalidTime, "not_in_audience", info.WarningInfo.NotInAudience)
-			return nil, nil, errs.ErrSAMLAssertionConditions
+				"invalid_time", !current, "not_in_audience", elsewhere)
+			why := "the assertion is outside its validity period"
+			if elsewhere {
+				why = "the assertion's audience isn't this connection's SP entity ID"
+			}
+			return nil, nil, errs.ErrSAMLAssertionConditions.Wrap(errors.New(why))
 		}
 		return response, info, nil
 	}
 	slog.Warn("saml acs: response validation failed", "err", errors.Join(failures...), "connection", conn.ID)
-	return nil, nil, errs.ErrSAMLAssertionInvalid
+	return nil, nil, errs.ErrSAMLAssertionInvalid.Wrap(errors.Join(failures...))
+}
+
+// withinValidity reports whether every assertion's Conditions hold at now,
+// allowing assertionClockSkew either way.
+func withinValidity(assertions []samltypes.Assertion, now time.Time) bool {
+	if len(assertions) == 0 {
+		return false
+	}
+	for _, a := range assertions {
+		if a.Conditions == nil {
+			return false
+		}
+		notBefore, err := time.Parse(time.RFC3339, a.Conditions.NotBefore)
+		if err != nil {
+			return false
+		}
+		notOnOrAfter, err := time.Parse(time.RFC3339, a.Conditions.NotOnOrAfter)
+		if err != nil {
+			return false
+		}
+		if now.Add(assertionClockSkew).Before(notBefore) || !now.Add(-assertionClockSkew).Before(notOnOrAfter) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) storeAuthnRequest(ctx context.Context, connectionID uuid.UUID, requestID string) error {
@@ -1304,7 +1348,7 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSAMLConnectionMisconfigured)
 		return
 	}
-	response, info, err := h.Service.validateResponse(h.publicBase(r), conn, certs, encoded)
+	response, info, err := h.Service.validateResponse(h.publicBase(r), conn, certs, encoded, time.Now())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
