@@ -59,7 +59,8 @@ type canonicalRow struct {
 }
 
 // Rechain rehashes every audit chain in time order, after At moved rows back
-// and Audit wrote history out of order.
+// and Audit wrote history out of order, and drops the chains' checkpoints, so
+// the next scheduled verification walks each from the start.
 func (w *World) Rechain() {
 	rows, err := w.Admin.Query(w.Ctx, `SELECT DISTINCT tenant_id FROM audit.events`)
 	Must(err, "list audit chains")
@@ -74,6 +75,7 @@ func (w *World) Rechain() {
 	for _, t := range chains {
 		w.rechain(t)
 	}
+	w.Exec("drop the audit chain checkpoints", `DELETE FROM platform.audit_chain_checkpoints`)
 }
 
 func (w *World) rechain(tenant pgtype.UUID) {

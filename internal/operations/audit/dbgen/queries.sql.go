@@ -13,6 +13,48 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const advanceAuditChainCheckpoint = `-- name: AdvanceAuditChainCheckpoint :exec
+UPDATE platform.audit_chain_checkpoints
+SET event_id = $1, event_created_at = $2, row_hash = $3, verified_at = NOW()
+WHERE event_id = $4 AND broken_at IS NULL
+  AND (tenant_id = $5 OR ($5::uuid IS NULL AND tenant_id IS NULL))
+`
+
+type AdvanceAuditChainCheckpointParams struct {
+	EventID        uuid.UUID
+	EventCreatedAt time.Time
+	RowHash        string
+	FromEventID    uuid.UUID
+	TenantID       pgtype.UUID
+}
+
+// Move a chain's checkpoint on from the one the run began at, unless another
+// run has moved it or found the chain broken since.
+func (q *Queries) AdvanceAuditChainCheckpoint(ctx context.Context, arg AdvanceAuditChainCheckpointParams) error {
+	_, err := q.db.Exec(ctx, advanceAuditChainCheckpoint,
+		arg.EventID,
+		arg.EventCreatedAt,
+		arg.RowHash,
+		arg.FromEventID,
+		arg.TenantID,
+	)
+	return err
+}
+
+const countFullAuditVerificationsSince = `-- name: CountFullAuditVerificationsSince :one
+SELECT count(*) FROM platform.audit_verification_runs
+WHERE scope = 'all' AND outcome <> 'error' AND started_at > $1
+`
+
+// How many verifications since @since walked every chain from its first row;
+// one that failed to run doesn't count.
+func (q *Queries) CountFullAuditVerificationsSince(ctx context.Context, since time.Time) (int64, error) {
+	row := q.db.QueryRow(ctx, countFullAuditVerificationsSince, since)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getAuditChainTip = `-- name: GetAuditChainTip :one
 
 (SELECT o.row_hash, o.created_at FROM audit.events o
@@ -49,6 +91,101 @@ func (q *Queries) GetAuditChainTip(ctx context.Context, tenantID pgtype.UUID) (G
 	var i GetAuditChainTipRow
 	err := row.Scan(&i.RowHash, &i.CreatedAt)
 	return i, err
+}
+
+const getAuditEventForVerify = `-- name: GetAuditEventForVerify :one
+(SELECT o.id, o.tenant_id, o.actor_user_id, o.actor_type, o.action,
+        o.resource_type, o.resource_id,
+        COALESCE(host(o.ip), '') AS ip,
+        COALESCE(o.user_agent, '') AS user_agent,
+        COALESCE(o.request_id, '') AS request_id,
+        o.metadata,
+        o.created_at,
+        o.prev_hash, o.row_hash
+ FROM audit.events o
+ WHERE o.id = $1 AND o.tenant_id = $2 AND o.row_hash IS NOT NULL)
+UNION ALL
+(SELECT p.id, p.tenant_id, p.actor_user_id, p.actor_type, p.action,
+        p.resource_type, p.resource_id,
+        COALESCE(host(p.ip), '') AS ip,
+        COALESCE(p.user_agent, '') AS user_agent,
+        COALESCE(p.request_id, '') AS request_id,
+        p.metadata,
+        p.created_at,
+        p.prev_hash, p.row_hash
+ FROM audit.events p
+ WHERE p.id = $1 AND $2::uuid IS NULL AND p.tenant_id IS NULL AND p.row_hash IS NOT NULL)
+`
+
+type GetAuditEventForVerifyParams struct {
+	ID       uuid.UUID
+	TenantID pgtype.UUID
+}
+
+type GetAuditEventForVerifyRow struct {
+	ID           uuid.UUID
+	TenantID     pgtype.UUID
+	ActorUserID  pgtype.UUID
+	ActorType    string
+	Action       string
+	ResourceType string
+	ResourceID   pgtype.UUID
+	Ip           interface{}
+	UserAgent    string
+	RequestID    string
+	Metadata     []byte
+	CreatedAt    time.Time
+	PrevHash     *string
+	RowHash      *string
+}
+
+// One row of a chain, as ListAuditEventsForVerify reads it: the row a chain's
+// checkpoint names, checked again before the walk goes on after it.
+func (q *Queries) GetAuditEventForVerify(ctx context.Context, arg GetAuditEventForVerifyParams) (GetAuditEventForVerifyRow, error) {
+	row := q.db.QueryRow(ctx, getAuditEventForVerify, arg.ID, arg.TenantID)
+	var i GetAuditEventForVerifyRow
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.ActorUserID,
+		&i.ActorType,
+		&i.Action,
+		&i.ResourceType,
+		&i.ResourceID,
+		&i.Ip,
+		&i.UserAgent,
+		&i.RequestID,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.PrevHash,
+		&i.RowHash,
+	)
+	return i, err
+}
+
+const insertAuditChainCheckpoint = `-- name: InsertAuditChainCheckpoint :exec
+INSERT INTO platform.audit_chain_checkpoints (tenant_id, event_id, event_created_at, row_hash)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (tenant_id) DO NOTHING
+`
+
+type InsertAuditChainCheckpointParams struct {
+	TenantID       pgtype.UUID
+	EventID        uuid.UUID
+	EventCreatedAt time.Time
+	RowHash        string
+}
+
+// A chain's first checkpoint. A run that began when it had none leaves one
+// another run wrote since.
+func (q *Queries) InsertAuditChainCheckpoint(ctx context.Context, arg InsertAuditChainCheckpointParams) error {
+	_, err := q.db.Exec(ctx, insertAuditChainCheckpoint,
+		arg.TenantID,
+		arg.EventID,
+		arg.EventCreatedAt,
+		arg.RowHash,
+	)
+	return err
 }
 
 const insertAuditEvent = `-- name: InsertAuditEvent :exec
@@ -106,11 +243,11 @@ func (q *Queries) InsertAuditEvent(ctx context.Context, arg InsertAuditEventPara
 
 const insertAuditVerificationRun = `-- name: InsertAuditVerificationRun :exec
 INSERT INTO platform.audit_verification_runs (
-    id, started_at, finished_at, tenants_walked, rows_checked, outcome,
+    id, started_at, finished_at, scope, tenants_walked, rows_checked, outcome,
     broken_tenant_id, first_broken_link, broken_reason, error
 ) VALUES (
-    $1, $2, $3, $4, $5, $6,
-    $7, $8, $9, $10
+    $1, $2, $3, $4, $5, $6, $7,
+    $8, $9, $10, $11
 )
 `
 
@@ -118,6 +255,7 @@ type InsertAuditVerificationRunParams struct {
 	ID              uuid.UUID
 	StartedAt       time.Time
 	FinishedAt      time.Time
+	Scope           string
 	TenantsWalked   int32
 	RowsChecked     int64
 	Outcome         string
@@ -127,12 +265,15 @@ type InsertAuditVerificationRunParams struct {
 	Error           *string
 }
 
-// Store one scheduled verification of every chain, as evidence.
+// Store one scheduled verification of every chain, as evidence. Its scope is
+// 'all' when it walked each chain from its first row, 'incremental' when from
+// the chains' checkpoints.
 func (q *Queries) InsertAuditVerificationRun(ctx context.Context, arg InsertAuditVerificationRunParams) error {
 	_, err := q.db.Exec(ctx, insertAuditVerificationRun,
 		arg.ID,
 		arg.StartedAt,
 		arg.FinishedAt,
+		arg.Scope,
 		arg.TenantsWalked,
 		arg.RowsChecked,
 		arg.Outcome,
@@ -157,23 +298,75 @@ func (q *Queries) LastIntactAuditVerification(ctx context.Context) (float64, err
 	return at, err
 }
 
+const listAuditChainCheckpoints = `-- name: ListAuditChainCheckpoints :many
+SELECT tenant_id, event_id, event_created_at, row_hash, (broken_at IS NOT NULL)::bool AS broken
+FROM platform.audit_chain_checkpoints
+`
+
+type ListAuditChainCheckpointsRow struct {
+	TenantID       pgtype.UUID
+	EventID        uuid.UUID
+	EventCreatedAt time.Time
+	RowHash        string
+	Broken         bool
+}
+
+// Every chain's checkpoint: the last row a scheduled verification found intact,
+// and whether the chain has since been found broken.
+func (q *Queries) ListAuditChainCheckpoints(ctx context.Context) ([]ListAuditChainCheckpointsRow, error) {
+	rows, err := q.db.Query(ctx, listAuditChainCheckpoints)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAuditChainCheckpointsRow{}
+	for rows.Next() {
+		var i ListAuditChainCheckpointsRow
+		if err := rows.Scan(
+			&i.TenantID,
+			&i.EventID,
+			&i.EventCreatedAt,
+			&i.RowHash,
+			&i.Broken,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAuditChainTenants = `-- name: ListAuditChainTenants :many
-SELECT DISTINCT tenant_id FROM audit.events
-WHERE tenant_id IS NOT NULL AND row_hash IS NOT NULL
-ORDER BY tenant_id
+WITH RECURSIVE chains AS (
+    (SELECT e.tenant_id FROM audit.events e
+     WHERE e.tenant_id IS NOT NULL AND e.row_hash IS NOT NULL
+     ORDER BY e.tenant_id LIMIT 1)
+    UNION ALL
+    SELECT (SELECT e.tenant_id FROM audit.events e
+            WHERE e.tenant_id > c.tenant_id AND e.row_hash IS NOT NULL
+            ORDER BY e.tenant_id LIMIT 1)
+    FROM chains c
+    WHERE c.tenant_id IS NOT NULL
+)
+SELECT chains.tenant_id::uuid AS tenant_id FROM chains WHERE chains.tenant_id IS NOT NULL
 `
 
 // Every organisation with a hash chain, for the scheduled verification of all
-// of them (the platform chain, NULL tenant_id, is verified separately).
-func (q *Queries) ListAuditChainTenants(ctx context.Context) ([]pgtype.UUID, error) {
+// of them (the platform chain, NULL tenant_id, is verified separately). It
+// skips from one organisation to the next along idx_audit_chain_tip, reading a
+// row per organisation rather than every row.
+func (q *Queries) ListAuditChainTenants(ctx context.Context) ([]uuid.UUID, error) {
 	rows, err := q.db.Query(ctx, listAuditChainTenants)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []pgtype.UUID{}
+	items := []uuid.UUID{}
 	for rows.Next() {
-		var tenant_id pgtype.UUID
+		var tenant_id uuid.UUID
 		if err := rows.Scan(&tenant_id); err != nil {
 			return nil, err
 		}
@@ -284,4 +477,23 @@ func (q *Queries) ListAuditEventsForVerify(ctx context.Context, arg ListAuditEve
 		return nil, err
 	}
 	return items, nil
+}
+
+const markAuditChainCheckpointBroken = `-- name: MarkAuditChainCheckpointBroken :exec
+UPDATE platform.audit_chain_checkpoints
+SET broken_at = COALESCE(broken_at, NOW())
+WHERE event_id = $1
+  AND (tenant_id = $2 OR ($2::uuid IS NULL AND tenant_id IS NULL))
+`
+
+type MarkAuditChainCheckpointBrokenParams struct {
+	EventID  uuid.UUID
+	TenantID pgtype.UUID
+}
+
+// Mark a chain broken at the checkpoint the run began at. The checkpoint then
+// stays, and every run checks its row again and walks the chain from the start.
+func (q *Queries) MarkAuditChainCheckpointBroken(ctx context.Context, arg MarkAuditChainCheckpointBrokenParams) error {
+	_, err := q.db.Exec(ctx, markAuditChainCheckpointBroken, arg.EventID, arg.TenantID)
+	return err
 }

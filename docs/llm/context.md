@@ -497,8 +497,10 @@ Scheduled maintenance (audit-chain verification of every organisation, session, 
 history, published-outbox and dead-letter cleanup) is `bootstrap.MaintenanceJobs`, run by `worker.RunScheduled`: the
 API runs it as its embedded `scheduler` worker, and `cmd/scheduler` or `cmd/worker` can run it
 standalone. Each job is claimed in `platform.scheduled_job_runs` before it runs, so it runs once per
-interval however many instances run it; each verification is stored in
-`platform.audit_verification_runs`.
+interval however many instances run it, each in its own goroutine (at most four at once); each
+verification is stored in `platform.audit_verification_runs`. Verification goes on from each chain's
+checkpoint (`platform.audit_chain_checkpoints`) and walks every chain from its first row once a week;
+deleting a chain's checkpoint makes the next run walk it from the start.
 
 **Choose async when** the work is retryable, slow, or must survive a request; **sync when** the
 caller needs the result or the operation must be atomic with the response.

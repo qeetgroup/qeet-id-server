@@ -37,7 +37,7 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller) []wor
 			Run: func(ctx context.Context) error {
 				run, err := verifier.VerifyAll(ctx)
 				if err == nil {
-					slog.Info("audit chains intact", "tenants", run.TenantsWalked, "rows_checked", run.RowsChecked)
+					slog.Info("audit chains intact", "scope", run.Scope, "tenants", run.TenantsWalked, "rows_checked", run.RowsChecked)
 				}
 				return err
 			},

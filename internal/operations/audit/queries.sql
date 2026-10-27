@@ -73,20 +73,93 @@ UNION ALL
  LIMIT @page_size)
 ORDER BY created_at ASC, id ASC;
 
+-- name: GetAuditEventForVerify :one
+-- One row of a chain, as ListAuditEventsForVerify reads it: the row a chain's
+-- checkpoint names, checked again before the walk goes on after it.
+(SELECT o.id, o.tenant_id, o.actor_user_id, o.actor_type, o.action,
+        o.resource_type, o.resource_id,
+        COALESCE(host(o.ip), '') AS ip,
+        COALESCE(o.user_agent, '') AS user_agent,
+        COALESCE(o.request_id, '') AS request_id,
+        o.metadata,
+        o.created_at,
+        o.prev_hash, o.row_hash
+ FROM audit.events o
+ WHERE o.id = @id AND o.tenant_id = @tenant_id AND o.row_hash IS NOT NULL)
+UNION ALL
+(SELECT p.id, p.tenant_id, p.actor_user_id, p.actor_type, p.action,
+        p.resource_type, p.resource_id,
+        COALESCE(host(p.ip), '') AS ip,
+        COALESCE(p.user_agent, '') AS user_agent,
+        COALESCE(p.request_id, '') AS request_id,
+        p.metadata,
+        p.created_at,
+        p.prev_hash, p.row_hash
+ FROM audit.events p
+ WHERE p.id = @id AND @tenant_id::uuid IS NULL AND p.tenant_id IS NULL AND p.row_hash IS NOT NULL);
+
 -- name: ListAuditChainTenants :many
 -- Every organisation with a hash chain, for the scheduled verification of all
--- of them (the platform chain, NULL tenant_id, is verified separately).
-SELECT DISTINCT tenant_id FROM audit.events
-WHERE tenant_id IS NOT NULL AND row_hash IS NOT NULL
-ORDER BY tenant_id;
+-- of them (the platform chain, NULL tenant_id, is verified separately). It
+-- skips from one organisation to the next along idx_audit_chain_tip, reading a
+-- row per organisation rather than every row.
+WITH RECURSIVE chains AS (
+    (SELECT e.tenant_id FROM audit.events e
+     WHERE e.tenant_id IS NOT NULL AND e.row_hash IS NOT NULL
+     ORDER BY e.tenant_id LIMIT 1)
+    UNION ALL
+    SELECT (SELECT e.tenant_id FROM audit.events e
+            WHERE e.tenant_id > c.tenant_id AND e.row_hash IS NOT NULL
+            ORDER BY e.tenant_id LIMIT 1)
+    FROM chains c
+    WHERE c.tenant_id IS NOT NULL
+)
+SELECT chains.tenant_id::uuid AS tenant_id FROM chains WHERE chains.tenant_id IS NOT NULL;
+
+-- name: ListAuditChainCheckpoints :many
+-- Every chain's checkpoint: the last row a scheduled verification found intact,
+-- and whether the chain has since been found broken.
+SELECT tenant_id, event_id, event_created_at, row_hash, (broken_at IS NOT NULL)::bool AS broken
+FROM platform.audit_chain_checkpoints;
+
+-- name: InsertAuditChainCheckpoint :exec
+-- A chain's first checkpoint. A run that began when it had none leaves one
+-- another run wrote since.
+INSERT INTO platform.audit_chain_checkpoints (tenant_id, event_id, event_created_at, row_hash)
+VALUES (@tenant_id, @event_id, @event_created_at, @row_hash)
+ON CONFLICT (tenant_id) DO NOTHING;
+
+-- name: AdvanceAuditChainCheckpoint :exec
+-- Move a chain's checkpoint on from the one the run began at, unless another
+-- run has moved it or found the chain broken since.
+UPDATE platform.audit_chain_checkpoints
+SET event_id = @event_id, event_created_at = @event_created_at, row_hash = @row_hash, verified_at = NOW()
+WHERE event_id = @from_event_id AND broken_at IS NULL
+  AND (tenant_id = @tenant_id OR (@tenant_id::uuid IS NULL AND tenant_id IS NULL));
+
+-- name: MarkAuditChainCheckpointBroken :exec
+-- Mark a chain broken at the checkpoint the run began at. The checkpoint then
+-- stays, and every run checks its row again and walks the chain from the start.
+UPDATE platform.audit_chain_checkpoints
+SET broken_at = COALESCE(broken_at, NOW())
+WHERE event_id = @event_id
+  AND (tenant_id = @tenant_id OR (@tenant_id::uuid IS NULL AND tenant_id IS NULL));
+
+-- name: CountFullAuditVerificationsSince :one
+-- How many verifications since @since walked every chain from its first row;
+-- one that failed to run doesn't count.
+SELECT count(*) FROM platform.audit_verification_runs
+WHERE scope = 'all' AND outcome <> 'error' AND started_at > @since;
 
 -- name: InsertAuditVerificationRun :exec
--- Store one scheduled verification of every chain, as evidence.
+-- Store one scheduled verification of every chain, as evidence. Its scope is
+-- 'all' when it walked each chain from its first row, 'incremental' when from
+-- the chains' checkpoints.
 INSERT INTO platform.audit_verification_runs (
-    id, started_at, finished_at, tenants_walked, rows_checked, outcome,
+    id, started_at, finished_at, scope, tenants_walked, rows_checked, outcome,
     broken_tenant_id, first_broken_link, broken_reason, error
 ) VALUES (
-    @id, @started_at, @finished_at, @tenants_walked, @rows_checked, @outcome,
+    @id, @started_at, @finished_at, @scope, @tenants_walked, @rows_checked, @outcome,
     sqlc.narg(broken_tenant_id), sqlc.narg(first_broken_link), sqlc.narg(broken_reason), sqlc.narg(error)
 );
 
