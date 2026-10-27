@@ -320,7 +320,10 @@ paths:
         sign-in flows. Each phone is sent a high-priority push that lives as long as the request can
         be answered (two minutes); a phone the push service reports as no longer having the app is
         retired. When the request reaches none of the person's phones it is closed and the call
-        answers 502 mfa.push_delivery_failed, so the person can use another way to verify.
+        answers 502 mfa.push_delivery_failed, so the person can use another way to verify. The
+        answer carries a two-digit number to show on the sign-in screen: the phone must send it back
+        to approve. A person is sent at most five requests in ten minutes, and none for the rest of
+        an hour in which they denied three; past that the call answers 429 mfa.push_limited.
       tags:
         - Auth
       security: []
@@ -346,6 +349,9 @@ paths:
                   expires_at:
                     type: string
                     format: date-time
+                  number:
+                    type: integer
+                    description: Show it on the sign-in screen; the phone sends it back to approve.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -2330,7 +2336,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Sends a step-up request for the calling session to every phone the caller has linked, and answers 202 with its challenge_id and expires_at. Once the request is approved on a phone, complete the step-up with the complete call. A caller with no linked phone gets 404 mfa.push_device_not_found; a principal without a session (an API key, agent) cannot step up.'
+      description: 'Sends a step-up request for the calling session to every phone the caller has linked, and answers 202 with its challenge_id, expires_at and the number to show for the phone to send back when approving. Once the request is approved on a phone, complete the step-up with the complete call. A caller with no linked phone gets 404 mfa.push_device_not_found; a principal without a session (an API key, agent) cannot step up. Requests are bounded as at sign-in (429 mfa.push_limited).'
       responses:
         '202':
           description: Request sent
@@ -2345,10 +2351,14 @@ paths:
                   expires_at:
                     type: string
                     format: date-time
+                  number:
+                    type: integer
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/mfa/push/step-up/{id}/complete:
     post:
       operationId: post_v1_mfa_push_step_up_complete
@@ -2925,7 +2935,7 @@ paths:
   /v1/mfa/push/challenges/{id}/respond:
     post:
       operationId: post_v1_mfa_push_challenges_ById_respond
-      description: 'Records the user''s approval or denial of a push-MFA challenge, called by the enrolled device rather than the browser. It is authenticated by the device_token issued at registration together with the matching user_id, not a session credential, which is why no bearer token is required. Once recorded, the polling sign-in surface observes the outcome through the challenge-status call and proceeds or fails accordingly.'
+      description: 'Records the user''s approval or denial of a push-MFA challenge, called by the enrolled device rather than the browser. It is authenticated by the device_token issued at registration together with the matching user_id, not a session credential, which is why no bearer token is required. Once recorded, the polling sign-in surface observes the outcome through the challenge-status call and proceeds or fails accordingly. An approval must carry the number shown where the request was asked for (the sign-in screen, or the step-up prompt); with another number the request is denied and the call answers 403 mfa.push_number_mismatch.'
       summary: Approve or deny a push-MFA challenge
       tags: [MFA]
       security: []
@@ -2945,10 +2955,20 @@ paths:
                 user_id: { type: string, format: uuid }
                 device_token: { type: string }
                 approved: { type: boolean }
+                number: { type: integer, minimum: 10, maximum: 99, description: The number shown where the request was asked for; required to approve. }
       responses:
-        '204': { description: Challenge response recorded }
+        '200':
+          description: Challenge response recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [approved, denied] }
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
   /v1/check:

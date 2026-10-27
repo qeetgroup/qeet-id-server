@@ -94,14 +94,17 @@ func TestPushApproval(t *testing.T) {
 		t.Errorf("pairing after the claim: %+v, %v; want it to name the device", got, err)
 	}
 
-	challenge := func() uuid.UUID {
+	numbers := map[uuid.UUID]int{}
+	challengeFor := func(userID uuid.UUID) uuid.UUID {
 		t.Helper()
-		id, err := svc.CreatePushChallenge(ctx, a.ID, "sign_in", PushChallengeContext{IP: "192.0.2.1"})
-		if err != nil {
-			t.Fatalf("push request: %v", err)
+		id, number, err := svc.CreatePushChallenge(ctx, userID, "sign_in", PushChallengeContext{IP: "192.0.2.1"})
+		if err != nil || number < 10 || number > 99 {
+			t.Fatalf("push request: number %d, %v; want a two-digit number", number, err)
 		}
+		numbers[id] = number
 		return id
 	}
+	challenge := func() uuid.UUID { return challengeFor(a.ID) }
 	status := func(id uuid.UUID) string {
 		t.Helper()
 		ch, err := svc.GetPushChallenge(ctx, id)
@@ -115,22 +118,26 @@ func TestPushApproval(t *testing.T) {
 	if sent := push.sent(); len(sent) != 1 || sent[0] != approved.String() {
 		t.Fatalf("delivered %v, want the request %s", sent, approved)
 	}
-	if err := svc.RespondToPushChallenge(ctx, approved, a.ID, "not-the-device", true); !errors.Is(err, errs.ErrMFAPushUnauthorized) {
+	if err := svc.RespondToPushChallenge(ctx, approved, a.ID, "not-the-device", true, numbers[approved]); !errors.Is(err, errs.ErrMFAPushUnauthorized) {
 		t.Errorf("an answer from another device: %v, want %v", err, errs.ErrMFAPushUnauthorized)
 	}
-	if err := svc.RespondToPushChallenge(ctx, approved, other.ID, claim.DeviceToken, true); err == nil {
+	if err := svc.RespondToPushChallenge(ctx, approved, other.ID, claim.DeviceToken, true, numbers[approved]); err == nil {
 		t.Error("another account answered the request")
 	}
-	if err := svc.RespondToPushChallenge(ctx, approved, a.ID, claim.DeviceToken, true); err != nil || status(approved) != "approved" {
+	if err := svc.RespondToPushChallenge(ctx, approved, a.ID, claim.DeviceToken, true, numbers[approved]); err != nil || status(approved) != "approved" {
 		t.Fatalf("approve: %v, status %q", err, status(approved))
 	}
-	if err := svc.RespondToPushChallenge(ctx, approved, a.ID, claim.DeviceToken, false); err == nil || status(approved) != "approved" {
+	if err := svc.RespondToPushChallenge(ctx, approved, a.ID, claim.DeviceToken, false, 0); err == nil || status(approved) != "approved" {
 		t.Errorf("a second answer: %v, status %q; want it refused and the first to stand", err, status(approved))
 	}
 
 	denied := challenge()
-	if err := svc.RespondToPushChallenge(ctx, denied, a.ID, claim.DeviceToken, false); err != nil || status(denied) != "denied" {
+	if err := svc.RespondToPushChallenge(ctx, denied, a.ID, claim.DeviceToken, false, 0); err != nil || status(denied) != "denied" {
 		t.Errorf("deny: %v, status %q", err, status(denied))
+	}
+	guessed := challenge()
+	if err := svc.RespondToPushChallenge(ctx, guessed, a.ID, claim.DeviceToken, true, 109-numbers[guessed]); !errors.Is(err, errs.ErrMFAPushNumberMismatch) || status(guessed) != "denied" {
+		t.Errorf("approve with another number: %v, status %q; want %v and denied", err, status(guessed), errs.ErrMFAPushNumberMismatch)
 	}
 	stale := challenge()
 	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE auth.mfa_push_challenges SET expires_at = NOW() - interval '1 minute' WHERE id = $1`, stale); err != nil {
@@ -139,12 +146,29 @@ func TestPushApproval(t *testing.T) {
 	if status(stale) != "expired" {
 		t.Errorf("an unanswered request past its time: %q, want expired", status(stale))
 	}
+	challenge() // the fifth in ten minutes
+	if _, _, err := svc.CreatePushChallenge(ctx, a.ID, "sign_in", PushChallengeContext{}); !errors.Is(err, errs.ErrMFAPushLimited) {
+		t.Errorf("a sixth request in ten minutes: %v, want %v", err, errs.ErrMFAPushLimited)
+	}
+	c, _ := member(t)
+	_, cDevice, err := svc.RegisterPushDevice(ctx, c.ID, "Phone", "ExponentPushToken[ok-c]", "ios")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if err := svc.RespondToPushChallenge(ctx, challengeFor(c.ID), c.ID, cDevice, false, 0); err != nil {
+			t.Fatalf("deny: %v", err)
+		}
+	}
+	if _, _, err := svc.CreatePushChallenge(ctx, c.ID, "sign_in", PushChallengeContext{}); !errors.Is(err, errs.ErrMFAPushLimited) {
+		t.Errorf("a request after three denials this hour: %v, want %v", err, errs.ErrMFAPushLimited)
+	}
 
 	b, _ := member(t)
 	if _, _, err := svc.RegisterPushDevice(ctx, b.ID, "Old phone", "ExponentPushToken[gone]", "android"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.CreatePushChallenge(ctx, b.ID, "sign_in", PushChallengeContext{}); !errors.Is(err, errs.ErrMFAPushDeliveryFailed) {
+	if _, _, err := svc.CreatePushChallenge(ctx, b.ID, "sign_in", PushChallengeContext{}); !errors.Is(err, errs.ErrMFAPushDeliveryFailed) {
 		t.Errorf("a request to a phone the app is gone from: %v, want %v", err, errs.ErrMFAPushDeliveryFailed)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM auth.mfa_push_devices WHERE user_id = $1 AND device_token_expires_at > NOW()`, b.ID); n != 0 {
@@ -164,7 +188,8 @@ func TestPushSignIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	token := challenge(t, authSvc, a)
-	if _, err := authSvc.StartMFAPush(ctx, token, "192.0.2.1", "test"); err != nil {
+	_, number, err := authSvc.StartMFAPush(ctx, token, "192.0.2.1", "test")
+	if err != nil {
 		t.Fatalf("start push: %v", err)
 	}
 	if _, _, err := authSvc.CompleteMFALoginWith(ctx, token, auth.MFAProof{Push: true}, "", ""); !errors.Is(err, errs.ErrMFAPushPending) {
@@ -174,7 +199,7 @@ func TestPushSignIn(t *testing.T) {
 	if len(sent) != 1 {
 		t.Fatalf("delivered %d requests, want 1", len(sent))
 	}
-	if err := svc.RespondToPushChallenge(ctx, uuid.MustParse(sent[0]), a.ID, device, true); err != nil {
+	if err := svc.RespondToPushChallenge(ctx, uuid.MustParse(sent[0]), a.ID, device, true, number); err != nil {
 		t.Fatalf("approve on the phone: %v", err)
 	}
 	pair, _, err := authSvc.CompleteMFALoginWith(ctx, token, auth.MFAProof{Push: true}, "", "")
@@ -205,6 +230,7 @@ func TestPushStepUp(t *testing.T) {
 	rec := dbtest.Do(t, h, http.MethodPost, "/mfa/push/step-up", nil)
 	var started struct {
 		ChallengeID uuid.UUID `json:"challenge_id"`
+		Number      int       `json:"number"`
 	}
 	dbtest.Decode(t, rec, &started)
 	if rec.Code != http.StatusAccepted || started.ChallengeID == uuid.Nil {
@@ -214,7 +240,7 @@ func TestPushStepUp(t *testing.T) {
 	if rec := dbtest.Do(t, h, http.MethodPost, complete, nil); rec.Code != http.StatusConflict {
 		t.Errorf("complete before the phone answers: %d, want 409", rec.Code)
 	}
-	if err := svc.RespondToPushChallenge(ctx, started.ChallengeID, a.ID, device, true); err != nil {
+	if err := svc.RespondToPushChallenge(ctx, started.ChallengeID, a.ID, device, true, started.Number); err != nil {
 		t.Fatal(err)
 	}
 	if rec := dbtest.Do(t, h, http.MethodPost, complete, nil); rec.Code/100 != 2 {

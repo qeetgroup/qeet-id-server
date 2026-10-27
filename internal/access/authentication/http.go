@@ -755,20 +755,21 @@ func (h *Handler) mfaPasskeyBegin(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"session_id": sessionID, "publicKey": options})
 }
 
-// mfaPush sends the push approval request that can meet the challenge; the
-// client then completes with push: true, which answers mfa.push_pending until
-// the request is approved.
+// mfaPush sends the push approval request that can meet the challenge, and
+// returns the number to show for the phone to match; the client then
+// completes with push: true, which answers mfa.push_pending until the request
+// is approved.
 func (h *Handler) mfaPush(w http.ResponseWriter, r *http.Request) {
 	in, ok := h.decodeMFAToken(w, r)
 	if !ok {
 		return
 	}
-	expires, err := h.Service.StartMFAPush(r.Context(), in.MFAToken, httpx.ClientIP(r), r.UserAgent())
+	expires, number, err := h.Service.StartMFAPush(r.Context(), in.MFAToken, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"expires_at": expires})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"expires_at": expires, "number": number})
 }
 
 // mfaEnroll starts the authenticator app that meets an enrolment challenge

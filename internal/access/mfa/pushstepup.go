@@ -21,7 +21,8 @@ const pushActionStepUp = "step_up"
 
 // startStepUpPush (POST /v1/mfa/push/step-up) sends a step-up request for the
 // calling session to every phone the person has linked. 202 with the
-// request's id and expiry; complete it once approved.
+// request's id, expiry and the number to show for the phone to match;
+// complete it once approved.
 func (h *Handler) startStepUpPush(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil || p.SessionID == nil {
@@ -38,7 +39,7 @@ func (h *Handler) startStepUpPush(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrMFAPushDeviceNotFound)
 		return
 	}
-	id, err := h.Service.CreatePushChallenge(ctx, *p.UserID, pushActionStepUp, PushChallengeContext{
+	id, number, err := h.Service.CreatePushChallenge(ctx, *p.UserID, pushActionStepUp, PushChallengeContext{
 		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), Timestamp: time.Now().UTC().Format(time.RFC3339),
 		SessionID: p.SessionID.String(),
 	})
@@ -51,7 +52,7 @@ func (h *Handler) startStepUpPush(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"challenge_id": id, "expires_at": ch.ExpiresAt})
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"challenge_id": id, "expires_at": ch.ExpiresAt, "number": number})
 }
 
 // completeStepUpPush (POST /v1/mfa/push/step-up/{id}/complete) records the

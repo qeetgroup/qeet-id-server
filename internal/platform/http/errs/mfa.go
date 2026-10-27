@@ -27,6 +27,8 @@ const (
 	CodeMFAPushPending          = "mfa.push_pending"
 	CodeMFAPairingCodeInvalid   = "mfa.pairing_code_invalid"
 	CodeMFAPushDeliveryFailed   = "mfa.push_delivery_failed"
+	CodeMFAPushLimited          = "mfa.push_limited"
+	CodeMFAPushNumberMismatch   = "mfa.push_number_mismatch"
 )
 
 // MFA errors. ErrMFACodeSendLimited carries retry_after (seconds) in its
@@ -57,4 +59,6 @@ var (
 	ErrMFAPushPending          = New(CodeMFAPushPending, "Approve the sign-in on your phone to continue.").AsRetryable()
 	ErrMFAPairingCodeInvalid   = New(CodeMFAPairingCodeInvalid, "That pairing code is wrong, already used or expired. Ask for a new one on your account's security page.")
 	ErrMFAPushDeliveryFailed   = New(CodeMFAPushDeliveryFailed, "We couldn't reach your phone. Try again, or use another way to verify.").AsRetryable()
+	ErrMFAPushLimited          = New(CodeMFAPushLimited, "Too many approval requests were sent to your phone. Wait a while, or use another way to verify.")
+	ErrMFAPushNumberMismatch   = New(CodeMFAPushNumberMismatch, "That number doesn't match the one on the sign-in screen, so the request was denied.")
 )

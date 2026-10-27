@@ -256,16 +256,17 @@ func (q *Queries) GetPushChallenge(ctx context.Context, id uuid.UUID) (GetPushCh
 }
 
 const getPushChallengeForUpdate = `-- name: GetPushChallengeForUpdate :one
-SELECT id, user_id, status, expires_at
+SELECT id, user_id, status, expires_at, match_number
 FROM auth.mfa_push_challenges WHERE id = $1
 FOR UPDATE
 `
 
 type GetPushChallengeForUpdateRow struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	Status    string
-	ExpiresAt time.Time
+	ID          uuid.UUID
+	UserID      uuid.UUID
+	Status      string
+	ExpiresAt   time.Time
+	MatchNumber *int16
 }
 
 func (q *Queries) GetPushChallengeForUpdate(ctx context.Context, id uuid.UUID) (GetPushChallengeForUpdateRow, error) {
@@ -276,6 +277,7 @@ func (q *Queries) GetPushChallengeForUpdate(ctx context.Context, id uuid.UUID) (
 		&i.UserID,
 		&i.Status,
 		&i.ExpiresAt,
+		&i.MatchNumber,
 	)
 	return i, err
 }
@@ -317,15 +319,16 @@ func (q *Queries) InsertMFARecoveryCode(ctx context.Context, arg InsertMFARecove
 }
 
 const insertPushChallenge = `-- name: InsertPushChallenge :one
-INSERT INTO auth.mfa_push_challenges (user_id, action, context)
-VALUES ($1, $2, $3)
+INSERT INTO auth.mfa_push_challenges (user_id, action, context, match_number)
+VALUES ($1, $2, $3, $4)
 RETURNING id, user_id, action, context, status, expires_at, created_at
 `
 
 type InsertPushChallengeParams struct {
-	UserID  uuid.UUID
-	Action  string
-	Context []byte
+	UserID      uuid.UUID
+	Action      string
+	Context     []byte
+	MatchNumber *int16
 }
 
 type InsertPushChallengeRow struct {
@@ -339,7 +342,12 @@ type InsertPushChallengeRow struct {
 }
 
 func (q *Queries) InsertPushChallenge(ctx context.Context, arg InsertPushChallengeParams) (InsertPushChallengeRow, error) {
-	row := q.db.QueryRow(ctx, insertPushChallenge, arg.UserID, arg.Action, arg.Context)
+	row := q.db.QueryRow(ctx, insertPushChallenge,
+		arg.UserID,
+		arg.Action,
+		arg.Context,
+		arg.MatchNumber,
+	)
 	var i InsertPushChallengeRow
 	err := row.Scan(
 		&i.ID,
@@ -616,6 +624,27 @@ func (q *Queries) PushChallengeForStepUp(ctx context.Context, arg PushChallengeF
 		&i.Action,
 		&i.SessionID,
 	)
+	return i, err
+}
+
+const recentPushChallenges = `-- name: RecentPushChallenges :one
+SELECT count(*) FILTER (WHERE created_at > NOW() - INTERVAL '10 minutes')::int AS sent,
+       count(*) FILTER (WHERE status = 'denied')::int AS denied
+FROM auth.mfa_push_challenges
+WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour'
+`
+
+type RecentPushChallengesRow struct {
+	Sent   int32
+	Denied int32
+}
+
+// RecentPushChallenges counts the user's push requests of the last ten
+// minutes, and those denied in the last hour.
+func (q *Queries) RecentPushChallenges(ctx context.Context, userID uuid.UUID) (RecentPushChallengesRow, error) {
+	row := q.db.QueryRow(ctx, recentPushChallenges, userID)
+	var i RecentPushChallengesRow
+	err := row.Scan(&i.Sent, &i.Denied)
 	return i, err
 }
 

@@ -89,6 +89,14 @@ func NewService(pool *pgxpool.Pool, users *user.Repository, t *tokens.Issuer) *S
 // webhooks).
 func (s *Service) SetSessionSignals(sig *sessionsignal.Signaller) { s.signals = sig }
 
+// LoginPush is a push approval request sent for a sign-in: its id, when it
+// expires, and the number shown on the sign-in screen for the phone to match.
+type LoginPush struct {
+	ID        uuid.UUID
+	ExpiresAt time.Time
+	Number    int
+}
+
 // MFAEnroller is the slice of the MFA service the auth package needs to enforce
 // a second factor at login.
 type MFAEnroller interface {
@@ -110,9 +118,9 @@ type MFAEnroller interface {
 	BeginLoginPasskey(ctx context.Context, userID uuid.UUID) (uuid.UUID, any, error)
 	FinishLoginPasskeyTx(ctx context.Context, tx pgx.Tx, userID, sessionID uuid.UUID, credential json.RawMessage) error
 	// StartLoginPush sends a push approval request to the user's devices and
-	// returns its id and expiry; LoginPushStatusTx reads its state
-	// ("pending", "approved", "denied" or "expired") under lock.
-	StartLoginPush(ctx context.Context, userID uuid.UUID, ip, ua string) (uuid.UUID, time.Time, error)
+	// returns it; LoginPushStatusTx reads its state ("pending", "approved",
+	// "denied" or "expired") under lock.
+	StartLoginPush(ctx context.Context, userID uuid.UUID, ip, ua string) (LoginPush, error)
 	LoginPushStatusTx(ctx context.Context, tx pgx.Tx, userID, challengeID uuid.UUID) (string, error)
 	// RecordVerification records that one of the user's sessions met a second
 	// factor, stepping that session (and no other) up.

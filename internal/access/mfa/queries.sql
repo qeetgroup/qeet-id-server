@@ -159,16 +159,24 @@ SELECT (EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = @user_id AND
 DELETE FROM auth.mfa_push_devices WHERE id = $1 AND user_id = $2;
 
 -- name: InsertPushChallenge :one
-INSERT INTO auth.mfa_push_challenges (user_id, action, context)
-VALUES ($1, $2, $3)
+INSERT INTO auth.mfa_push_challenges (user_id, action, context, match_number)
+VALUES (@user_id, @action, @context, @match_number)
 RETURNING id, user_id, action, context, status, expires_at, created_at;
+
+-- RecentPushChallenges counts the user's push requests of the last ten
+-- minutes, and those denied in the last hour.
+-- name: RecentPushChallenges :one
+SELECT count(*) FILTER (WHERE created_at > NOW() - INTERVAL '10 minutes')::int AS sent,
+       count(*) FILTER (WHERE status = 'denied')::int AS denied
+FROM auth.mfa_push_challenges
+WHERE user_id = @user_id AND created_at > NOW() - INTERVAL '1 hour';
 
 -- name: GetPushChallenge :one
 SELECT id, user_id, action, context, status, expires_at, created_at
 FROM auth.mfa_push_challenges WHERE id = $1;
 
 -- name: GetPushChallengeForUpdate :one
-SELECT id, user_id, status, expires_at
+SELECT id, user_id, status, expires_at, match_number
 FROM auth.mfa_push_challenges WHERE id = $1
 FOR UPDATE;
 

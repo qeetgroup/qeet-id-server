@@ -116,19 +116,19 @@ func (s *Service) FinishLoginPasskeyTx(ctx context.Context, tx pgx.Tx, userID, s
 }
 
 // StartLoginPush sends a sign-in approval request to every push device of the
-// user and returns the request's id and expiry.
-func (s *Service) StartLoginPush(ctx context.Context, userID uuid.UUID, ip, ua string) (uuid.UUID, time.Time, error) {
-	id, err := s.CreatePushChallenge(ctx, userID, "sign_in", PushChallengeContext{
+// user and returns the request: its id, expiry and the number to match.
+func (s *Service) StartLoginPush(ctx context.Context, userID uuid.UUID, ip, ua string) (auth.LoginPush, error) {
+	id, number, err := s.CreatePushChallenge(ctx, userID, "sign_in", PushChallengeContext{
 		IP: ip, UserAgent: ua, Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
 	if err != nil {
-		return uuid.Nil, time.Time{}, err
+		return auth.LoginPush{}, err
 	}
 	ch, err := s.GetPushChallenge(ctx, id)
 	if err != nil {
-		return uuid.Nil, time.Time{}, err
+		return auth.LoginPush{}, err
 	}
-	return id, ch.ExpiresAt, nil
+	return auth.LoginPush{ID: id, ExpiresAt: ch.ExpiresAt, Number: number}, nil
 }
 
 // LoginPushStatusTx reads the state of one of userID's push requests under

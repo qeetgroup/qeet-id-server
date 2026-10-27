@@ -294,7 +294,7 @@ One PostgreSQL database, **seven schemas**: `auth`, `tenant`, `user`, `rbac`, `a
 
 ### Migrations
 
-**Evidence:** `internal/platform/database/migrations/` — 168 up/down pairs, `0001`–`0169` (`0082` intentionally absent)
+**Evidence:** `internal/platform/database/migrations/` — 169 up/down pairs, `0001`–`0170` (`0082` intentionally absent)
 (`0082` is absent and must not be reused). Embedded with `//go:embed *.sql` in `runner.go` and
 applied on startup.
 

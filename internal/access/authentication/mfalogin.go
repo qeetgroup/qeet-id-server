@@ -243,26 +243,27 @@ func (s *Service) BeginMFAPasskey(ctx context.Context, mfaToken string) (uuid.UU
 }
 
 // StartMFAPush sends a push approval request for the challenge to the
-// person's devices and returns when it expires; only its approval meets the
-// challenge. It is sent after the challenge's transaction, as the MFA service
-// uses its own connection, and is then bound to the challenge.
-func (s *Service) StartMFAPush(ctx context.Context, mfaToken, ip, ua string) (time.Time, error) {
+// person's devices and returns when it expires and the number to show for the
+// phone to match; only its approval meets the challenge. It is sent after the
+// challenge's transaction, as the MFA service uses its own connection, and is
+// then bound to the challenge.
+func (s *Service) StartMFAPush(ctx context.Context, mfaToken, ip, ua string) (time.Time, int, error) {
 	id, userID, err := s.factorChallenge(ctx, mfaToken)
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, 0, err
 	}
-	pushID, expires, err := s.mfa.StartLoginPush(ctx, userID, ip, ua)
+	push, err := s.mfa.StartLoginPush(ctx, userID, ip, ua)
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, 0, err
 	}
-	tag, err := s.pool.Exec(ctx, `UPDATE auth.mfa_login_challenges SET push_challenge_id = $2 WHERE id = $1`, id, pushID)
+	tag, err := s.pool.Exec(ctx, `UPDATE auth.mfa_login_challenges SET push_challenge_id = $2 WHERE id = $1`, id, push.ID)
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, 0, err
 	}
 	if tag.RowsAffected() == 0 {
-		return time.Time{}, errs.ErrAuthMFAChallengeExpired
+		return time.Time{}, 0, errs.ErrAuthMFAChallengeExpired
 	}
-	return expires, nil
+	return push.ExpiresAt, push.Number, nil
 }
 
 // verifyMFAProof checks proof against the challenge inside tx and returns the
