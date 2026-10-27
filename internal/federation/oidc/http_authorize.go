@@ -138,7 +138,6 @@ func (h *Handler) authorizeError(w http.ResponseWriter, r *http.Request, clientI
 	case errors.Is(err, errs.ErrOIDCCodeChallengeRequired),
 		errors.Is(err, errs.ErrOIDCCodeChallengeInvalid),
 		errors.Is(err, errs.ErrOIDCCodeChallengeMethodUnsupported),
-		errors.Is(err, errs.ErrOIDCNonceRequired),
 		errors.Is(err, errs.ErrOIDCNonceInvalid):
 		oauthCode = "invalid_request"
 	case errors.Is(err, errs.ErrOIDCRedirectURIInvalid):

@@ -32,7 +32,7 @@ type Client struct {
 	Scopes         []string  `json:"scopes"`
 	CreatedAt      time.Time `json:"created_at"`
 	// PKCEExemptUntil is when this confidential application's exemption from
-	// sending a PKCE code_challenge (and a nonce) ends; nil: no exemption.
+	// sending a PKCE code_challenge ends; nil: no exemption.
 	PKCEExemptUntil *time.Time `json:"pkce_exempt_until"`
 	// BackchannelLogoutURI receives a signed logout token, server to server,
 	// when someone it signed in signs out; FrontchannelLogoutURI is loaded by

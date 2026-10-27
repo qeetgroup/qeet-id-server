@@ -74,7 +74,7 @@ func (s *Service) AuthorizeInLoginSession(ctx context.Context, in AuthorizeInput
 			return "", uuid.Nil, errs.ErrOIDCScopeNotPermitted
 		}
 	}
-	if err := validateSignInRequest(info.Type, info.PkceExempt, scopes, nonce, challenge, challengeMethod); err != nil {
+	if err := validateSignInRequest(info.Type, info.PkceExempt, nonce, challenge, challengeMethod); err != nil {
 		return "", uuid.Nil, err
 	}
 	if err := checkResource(ctx, s.q, info.TenantID, resource); err != nil {

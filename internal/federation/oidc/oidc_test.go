@@ -282,6 +282,34 @@ func TestValidateRegisteredRedirectURI(t *testing.T) {
 	}
 }
 
+// TestValidateSignInRequest checks that an authorization request needs an S256
+// challenge unless a confidential application is exempt, and that a nonce is
+// optional either way but bounded when sent.
+func TestValidateSignInRequest(t *testing.T) {
+	challenge := strings.Repeat("c", 43)
+	for _, tc := range []struct {
+		name                     string
+		clientType               string
+		exempt                   bool
+		nonce, challenge, method string
+		want                     error
+	}{
+		{"a public application with PKCE and a nonce", "public", false, "n-1", challenge, "S256", nil},
+		{"a public application with PKCE and no nonce", "public", false, "", challenge, "S256", nil},
+		{"a confidential application with PKCE and no nonce", "confidential", false, "", challenge, "S256", nil},
+		{"an exempt confidential application with neither", "confidential", true, "", "", "", nil},
+		{"no challenge", "confidential", false, "n-1", "", "", errs.ErrOIDCCodeChallengeRequired},
+		{"no challenge from an exempt public application", "public", true, "n-1", "", "", errs.ErrOIDCCodeChallengeRequired},
+		{"a plain challenge", "public", false, "", challenge, "plain", errs.ErrOIDCCodeChallengeMethodUnsupported},
+		{"a method without a challenge", "confidential", true, "", "", "S256", errs.ErrOIDCCodeChallengeInvalid},
+		{"a nonce too long", "public", false, strings.Repeat("n", maxNonceLength+1), challenge, "S256", errs.ErrOIDCNonceInvalid},
+	} {
+		if err := validateSignInRequest(tc.clientType, tc.exempt, tc.nonce, tc.challenge, tc.method); !errors.Is(err, tc.want) {
+			t.Errorf("%s: %v, want %v", tc.name, err, tc.want)
+		}
+	}
+}
+
 // TestPublicClientsCantHoldConfidentialFlows checks that a public client, which
 // authenticates with a client_id alone, can't hold flows that need client auth.
 func TestPublicClientsCantHoldConfidentialFlows(t *testing.T) {

@@ -494,7 +494,6 @@ func TestAuthorizeAnswersOnlyRegisteredRedirects(t *testing.T) {
 		{"a fragment response mode", []string{"response_mode", "fragment"}, cookie, "invalid_request"},
 		{"no PKCE challenge", []string{"code_challenge", ""}, cookie, "invalid_request"},
 		{"a plain PKCE challenge", []string{"code_challenge_method", "plain"}, cookie, "invalid_request"},
-		{"openid without a nonce", []string{"nonce", ""}, cookie, "invalid_request"},
 		{"an unregistered resource", []string{"resource", "https://api.example.test"}, cookie, "invalid_target"},
 		{"a person of another organisation", nil, outsiderCookie, "access_denied"},
 	} {
@@ -506,6 +505,38 @@ func TestAuthorizeAnswersOnlyRegisteredRedirects(t *testing.T) {
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM auth.oidc_consent_requests WHERE client_id = $1`, client.ClientID); n != 0 {
 		t.Errorf("refused requests stored %d consent requests, want none", n)
+	}
+}
+
+// TestCodeFlowWithPKCENeedsNoNonce checks that an OpenID request with a PKCE
+// challenge and no nonce, as Auth.js sends it, gets a code that redeems for an
+// ID token without a nonce claim.
+func TestCodeFlowWithPKCENeedsNoNonce(t *testing.T) {
+	ctx := dbtest.Context(t)
+	p := newProvider(t)
+	tenant := dbtest.Tenant(t)
+	person := dbtest.User(t, tenant, tenant)
+	client, secret := registerClient(t, p.svc, tenant)
+	cookie, _ := p.signIn(t, person.ID)
+	if err := p.svc.GrantConsent(ctx, person.ID, client.ClientID, []string{"openid"}); err != nil {
+		t.Fatalf("consent: %v", err)
+	}
+
+	target, verifier := authorizeURL(t, client.ClientID, "nonce", "")
+	to, q := redirected(t, browse(t, p.public, http.MethodGet, target, cookie, nil))
+	if to != testRedirect || q.Get("code") == "" || q.Get("error") != "" {
+		t.Fatalf("authorize without a nonce: sent to %s %v, want a code", to, q)
+	}
+	issued, err := p.svc.ExchangeCode(ctx, client.ClientID, secret, q.Get("code"), testRedirect, verifier, "")
+	if err != nil {
+		t.Fatalf("redeem the code: %v", err)
+	}
+	id, err := p.svc.issuer.VerifySigned(issued.IDToken)
+	if err != nil {
+		t.Fatalf("verify the ID token: %v", err)
+	}
+	if _, ok := id["nonce"]; ok || id["sub"] != person.ID.String() {
+		t.Errorf("ID token %v, want the person's without a nonce", id)
 	}
 }
 
