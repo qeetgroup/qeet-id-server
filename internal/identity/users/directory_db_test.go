@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -411,5 +412,51 @@ func TestBulkImportStaysInTheCallersOrganisation(t *testing.T) {
 		if rec := dbtest.Do(t, as, tc.method, tc.path, tc.body); !strings.Contains(rec.Body.String(), tc.want) {
 			t.Errorf("bulk import with %s: %d %s, want %s", tc.name, rec.Code, rec.Body.String(), tc.want)
 		}
+	}
+}
+
+// TestLastSignInOutlastsTheSessions checks that the user list and the
+// suspended list still show when and from where someone last signed in to the
+// organisation once their sessions are gone, from the sign-in log, and never a
+// sign-in to another organisation.
+func TestLastSignInOutlastsTheSessions(t *testing.T) {
+	ctx := dbtest.Context(t)
+	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	member := dbtest.User(t, tenant, tenant, other)
+	signIn := func(org uuid.UUID, ago time.Duration, ip string) {
+		t.Helper()
+		if _, err := dbtest.Pool(t).Exec(ctx, `
+			INSERT INTO audit.events (tenant_id, actor_user_id, actor_type, action, resource_type, ip, created_at)
+			VALUES ($1, $2, 'user', 'auth.login_succeeded', 'session', $3::inet, NOW() - $4::interval)`,
+			org, member.ID, ip, ago.String()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	signIn(tenant, 20*24*time.Hour, "203.0.113.9")
+	signIn(other, 2*24*time.Hour, "198.51.100.40")
+
+	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)
+	var page struct {
+		Items []User `json:"items"`
+	}
+	dbtest.Decode(t, dbtest.Do(t, as, http.MethodGet, "/users", nil), &page)
+	i := slices.IndexFunc(page.Items, func(u User) bool { return u.ID == member.ID })
+	if i < 0 {
+		t.Fatal("the member isn't listed")
+	}
+	got := page.Items[i]
+	if got.LastSeenAt == nil || time.Since(*got.LastSeenAt) < 19*24*time.Hour || time.Since(*got.LastSeenAt) > 21*24*time.Hour ||
+		got.LastSeenIP == nil || *got.LastSeenIP != "203.0.113.9" {
+		t.Errorf("last seen %v from %v, want the sign-in here 20 days ago from 203.0.113.9", got.LastSeenAt, got.LastSeenIP)
+	}
+
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1 AND tenant_id = $2`, member.ID, tenant); err != nil {
+		t.Fatal(err)
+	}
+	suspended, err := testHandler(t, nil).Repo.ListSuspended(ctx, tenant, SuspensionFilters{Limit: 10})
+	if err != nil || len(suspended.Items) != 1 || suspended.Items[0].LastSignIn == nil ||
+		time.Since(*suspended.Items[0].LastSignIn) < 19*24*time.Hour {
+		t.Errorf("suspended list %+v, %v; want the member, last signed in here 20 days ago", suspended.Items, err)
 	}
 }

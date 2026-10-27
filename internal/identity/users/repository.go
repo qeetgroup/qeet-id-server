@@ -164,6 +164,26 @@ func userFromEmailRow(
 const userCols = `id, tenant_id, email, email_verified_at, phone, phone_verified_at,
                   display_name, status, metadata, created_at, updated_at`
 
+// lastSeenCols are when and from where the person last used the organisation:
+// their newest live session there, else their last sign-in to it in the audit
+// log, which outlasts the sessions the cleanup deletes.
+const lastSeenCols = `GREATEST(
+			    (SELECT s.last_seen_at FROM auth.sessions s
+			     WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
+			       AND (s.tenant_id = $1 OR (s.tenant_id IS NULL AND "user".users.tenant_id = $1))
+			     ORDER BY s.last_seen_at DESC LIMIT 1),
+			    (SELECT e.created_at FROM audit.events e
+			     WHERE e.actor_user_id = "user".users.id AND e.tenant_id = $1 AND e.action = 'auth.login_succeeded'
+			     ORDER BY e.created_at DESC LIMIT 1)) AS last_seen_at,
+			  COALESCE(
+			    (SELECT host(s.ip) FROM auth.sessions s
+			     WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
+			       AND (s.tenant_id = $1 OR (s.tenant_id IS NULL AND "user".users.tenant_id = $1))
+			     ORDER BY s.last_seen_at DESC LIMIT 1),
+			    (SELECT host(e.ip) FROM audit.events e
+			     WHERE e.actor_user_id = "user".users.id AND e.tenant_id = $1 AND e.action = 'auth.login_succeeded'
+			     ORDER BY e.created_at DESC LIMIT 1))::text AS last_seen_ip`
+
 // scanUser scans a userCols row (no avatar_url) into a User.
 func scanUser(row pgx.Row) (*User, error) {
 	var u User
@@ -371,14 +391,7 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 			   OR EXISTS(SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = "user".users.id))::boolean AS mfa_enabled,
 			  (SELECT count(*) FROM tenant.group_members gm
 			   WHERE gm.user_id = "user".users.id AND gm.tenant_id = $1)::int AS groups_count,
-			  (SELECT s.last_seen_at FROM auth.sessions s
-			   WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
-			     AND (s.tenant_id = $1 OR (s.tenant_id IS NULL AND "user".users.tenant_id = $1))
-			   ORDER BY s.last_seen_at DESC LIMIT 1) AS last_seen_at,
-			  (SELECT host(s.ip) FROM auth.sessions s
-			   WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
-			     AND (s.tenant_id = $1 OR (s.tenant_id IS NULL AND "user".users.tenant_id = $1))
-			   ORDER BY s.last_seen_at DESC LIMIT 1)::text AS last_seen_ip
+			  `+lastSeenCols+`
 			FROM "user".users
 			WHERE deleted_at IS NULL
 			  AND id IN (
@@ -403,14 +416,7 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 			   OR EXISTS(SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = "user".users.id))::boolean AS mfa_enabled,
 			  (SELECT count(*) FROM tenant.group_members gm
 			   WHERE gm.user_id = "user".users.id AND gm.tenant_id = $1)::int AS groups_count,
-			  (SELECT s.last_seen_at FROM auth.sessions s
-			   WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
-			     AND (s.tenant_id = $1 OR (s.tenant_id IS NULL AND "user".users.tenant_id = $1))
-			   ORDER BY s.last_seen_at DESC LIMIT 1) AS last_seen_at,
-			  (SELECT host(s.ip) FROM auth.sessions s
-			   WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
-			     AND (s.tenant_id = $1 OR (s.tenant_id IS NULL AND "user".users.tenant_id = $1))
-			   ORDER BY s.last_seen_at DESC LIMIT 1)::text AS last_seen_ip
+			  `+lastSeenCols+`
 			FROM "user".users
 			WHERE deleted_at IS NULL
 			  AND id IN (
@@ -440,14 +446,7 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 			   OR EXISTS(SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = "user".users.id))::boolean AS mfa_enabled,
 			  (SELECT count(*) FROM tenant.group_members gm
 			   WHERE gm.user_id = "user".users.id AND gm.tenant_id = $1)::int AS groups_count,
-			  (SELECT s.last_seen_at FROM auth.sessions s
-			   WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
-			     AND (s.tenant_id = $1 OR (s.tenant_id IS NULL AND "user".users.tenant_id = $1))
-			   ORDER BY s.last_seen_at DESC LIMIT 1) AS last_seen_at,
-			  (SELECT host(s.ip) FROM auth.sessions s
-			   WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
-			     AND (s.tenant_id = $1 OR (s.tenant_id IS NULL AND "user".users.tenant_id = $1))
-			   ORDER BY s.last_seen_at DESC LIMIT 1)::text AS last_seen_ip
+			  `+lastSeenCols+`
 			FROM "user".users
 			WHERE deleted_at IS NULL
 			  AND id IN (

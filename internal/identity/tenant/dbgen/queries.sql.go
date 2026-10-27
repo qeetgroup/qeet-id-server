@@ -186,9 +186,15 @@ SELECT t.id, t.slug, t.name, t.plan, t.region, t.logo_url,
   COALESCE((SELECT domain.domain FROM tenant.domains domain
     WHERE domain.tenant_id = t.id AND domain.verified_at IS NOT NULL
     ORDER BY domain.created_at, domain.id LIMIT 1), '')::text AS domain,
-  COALESCE((SELECT MAX(session.last_seen_at) FROM auth.sessions session
-    WHERE session.user_id = $1 AND session.tenant_id = t.id
-      AND session.id <> $2), '0001-01-01 00:00:00+00'::timestamptz)::timestamptz AS last_used_at
+  COALESCE(GREATEST(
+    (SELECT MAX(session.last_seen_at) FROM auth.sessions session
+      WHERE session.user_id = $1 AND session.tenant_id = t.id
+        AND session.id <> $2),
+    (SELECT MAX(sign_in.created_at) FROM audit.events sign_in
+      WHERE sign_in.actor_user_id = $1 AND sign_in.tenant_id = t.id
+        AND sign_in.action = 'auth.login_succeeded'
+        AND sign_in.resource_id IS DISTINCT FROM $2)),
+    '0001-01-01 00:00:00+00'::timestamptz)::timestamptz AS last_used_at
 FROM tenant.tenants t
 WHERE t.status = 'active' AND t.deleted_at IS NULL
   AND EXISTS (SELECT 1 FROM "user".users account
@@ -220,7 +226,9 @@ type ListEligibleOrganizationsRow struct {
 }
 
 // ListEligibleOrganizations lists the active organisations an active account
-// belongs to, by id: its own, and each one it holds a role in.
+// belongs to, by id: its own, and each one it holds a role in. last_used_at is
+// its newest other session there, else its last sign-in there in the audit
+// log, which outlasts the sessions the cleanup deletes.
 func (q *Queries) ListEligibleOrganizations(ctx context.Context, arg ListEligibleOrganizationsParams) ([]ListEligibleOrganizationsRow, error) {
 	rows, err := q.db.Query(ctx, listEligibleOrganizations,
 		arg.UserID,

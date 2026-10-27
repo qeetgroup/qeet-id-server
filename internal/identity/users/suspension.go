@@ -121,7 +121,8 @@ const suspendedDataset = `WITH suspended AS (
  CASE WHEN u.tenant_id=$1 THEN COALESCE(u.suspension_risk,'unknown') ELSE 'unknown' END AS risk,
  CASE WHEN u.tenant_id=$1 THEN COALESCE(u.suspension_review,'pending') ELSE 'external' END AS review,
  CASE WHEN u.tenant_id=$1 THEN u.suspended_at ELSE NULL END AS suspended_at,
- (SELECT max(s.created_at) FROM auth.sessions s WHERE s.tenant_id=$1 AND s.user_id=u.id) AS last_sign_in,
+ GREATEST((SELECT max(s.created_at) FROM auth.sessions s WHERE s.tenant_id=$1 AND s.user_id=u.id),
+  (SELECT max(e.created_at) FROM audit.events e WHERE e.tenant_id=$1 AND e.actor_user_id=u.id AND e.action='auth.login_succeeded')) AS last_sign_in,
  COALESCE(u.tenant_id=$1,false) AS can_manage
  FROM "user".users u WHERE u.status='suspended' AND u.deleted_at IS NULL
  AND (u.tenant_id=$1 OR EXISTS(SELECT 1 FROM rbac.user_roles roles WHERE roles.tenant_id=$1 AND roles.user_id=u.id))
