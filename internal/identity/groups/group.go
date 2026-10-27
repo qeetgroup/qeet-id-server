@@ -395,6 +395,10 @@ func (s *Service) ListMembers(ctx context.Context, groupID, tenantID uuid.UUID) 
 // Handler serves the group HTTP API.
 type Handler struct {
 	Service *Service
+	// GrantCheck refuses adding someone to a group whose roles carry authority
+	// the caller doesn't hold (rbac.Repository.CheckGrantGroup). Without it
+	// adding a member is refused.
+	GrantCheck func(ctx context.Context, caller *httpx.Principal, tenantID, groupID uuid.UUID) error
 }
 
 // Mount registers the group routes on r.
@@ -506,6 +510,14 @@ func (h *Handler) addMember(w http.ResponseWriter, r *http.Request) {
 	}
 	tenantID, err := httpx.RequireTenant(r)
 	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if h.GrantCheck == nil {
+		httpx.WriteError(w, r, errs.ErrNotImplemented)
+		return
+	}
+	if err := h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, id); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

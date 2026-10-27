@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -44,7 +45,7 @@ func TestGroupsStayInTheirTenant(t *testing.T) {
 		t.Fatalf("create group in B: %v", err)
 	}
 
-	asB := dbtest.Serve(dbtest.Principal(adminB.ID, tenantB), (&Handler{Service: svc}).Mount)
+	asB := dbtest.Serve(dbtest.Principal(adminB.ID, tenantB), (&Handler{Service: svc, GrantCheck: rbac.NewRepository(dbtest.Pool(t)).CheckGrantGroup}).Mount)
 	path := "/groups/" + groupA.ID.String()
 	for _, tc := range []struct {
 		method, path string
@@ -128,7 +129,7 @@ func TestGroupNamesAreUniquePerOrganization(t *testing.T) {
 		t.Errorf("rename Platform to a blank name: %v, want %v", err, errs.ErrValidationFailed)
 	}
 
-	asA := dbtest.Serve(dbtest.Principal(adminA.ID, tenantA), (&Handler{Service: svc}).Mount)
+	asA := dbtest.Serve(dbtest.Principal(adminA.ID, tenantA), (&Handler{Service: svc, GrantCheck: rbac.NewRepository(dbtest.Pool(t)).CheckGrantGroup}).Mount)
 	rec := dbtest.Do(t, asA, http.MethodPost, "/groups", map[string]string{"name": "Engineering"})
 	var body struct {
 		Error struct {

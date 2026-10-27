@@ -14,7 +14,8 @@ import (
 
 // Nobody hands out authority they don't hold. Granting a permission to a role
 // needs the caller to hold it; giving a role (directly, by group or by
-// invitation) needs every permission it carries; issuing a machine credential
+// invitation, or by adding them to a group that holds it) needs every
+// permission it carries; issuing a machine credential
 // needs every scope it carries; only an owner gives the owner role. A person
 // holds their permissions, an owner everything; a credential (API key, service
 // principal, agent) holds only its scopes, and no more than the person it acts
@@ -54,6 +55,27 @@ func (r *Repository) CheckGrantRole(ctx context.Context, caller *httpx.Principal
 		return nil
 	}
 	if err != nil {
+		return err
+	}
+	return r.checkGrant(ctx, caller, tenantID, keys, ownerRole)
+}
+
+// CheckGrantGroup refuses the caller adding someone to groupID of tenantID when
+// the group's roles carry authority the caller doesn't hold: ErrRBACOwnerOnly
+// for a group holding the owner role, ErrRBACGrantExceedsCaller naming a
+// permission otherwise. A group that isn't tenantID's passes, so the write
+// itself must refuse it.
+func (r *Repository) CheckGrantGroup(ctx context.Context, caller *httpx.Principal, tenantID, groupID uuid.UUID) error {
+	var ownerRole bool
+	var keys []string
+	if err := r.pool.QueryRow(ctx, `
+		SELECT COALESCE(bool_or(ro.is_system AND ro.name = 'owner'), false),
+		       COALESCE(array_agg(DISTINCT p.key) FILTER (WHERE p.key IS NOT NULL), '{}')
+		FROM rbac.group_roles gr
+		JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.tenant_id = gr.tenant_id
+		LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
+		LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
+		WHERE gr.group_id = $1 AND gr.tenant_id = $2`, groupID, tenantID).Scan(&ownerRole, &keys); err != nil {
 		return err
 	}
 	return r.checkGrant(ctx, caller, tenantID, keys, ownerRole)
