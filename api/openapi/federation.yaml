@@ -2255,7 +2255,7 @@ paths:
   /saml/acs/{id}:
     post:
       operationId: post_saml_acs_ById
-      description: 'The SAML Assertion Consumer Service for a specific connection, with Qeet acting as the Service Provider. It validates the external IdP''s signed SAMLResponse and assertion (an EncryptedAssertion is decrypted with the connection''s SP key first and must still be signed; signature by any of the certificates the connection trusts; conditions, allowing three minutes of clock difference with the IdP either way; and replay protection), provisions or resolves the user just-in-time, and redirects to the SPA callback with a one-time login code carried in the URL fragment. An answer to a sign-in request completes only in the browser that began it (holding the cookie the login call set): from another it spends the request and answers 403 saml.other_browser, so a sign-in begun by someone else can''t be completed in a victim''s browser. An IdP-initiated answer, which answers no request, is accepted only where the connection allows those. The SPA then trades that code for tokens at POST /saml/exchange. Mounted at the root, not under /v1, and unauthenticated. An existing account is signed in only while this organisation is its home, and one adopted by email must have a verified address or have been provisioned by the organisation''s directory (SCIM), and is then marked verified: another organisation''s account or a guest whose home is elsewhere is refused with 403 saml.user_tenant_mismatch, an unverified one with 403 saml.account_unverified. A subject is linked to the connection that asserted it, so another connection asserting it doesn''t sign it in. An address not yet linked is adopted or given an account only on a domain the organisation has verified (the most specific verified domain decides, 403 saml.email_domain_unverified otherwise), and an account that owns the organisation or holds an admin permission there (user.write, role.write, group.write, connection.write, policy.write or tenant.write) is not adopted by its address (403 saml.account_administers): it keeps its own credentials. A new account is created only while the domain that manages the address has jit_enabled on; otherwise an address with no account is refused with 403 saml.jit_not_allowed and nothing is created. Existing members are adopted either way. Every sign-in then brings the account in step with the assertion, each change audited: its display name; its address, when the asserted one is on a domain the organisation has verified, is no other account''s, and the account doesn''t administer the organisation (recovery links sent to the old address then stop working); and its groups, as GET /v1/tenants/{tenantID}/saml/{id}/group-mappings describes.'
+      description: 'The SAML Assertion Consumer Service for a specific connection, with Qeet acting as the Service Provider. It validates the external IdP''s signed SAMLResponse and assertion (an EncryptedAssertion is decrypted with the connection''s SP key first and must still be signed; signature by any of the certificates the connection trusts; conditions, allowing three minutes of clock difference with the IdP either way; and replay protection), provisions or resolves the user just-in-time, and redirects to the SPA callback with a one-time login code carried in the URL fragment. An answer to a sign-in request completes only in the browser that began it (holding the cookie the login call set): from another it spends the request and answers 403 saml.other_browser, so a sign-in begun by someone else can''t be completed in a victim''s browser. An IdP-initiated answer, which answers no request, is accepted only where the connection allows those. The SPA then trades that code for tokens at POST /saml/exchange. Mounted at the root, not under /v1, and unauthenticated. An existing account is signed in only while this organisation is its home, and one adopted by email must have a verified address or have been provisioned by the organisation''s directory (SCIM), and is then marked verified: another organisation''s account or a guest whose home is elsewhere is refused with 403 saml.user_tenant_mismatch, an unverified one with 403 saml.account_unverified. A subject is linked to the connection that asserted it, so another connection asserting it doesn''t sign it in. An address not yet linked is adopted or given an account only on a domain the organisation has verified (the most specific verified domain decides, 403 saml.email_domain_unverified otherwise), and an account that owns the organisation or holds an admin permission there (user.write, role.write, group.write, connection.write, policy.write or tenant.write) is not adopted by its address (403 saml.account_administers): it keeps its own credentials. A new account is created only while the domain that manages the address has jit_enabled on; otherwise an address with no account is refused with 403 saml.jit_not_allowed and nothing is created. Existing members are adopted either way. Every sign-in then brings the account in step with the assertion, each change audited: its display name; its address, when the asserted one is on a domain the organisation has verified, is no other account''s, and the account doesn''t administer the organisation (recovery links sent to the old address then stop working); and its groups, as GET /v1/tenants/{tenantID}/saml/{id}/group-mappings describes. The organisation''s plan must include enterprise SSO when the assertion arrives, so a connection set up on a plan that has since lapsed signs no one in (402 billing.upgrade_required).'
       summary: "[acs] Assertion Consumer Service"
       tags:
         - SAML
@@ -2284,6 +2284,7 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '402': {description: 'The organisation''s plan does not include enterprise SSO (billing.upgrade_required).'}
   /saml/exchange:
     post:
       operationId: post_saml_exchange
@@ -2341,7 +2342,7 @@ paths:
   /saml/idp/{tenantID}/sso:
     get:
       operationId: get_saml_idp_ByTenantID_sso
-      description: 'The tenant''s SAML SingleSignOnService over the HTTP-Redirect binding, with Qeet acting as the Identity Provider. It handles SP-initiated SSO from the AuthnRequest of a Service Provider registered in that tenant and IdP-initiated SSO by SP reference; only SPs of the tenant in the path are matched. The user is authenticated by the hosted-login SSO cookie, and the browser is bounced to the hosted login when no session exists. On success it returns an auto-submitting HTML form that POSTs a signed SAMLResponse to the SP''s registered ACS URL. Only people whose home is the tenant are signed in (403 saml.user_tenant_mismatch otherwise), and an SP with assignment_required only those assigned to it, themselves or through a group of the tenant they belong to: anyone else is refused with 403 saml.sp_not_assigned, and the refusal is audited as saml.idp_assertion_refused. The assertion''s NameID follows the SP''s name_id_format and name_id_attribute (an emailAddress NameID is the email; a persistent one an opaque value made for this person at this SP the first time they sign in to it, which never changes, or their user id when name_id_attribute is user_id); a NameID from a metadata key the person has no single value for is refused with 403 saml.name_id_unavailable, also audited. The assertion carries the attributes the SP maps, each the person has a value for. A browser asking for HTML gets every error as a page showing its message and code; anything else gets the JSON error. An unknown or inactive tenant, or an unknown SP, returns 404. The POST-binding variant is POST /saml/idp/{tenantID}/sso.'
+      description: 'The tenant''s SAML SingleSignOnService over the HTTP-Redirect binding, with Qeet acting as the Identity Provider. It handles SP-initiated SSO from the AuthnRequest of a Service Provider registered in that tenant and IdP-initiated SSO by SP reference; only SPs of the tenant in the path are matched. The user is authenticated by the hosted-login SSO cookie, and the browser is bounced to the hosted login when no session exists. On success it returns an auto-submitting HTML form that POSTs a signed SAMLResponse to the SP''s registered ACS URL. Only people whose home is the tenant are signed in (403 saml.user_tenant_mismatch otherwise), and an SP with assignment_required only those assigned to it, themselves or through a group of the tenant they belong to: anyone else is refused with 403 saml.sp_not_assigned, and the refusal is audited as saml.idp_assertion_refused. The assertion''s NameID follows the SP''s name_id_format and name_id_attribute (an emailAddress NameID is the email; a persistent one an opaque value made for this person at this SP the first time they sign in to it, which never changes, or their user id when name_id_attribute is user_id); a NameID from a metadata key the person has no single value for is refused with 403 saml.name_id_unavailable, also audited. The assertion carries the attributes the SP maps, each the person has a value for. A browser asking for HTML gets every error as a page showing its message and code; anything else gets the JSON error. An unknown or inactive tenant, or an unknown SP, returns 404. The organisation''s plan must include enterprise SSO at every sign-in, not only when the SP was registered (402 billing.upgrade_required). The POST-binding variant is POST /saml/idp/{tenantID}/sso.'
       summary: "[idp] IdP SSO (redirect binding)"
       tags:
         - SAML
@@ -2374,11 +2375,12 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '402': {description: 'The organisation''s plan does not include enterprise SSO (billing.upgrade_required).'}
         '404':
           $ref: '#/components/responses/NotFound'
     post:
       operationId: post_saml_idp_ByTenantID_sso
-      description: 'The tenant''s SAML SingleSignOnService over the HTTP-POST binding, with Qeet acting as the Identity Provider; equivalent to GET /saml/idp/{tenantID}/sso for Service Providers that send the AuthnRequest via POST. Only SPs of the tenant in the path are matched. The user is authenticated by the hosted-login SSO cookie, with a redirect to the hosted login when no session exists; that sign-in returns to GET /saml/idp/{tenantID}/sso carrying the request and RelayState, so the flow resumes. A posted request over 256 KiB is refused with saml.authn_request_invalid. Any supplied AssertionConsumerServiceURL must match the SP''s registered ACS. On success it returns an auto-submitting form that POSTs a signed SAMLResponse to that ACS. Who is signed in, and what the assertion says, is as for GET /saml/idp/{tenantID}/sso: an SP with assignment_required refuses anyone not assigned to it with an audited 403 saml.sp_not_assigned. An unknown or inactive tenant, or an unknown SP, returns 404.'
+      description: 'The tenant''s SAML SingleSignOnService over the HTTP-POST binding, with Qeet acting as the Identity Provider; equivalent to GET /saml/idp/{tenantID}/sso for Service Providers that send the AuthnRequest via POST. Only SPs of the tenant in the path are matched. The user is authenticated by the hosted-login SSO cookie, with a redirect to the hosted login when no session exists; that sign-in returns to GET /saml/idp/{tenantID}/sso carrying the request and RelayState, so the flow resumes. A posted request over 256 KiB is refused with saml.authn_request_invalid. Any supplied AssertionConsumerServiceURL must match the SP''s registered ACS. On success it returns an auto-submitting form that POSTs a signed SAMLResponse to that ACS. Who is signed in, and what the assertion says, is as for GET /saml/idp/{tenantID}/sso: an SP with assignment_required refuses anyone not assigned to it with an audited 403 saml.sp_not_assigned. An unknown or inactive tenant, or an unknown SP, returns 404. The organisation''s plan must include enterprise SSO at every sign-in (402 billing.upgrade_required).'
       summary: "[idp] IdP SSO (POST binding)"
       tags:
         - SAML
@@ -2414,12 +2416,13 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '402': {description: 'The organisation''s plan does not include enterprise SSO (billing.upgrade_required).'}
         '404':
           $ref: '#/components/responses/NotFound'
   /saml/login/{id}:
     get:
       operationId: get_saml_login_ById
-      description: 'Initiates SP-initiated SAML login for a specific connection, with Qeet acting as the Service Provider: it builds and stores an AuthnRequest, sets an HttpOnly cookie binding it to this browser, and redirects the browser to the external IdP''s SSO URL. The IdP returns its assertion to POST /saml/acs/{id}. Only an active connection signs anyone in: a disabled one answers 403 saml.connection_disabled, and a draft one, still being set up, 403 saml.connection_draft, here and at the ACS. Mounted at the root, not under /v1, and unauthenticated.'
+      description: 'Initiates SP-initiated SAML login for a specific connection, with Qeet acting as the Service Provider: it builds and stores an AuthnRequest, sets an HttpOnly cookie binding it to this browser, and redirects the browser to the external IdP''s SSO URL. The IdP returns its assertion to POST /saml/acs/{id}. Only an active connection signs anyone in: a disabled one answers 403 saml.connection_disabled, and a draft one, still being set up, 403 saml.connection_draft, here and at the ACS. Mounted at the root, not under /v1, and unauthenticated. The organisation''s plan must include enterprise SSO (402 billing.upgrade_required).'
       summary: Login redirect (public)
       tags:
         - SAML
@@ -2433,6 +2436,7 @@ paths:
       responses:
         '302':
           description: Redirect to the external IdP with an AuthnRequest
+        '402': {description: 'The organisation''s plan does not include enterprise SSO (billing.upgrade_required).'}
         '404':
           $ref: '#/components/responses/NotFound'
   /saml/metadata/{id}:
@@ -2492,7 +2496,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_saml
-      description: 'Creates an inbound SAML connection in the tenant with the external IdP''s entity id, SSO URL and signing certificate so Qeet can act as the Service Provider for that IdP. Validate the configuration with the connection test endpoint, then drive sign-in via GET /saml/login/{id}. Scoped to the tenant in the path. A status, when given, must be draft, active or disabled (422 saml.status_invalid).'
+      description: 'Creates an inbound SAML connection in the tenant with the external IdP''s entity id, SSO URL and signing certificate so Qeet can act as the Service Provider for that IdP. Validate the configuration with the connection test endpoint, then drive sign-in via GET /saml/login/{id}. Scoped to the tenant in the path. A status, when given, must be draft, active or disabled (422 saml.status_invalid). The organisation''s plan must include enterprise SSO (402 billing.upgrade_required, metadata.feature sso), and every sign-in through the connection checks it again.'
       summary: Create connection
       tags:
         - SAML
@@ -2522,6 +2526,7 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '402': {description: 'The organisation''s plan does not include enterprise SSO (billing.upgrade_required).'}
         '403':
           $ref: '#/components/responses/Forbidden'
         '422':
@@ -5604,7 +5609,7 @@ paths:
     post:
       operationId: post_v1_admin_portal_saml
       summary: Create connection (portal)
-      description: Requires the link's capabilities to include "saml". As on the tenant-admin endpoint, an IdP SSO URL that is not an absolute https URL answers 422 saml.sso_url_invalid, and a certificate that does not parse 422 saml.certificate_invalid.
+      description: Requires the link's capabilities to include "saml". As on the tenant-admin endpoint, an IdP SSO URL that is not an absolute https URL answers 422 saml.sso_url_invalid, a certificate that does not parse 422 saml.certificate_invalid, and an organisation whose plan does not include enterprise SSO 402 billing.upgrade_required.
       tags:
         - Admin Portal
       security:
@@ -5624,6 +5629,7 @@ paths:
                 $ref: '#/components/schemas/SAMLConnection'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '402': {description: 'The organisation''s plan does not include enterprise SSO (billing.upgrade_required).'}
         '403':
           $ref: '#/components/responses/Forbidden'
         '422':

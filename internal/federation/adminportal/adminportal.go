@@ -411,6 +411,7 @@ func (s *Service) Context(ctx context.Context, l *Link) (*PortalContext, error) 
 // samlService is the slice of saml.Service the portal needs to let an IT
 // admin manage their tenant's SP-side connection(s).
 type samlService interface {
+	RequireSSO(ctx context.Context, tenantID uuid.UUID) error
 	List(ctx context.Context, tenantID uuid.UUID) ([]saml.Connection, error)
 	Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in saml.CreateInput) (*saml.Connection, error)
 	Get(ctx context.Context, id, tenantID uuid.UUID) (*saml.Connection, error)
@@ -810,6 +811,10 @@ func (h *Handler) samlCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	if err := h.SAML.RequireSSO(ctx, l.TenantID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	tx, err := h.SAML.Pool().Begin(ctx)
 	if err != nil {
 		httpx.WriteError(w, r, err)

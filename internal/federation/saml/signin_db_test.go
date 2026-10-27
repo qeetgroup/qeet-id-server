@@ -687,6 +687,46 @@ func TestSAMLLinkSignsInOnlyHomeAccounts(t *testing.T) {
 	}
 }
 
+// TestSAMLSignInNeedsSSOInThePlan checks that a connection can be set up only
+// on a plan with SSO, and that one set up while the plan had it signs no one
+// in once the plan has lapsed: neither the redirect to the IdP nor its answer.
+func TestSAMLSignInNeedsSSOInThePlan(t *testing.T) {
+	sp := newSPSide(t)
+	idp := newUpstreamIdP(t)
+	paid, free := dbtest.Tenant(t), dbtest.Tenant(t)
+	allowed := map[uuid.UUID]bool{paid: true}
+	sp.handler.Service.SetPlanGate(poolGate{pool: dbtest.Pool(t), allowed: allowed})
+
+	rec := dbtest.Do(t, sp.asAdmin(t, free), http.MethodPost, "/tenants/"+free.String()+"/saml", map[string]any{
+		"name": "Okta", "idp_entity_id": idp.entityID, "idp_sso_url": upstreamSSO, "idp_certificate": idp.certPEM, "status": "active",
+	})
+	if rec.Code != http.StatusPaymentRequired || !strings.Contains(rec.Body.String(), errs.CodeUpgradeRequired) {
+		t.Errorf("connection on a plan without SSO: %d %s, want 402 %s", rec.Code, rec.Body.String(), errs.CodeUpgradeRequired)
+	}
+
+	conn := sp.connect(t, paid, idp)
+	member := dbtest.User(t, paid, paid)
+	verify(t, member.ID)
+	requestID := sp.begin(t, conn.ID)
+	response := idp.respond(t, conn.ID, answer{inResponseTo: requestID, nameID: "okta|lapsed", email: member.Email})
+
+	delete(allowed, paid) // the plan lapses
+	if rec := sp.post(t, conn.ID, response); rec.Code != http.StatusPaymentRequired || !strings.Contains(rec.Body.String(), errs.CodeUpgradeRequired) {
+		t.Errorf("assertion after the plan lapsed: %d %s, want 402 %s", rec.Code, rec.Body.String(), errs.CodeUpgradeRequired)
+	}
+	if rec := dbtest.Do(t, sp.public, http.MethodGet, "/saml/login/"+conn.ID.String(), nil); rec.Code != http.StatusPaymentRequired {
+		t.Errorf("sign-in start after the plan lapsed: %d %s, want 402", rec.Code, rec.Body.String())
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1`, member.ID); n != 0 {
+		t.Errorf("the refused assertion linked the member")
+	}
+
+	allowed[paid] = true // paid again
+	if rec := sp.post(t, conn.ID, response); rec.Code != http.StatusFound {
+		t.Errorf("assertion once paid again: %d %s, want the console's callback", rec.Code, rec.Body.String())
+	}
+}
+
 // TestSAMLRefusesAGuest checks that an organisation's IdP can't vouch for a
 // guest member whose home is another organisation, so its session can't be
 // switched into the guest's home.

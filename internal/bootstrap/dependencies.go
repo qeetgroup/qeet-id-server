@@ -391,7 +391,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	apikeyService.SetPlanLimiter(entitlementSvc) // api_keys
 	rbacService.SetPlanLimiter(entitlementSvc)   // custom_roles
 	webhookService.SetPlanGate(entitlementSvc)   // webhooks (feature)
-	samlIdP.SetPlanGate(entitlementSvc)          // SSO (SAML)
+	samlIdP.SetPlanGate(entitlementSvc)          // SSO (SAML), as identity provider
+	samlService.SetPlanGate(entitlementSvc)      // SSO (SAML), through a tenant's identity provider
 	oidcSSOService.SetPlanGate(entitlementSvc)   // SSO (OpenID Connect connections)
 	scimService.SetPlanGate(entitlementSvc)      // SCIM
 	ldapService.SetPlanGate(entitlementSvc)      // LDAP

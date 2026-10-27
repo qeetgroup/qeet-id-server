@@ -299,10 +299,16 @@ func validACSURL(raw string) bool {
 // include enterprise SSO (SAML), a paid feature. It reads on the pool, so the
 // handler runs it before it opens the transaction CreateSP joins.
 func (i *IdP) requireSSO(ctx context.Context, tenantID uuid.UUID) error {
-	if i.gate == nil {
+	return requireSSO(ctx, i.gate, tenantID)
+}
+
+// requireSSO refuses with ErrUpgradeRequired when gate, if set, finds that
+// the tenant's plan doesn't include enterprise SSO.
+func requireSSO(ctx context.Context, gate PlanGate, tenantID uuid.UUID) error {
+	if gate == nil {
 		return nil
 	}
-	ok, err := i.gate.FeatureAllowed(ctx, tenantID, "sso")
+	ok, err := gate.FeatureAllowed(ctx, tenantID, "sso")
 	if err != nil {
 		return err
 	}
@@ -998,6 +1004,12 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 	}
 	if sp.Status == "disabled" {
 		writeSSOError(w, r, errs.ErrSAMLServiceProviderDisabled)
+		return
+	}
+	// The plan is checked at every sign-in, not only when the service provider
+	// was registered, so one set up on a plan that has since lapsed stops.
+	if err := h.IdP.requireSSO(r.Context(), sp.TenantID); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	// A supplied ACS URL must match the registered one (prevents redirecting a

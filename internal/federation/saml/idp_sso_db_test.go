@@ -91,6 +91,28 @@ func setSPStatus(t *testing.T, ctx context.Context, idp *IdP, sp *ServiceProvide
 	}
 }
 
+// TestIdPSignInNeedsSSOInThePlan checks that a service provider registered
+// while the plan had SSO gets no assertion once the plan has lapsed.
+func TestIdPSignInNeedsSSOInThePlan(t *testing.T) {
+	ctx := dbtest.Context(t)
+	s := newIdPSide(t)
+	tenant := dbtest.Tenant(t)
+	member := dbtest.User(t, tenant, tenant)
+	sp := registerSP(t, ctx, s.idp, tenant, "https://sp.example.test/metadata", "https://sp.example.test/acs")
+	allowed := map[uuid.UUID]bool{tenant: true}
+	s.idp.SetPlanGate(poolGate{pool: dbtest.Pool(t), allowed: allowed})
+	sso := "/saml/idp/" + tenant.String() + "/sso?" + authnRequestTo(sp.EntityID, "_req-1", sp.ACSURL)
+	cookie := s.signIn(member.ID)
+
+	if acs, _ := postedTo(t, idpGet(t, s.router, sso, cookie)); acs != sp.ACSURL {
+		t.Fatalf("SSO on a plan with SSO posted to %q, want %q", acs, sp.ACSURL)
+	}
+	delete(allowed, tenant) // the plan lapses
+	if rec := idpGet(t, s.router, sso, cookie); rec.Code != http.StatusPaymentRequired || !strings.Contains(rec.Body.String(), errs.CodeUpgradeRequired) {
+		t.Errorf("SSO after the plan lapsed: %d %s, want 402 %s", rec.Code, rec.Body.String(), errs.CodeUpgradeRequired)
+	}
+}
+
 // TestIdPIssuesAssertionsAsRegistered checks that the organisation's IdP
 // issues a recorded assertion, which a standard SP verifies with the metadata's
 // certificate, only to an enabled, registered SP at its ACS URL for a signed-in

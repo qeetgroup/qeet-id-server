@@ -460,3 +460,49 @@ func TestPortalFinishesAnSSOSetup(t *testing.T) {
 		}
 	}
 }
+
+// noSSO is a plan without enterprise SSO.
+type noSSO struct{}
+
+func (noSSO) FeatureAllowed(context.Context, uuid.UUID, string) (bool, error) { return false, nil }
+
+// TestPortalSAMLNeedsSSOInThePlan checks that the portal sets up no SAML
+// connection for an organisation whose plan doesn't include SSO.
+func TestPortalSAMLNeedsSSOInThePlan(t *testing.T) {
+	pool := dbtest.Pool(t)
+	tenant := dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	samlService := saml.NewService(pool, auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t)), "https://id.example.test")
+	samlService.SetPlanGate(noSSO{})
+	h := &Handler{Service: NewService(pool, branded{}, "https://login.example.test"), SAML: samlService}
+	public := chi.NewRouter()
+	public.Route("/v1", h.MountPublic)
+
+	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount), http.MethodPost,
+		"/tenants/"+tenant.String()+"/admin-portal/links", map[string]any{"capabilities": []string{"saml"}})
+	var out struct {
+		Token string `json:"token"`
+	}
+	dbtest.Decode(t, rec, &out)
+	redeemed := portal(t, public, http.MethodPost, "/admin-portal/session", out.Token, "", nil)
+	var session string
+	for _, c := range redeemed.Result().Cookies() {
+		if c.Name == portalSessionCookie {
+			session = c.Value
+		}
+	}
+	if session == "" {
+		t.Fatalf("redeem: %d %s", redeemed.Code, redeemed.Body.String())
+	}
+
+	rec = portal(t, public, http.MethodPost, "/admin-portal/saml", "", session, map[string]string{
+		"name": "Okta", "idp_entity_id": "https://idp.example.test", "idp_sso_url": "https://idp.example.test/sso",
+		"idp_certificate": idpCertificate(t),
+	})
+	if rec.Code != http.StatusPaymentRequired || !strings.Contains(rec.Body.String(), errs.CodeUpgradeRequired) {
+		t.Errorf("SAML connection on a plan without SSO: %d %s, want 402 %s", rec.Code, rec.Body.String(), errs.CodeUpgradeRequired)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.saml_connections WHERE tenant_id = $1`, tenant); n != 0 {
+		t.Errorf("%d connections created, want none", n)
+	}
+}

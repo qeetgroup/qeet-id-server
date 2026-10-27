@@ -87,6 +87,7 @@ type Service struct {
 	q                *dbgen.Queries
 	auth             *auth.Service
 	appBaseURL       string
+	gate             PlanGate
 	nextRequestSweep atomic.Int64
 	nextReplaySweep  atomic.Int64
 	egress           *egress.Policy
@@ -121,6 +122,17 @@ func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string) *S
 
 // Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
+
+// SetPlanGate wires the plan-feature gate (nil allows all features).
+func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
+
+// RequireSSO refuses with errs.ErrUpgradeRequired when the tenant's plan
+// doesn't include enterprise SSO: setting up a connection and every sign-in
+// through one need it. It reads on the pool, so callers run it before they
+// open the transaction Create joins.
+func (s *Service) RequireSSO(ctx context.Context, tenantID uuid.UUID) error {
+	return requireSSO(ctx, s.gate, tenantID)
+}
 
 // toConnection maps a sqlc-generated row to the API-facing Connection type.
 // The other connection queries return rows with the same fields, which
@@ -1112,6 +1124,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	if err := h.Service.RequireSSO(ctx, tenantID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	tx, err := h.Service.Pool().Begin(ctx)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -1307,6 +1323,10 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	if err := h.Service.RequireSSO(r.Context(), conn.TenantID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	if !validIdPSSOURL(conn.IdpSSOURL) {
 		slog.Error("saml login: IdP SSO URL is not an absolute https URL", "connection", conn.ID)
 		httpx.WriteError(w, r, errs.ErrSAMLConnectionMisconfigured)
@@ -1366,6 +1386,12 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := signInStatus(conn.Status); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	// The plan is checked when the assertion arrives too, so a connection set
+	// up on a plan that has since lapsed signs no one in.
+	if err := h.Service.RequireSSO(r.Context(), conn.TenantID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
