@@ -1,8 +1,11 @@
-.PHONY: install dev dev-secrets build test test-db lint sqlc sqlc-check migrate-up migrate-down db-up db-down db-reset seed seed-reset kill
+.PHONY: install dev dev-secrets build test test-db lint sqlc sqlc-check vuln sast ci migrate-up migrate-down db-up db-down db-reset seed seed-reset kill
 
 # Tool versions; keep in step with .github/workflows/ci.yml.
-GOLANGCI_VERSION = v2.14.0
-SQLC_VERSION     = v1.31.1
+GOLANGCI_VERSION    = v2.14.0
+SQLC_VERSION        = v1.31.1
+GOVULNCHECK_VERSION = v1.9.0
+GOSEC_VERSION       = v2.29.0
+GOSEC_XTOOLS        = v0.52.0
 
 ifneq (,$(wildcard .env))
     include .env
@@ -66,6 +69,29 @@ sqlc:
 	@for cfg in $$(find internal -name sqlc.yaml); do \
 		(cd "$$(dirname "$$cfg")" && go run github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION) generate) || exit 1; \
 	done
+
+# Known vulnerabilities in what ships (cmd/ and internal/), as CI gates on.
+vuln:
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./cmd/... ./internal/...
+
+# gosec, built against a current x/tools as CI does (the released binary can't
+# read this Go version's export data), cached in GOPATH/bin.
+sast:
+	@bin="$$(go env GOPATH)/bin/gosec-$(GOSEC_VERSION)"; \
+	[ -x "$$bin" ] || { dir="$$(mktemp -d)" && (cd "$$dir" && go mod init gosec-build >/dev/null 2>&1 && \
+		go get github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) golang.org/x/tools@$(GOSEC_XTOOLS) && \
+		go build -o "$$bin" github.com/securego/gosec/v2/cmd/gosec) || exit 1; }; \
+	"$$bin" -quiet -conf .gosec.json -exclude-dir='.*dbgen' -exclude-generated ./...
+
+# Every check CI runs, locally: build, vet, unit tests with the race detector,
+# the database tests (needs Docker), lint, generated SQL, and the vulnerability
+# and security scans.
+ci:
+	go build ./...
+	go vet ./...
+	go test -race -count=1 ./...
+	$(MAKE) test-db lint sqlc-check vuln sast
+	@echo "ci: every check passed"
 
 # Fail if any dbgen/ differs from what sqlc generates.
 sqlc-check:
