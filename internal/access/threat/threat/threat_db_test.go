@@ -3,13 +3,20 @@
 package threat
 
 import (
+	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
+
+func TestMain(m *testing.M) { dbtest.Main(m) }
 
 // TestLockoutsCountAsOpenIncidents checks that the anomaly summary counts what
 // the sign-in lockouts record (status rate-limited) as open until resolved,
@@ -42,7 +49,7 @@ func TestLockoutsCountAsOpenIncidents(t *testing.T) {
 	}
 	for _, e := range events {
 		if e.UserID != nil {
-			if err := svc.Resolve(ctx, e.ID, tenant); err != nil {
+			if err := svc.Resolve(ctx, e.ID, tenant, audit.Actor{Type: "user"}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -82,5 +89,56 @@ func TestSprayCountsTheAccountsItTargeted(t *testing.T) {
 	if n := dbtest.Count(t, `SELECT count(*) FROM auth.security_events WHERE tenant_id = $1 AND type = 'password_spraying'
 		AND metadata->'targeted_user_ids' @> to_jsonb($2::text)`, tenant, elsewhere.ID.String()); n != 0 {
 		t.Error("an organisation's spray event names another organisation's account")
+	}
+}
+
+// TestResolvingAnAnomalyIsAudited checks that an administrator resolving an
+// anomaly is recorded in their organisation with what the anomaly was, and
+// that another organisation can neither resolve it nor leave a record of it.
+func TestResolvingAnAnomalyIsAudited(t *testing.T) {
+	ctx := dbtest.Context(t)
+	svc := NewService(dbtest.Pool(t))
+	h := &Handler{Service: svc}
+	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	admin, victim := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
+	otherAdmin := dbtest.User(t, other, other)
+	if err := svc.Record(ctx, Event{TenantID: tenant, UserID: &victim.ID, Type: "credential_stuffing", Severity: "high", Detail: "burst"}); err != nil {
+		t.Fatal(err)
+	}
+	events, err := svc.List(ctx, tenant, 10)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("list: %d events, %v", len(events), err)
+	}
+	id := events[0].ID
+	resolve := func(by uuid.UUID, in uuid.UUID) int {
+		path := "/tenants/" + in.String() + "/security/anomalies/" + id.String() + "/resolve"
+		return dbtest.Do(t, dbtest.Serve(dbtest.Principal(by, in), h.Mount), http.MethodPost, path, nil).Code
+	}
+
+	if code := resolve(otherAdmin.ID, other); code != http.StatusNotFound {
+		t.Errorf("another organisation resolves the anomaly: %d, want 404", code)
+	}
+	if code := resolve(admin.ID, tenant); code != http.StatusOK {
+		t.Fatalf("resolve: %d", code)
+	}
+	var raw []byte
+	if err := dbtest.Pool(t).QueryRow(ctx, `
+		SELECT metadata FROM audit.events
+		WHERE tenant_id = $1 AND action = 'anomaly.resolved' AND resource_type = 'security_event' AND resource_id = $2 AND actor_user_id = $3`,
+		tenant, id, admin.ID).Scan(&raw); err != nil {
+		t.Fatalf("the resolution's audit record: %v", err)
+	}
+	var got struct {
+		Type, Severity string
+		UserID         uuid.UUID `json:"user_id"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil || got.Type != "credential_stuffing" || got.Severity != "high" || got.UserID != victim.ID {
+		t.Errorf("recorded %s, want the anomaly's type, severity and account", raw)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'anomaly.resolved' AND resource_id = $1`, id); n != 1 {
+		t.Errorf("%d resolutions recorded, want 1", n)
+	}
+	if code := resolve(admin.ID, tenant); code != http.StatusNotFound {
+		t.Errorf("resolve again: %d, want 404", code)
 	}
 }

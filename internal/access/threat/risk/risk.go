@@ -18,6 +18,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/bot"
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/risk/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -246,7 +247,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	st, err := h.Service.UpdateSettings(r.Context(), tenantID, in)
+	st, err := h.Service.UpdateSettings(r.Context(), tenantID, in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -254,8 +255,9 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, withCountrySignal(st))
 }
 
-// UpdateSettings stores the tenant's risk settings.
-func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Settings) (Settings, error) {
+// UpdateSettings stores the tenant's risk settings, recorded as actor's with
+// each setting it changed.
+func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Settings, actor audit.Actor) (Settings, error) {
 	if in.MediumThreshold < 0.1 {
 		in.MediumThreshold = 0.1
 	}
@@ -268,7 +270,25 @@ func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Set
 	if in.MinTravelHours <= 0 {
 		in.MinTravelHours = defaultSettings().MinTravelHours
 	}
-	if err := s.q.UpsertRiskSettings(ctx, dbgen.UpsertRiskSettingsParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Settings{}, err
+	}
+	defer tx.Rollback(ctx)
+	q := s.q.WithTx(tx)
+	before := defaultSettings()
+	row, err := q.LockRiskSettings(ctx, tenantID)
+	switch {
+	case err == nil:
+		before = Settings{
+			MediumThreshold: row.MediumThreshold, HighThreshold: row.HighThreshold,
+			ForceMFAAtLevel: row.ForceMfaAtLevel, ImpossibleTravelEnabled: row.ImpossibleTravelEnabled,
+			MinTravelHours: row.MinTravelHours, DeviceReputationEnabled: row.DeviceReputationEnabled,
+		}
+	case !errors.Is(err, pgx.ErrNoRows):
+		return Settings{}, err
+	}
+	if err := q.UpsertRiskSettings(ctx, dbgen.UpsertRiskSettingsParams{
 		TenantID:                tenantID,
 		MediumThreshold:         in.MediumThreshold,
 		HighThreshold:           in.HighThreshold,
@@ -279,5 +299,21 @@ func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Set
 	}); err != nil {
 		return Settings{}, err
 	}
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "risk.settings_updated", "tenant", tenantID,
+		map[string]any{"changes": audit.Changes(before.audited(), in.audited()), "settings": in.audited()})); err != nil {
+		return Settings{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Settings{}, err
+	}
 	return in, nil
+}
+
+// audited is the settings by name, as recorded.
+func (st Settings) audited() map[string]any {
+	return map[string]any{
+		"medium_threshold": st.MediumThreshold, "high_threshold": st.HighThreshold,
+		"force_mfa_at_level": st.ForceMFAAtLevel, "impossible_travel_enabled": st.ImpossibleTravelEnabled,
+		"min_travel_hours": st.MinTravelHours, "device_reputation_enabled": st.DeviceReputationEnabled,
+	}
 }

@@ -3,6 +3,7 @@ package audit
 import (
 	"encoding/hex"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -202,5 +203,24 @@ func TestCanonicalize_PrevHashAffectsOutput(t *testing.T) {
 	b, _ := canonicalize(e, fixedID, fixedCreatedAt, meta, strings.Repeat("f", 64))
 	if string(a) == string(b) {
 		t.Error("prev_hash must be embedded in canonical output")
+	}
+}
+
+// TestChanges checks that only the fields whose value changed are reported,
+// each with its old and new value.
+func TestChanges(t *testing.T) {
+	got := Changes(
+		map[string]any{"name": "Acme", "threshold": 0.7, "on": true},
+		map[string]any{"name": "Acme Ltd", "threshold": 0.7, "on": false},
+	)
+	want := map[string]any{
+		"name": map[string]any{"from": "Acme", "to": "Acme Ltd"},
+		"on":   map[string]any{"from": true, "to": false},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Changes = %v, want %v", got, want)
+	}
+	if got := Changes(map[string]any{"a": 1}, map[string]any{"a": 1}); len(got) != 0 {
+		t.Errorf("Changes of an unchanged field = %v, want none", got)
 	}
 }

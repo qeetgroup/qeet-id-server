@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
@@ -91,6 +92,18 @@ func (a Actor) PlatformEvent(action, resourceType string, resourceID uuid.UUID, 
 		RequestID:    a.RequestID,
 		Metadata:     metadata,
 	}
+}
+
+// Changes returns the fields of after whose value differs from before, each as
+// {"from": old, "to": new}: what an update changed, for its audit metadata.
+func Changes(before, after map[string]any) map[string]any {
+	out := map[string]any{}
+	for field, to := range after {
+		if from := before[field]; !reflect.DeepEqual(from, to) {
+			out[field] = map[string]any{"from": from, "to": to}
+		}
+	}
+	return out
 }
 
 // canonicalRow is the serialisation each row's hash covers; its field order is

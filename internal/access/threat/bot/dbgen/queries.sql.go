@@ -80,6 +80,35 @@ func (q *Queries) GetUserTenantByEmail(ctx context.Context, lower string) (pgtyp
 	return tenant_id, err
 }
 
+const lockBotSettings = `-- name: LockBotSettings :one
+SELECT ua_check, honeypot, captcha, signature, score_threshold
+FROM auth.bot_settings WHERE tenant_id = $1
+FOR UPDATE
+`
+
+type LockBotSettingsRow struct {
+	UaCheck        bool
+	Honeypot       bool
+	Captcha        bool
+	Signature      bool
+	ScoreThreshold float32
+}
+
+// LockBotSettings is GetBotSettings holding the row until the update that
+// replaces it commits.
+func (q *Queries) LockBotSettings(ctx context.Context, tenantID uuid.UUID) (LockBotSettingsRow, error) {
+	row := q.db.QueryRow(ctx, lockBotSettings, tenantID)
+	var i LockBotSettingsRow
+	err := row.Scan(
+		&i.UaCheck,
+		&i.Honeypot,
+		&i.Captcha,
+		&i.Signature,
+		&i.ScoreThreshold,
+	)
+	return i, err
+}
+
 const upsertBotSettings = `-- name: UpsertBotSettings :exec
 INSERT INTO auth.bot_settings (tenant_id, ua_check, honeypot, captcha, signature, score_threshold, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, NOW())

@@ -43,7 +43,10 @@ SELECT
 FROM auth.security_events
 WHERE tenant_id = $1;
 
--- name: ResolveSecurityEvent :execrows
+-- ResolveSecurityEvent returns what the resolved anomaly was, for its audit
+-- record.
+-- name: ResolveSecurityEvent :one
 UPDATE auth.security_events
 SET status = 'resolved', resolved_at = NOW()
-WHERE id = $1 AND tenant_id = $2 AND resolved_at IS NULL;
+WHERE id = $1 AND tenant_id = $2 AND resolved_at IS NULL
+RETURNING type, severity, user_id;

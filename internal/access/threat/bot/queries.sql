@@ -23,6 +23,13 @@ FROM auth.bot_events WHERE tenant_id = $1;
 SELECT ua_check, honeypot, captcha, signature, score_threshold
 FROM auth.bot_settings WHERE tenant_id = $1;
 
+-- LockBotSettings is GetBotSettings holding the row until the update that
+-- replaces it commits.
+-- name: LockBotSettings :one
+SELECT ua_check, honeypot, captcha, signature, score_threshold
+FROM auth.bot_settings WHERE tenant_id = $1
+FOR UPDATE;
+
 -- name: UpsertBotSettings :exec
 INSERT INTO auth.bot_settings (tenant_id, ua_check, honeypot, captcha, signature, score_threshold, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, NOW())

@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/bot/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
@@ -201,15 +202,31 @@ func (s *Service) GetSettings(ctx context.Context, tenantID uuid.UUID) (Settings
 	}, nil
 }
 
-// UpdateSettings stores the tenant's bot-detection settings.
-func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Settings) (Settings, error) {
+// UpdateSettings stores the tenant's bot-detection settings, recorded as
+// actor's with each setting it changed.
+func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Settings, actor audit.Actor) (Settings, error) {
 	if in.ScoreThreshold < 0.1 {
 		in.ScoreThreshold = 0.1
 	}
 	if in.ScoreThreshold > 1 {
 		in.ScoreThreshold = 1
 	}
-	if err := s.q.UpsertBotSettings(ctx, dbgen.UpsertBotSettingsParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Settings{}, err
+	}
+	defer tx.Rollback(ctx)
+	q := s.q.WithTx(tx)
+	before := DefaultSettings()
+	row, err := q.LockBotSettings(ctx, tenantID)
+	switch {
+	case err == nil:
+		before = Settings{UACheck: row.UaCheck, Honeypot: row.Honeypot, Captcha: row.Captcha,
+			Signature: row.Signature, ScoreThreshold: float64(row.ScoreThreshold)}
+	case !errors.Is(err, pgx.ErrNoRows):
+		return Settings{}, err
+	}
+	if err := q.UpsertBotSettings(ctx, dbgen.UpsertBotSettingsParams{
 		TenantID:       tenantID,
 		UaCheck:        in.UACheck,
 		Honeypot:       in.Honeypot,
@@ -219,7 +236,23 @@ func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Set
 	}); err != nil {
 		return Settings{}, err
 	}
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "bot.settings_updated", "tenant", tenantID,
+		map[string]any{"changes": audit.Changes(before.audited(), in.audited()), "settings": in.audited()})); err != nil {
+		return Settings{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Settings{}, err
+	}
 	return in, nil
+}
+
+// audited is the settings by name, as recorded. The threshold is kept at the
+// precision it is stored with, so an unchanged one compares equal.
+func (st Settings) audited() map[string]any {
+	return map[string]any{
+		"ua_check": st.UACheck, "honeypot": st.Honeypot, "captcha": st.Captcha,
+		"signature": st.Signature, "score_threshold": float32(st.ScoreThreshold),
+	}
 }
 
 // Handler serves the bot detection HTTP API.
@@ -278,7 +311,7 @@ func (h *Handler) putSettings(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	st, err := h.Service.UpdateSettings(r.Context(), tenantID, in)
+	st, err := h.Service.UpdateSettings(r.Context(), tenantID, in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

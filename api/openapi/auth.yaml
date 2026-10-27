@@ -4801,7 +4801,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     put:
       operationId: put_v1_tenants_ByTenantID_security_risk_settings
-      description: 'Updates the tenant''s adaptive-risk configuration, including the medium and high risk-score thresholds, the level at which step-up MFA is forced even for a trusted device, and the impossible-travel and device-reputation signals. Both additive signals are off by default and take effect for subsequent sign-ins once enabled. Retrieve the current values first with the get-risk-settings call, since this call replaces the stored settings with the submitted state.'
+      description: 'Updates the tenant''s adaptive-risk configuration, including the medium and high risk-score thresholds, the level at which step-up MFA is forced even for a trusted device, and the impossible-travel and device-reputation signals. Both additive signals are off by default and take effect for subsequent sign-ins once enabled. Retrieve the current values first with the get-risk-settings call, since this call replaces the stored settings with the submitted state. Audited as risk.settings_updated, naming the caller, with each setting it changed (its old and new value) and the settings saved.'
       summary: Update risk settings
       tags:
         - Threats
@@ -4862,7 +4862,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     put:
       operationId: put_v1_tenants_ByTenantID_security_bots_settings
-      description: 'Updates the tenant''s bot-detection configuration and applies it to subsequent authentication traffic. Retrieve the current configuration first with the get-bot-settings call, since this call replaces the stored settings with the submitted state. Review the effect afterward through the bot-telemetry call.'
+      description: 'Updates the tenant''s bot-detection configuration and applies it to subsequent authentication traffic. Retrieve the current configuration first with the get-bot-settings call, since this call replaces the stored settings with the submitted state. Review the effect afterward through the bot-telemetry call. Audited as bot.settings_updated, naming the caller, with each setting it changed (its old and new value) and the settings saved.'
       summary: Update bot settings
       tags:
         - Threats
@@ -4957,7 +4957,7 @@ paths:
   /v1/tenants/{tenantID}/security/anomalies/{id}/resolve:
     post:
       operationId: post_v1_tenants_ByTenantID_security_anomalies_ById_resolve
-      description: 'Marks a login anomaly as resolved, recording that an operator has reviewed it and removing it from the open queue. Resolving is a review action; it does not itself block a user or revoke a session, so take any remediation separately. The updated totals are reflected by the anomaly-summary call.'
+      description: 'Marks a login anomaly as resolved, recording that an operator has reviewed it and removing it from the open queue. Resolving is a review action; it does not itself block a user or revoke a session, so take any remediation separately. The updated totals are reflected by the anomaly-summary call. Audited as anomaly.resolved, naming the caller and the anomaly''s type, severity and account; another organisation''s anomaly, or one already resolved, is 404.'
       summary: Resolve anomaly
       tags:
         - Threats

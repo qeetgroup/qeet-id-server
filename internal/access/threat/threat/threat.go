@@ -7,16 +7,19 @@ package threat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/threat/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -244,20 +247,32 @@ func (s *Service) Summary(ctx context.Context, tenantID uuid.UUID) (*Summary, er
 	}, nil
 }
 
-// Resolve marks an open anomaly resolved. Tenant-scoped so an admin can never
-// resolve another tenant's incident.
-func (s *Service) Resolve(ctx context.Context, id, tenantID uuid.UUID) error {
-	n, err := s.q.ResolveSecurityEvent(ctx, dbgen.ResolveSecurityEventParams{
-		ID:       id,
-		TenantID: tenantID,
-	})
+// Resolve marks an open anomaly resolved, recorded as actor's. Tenant-scoped so
+// an admin can never resolve another tenant's incident.
+func (s *Service) Resolve(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if n == 0 {
+	defer tx.Rollback(ctx)
+	row, err := s.q.WithTx(tx).ResolveSecurityEvent(ctx, dbgen.ResolveSecurityEventParams{
+		ID:       id,
+		TenantID: tenantID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	metadata := map[string]any{"type": row.Type, "severity": row.Severity}
+	if row.UserID.Valid {
+		metadata["user_id"] = uuid.UUID(row.UserID.Bytes)
+	}
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "anomaly.resolved", "security_event", id, metadata)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // Handler serves the security anomaly HTTP API.
@@ -311,7 +326,7 @@ func (h *Handler) resolve(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.Resolve(r.Context(), id, tenantID); err != nil {
+	if err := h.Service.Resolve(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
