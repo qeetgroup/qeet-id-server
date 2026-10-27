@@ -540,6 +540,43 @@ func TestCodeFlowWithPKCENeedsNoNonce(t *testing.T) {
 	}
 }
 
+// TestLoopbackRedirectOnAnyPort checks that a native application registered
+// with a loopback redirect gets its code on whatever port it asks for (RFC 8252
+// §7.3) and redeems it only with that same redirect_uri, while another path or
+// host on the loopback is still refused.
+func TestLoopbackRedirectOnAnyPort(t *testing.T) {
+	ctx := dbtest.Context(t)
+	p := newProvider(t)
+	tenant := dbtest.Tenant(t)
+	person := dbtest.User(t, tenant, tenant)
+	native, _ := registerClientWith(t, p.svc, CreateClientInput{TenantID: tenant, Type: "public", RedirectURIs: []string{"http://127.0.0.1/callback"}})
+	cookie, _ := p.signIn(t, person.ID)
+	if err := p.svc.GrantConsent(ctx, person.ID, native.ClientID, []string{"openid"}); err != nil {
+		t.Fatalf("consent: %v", err)
+	}
+
+	const asked = "http://127.0.0.1:49152/callback"
+	target, verifier := authorizeURL(t, native.ClientID, "redirect_uri", asked)
+	to, q := redirected(t, browse(t, p.public, http.MethodGet, target, cookie, nil))
+	if to != asked || q.Get("code") == "" {
+		t.Fatalf("authorize on port 49152: sent to %s %v, want a code at that port", to, q)
+	}
+	if _, err := p.svc.ExchangeCode(ctx, native.ClientID, "", q.Get("code"), "http://127.0.0.1:49153/callback", verifier, ""); !errors.Is(err, errs.ErrOIDCRedirectURIMismatch) {
+		t.Errorf("redeem at another port: %v, want %v", err, errs.ErrOIDCRedirectURIMismatch)
+	}
+	if issued, err := p.svc.ExchangeCode(ctx, native.ClientID, "", q.Get("code"), asked, verifier, ""); err != nil || issued.AccessToken == "" {
+		t.Errorf("redeem at the port it asked for: %+v, %v", issued, err)
+	}
+
+	for _, redirect := range []string{"http://127.0.0.1:49152/other", "http://127.0.0.2:49152/callback", "http://localhost:49152/callback"} {
+		target, _ := authorizeURL(t, native.ClientID, "redirect_uri", redirect)
+		rec := browse(t, p.public, http.MethodGet, target, cookie, nil)
+		if rec.Header().Get("Location") != "" || !strings.Contains(rec.Body.String(), errs.CodeOIDCRedirectURINotRegistered) {
+			t.Errorf("redirect_uri %q: %d to %q, want the error shown here", redirect, rec.Code, rec.Header().Get("Location"))
+		}
+	}
+}
+
 // TestAuthorizeRefusesScopesBeforeConsent checks that a request for a scope
 // the application may not have goes back to it as invalid_scope, before the
 // person is asked to consent to it.

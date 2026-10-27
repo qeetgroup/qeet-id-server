@@ -63,7 +63,7 @@ func (s *Service) AuthorizeInLoginSession(ctx context.Context, in AuthorizeInput
 	if !member {
 		return "", uuid.Nil, errs.ErrOIDCUserTenantMismatch
 	}
-	if !contains(info.RedirectUris, redirectURI) {
+	if !redirectRegistered(info.RedirectUris, redirectURI) {
 		return "", uuid.Nil, errs.ErrOIDCRedirectURIInvalid
 	}
 	if !contains(info.GrantTypes, "authorization_code") {

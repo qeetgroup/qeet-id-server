@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -329,9 +330,9 @@ func (s *Service) ReviewShadowAIClient(ctx context.Context, tenantID, id, review
 	return nil
 }
 
-// RegisteredRedirect reports whether redirectURI is registered for the client.
-// The authorize endpoint uses it to decide whether a failure can be reported to
-// the relying party or has to be rendered here.
+// RegisteredRedirect reports whether redirectURI is registered for the client
+// (see redirectRegistered). The authorize endpoint uses it to decide whether a
+// failure can be reported to the relying party or has to be rendered here.
 func (s *Service) RegisteredRedirect(ctx context.Context, clientID, redirectURI string) bool {
 	if clientID == "" || redirectURI == "" {
 		return false
@@ -340,7 +341,59 @@ func (s *Service) RegisteredRedirect(ctx context.Context, clientID, redirectURI 
 	if err != nil {
 		return false
 	}
-	return contains(info.RedirectUris, redirectURI)
+	return redirectRegistered(info.RedirectUris, redirectURI)
+}
+
+// redirectRegistered reports whether redirectURI is one of registered: the same
+// string or, for an http redirect to a loopback IP literal, the same but for
+// its port, as a native app listens on whatever port it is given (RFC 8252
+// §7.3). "localhost" is not a literal and must match exactly.
+func redirectRegistered(registered []string, redirectURI string) bool {
+	if contains(registered, redirectURI) {
+		return true
+	}
+	want, ok := withoutLoopbackPort(redirectURI)
+	if !ok {
+		return false
+	}
+	for _, r := range registered {
+		if got, ok := withoutLoopbackPort(r); ok && got == want {
+			return true
+		}
+	}
+	return false
+}
+
+// withoutLoopbackPort is raw without its port when raw is an http URI whose
+// host is a loopback IP literal, such as 127.0.0.1 or [::1]; everything else
+// stays as written. ok is false for any other URI.
+func withoutLoopbackPort(raw string) (string, bool) {
+	rest, ok := strings.CutPrefix(raw, "http://")
+	if !ok {
+		return "", false
+	}
+	end := strings.IndexAny(rest, "/?#")
+	if end < 0 {
+		end = len(rest)
+	}
+	host, tail := rest[:end], rest[end:]
+	if i := strings.LastIndexByte(host, ':'); i >= 0 && !strings.Contains(host[i:], "]") {
+		port := host[i+1:]
+		if n, err := strconv.Atoi(port); err != nil || n > 65535 || strings.Trim(port, "0123456789") != "" {
+			return "", false
+		}
+		host = host[:i]
+	}
+	literal := host
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		literal = host[1 : len(host)-1]
+	} else if strings.Contains(host, ":") {
+		return "", false
+	}
+	if ip := net.ParseIP(literal); ip == nil || !ip.IsLoopback() {
+		return "", false
+	}
+	return "http://" + host + tail, true
 }
 
 // ClientName resolves a client's display name and tenant from its client_id —

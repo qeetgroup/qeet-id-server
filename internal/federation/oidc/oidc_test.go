@@ -282,6 +282,53 @@ func TestValidateRegisteredRedirectURI(t *testing.T) {
 	}
 }
 
+// TestRedirectRegistered checks that a redirect matches a registered one
+// exactly, except that an http redirect to a loopback IP literal may name any
+// port (RFC 8252 §7.3), and nothing else about it may differ.
+func TestRedirectRegistered(t *testing.T) {
+	registered := []string{
+		"https://app.example.test/callback",
+		"http://127.0.0.1/cb",
+		"http://[::1]:8080/cb?app=1",
+		"http://localhost:3000/cb",
+	}
+	for _, uri := range []string{
+		"https://app.example.test/callback",
+		"http://127.0.0.1/cb",
+		"http://127.0.0.1:53682/cb",
+		"http://127.0.0.1:1/cb",
+		"http://[::1]/cb?app=1",
+		"http://[::1]:61000/cb?app=1",
+		"http://localhost:3000/cb",
+	} {
+		if !redirectRegistered(registered, uri) {
+			t.Errorf("%s: not matched", uri)
+		}
+	}
+	for _, uri := range []string{
+		"https://app.example.test:8443/callback", // not loopback: the port must match
+		"http://127.0.0.1:53682/cb/",
+		"http://127.0.0.1:53682/other",
+		"http://127.0.0.1:53682/cb?x=1",
+		"http://127.0.0.1:53682/cb#frag",
+		"http://127.0.0.2:53682/cb",
+		"http://[::1]:61000/cb",
+		"https://127.0.0.1:53682/cb",
+		"HTTP://127.0.0.1:53682/cb",
+		"http://localhost:4000/cb", // a name, not an IP literal
+		"http://user@127.0.0.1:53682/cb",
+		"http://127.0.0.1:/cb",
+		"http://127.0.0.1:65536/cb",
+		"http://127.0.0.1:+80/cb",
+		"http://127.0.0.1.evil.test:53682/cb",
+		"http://[::1]x:61000/cb?app=1",
+	} {
+		if redirectRegistered(registered, uri) {
+			t.Errorf("%s: matched", uri)
+		}
+	}
+}
+
 // TestValidateSignInRequest checks that an authorization request needs an S256
 // challenge unless a confidential application is exempt, and that a nonce is
 // optional either way but bounded when sent.

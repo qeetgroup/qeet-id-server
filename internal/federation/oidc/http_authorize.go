@@ -112,7 +112,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// RFC 9207: identify the issuer in the authorization response.
-	http.Redirect(w, r, appendQuery(redirect, "code", code, "state", state, "iss", h.Service.issuer.JWTIssuer()), http.StatusFound) // #nosec G710 -- redirect_uri matched exactly against the registered list
+	http.Redirect(w, r, appendQuery(redirect, "code", code, "state", state, "iss", h.Service.issuer.JWTIssuer()), http.StatusFound) // #nosec G710 -- redirect_uri matched against the registered list (a loopback port aside)
 }
 
 // authorizeError reports a failure before a code was issued. Per RFC 6749
@@ -146,7 +146,7 @@ func (h *Handler) authorizeError(w http.ResponseWriter, r *http.Request, clientI
 		httpx.WriteError(w, r, err)
 		return
 	}
-	http.Redirect(w, r, appendQuery(redirect, // #nosec G710 -- redirect_uri matched exactly against the registered list
+	http.Redirect(w, r, appendQuery(redirect, // #nosec G710 -- redirect_uri matched against the registered list (a loopback port aside)
 		"error", oauthCode, "state", state, "iss", h.Service.issuer.JWTIssuer()), http.StatusFound)
 }
 
