@@ -564,7 +564,8 @@ func TestSAMLAssertionRefused(t *testing.T) {
 	pending = sp.begin(t, broken.ID)
 	for _, change := range []string{
 		`UPDATE tenant.saml_connections SET idp_sso_url = 'http://idp.example.test/sso' WHERE id = $1`,
-		`UPDATE tenant.saml_connections SET idp_sso_url = '` + upstreamSSO + `', idp_certificate = 'not a certificate' WHERE id = $1`,
+		`WITH sso AS (UPDATE tenant.saml_connections SET idp_sso_url = '` + upstreamSSO + `' WHERE id = $1)
+		 UPDATE tenant.saml_connection_certificates SET certificate = 'not a certificate' WHERE connection_id = $1`,
 	} {
 		if _, err := dbtest.Pool(t).Exec(ctx, change, broken.ID); err != nil {
 			t.Fatal(err)

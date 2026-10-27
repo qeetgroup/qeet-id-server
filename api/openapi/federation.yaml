@@ -2702,6 +2702,98 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/saml/{id}/certificates:
+    post:
+      operationId: post_v1_tenants_ByTenantID_saml_ById_certificates
+      summary: Add IdP certificate
+      description: >-
+        Makes the connection also trust another of the IdP's signing certificates, such as the next one it has published ahead of a certificate rollover. An assertion signed with any certificate the connection trusts is accepted, so add the new certificate before the IdP switches and remove the old one after. The connection's certificates, with their validity periods, are in its certificates field. A certificate that doesn't parse answers 422 saml.certificate_invalid, one already trusted 409 saml.certificate_exists, and a ninth 422 saml.certificate_limit. Audited; another organisation's connection answers 404.
+      tags:
+        - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [certificate]
+              properties:
+                certificate:
+                  type: string
+                  description: PEM or base64 DER X.509 signing certificate
+      responses:
+        '201':
+          description: Certificate added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SAMLCertificate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/saml/{id}/certificates/{certificateID}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_saml_ById_certificates_ByCertificateID
+      summary: Remove IdP certificate
+      description: >-
+        Stops the connection trusting one of its IdP signing certificates, such as the old one once the IdP has rolled over to its next. The connection's last certificate can't be removed (409 saml.certificate_last); idp_certificate becomes the oldest one left. Audited; another organisation's connection answers 404.
+      tags:
+        - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: certificateID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Certificate removed
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v1/tenants/{tenantID}/saml-providers/{id}/assignments:
     get:
       operationId: get_v1_tenants_ByTenantID_saml_providers_ById_assignments
@@ -3110,7 +3202,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_tenants_ByTenantID_saml_ById
-      description: 'Applies a partial update to an inbound SAML connection in the tenant, covering the IdP entity id, SSO URL, signing certificate, attribute mappings or status, with Qeet acting as the Service Provider. Changes are confined to the tenant in the path and are audited. Re-run the connection test endpoint after changing IdP details.'
+      description: 'Applies a partial update to an inbound SAML connection in the tenant, covering the IdP entity id, SSO URL, signing certificate, attribute mappings or status, with Qeet acting as the Service Provider. A new idp_certificate replaces every certificate the connection trusts; to roll over without an outage, use the certificates endpoints instead. Changes are confined to the tenant in the path and are audited. Re-run the connection test endpoint after changing IdP details.'
       summary: Update connection
       tags:
         - SAML
@@ -6469,6 +6561,13 @@ components:
           format: uri
         idp_certificate:
           type: string
+          description: The oldest of the signing certificates the connection trusts.
+        certificates:
+          type: array
+          description: >-
+            Every IdP signing certificate the connection trusts, oldest first. An assertion signed with any of them is accepted, so an IdP can roll its key over without a sign-in outage.
+          items:
+            $ref: '#/components/schemas/SAMLCertificate'
         email_attribute:
           type: string
         name_attribute:
@@ -6526,7 +6625,8 @@ components:
           format: uri
         idp_certificate:
           type: string
-          description: PEM or base64 DER X.509 signing certificate
+          description: >-
+            PEM or base64 DER X.509 signing certificate. On update it becomes the only certificate the connection trusts; add and remove certificates one at a time with the certificates endpoints.
         email_attribute:
           type: string
         name_attribute:
@@ -6537,6 +6637,37 @@ components:
           description: The attribute carrying the person's groups; empty reads the common ones (see SAMLConnection). Over 256 characters is refused with 422 validation_failed.
         status:
           type: string
+    SAMLCertificate:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        certificate:
+          type: string
+          description: PEM or base64 DER X.509 certificate
+        subject:
+          type: string
+          description: The certificate's subject; empty if it doesn't parse.
+        fingerprint_sha256:
+          type: string
+          description: SHA-256 fingerprint as colon-separated hex; empty if it doesn't parse.
+        not_before:
+          type: string
+          format: date-time
+          nullable: true
+        not_after:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the certificate expires; an assertion it signed is refused after then.
+        source:
+          type: string
+          enum: [manual, metadata]
+          description: Whether an administrator added the certificate or the IdP's metadata listed it.
+        created_at:
+          type: string
+          format: date-time
     OIDCClaimMapping:
       type: object
       description: The ID token claims a sign-in reads. An empty name reads none, except for email, which is required.

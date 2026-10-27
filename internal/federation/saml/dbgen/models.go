@@ -11,6 +11,15 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type TenantSamlConnectionCertificate struct {
+	ID           uuid.UUID
+	TenantID     uuid.UUID
+	ConnectionID uuid.UUID
+	Certificate  string
+	Source       string
+	CreatedAt    time.Time
+}
+
 type TenantSamlServiceProvider struct {
 	ID                 uuid.UUID
 	TenantID           uuid.UUID

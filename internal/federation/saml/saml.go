@@ -51,21 +51,24 @@ const (
 // AllowIdPInitiated and GroupsAttribute aren't in the generated connection
 // queries, so they are read separately. GroupsAttribute names the attribute
 // carrying a person's groups; "" reads the common ones (assertedGroups).
+// Certificates are every signing certificate it trusts; IdpCertificate is the
+// oldest of them.
 type Connection struct {
-	ID                uuid.UUID  `json:"id"`
-	TenantID          uuid.UUID  `json:"tenant_id"`
-	Name              string     `json:"name"`
-	IdpEntityID       string     `json:"idp_entity_id"`
-	IdpSSOURL         string     `json:"idp_sso_url"`
-	IdpCertificate    string     `json:"idp_certificate"`
-	EmailAttribute    string     `json:"email_attribute"`
-	NameAttribute     string     `json:"name_attribute"`
-	GroupsAttribute   string     `json:"groups_attribute"`
-	Status            string     `json:"status"`
-	AllowIdPInitiated bool       `json:"allow_idp_initiated"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
-	LastLoginAt       *time.Time `json:"last_login_at"`
+	ID                uuid.UUID     `json:"id"`
+	TenantID          uuid.UUID     `json:"tenant_id"`
+	Name              string        `json:"name"`
+	IdpEntityID       string        `json:"idp_entity_id"`
+	IdpSSOURL         string        `json:"idp_sso_url"`
+	IdpCertificate    string        `json:"idp_certificate"`
+	Certificates      []Certificate `json:"certificates"`
+	EmailAttribute    string        `json:"email_attribute"`
+	NameAttribute     string        `json:"name_attribute"`
+	GroupsAttribute   string        `json:"groups_attribute"`
+	Status            string        `json:"status"`
+	AllowIdPInitiated bool          `json:"allow_idp_initiated"`
+	CreatedAt         time.Time     `json:"created_at"`
+	UpdatedAt         time.Time     `json:"updated_at"`
+	LastLoginAt       *time.Time    `json:"last_login_at"`
 }
 
 // Service manages a tenant's IdP connections and runs SP-initiated sign-in.
@@ -122,6 +125,7 @@ func toConnection(r dbgen.GetSamlConnectionRow) *Connection {
 		IdpEntityID:    r.IdpEntityID,
 		IdpSSOURL:      r.IdpSsoUrl,
 		IdpCertificate: r.IdpCertificate,
+		Certificates:   []Certificate{},
 		EmailAttribute: r.EmailAttribute,
 		NameAttribute:  r.NameAttribute,
 		Status:         r.Status,
@@ -190,7 +194,8 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 	if status == "" {
 		status = "draft"
 	}
-	row, err := s.q.WithTx(tx).InsertSamlConnection(ctx, dbgen.InsertSamlConnectionParams{
+	q := s.q.WithTx(tx)
+	row, err := q.InsertSamlConnection(ctx, dbgen.InsertSamlConnectionParams{
 		TenantID:       tenantID,
 		Name:           in.Name,
 		IdpEntityID:    in.IdpEntityID,
@@ -203,9 +208,19 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 	if err != nil {
 		return nil, err
 	}
+	cert, err := parseCertificate(in.IdpCertificate)
+	if err != nil {
+		return nil, errs.ErrSAMLCertificateInvalid
+	}
+	if err := replaceCertificates(ctx, q, row.ID, tenantID, cert); err != nil {
+		return nil, err
+	}
 	out := toConnection(dbgen.GetSamlConnectionRow(row))
+	if out.Certificates, err = listCertificates(ctx, q, row.ID, tenantID); err != nil {
+		return nil, err
+	}
 	if in.GroupsAttribute != "" {
-		if err := s.q.WithTx(tx).SetSamlGroupsAttribute(ctx, dbgen.SetSamlGroupsAttributeParams{
+		if err := q.SetSamlGroupsAttribute(ctx, dbgen.SetSamlGroupsAttributeParams{
 			ID: out.ID, TenantID: tenantID, GroupsAttribute: in.GroupsAttribute,
 		}); err != nil {
 			return nil, err
@@ -237,9 +252,20 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, e
 	for _, a := range attributes {
 		groups[a.ID] = a.GroupsAttribute
 	}
+	certs, err := s.q.ListSamlCertificatesForTenant(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	byConnection := map[uuid.UUID][]Certificate{}
+	for _, c := range certs {
+		byConnection[c.ConnectionID] = append(byConnection[c.ConnectionID], toCertificate(c))
+	}
 	for i := range out {
 		out[i].AllowIdPInitiated = flags[out[i].ID]
 		out[i].GroupsAttribute = groups[out[i].ID]
+		if c := byConnection[out[i].ID]; c != nil {
+			out[i].Certificates = c
+		}
 	}
 	return out, nil
 }
@@ -284,6 +310,9 @@ func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Connection,
 	if err != nil {
 		return nil, err
 	}
+	if out.Certificates, err = listCertificates(ctx, s.q, id, tenantID); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -306,7 +335,8 @@ func (s *Service) getByID(ctx context.Context, id uuid.UUID) (*Connection, error
 }
 
 // UpdateInput changes a connection; a nil field is kept. AllowIdPInitiated opts
-// into unsolicited assertions (see AllowsIdPInitiated).
+// into unsolicited assertions (see AllowsIdPInitiated). IdpCertificate becomes
+// the only certificate the connection trusts.
 type UpdateInput struct {
 	Name              *string `json:"name"`
 	IdpEntityID       *string `json:"idp_entity_id"`
@@ -345,7 +375,8 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 	if err := in.check(); err != nil {
 		return nil, err
 	}
-	r, err := s.q.WithTx(tx).UpdateSamlConnection(ctx, dbgen.UpdateSamlConnectionParams{
+	q := s.q.WithTx(tx)
+	r, err := q.UpdateSamlConnection(ctx, dbgen.UpdateSamlConnectionParams{
 		ID:             id,
 		TenantID:       tenantID,
 		Name:           in.Name,
@@ -361,6 +392,15 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 	}
 	if err != nil {
 		return nil, err
+	}
+	if in.IdpCertificate != nil {
+		cert, err := parseCertificate(*in.IdpCertificate)
+		if err != nil {
+			return nil, errs.ErrSAMLCertificateInvalid
+		}
+		if err := replaceCertificates(ctx, q, id, tenantID, cert); err != nil {
+			return nil, err
+		}
 	}
 	// The generated update doesn't include allow_idp_initiated.
 	if in.AllowIdPInitiated != nil {
@@ -390,6 +430,9 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 	} else if err := tx.QueryRow(ctx, `
 		SELECT allow_idp_initiated FROM tenant.saml_connections WHERE id = $1 AND tenant_id = $2
 	`, id, tenantID).Scan(&out.AllowIdPInitiated); err != nil {
+		return nil, err
+	}
+	if out.Certificates, err = listCertificates(ctx, q, id, tenantID); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -457,14 +500,26 @@ func (s *Service) TestConnection(ctx context.Context, id, tenantID uuid.UUID) (*
 	add("IdP entity ID", strings.TrimSpace(c.IdpEntityID) != "", "The IdP's entity ID (issuer) must be set.")
 	add("IdP SSO URL", validIdPSSOURL(strings.TrimSpace(c.IdpSSOURL)), "Must be an absolute https:// URL.")
 
-	cert, cerr := parseCertificate(c.IdpCertificate)
-	add("Signing certificate", cerr == nil, "Must be a valid PEM block or base64-encoded DER certificate.")
-	if cerr == nil {
+	parsed := len(c.Certificates) > 0
+	for _, cert := range c.Certificates {
+		parsed = parsed && cert.NotAfter != nil
+	}
+	add("Signing certificate", parsed, "Each must be a valid PEM block or base64-encoded DER certificate.")
+	if parsed {
+		// Valid while any certificate is; report the furthest expiry.
 		now := time.Now()
-		valid := now.After(cert.NotBefore) && now.Before(cert.NotAfter)
-		detail := "Valid until " + cert.NotAfter.Format("2006-01-02") + "."
+		var valid bool
+		var until, latest time.Time
+		for _, cert := range c.Certificates {
+			if now.After(*cert.NotBefore) && now.Before(*cert.NotAfter) {
+				valid = true
+				until = later(until, *cert.NotAfter)
+			}
+			latest = later(latest, *cert.NotAfter)
+		}
+		detail := "Valid until " + until.Format("2006-01-02") + "."
 		if !valid {
-			detail = "Certificate is expired or not yet valid (expires " + cert.NotAfter.Format("2006-01-02") + ")."
+			detail = "Certificate is expired or not yet valid (expires " + latest.Format("2006-01-02") + ")."
 		}
 		add("Certificate validity period", valid, detail)
 	}
@@ -472,6 +527,14 @@ func (s *Service) TestConnection(ctx context.Context, id, tenantID uuid.UUID) (*
 	add("Email attribute mapping", strings.TrimSpace(c.EmailAttribute) != "", "Needed to resolve each user's email from the SAML assertion.")
 
 	return res, nil
+}
+
+// later returns whichever of a and b is later.
+func later(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
+	}
+	return a
 }
 
 // parseCertificate accepts a PEM block or bare base64 DER and returns the cert.
@@ -524,12 +587,8 @@ func Addresses(base string, id uuid.UUID) SPAddresses {
 }
 
 // buildSP returns the gosaml2 service provider for conn, with its entity ID,
-// audience and ACS URL built on base.
-func (s *Service) buildSP(base string, conn *Connection) (*saml2.SAMLServiceProvider, error) {
-	cert, err := parseCertificate(conn.IdpCertificate)
-	if err != nil {
-		return nil, err
-	}
+// audience and ACS URL built on base, trusting signatures by certs.
+func (s *Service) buildSP(base string, conn *Connection, certs []*x509.Certificate) *saml2.SAMLServiceProvider {
 	return &saml2.SAMLServiceProvider{
 		IdentityProviderSSOURL:      conn.IdpSSOURL,
 		IdentityProviderIssuer:      conn.IdpEntityID,
@@ -537,10 +596,37 @@ func (s *Service) buildSP(base string, conn *Connection) (*saml2.SAMLServiceProv
 		AssertionConsumerServiceURL: acsURL(base, conn.ID),
 		AudienceURI:                 spEntityID(base, conn.ID),
 		SignAuthnRequests:           false,
-		IDPCertificateStore: &dsig.MemoryX509CertificateStore{
-			Roots: []*x509.Certificate{cert},
-		},
-	}, nil
+		IDPCertificateStore:         &dsig.MemoryX509CertificateStore{Roots: certs},
+	}
+}
+
+// validateResponse checks the encoded SAMLResponse against each of the IdP's
+// certificates in turn, so one signed with any of them is accepted, and returns
+// the response and its assertion. Each attempt trusts a single certificate, so
+// a signature without KeyInfo is checked against every one.
+func (s *Service) validateResponse(base string, conn *Connection, certs []*x509.Certificate, encoded string) (*samltypes.Response, *saml2.AssertionInfo, error) {
+	var failures []error
+	for _, cert := range certs {
+		sp := s.buildSP(base, conn, []*x509.Certificate{cert})
+		response, err := sp.ValidateEncodedResponse(encoded)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		info, err := sp.RetrieveAssertionInfo(encoded)
+		if err != nil {
+			slog.Warn("saml acs: assertion validation failed", "err", err, "connection", conn.ID)
+			return nil, nil, errs.ErrSAMLAssertionInvalid
+		}
+		if info.WarningInfo != nil && (info.WarningInfo.InvalidTime || info.WarningInfo.NotInAudience) {
+			slog.Warn("saml acs: assertion conditions not met", "connection", conn.ID,
+				"invalid_time", info.WarningInfo.InvalidTime, "not_in_audience", info.WarningInfo.NotInAudience)
+			return nil, nil, errs.ErrSAMLAssertionConditions
+		}
+		return response, info, nil
+	}
+	slog.Warn("saml acs: response validation failed", "err", errors.Join(failures...), "connection", conn.ID)
+	return nil, nil, errs.ErrSAMLAssertionInvalid
 }
 
 func (s *Service) storeAuthnRequest(ctx context.Context, connectionID uuid.UUID, requestID string) error {
@@ -858,6 +944,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Patch("/tenants/{tenantID}/saml/{id}", h.update)
 	r.Post("/tenants/{tenantID}/saml/{id}/test", h.test)
 	r.Delete("/tenants/{tenantID}/saml/{id}", h.del)
+	r.Post("/tenants/{tenantID}/saml/{id}/certificates", h.addCertificate)
+	r.Delete("/tenants/{tenantID}/saml/{id}/certificates/{certificateID}", h.removeCertificate)
 
 	// IdP side: downstream Service Providers that consume Qeet as their IdP.
 	if h.IdP != nil {
@@ -1140,12 +1228,17 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSAMLConnectionMisconfigured)
 		return
 	}
-	sp, err := h.Service.buildSP(h.publicBase(r), conn)
+	certs, err := h.Service.signingCertificates(r.Context(), conn)
 	if err != nil {
-		slog.Error("saml login: build SP", "err", err, "connection", conn.ID)
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if len(certs) == 0 {
+		slog.Error("saml login: no readable IdP certificate", "connection", conn.ID)
 		httpx.WriteError(w, r, errs.ErrSAMLConnectionMisconfigured)
 		return
 	}
+	sp := h.Service.buildSP(h.publicBase(r), conn, certs)
 	doc, err := sp.BuildAuthRequestDocument()
 	if err != nil {
 		slog.Error("saml login: build auth request", "err", err, "connection", conn.ID)
@@ -1201,28 +1294,19 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSAMLResponseMissing)
 		return
 	}
-	sp, err := h.Service.buildSP(h.publicBase(r), conn)
+	certs, err := h.Service.signingCertificates(r.Context(), conn)
 	if err != nil {
-		slog.Error("saml acs: build SP", "err", err, "connection", conn.ID)
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if len(certs) == 0 {
+		slog.Error("saml acs: no readable IdP certificate", "connection", conn.ID)
 		httpx.WriteError(w, r, errs.ErrSAMLConnectionMisconfigured)
 		return
 	}
-	response, err := sp.ValidateEncodedResponse(encoded)
+	response, info, err := h.Service.validateResponse(h.publicBase(r), conn, certs, encoded)
 	if err != nil {
-		slog.Warn("saml acs: response validation failed", "err", err, "connection", conn.ID)
-		httpx.WriteError(w, r, errs.ErrSAMLAssertionInvalid)
-		return
-	}
-	info, err := sp.RetrieveAssertionInfo(encoded)
-	if err != nil {
-		slog.Warn("saml acs: assertion validation failed", "err", err, "connection", conn.ID)
-		httpx.WriteError(w, r, errs.ErrSAMLAssertionInvalid)
-		return
-	}
-	if info.WarningInfo != nil && (info.WarningInfo.InvalidTime || info.WarningInfo.NotInAudience) {
-		slog.Warn("saml acs: assertion conditions not met", "connection", conn.ID,
-			"invalid_time", info.WarningInfo.InvalidTime, "not_in_audience", info.WarningInfo.NotInAudience)
-		httpx.WriteError(w, r, errs.ErrSAMLAssertionConditions)
+		httpx.WriteError(w, r, err)
 		return
 	}
 

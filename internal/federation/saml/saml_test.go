@@ -79,11 +79,12 @@ func TestBuildSP_URLsAndIssuer(t *testing.T) {
 		IdpSSOURL:      "https://idp.example.com/sso",
 		IdpCertificate: pemStr,
 	}
-	s := &Service{}
-	sp, err := s.buildSP("https://auth.acme.com", conn)
+	cert, err := parseCertificate(pemStr)
 	if err != nil {
-		t.Fatalf("buildSP: %v", err)
+		t.Fatal(err)
 	}
+	s := &Service{}
+	sp := s.buildSP("https://auth.acme.com", conn, []*x509.Certificate{cert})
 	wantACS := "https://auth.acme.com/saml/acs/" + id.String()
 	wantEntity := "https://auth.acme.com/saml/metadata/" + id.String()
 	if sp.AssertionConsumerServiceURL != wantACS {
@@ -98,8 +99,8 @@ func TestBuildSP_URLsAndIssuer(t *testing.T) {
 	if sp.SignAuthnRequests {
 		t.Error("SignAuthnRequests should be false (no SP key configured)")
 	}
-	if sp.IDPCertificateStore == nil {
-		t.Error("IDP certificate store must be set")
+	if roots, err := sp.IDPCertificateStore.Certificates(); err != nil || len(roots) != 1 || !roots[0].Equal(cert) {
+		t.Errorf("IdP certificate store holds %v, %v; want the connection's certificate", roots, err)
 	}
 }
 
@@ -114,10 +115,7 @@ func TestPublicBaseUsesConfiguredOrigin(t *testing.T) {
 
 	other := httptest.NewRequest("GET", "https://other.example/saml/login/"+id.String(), nil)
 	other.Host = "other.example"
-	sp, err := configured.Service.buildSP(configured.publicBase(other), conn)
-	if err != nil {
-		t.Fatalf("buildSP: %v", err)
-	}
+	sp := configured.Service.buildSP(configured.publicBase(other), conn, nil)
 	wantEntity := "https://api.id.qeet.in/saml/metadata/" + id.String()
 	if sp.AudienceURI != wantEntity || sp.ServiceProviderIssuer != wantEntity {
 		t.Errorf("audience/issuer = %q/%q, want %q", sp.AudienceURI, sp.ServiceProviderIssuer, wantEntity)

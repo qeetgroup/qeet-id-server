@@ -37,6 +37,37 @@ func (q *Queries) ConsumeSamlLoginCode(ctx context.Context, codeHash string) (Co
 	return i, err
 }
 
+const deleteSamlCertificate = `-- name: DeleteSamlCertificate :exec
+DELETE FROM tenant.saml_connection_certificates
+WHERE id = $1 AND connection_id = $2 AND tenant_id = $3
+`
+
+type DeleteSamlCertificateParams struct {
+	ID           uuid.UUID
+	ConnectionID uuid.UUID
+	TenantID     uuid.UUID
+}
+
+func (q *Queries) DeleteSamlCertificate(ctx context.Context, arg DeleteSamlCertificateParams) error {
+	_, err := q.db.Exec(ctx, deleteSamlCertificate, arg.ID, arg.ConnectionID, arg.TenantID)
+	return err
+}
+
+const deleteSamlCertificates = `-- name: DeleteSamlCertificates :exec
+DELETE FROM tenant.saml_connection_certificates
+WHERE connection_id = $1 AND tenant_id = $2
+`
+
+type DeleteSamlCertificatesParams struct {
+	ConnectionID uuid.UUID
+	TenantID     uuid.UUID
+}
+
+func (q *Queries) DeleteSamlCertificates(ctx context.Context, arg DeleteSamlCertificatesParams) error {
+	_, err := q.db.Exec(ctx, deleteSamlCertificates, arg.ConnectionID, arg.TenantID)
+	return err
+}
+
 const deleteSamlConnection = `-- name: DeleteSamlConnection :execrows
 DELETE FROM tenant.saml_connections WHERE id = $1 AND tenant_id = $2
 `
@@ -434,6 +465,38 @@ func (q *Queries) GetUserForIdP(ctx context.Context, id uuid.UUID) (GetUserForId
 		&i.TenantID,
 		&i.Status,
 		&i.Metadata,
+	)
+	return i, err
+}
+
+const insertSamlCertificate = `-- name: InsertSamlCertificate :one
+INSERT INTO tenant.saml_connection_certificates (tenant_id, connection_id, certificate, source)
+VALUES ($1, $2, $3, $4)
+RETURNING id, tenant_id, connection_id, certificate, source, created_at
+`
+
+type InsertSamlCertificateParams struct {
+	TenantID     uuid.UUID
+	ConnectionID uuid.UUID
+	Certificate  string
+	Source       string
+}
+
+func (q *Queries) InsertSamlCertificate(ctx context.Context, arg InsertSamlCertificateParams) (TenantSamlConnectionCertificate, error) {
+	row := q.db.QueryRow(ctx, insertSamlCertificate,
+		arg.TenantID,
+		arg.ConnectionID,
+		arg.Certificate,
+		arg.Source,
+	)
+	var i TenantSamlConnectionCertificate
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.ConnectionID,
+		&i.Certificate,
+		&i.Source,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -877,6 +940,79 @@ func (q *Queries) ListIdPUserRoleNames(ctx context.Context, arg ListIdPUserRoleN
 	return items, nil
 }
 
+const listSamlCertificates = `-- name: ListSamlCertificates :many
+SELECT id, tenant_id, connection_id, certificate, source, created_at
+FROM tenant.saml_connection_certificates
+WHERE connection_id = $1 AND tenant_id = $2
+ORDER BY created_at, id
+`
+
+type ListSamlCertificatesParams struct {
+	ConnectionID uuid.UUID
+	TenantID     uuid.UUID
+}
+
+func (q *Queries) ListSamlCertificates(ctx context.Context, arg ListSamlCertificatesParams) ([]TenantSamlConnectionCertificate, error) {
+	rows, err := q.db.Query(ctx, listSamlCertificates, arg.ConnectionID, arg.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TenantSamlConnectionCertificate{}
+	for rows.Next() {
+		var i TenantSamlConnectionCertificate
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.ConnectionID,
+			&i.Certificate,
+			&i.Source,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSamlCertificatesForTenant = `-- name: ListSamlCertificatesForTenant :many
+SELECT id, tenant_id, connection_id, certificate, source, created_at
+FROM tenant.saml_connection_certificates
+WHERE tenant_id = $1
+ORDER BY created_at, id
+`
+
+func (q *Queries) ListSamlCertificatesForTenant(ctx context.Context, tenantID uuid.UUID) ([]TenantSamlConnectionCertificate, error) {
+	rows, err := q.db.Query(ctx, listSamlCertificatesForTenant, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TenantSamlConnectionCertificate{}
+	for rows.Next() {
+		var i TenantSamlConnectionCertificate
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.ConnectionID,
+			&i.Certificate,
+			&i.Source,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSamlConnections = `-- name: ListSamlConnections :many
 SELECT id, tenant_id, name, idp_entity_id, idp_sso_url, idp_certificate,
        email_attribute, name_attribute, status, created_at, updated_at, last_login_at
@@ -1094,6 +1230,26 @@ func (q *Queries) ListSamlSPs(ctx context.Context, tenantID uuid.UUID) ([]Tenant
 	return items, nil
 }
 
+const lockSamlConnection = `-- name: LockSamlConnection :one
+
+SELECT id FROM tenant.saml_connections WHERE id = $1 AND tenant_id = $2 FOR UPDATE
+`
+
+type LockSamlConnectionParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+// ==========================================================================
+// SP-side: the IdP signing certificates a connection trusts (certificates.go)
+// ==========================================================================
+func (q *Queries) LockSamlConnection(ctx context.Context, arg LockSamlConnectionParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockSamlConnection, arg.ID, arg.TenantID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const markSamlLoginCodeUsed = `-- name: MarkSamlLoginCodeUsed :exec
 UPDATE auth.saml_login_codes SET used_at = NOW() WHERE code_hash = $1
 `
@@ -1116,6 +1272,27 @@ type SetSamlGroupsAttributeParams struct {
 
 func (q *Queries) SetSamlGroupsAttribute(ctx context.Context, arg SetSamlGroupsAttributeParams) error {
 	_, err := q.db.Exec(ctx, setSamlGroupsAttribute, arg.GroupsAttribute, arg.ID, arg.TenantID)
+	return err
+}
+
+const syncSamlPrimaryCertificate = `-- name: SyncSamlPrimaryCertificate :exec
+UPDATE tenant.saml_connections c SET
+    idp_certificate = (
+        SELECT k.certificate FROM tenant.saml_connection_certificates k
+        WHERE k.connection_id = c.id AND k.tenant_id = c.tenant_id
+        ORDER BY k.created_at, k.id LIMIT 1
+    ),
+    updated_at = NOW()
+WHERE c.id = $1 AND c.tenant_id = $2
+`
+
+type SyncSamlPrimaryCertificateParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+func (q *Queries) SyncSamlPrimaryCertificate(ctx context.Context, arg SyncSamlPrimaryCertificateParams) error {
+	_, err := q.db.Exec(ctx, syncSamlPrimaryCertificate, arg.ID, arg.TenantID)
 	return err
 }
 

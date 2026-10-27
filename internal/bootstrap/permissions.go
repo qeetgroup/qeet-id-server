@@ -158,6 +158,8 @@ func userPermissionMap() map[string]string {
 		"GET /v1/tenants/{tenantID}/ldap/{id}/group-mappings":                                     "connection.read",
 		"POST /v1/tenants/{tenantID}/ldap/{id}/group-mappings":                                    "group.write", // decides who sign-ins put in a group
 		"DELETE /v1/tenants/{tenantID}/ldap/{id}/group-mappings/{mappingID}":                      "group.write",
+		"POST /v1/tenants/{tenantID}/saml/{id}/certificates":                                      "connection.write",
+		"DELETE /v1/tenants/{tenantID}/saml/{id}/certificates/{certificateID}":                    "connection.write",
 		"GET /v1/tenants/{tenantID}/saml-providers":                                               "connection.read",
 		"POST /v1/tenants/{tenantID}/saml-providers":                                              "connection.write",
 		"GET /v1/tenants/{tenantID}/saml-providers/{id}":                                          "connection.read",

@@ -89,10 +89,8 @@ func (h *Handler) BeginTestSignIn(w http.ResponseWriter, r *http.Request, tx pgx
 	if !validIdPSSOURL(conn.IdpSSOURL) {
 		return nil, errs.ErrSAMLSSOURLInvalid
 	}
-	sp, err := h.Service.buildSP(h.publicBase(r), conn)
-	if err != nil {
-		return nil, errs.ErrSAMLCertificateInvalid.Wrap(err)
-	}
+	// The request carries no certificate; the answer is checked against them.
+	sp := h.Service.buildSP(h.publicBase(r), conn, nil)
 	doc, err := sp.BuildAuthRequestDocument()
 	if err != nil {
 		return nil, err
@@ -227,15 +225,14 @@ func (s *Service) checkTestAnswer(ctx context.Context, base string, conn *Connec
 		}
 		return testFailed, res, nil
 	}
-	sp, err := s.buildSP(base, conn)
+	certs, err := s.signingCertificates(ctx, conn)
 	if err != nil {
-		return fail(errs.ErrSAMLCertificateInvalid, err)
+		return "", res, err
 	}
-	response, err := sp.ValidateEncodedResponse(encoded)
-	if err != nil {
-		return fail(errs.ErrSAMLAssertionInvalid, err)
+	if len(certs) == 0 {
+		return fail(errs.ErrSAMLCertificateInvalid, nil)
 	}
-	info, err := sp.RetrieveAssertionInfo(encoded)
+	response, info, err := s.validateResponse(base, conn, certs, encoded)
 	if err != nil {
 		return fail(errs.ErrSAMLAssertionInvalid, err)
 	}

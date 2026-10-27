@@ -62,6 +62,48 @@ UPDATE tenant.saml_connections SET groups_attribute = @groups_attribute, updated
 WHERE id = @id AND tenant_id = @tenant_id;
 
 -- ==========================================================================
+-- SP-side: the IdP signing certificates a connection trusts (certificates.go)
+-- ==========================================================================
+
+-- name: LockSamlConnection :one
+SELECT id FROM tenant.saml_connections WHERE id = @id AND tenant_id = @tenant_id FOR UPDATE;
+
+-- name: ListSamlCertificates :many
+SELECT id, tenant_id, connection_id, certificate, source, created_at
+FROM tenant.saml_connection_certificates
+WHERE connection_id = @connection_id AND tenant_id = @tenant_id
+ORDER BY created_at, id;
+
+-- name: ListSamlCertificatesForTenant :many
+SELECT id, tenant_id, connection_id, certificate, source, created_at
+FROM tenant.saml_connection_certificates
+WHERE tenant_id = @tenant_id
+ORDER BY created_at, id;
+
+-- name: InsertSamlCertificate :one
+INSERT INTO tenant.saml_connection_certificates (tenant_id, connection_id, certificate, source)
+VALUES (@tenant_id, @connection_id, @certificate, @source)
+RETURNING id, tenant_id, connection_id, certificate, source, created_at;
+
+-- name: DeleteSamlCertificate :exec
+DELETE FROM tenant.saml_connection_certificates
+WHERE id = @id AND connection_id = @connection_id AND tenant_id = @tenant_id;
+
+-- name: DeleteSamlCertificates :exec
+DELETE FROM tenant.saml_connection_certificates
+WHERE connection_id = @connection_id AND tenant_id = @tenant_id;
+
+-- name: SyncSamlPrimaryCertificate :exec
+UPDATE tenant.saml_connections c SET
+    idp_certificate = (
+        SELECT k.certificate FROM tenant.saml_connection_certificates k
+        WHERE k.connection_id = c.id AND k.tenant_id = c.tenant_id
+        ORDER BY k.created_at, k.id LIMIT 1
+    ),
+    updated_at = NOW()
+WHERE c.id = @id AND c.tenant_id = @tenant_id;
+
+-- ==========================================================================
 -- SAML login codes (ExchangeLogin + ACS handler)
 -- ==========================================================================
 

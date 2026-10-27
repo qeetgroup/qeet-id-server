@@ -38,6 +38,9 @@ const (
 	CodeSAMLAccountAdministers       = "saml.account_administers"
 	CodeSAMLTestSignInNotFound       = "saml.test_sign_in_not_found"
 	CodeSAMLJITNotAllowed            = "saml.jit_not_allowed"
+	CodeSAMLCertificateExists        = "saml.certificate_exists"
+	CodeSAMLCertificateLimit         = "saml.certificate_limit"
+	CodeSAMLCertificateLast          = "saml.certificate_last"
 )
 
 // SAML errors. Message is the end-user-facing text; edit wording here. Handlers
@@ -83,4 +86,7 @@ var (
 	ErrSAMLTestSignInNotFound = New(CodeSAMLTestSignInNotFound, "We couldn't find that test sign-in. Start a new one.")
 	ErrSAMLJITNotAllowed      = New(CodeSAMLJITNotAllowed,
 		"There's no account for this address, and your organisation doesn't create one at sign-in for it. Ask your administrator to invite you.")
+	ErrSAMLCertificateExists = New(CodeSAMLCertificateExists, "This connection already trusts that certificate.")
+	ErrSAMLCertificateLimit  = New(CodeSAMLCertificateLimit, "A connection can trust at most 8 signing certificates. Remove one first.")
+	ErrSAMLCertificateLast   = New(CodeSAMLCertificateLast, "A connection needs at least one signing certificate. Add the new one before removing this one.")
 )

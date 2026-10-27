@@ -45,5 +45,8 @@ func init() {
 		errs.CodeSAMLSPEntityIDTaken:          http.StatusConflict,
 		errs.CodeSAMLTestSignInNotFound:       http.StatusNotFound,
 		errs.CodeSAMLJITNotAllowed:            http.StatusForbidden,
+		errs.CodeSAMLCertificateExists:        http.StatusConflict,
+		errs.CodeSAMLCertificateLimit:         http.StatusUnprocessableEntity,
+		errs.CodeSAMLCertificateLast:          http.StatusConflict,
 	})
 }
