@@ -19,7 +19,7 @@ RETURNING id, tenant_id, client_id, type, name, redirect_uris,
 
 -- pkce_exempt is whether the client's PKCE exemption is in force now.
 -- name: GetClientForAuth :one
-SELECT id, tenant_id, client_secret_hash, type, grant_types,
+SELECT id, tenant_id, client_secret_hash, type, grant_types, scopes,
        (pkce_exempt_until IS NOT NULL AND pkce_exempt_until > NOW())::bool AS pkce_exempt
 FROM auth.oidc_clients WHERE client_id = @client_id;
 

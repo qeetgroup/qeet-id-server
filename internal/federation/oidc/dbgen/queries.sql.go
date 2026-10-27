@@ -244,7 +244,7 @@ func (q *Queries) GetAccountStanding(ctx context.Context, id uuid.UUID) (GetAcco
 }
 
 const getClientForAuth = `-- name: GetClientForAuth :one
-SELECT id, tenant_id, client_secret_hash, type, grant_types,
+SELECT id, tenant_id, client_secret_hash, type, grant_types, scopes,
        (pkce_exempt_until IS NOT NULL AND pkce_exempt_until > NOW())::bool AS pkce_exempt
 FROM auth.oidc_clients WHERE client_id = $1
 `
@@ -255,6 +255,7 @@ type GetClientForAuthRow struct {
 	ClientSecretHash *string
 	Type             string
 	GrantTypes       []string
+	Scopes           []string
 	PkceExempt       bool
 }
 
@@ -268,6 +269,7 @@ func (q *Queries) GetClientForAuth(ctx context.Context, clientID string) (GetCli
 		&i.ClientSecretHash,
 		&i.Type,
 		&i.GrantTypes,
+		&i.Scopes,
 		&i.PkceExempt,
 	)
 	return i, err

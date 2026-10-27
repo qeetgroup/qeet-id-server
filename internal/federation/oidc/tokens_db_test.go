@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -148,5 +149,57 @@ func TestTokenExchange(t *testing.T) {
 	svc.SetTokenExchangeMaxDepth(1)
 	if _, err := exchange(client.ClientID, secret, exchanged.AccessToken, ""); !errors.Is(err, errs.ErrOIDCExchangeDepthExceeded) {
 		t.Errorf("exchange past the depth: %v, want %v", err, errs.ErrOIDCExchangeDepthExceeded)
+	}
+}
+
+// TestTokenExchangeHoldsOnlyWhatTheCallerMay checks that an application
+// exchanging a person's token it holds by their consent gets no scope beyond
+// those consented to and those it is registered for.
+func TestTokenExchangeHoldsOnlyWhatTheCallerMay(t *testing.T) {
+	ctx := dbtest.Context(t)
+	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	tenant := dbtest.Tenant(t)
+	user := dbtest.User(t, tenant, tenant)
+	grants := []string{"authorization_code", "refresh_token", "token_exchange"}
+	app, appSecret := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, GrantTypes: grants, Scopes: []string{"openid", "email", "profile"}})
+	verifier, challenge, err := codes.URLToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, _, err := svc.Authorize(ctx, user.ID, app.ClientID, testRedirect, []string{"openid", "email", "profile"}, "n-1", challenge, "S256")
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject, err := svc.ExchangeCode(ctx, app.ClientID, appSecret, code, testRedirect, verifier, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	delegate, delegateSecret := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, GrantTypes: grants, Scopes: []string{"openid", "email", "profile"}})
+	narrow, narrowSecret := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, GrantTypes: grants, Scopes: []string{"openid"}})
+	for _, c := range []*Client{delegate, narrow} {
+		if err := svc.GrantConsent(ctx, user.ID, c.ClientID, []string{"openid", "email"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, tc := range []struct {
+		name, clientID, secret, scope, want string
+		err                                 *errs.Error
+	}{
+		{"by consent, asking nothing", delegate.ClientID, delegateSecret, "", "openid email", nil},
+		{"by consent, asking beyond it", delegate.ClientID, delegateSecret, "profile", "", errs.ErrOIDCScopeExceedsSubject},
+		{"by consent, registered for less", narrow.ClientID, narrowSecret, "", "openid", nil},
+		{"by consent, asking beyond its registration", narrow.ClientID, narrowSecret, "email", "", errs.ErrOIDCScopeExceedsSubject},
+	} {
+		got, err := svc.TokenExchange(ctx, tc.clientID, tc.secret, subject.AccessToken, "", "", tc.scope, "", "", "")
+		if tc.err != nil {
+			if !errors.Is(err, tc.err) {
+				t.Errorf("%s: %v, want %v", tc.name, err, tc.err)
+			}
+			continue
+		}
+		if err != nil || got.Scope != tc.want {
+			t.Errorf("%s: %+v, %v; want scope %q", tc.name, got, err, tc.want)
+		}
 	}
 }

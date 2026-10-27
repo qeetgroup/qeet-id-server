@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -428,6 +429,13 @@ func TestAuthorizeRemembersConsentAndHonoursPrompt(t *testing.T) {
 	if to, q := redirected(t, browse(t, p.public, http.MethodGet, target, cookie, nil)); to != loginBase+"/sign-in" || q.Get("prompt") != "login" ||
 		!strings.Contains(q.Get("return_to"), loginAfterParam+"=") {
 		t.Errorf("prompt=login: sent to %s %v, want a fresh hosted sign-in that comes back", to, q)
+	}
+	// A marker added by hand doesn't stand for the forced sign-in.
+	for _, forged := range []string{"0", strconv.FormatInt(time.Now().Add(-time.Hour).Unix(), 10)} {
+		target, _ = authorizeURL(t, client.ClientID, "scope", "openid email", "prompt", "login", loginAfterParam, forged)
+		if to, _ := redirected(t, browse(t, p.public, http.MethodGet, target, cookie, nil)); to != loginBase+"/sign-in" {
+			t.Errorf("prompt=login with login_after=%s added by hand: sent to %s, want the sign-in again", forged, to)
+		}
 	}
 
 	target, _ = authorizeURL(t, client.ClientID, "scope", "openid email", "prompt", "consent")

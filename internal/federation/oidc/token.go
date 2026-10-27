@@ -50,6 +50,7 @@ type authedClient struct {
 	ClientID   string
 	Type       string
 	GrantTypes []string
+	Scopes     []string // the scopes it is registered for
 }
 
 // authenticateClient identifies the calling client: a confidential client must
@@ -64,7 +65,7 @@ func (s *Service) authenticateClient(ctx context.Context, clientID, clientSecret
 	if err != nil {
 		return authedClient{}, err
 	}
-	c := authedClient{ID: row.ID, TenantID: row.TenantID, ClientID: clientID, Type: row.Type, GrantTypes: row.GrantTypes}
+	c := authedClient{ID: row.ID, TenantID: row.TenantID, ClientID: clientID, Type: row.Type, GrantTypes: row.GrantTypes, Scopes: row.Scopes}
 	if row.Type == "confidential" {
 		// A locked-out application is refused before its secret is compared,
 		// with the same answer as a wrong one.
@@ -180,7 +181,7 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 	// for a resource it serves, or the person delegated to it (consented).
 	// Otherwise an application allowed to exchange could mint tokens in the
 	// name of anyone whose token passes through it, an administrator's too.
-	entitled, err := s.mayExchange(ctx, caller.TenantID, clientID, userID, claims)
+	entitled, consented, err := s.mayExchange(ctx, caller.TenantID, clientID, userID, claims)
 	if err != nil {
 		return nil, err
 	}
@@ -207,8 +208,16 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 	if claims.ExchangeDepth >= s.exchangeMaxDepth {
 		return nil, errs.ErrOIDCExchangeDepthExceeded
 	}
-	// Downscope: the result is at most the subject's scopes (never escalate).
-	granted, ok := downscope(strings.Fields(claims.Scope), scope)
+	// Downscope: the result is at most the subject's scopes (never escalate),
+	// and at most what the caller may hold: the scopes it is registered for
+	// and, when it holds the token by the person's consent, those consented
+	// to. Otherwise exchanging another application's token would hand the
+	// caller that application's access.
+	held := intersect(strings.Fields(claims.Scope), client.Scopes)
+	if consented != nil {
+		held = intersect(held, consented)
+	}
+	granted, ok := downscope(held, scope)
 	if !ok {
 		return nil, errs.ErrOIDCScopeExceedsSubject
 	}
@@ -613,16 +622,34 @@ func accountActive(ctx context.Context, q *dbgen.Queries, userID uuid.UUID) (boo
 
 // mayExchange reports whether clientID may exchange a subject token of its
 // tenant: the token was issued to it, or for a registered resource it serves,
-// or the person has consented to it (a delegation it holds).
-func (s *Service) mayExchange(ctx context.Context, tenantID uuid.UUID, clientID string, userID uuid.UUID, claims *tokens.Claims) (bool, error) {
+// or the person has consented to it (a delegation it holds), when it also
+// returns the scopes consented to (nil otherwise).
+func (s *Service) mayExchange(ctx context.Context, tenantID uuid.UUID, clientID string, userID uuid.UUID, claims *tokens.Claims) (bool, []string, error) {
 	if ok, err := s.mayIntrospect(ctx, tenantID, clientID, claims); err != nil || ok {
-		return ok, err
+		return ok, nil, err
 	}
-	_, err := s.q.GetConsent(ctx, dbgen.GetConsentParams{UserID: userID, ClientID: clientID})
+	consented, err := s.q.GetConsent(ctx, dbgen.GetConsentParams{UserID: userID, ClientID: clientID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		return false, nil, nil
 	}
-	return err == nil, err
+	if err != nil {
+		return false, nil, err
+	}
+	if consented == nil {
+		consented = []string{}
+	}
+	return true, consented, nil
+}
+
+// intersect is the scopes of a that b also holds, in a's order.
+func intersect(a, b []string) []string {
+	out := []string{}
+	for _, v := range a {
+		if contains(b, v) {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // auditExchange records a token exchange: caller, subject, actor, scopes,
