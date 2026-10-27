@@ -705,10 +705,9 @@ func TestSAMLSignInNeedsSSOInThePlan(t *testing.T) {
 	}
 
 	conn := sp.connect(t, paid, idp)
-	member := dbtest.User(t, paid, paid)
-	verify(t, member.ID)
+	newcomer := dbtest.Unique("new") + "@" + dbtest.Domain(t, paid)
 	requestID := sp.begin(t, conn.ID)
-	response := idp.respond(t, conn.ID, answer{inResponseTo: requestID, nameID: "okta|lapsed", email: member.Email})
+	response := idp.respond(t, conn.ID, answer{inResponseTo: requestID, nameID: "okta|lapsed", email: newcomer})
 
 	delete(allowed, paid) // the plan lapses
 	if rec := sp.post(t, conn.ID, response); rec.Code != http.StatusPaymentRequired || !strings.Contains(rec.Body.String(), errs.CodeUpgradeRequired) {
@@ -717,8 +716,8 @@ func TestSAMLSignInNeedsSSOInThePlan(t *testing.T) {
 	if rec := dbtest.Do(t, sp.public, http.MethodGet, "/saml/login/"+conn.ID.String(), nil); rec.Code != http.StatusPaymentRequired {
 		t.Errorf("sign-in start after the plan lapsed: %d %s, want 402", rec.Code, rec.Body.String())
 	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1`, member.ID); n != 0 {
-		t.Errorf("the refused assertion linked the member")
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, newcomer); n != 0 {
+		t.Errorf("the refused assertion provisioned the newcomer")
 	}
 
 	allowed[paid] = true // paid again
