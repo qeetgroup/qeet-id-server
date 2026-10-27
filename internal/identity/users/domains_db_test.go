@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -51,5 +53,32 @@ func TestNoAccountsOnAnotherOrganisationsDomain(t *testing.T) {
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE tenant_id = $1 AND lower(email) LIKE '%' || $2`, tenant, theirs); n != 0 {
 		t.Errorf("%d accounts created on another organisation's domain", n)
+	}
+}
+
+// TestGuestOrganisationsDontSeeHomeMetadata checks that the metadata a
+// person's home organisation keeps on them is shown to it, and not to an
+// organisation they are only a guest in, whether read alone or in its list.
+func TestGuestOrganisationsDontSeeHomeMetadata(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	home, guestOf := dbtest.Tenant(t), dbtest.Tenant(t)
+	person := dbtest.User(t, home, home, guestOf)
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET metadata = '{"salary_band":"L7"}' WHERE id = $1`, person.ID); err != nil {
+		t.Fatal(err)
+	}
+	h := &Handler{Repo: NewRepository(pool), Validate: jsonNamedValidator()}
+	seen := func(tenant uuid.UUID) (single, listed string) {
+		t.Helper()
+		as := dbtest.Serve(dbtest.Principal(dbtest.User(t, tenant, tenant).ID, tenant), h.Mount)
+		single = dbtest.Do(t, as, http.MethodGet, "/users/"+person.ID.String(), nil).Body.String()
+		listed = dbtest.Do(t, as, http.MethodGet, "/users?limit=200", nil).Body.String()
+		return single, listed
+	}
+	if single, listed := seen(home); !strings.Contains(single, "salary_band") || !strings.Contains(listed, "salary_band") {
+		t.Errorf("the home organisation: %s / %s; want the metadata", single, listed)
+	}
+	if single, listed := seen(guestOf); strings.Contains(single, "salary_band") || strings.Contains(listed, "salary_band") || !strings.Contains(listed, person.Email) {
+		t.Errorf("a guest organisation: %s / %s; want the person without the metadata", single, listed)
 	}
 }

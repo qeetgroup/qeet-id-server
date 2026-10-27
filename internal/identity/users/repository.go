@@ -489,7 +489,7 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 		u.LastSeenAt = lastSeenAt
 		u.LastSeenIP = lastSeenIP
 		u.Metadata = parseUserMetadata(meta, u.ID)
-		out = append(out, u)
+		out = append(out, *u.SeenBy(tenantID))
 	}
 	// A mid-stream failure (connection reset, server cancel) stops the loop
 	// without an error from Scan. Unchecked, that returns a SHORT page plus a

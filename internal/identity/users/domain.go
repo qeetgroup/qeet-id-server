@@ -34,6 +34,16 @@ type User struct {
 	LastSeenIP  *string    `json:"last_seen_ip,omitempty"`
 }
 
+// SeenBy is u as organisation tenantID sees it: a person whose home is
+// another organisation keeps their metadata from it, as that organisation
+// keeps it about them. It returns u, changed in place.
+func (u *User) SeenBy(tenantID uuid.UUID) *User {
+	if u.TenantID != tenantID {
+		u.Metadata = map[string]any{}
+	}
+	return u
+}
+
 // DeletedUser is the soft-deleted view shown in the recycle bin — enough to
 // identify the record and decide whether to restore or permanently purge it.
 type DeletedUser struct {

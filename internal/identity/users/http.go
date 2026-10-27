@@ -514,7 +514,7 @@ func (h *Handler) createWithEvidence(r *http.Request, in CreateInput, passwordHa
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	id, _, err := h.memberID(r)
+	id, tenantID, err := h.memberID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -524,7 +524,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, u)
+	httpx.WriteJSON(w, http.StatusOK, u.SeenBy(tenantID))
 }
 
 // me returns the caller's own user record, resolved from the principal rather

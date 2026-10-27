@@ -687,7 +687,7 @@ paths:
   /v1/users:
     get:
       operationId: get_v1_users
-      description: 'Returns a page of users in the caller''s tenant. Supports opaque cursor paging or numeric offset paging to jump to a specific page. Requires an existing tenant; scope comes from the authenticated principal. Members are the organisation''s own users (their home is this organisation) and the people who hold a role in it; last_seen_at and last_seen_ip come from sessions in this organisation only.'
+      description: 'Returns a page of users in the caller''s tenant. Supports opaque cursor paging or numeric offset paging to jump to a specific page. Requires an existing tenant; scope comes from the authenticated principal. Members are the organisation''s own users (their home is this organisation) and the people who hold a role in it; a member whose home is another organisation is shown with empty metadata, which their home organisation keeps; last_seen_at and last_seen_ip come from sessions in this organisation only.'
       summary: List users
       tags:
         - Users
@@ -921,7 +921,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     get:
       operationId: get_v1_users_ById
-      description: 'Returns a single user by id within the caller''s tenant. Requests for a user outside the tenant are rejected rather than disclosed. Anyone who belongs to the caller''s organization can be fetched: a role here, or here being their home. Anyone else is 404.'
+      description: 'Returns a single user by id within the caller''s tenant. Requests for a user outside the tenant are rejected rather than disclosed. Anyone who belongs to the caller''s organization can be fetched: a role here, or here being their home. Anyone else is 404. Someone whose home is another organisation is shown with empty metadata, which their home organisation keeps.'
       summary: Get user
       tags:
         - Users
