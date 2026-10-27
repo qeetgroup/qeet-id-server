@@ -42,6 +42,25 @@ UPDATE tenant.scim_tokens SET last_used_at = NOW() WHERE tenant_id = @tenant_id;
 SELECT id, email, display_name, status, external_id, created_at, updated_at
 FROM "user".users WHERE id = @id AND tenant_id = @tenant_id AND deleted_at IS NULL;
 
+-- ProvisionedUserState is a user's status, what suspended them ('' when
+-- not suspended), and whether they own the organisation, directly or through
+-- a group; the row is locked for the change it decides.
+-- name: ProvisionedUserState :one
+SELECT u.status, COALESCE(u.suspension_source, '')::text AS suspension_source,
+       EXISTS (
+           SELECT 1 FROM rbac.user_roles ur
+           JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.tenant_id = ur.tenant_id AND ro.is_system AND ro.name = 'owner'
+           WHERE ur.user_id = u.id AND ur.tenant_id = @tenant_id
+           UNION ALL
+           SELECT 1 FROM tenant.group_members gm
+           JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+           JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.tenant_id = gr.tenant_id AND ro.is_system AND ro.name = 'owner'
+           WHERE gm.user_id = u.id AND gm.tenant_id = @tenant_id
+       )::bool AS owner
+FROM "user".users u
+WHERE u.id = @id AND u.tenant_id = @tenant_id AND u.deleted_at IS NULL
+FOR UPDATE OF u;
+
 -- name: TagProvisionedUser :exec
 UPDATE "user".users
     SET external_id    = sqlc.narg('external_id'),

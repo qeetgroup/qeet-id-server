@@ -619,3 +619,59 @@ func TestSCIMDeprovisioningEndsEverySignIn(t *testing.T) {
 		}
 	}
 }
+
+// TestSCIMLeavesOwnersAndOthersSuspensionsAlone checks that a directory can
+// neither change nor delete an account that owns the organisation, and that
+// reactivating someone lifts only a suspension it set itself.
+func TestSCIMLeavesOwnersAndOthersSuspensionsAlone(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	f := newSCIMFixture(t, ctx)
+	active := func(id uuid.UUID, on bool) *httptest.ResponseRecorder {
+		t.Helper()
+		return f.do(t, http.MethodPatch, "/scim/v2/Users/"+id.String(), map[string]any{
+			"schemas":    []string{schemaPatchOp},
+			"Operations": []map[string]any{{"op": "replace", "path": "active", "value": on}},
+		})
+	}
+	status := func(id uuid.UUID) string {
+		t.Helper()
+		var s string
+		if err := pool.QueryRow(ctx, `SELECT status FROM "user".users WHERE id = $1`, id).Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+
+	owner := f.seedUser(t, ctx, dbtest.Unique("owner")+"@example.test")
+	var ownerRole uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, f.tenantID).Scan(&ownerRole); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.Assign(t, owner, f.tenantID, ownerRole)
+	if rec := active(owner, false); rec.Code != http.StatusForbidden || status(owner) != "active" {
+		t.Errorf("deactivate an owner: %d %s, status %s; want 403 and still active", rec.Code, rec.Body.String(), status(owner))
+	}
+	if rec := f.do(t, http.MethodDelete, "/scim/v2/Users/"+owner.String(), nil); rec.Code != http.StatusForbidden {
+		t.Errorf("delete an owner: %d %s, want 403", rec.Code, rec.Body.String())
+	}
+
+	byAdmin := f.seedUser(t, ctx, dbtest.Unique("held")+"@example.test")
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, byAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET suspension_source = 'manual' WHERE id = $1`, byAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if rec := active(byAdmin, true); rec.Code != http.StatusOK || status(byAdmin) != "suspended" {
+		t.Errorf("reactivate an administrator's suspension: %d, status %s; want it to stand", rec.Code, status(byAdmin))
+	}
+
+	byDirectory := f.seedUser(t, ctx, dbtest.Unique("left")+"@example.test")
+	if rec := active(byDirectory, false); rec.Code != http.StatusOK || status(byDirectory) != "suspended" {
+		t.Fatalf("deactivate: %d, status %s", rec.Code, status(byDirectory))
+	}
+	if rec := active(byDirectory, true); rec.Code != http.StatusOK || status(byDirectory) != "active" {
+		t.Errorf("reactivate the directory's own suspension: %d, status %s; want active", rec.Code, status(byDirectory))
+	}
+}

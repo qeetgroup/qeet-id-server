@@ -290,6 +290,44 @@ func (q *Queries) ListGroupMembers(ctx context.Context, arg ListGroupMembersPara
 	return items, nil
 }
 
+const provisionedUserState = `-- name: ProvisionedUserState :one
+SELECT u.status, COALESCE(u.suspension_source, '')::text AS suspension_source,
+       EXISTS (
+           SELECT 1 FROM rbac.user_roles ur
+           JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.tenant_id = ur.tenant_id AND ro.is_system AND ro.name = 'owner'
+           WHERE ur.user_id = u.id AND ur.tenant_id = $1
+           UNION ALL
+           SELECT 1 FROM tenant.group_members gm
+           JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+           JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.tenant_id = gr.tenant_id AND ro.is_system AND ro.name = 'owner'
+           WHERE gm.user_id = u.id AND gm.tenant_id = $1
+       )::bool AS owner
+FROM "user".users u
+WHERE u.id = $2 AND u.tenant_id = $1 AND u.deleted_at IS NULL
+FOR UPDATE OF u
+`
+
+type ProvisionedUserStateParams struct {
+	TenantID uuid.UUID
+	ID       uuid.UUID
+}
+
+type ProvisionedUserStateRow struct {
+	Status           string
+	SuspensionSource string
+	Owner            bool
+}
+
+// ProvisionedUserState is a user's status, what suspended them (” when
+// not suspended), and whether they own the organisation, directly or through
+// a group; the row is locked for the change it decides.
+func (q *Queries) ProvisionedUserState(ctx context.Context, arg ProvisionedUserStateParams) (ProvisionedUserStateRow, error) {
+	row := q.db.QueryRow(ctx, provisionedUserState, arg.TenantID, arg.ID)
+	var i ProvisionedUserStateRow
+	err := row.Scan(&i.Status, &i.SuspensionSource, &i.Owner)
+	return i, err
+}
+
 const removeGroupMember = `-- name: RemoveGroupMember :exec
 DELETE FROM tenant.group_members
 WHERE group_id = $1 AND user_id = $2 AND tenant_id = $3

@@ -864,6 +864,10 @@ func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.deprovision(r, tid, id); err != nil {
+		if errors.Is(err, errOwnerUnchangeable) {
+			writeSCIMErr(w, http.StatusForbidden, ownerUnchangeable)
+			return
+		}
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return
 	}
@@ -1060,6 +1064,21 @@ func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenant
 		return false
 	}
 	defer tx.Rollback(ctx)
+	state, err := h.Service.q.WithTx(tx).ProvisionedUserState(ctx, dbgen.ProvisionedUserStateParams{TenantID: tenantID, ID: userID})
+	if err != nil {
+		writeSCIMErr(w, http.StatusNotFound, "user not found")
+		return false
+	}
+	if state.Owner {
+		writeSCIMErr(w, http.StatusForbidden, ownerUnchangeable)
+		return false
+	}
+	// The directory lifts only a suspension it set: one an administrator, a
+	// policy or another directory set stands, and the rest of the change
+	// applies.
+	if in.Status != nil && *in.Status == "active" && state.Status == "suspended" && state.SuspensionSource != "scim" {
+		in.Status = nil
+	}
 	if _, err := h.Service.users.UpdateTx(ctx, tx, userID, in); err != nil {
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return false
@@ -1100,8 +1119,16 @@ func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenant
 	return true
 }
 
+// ownerUnchangeable is the refusal of a directory change to an account that
+// owns the organisation: owners are changed only by people, in the console.
+const ownerUnchangeable = "This account owns the organization, so the directory can't change it."
+
+// errOwnerUnchangeable refuses deprovisioning an owner.
+var errOwnerUnchangeable = errors.New("scim: the account owns the organization")
+
 // deprovision soft-deletes a SCIM-managed user, ending every way they sign
-// in, and records it in the same transaction.
+// in, and records it in the same transaction. An owner is refused with
+// errOwnerUnchangeable.
 func (h *Handler) deprovision(r *http.Request, tenantID, userID uuid.UUID) error {
 	ctx := r.Context()
 	tx, err := h.Service.users.Pool().Begin(ctx)
@@ -1109,6 +1136,13 @@ func (h *Handler) deprovision(r *http.Request, tenantID, userID uuid.UUID) error
 		return err
 	}
 	defer tx.Rollback(ctx)
+	state, err := h.Service.q.WithTx(tx).ProvisionedUserState(ctx, dbgen.ProvisionedUserStateParams{TenantID: tenantID, ID: userID})
+	if err != nil {
+		return err
+	}
+	if state.Owner {
+		return errOwnerUnchangeable
+	}
 	if err := h.Service.users.SoftDeleteTx(ctx, tx, userID); err != nil {
 		return err
 	}
