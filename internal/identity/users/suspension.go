@@ -298,7 +298,7 @@ func recordSuspensionEvidence(ctx context.Context, tx pgx.Tx, request *http.Requ
 }
 
 func (handler *Handler) reactivateUser(response http.ResponseWriter, request *http.Request) {
-	userID, tenantID, err := handler.scopedID(request)
+	userID, tenantID, err := handler.actOnID(request)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return

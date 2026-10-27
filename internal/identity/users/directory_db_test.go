@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
@@ -51,6 +52,7 @@ func testHandler(t *testing.T, mailbox *dbtest.Mailbox) *Handler {
 		MFA:            clearTOTP{},
 		SignIns:        endSessions{},
 		Mailer:         mailbox,
+		ActOnCheck:     rbac.NewRepository(dbtest.Pool(t)).CheckActOn,
 	}
 }
 

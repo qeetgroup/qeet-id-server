@@ -57,6 +57,9 @@ type Handler struct {
 	Signals        *sessionsignal.Signaller
 	SignIns        signInEnder
 	Mailer         notifier.Sender
+	// ActOnCheck refuses changing the account of someone who outranks the
+	// caller (rbac.Repository.CheckActOn). Without it every change is refused.
+	ActOnCheck func(ctx context.Context, caller *httpx.Principal, tenantID, targetID uuid.UUID) error
 }
 
 // endEverySignIn ends, inside tx, every way userID is signed in: sessions,
@@ -175,6 +178,28 @@ func (h *Handler) scopedID(r *http.Request) (id, tenantID uuid.UUID, err error) 
 	}
 }
 
+// actOnID is scopedID for a change to the account, refused when the person
+// outranks the caller: only an owner changes an owner, and nobody changes
+// someone holding a permission they don't.
+func (h *Handler) actOnID(r *http.Request) (id, tenantID uuid.UUID, err error) {
+	id, tenantID, err = h.scopedID(r)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	if err := h.checkActOn(r, tenantID, id); err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	return id, tenantID, nil
+}
+
+// checkActOn applies ActOnCheck to the caller of r acting on id in tenantID.
+func (h *Handler) checkActOn(r *http.Request, tenantID, id uuid.UUID) error {
+	if h.ActOnCheck == nil {
+		return errs.ErrNotImplemented
+	}
+	return h.ActOnCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, id)
+}
+
 // removeMembership removes a member whose home is another tenant from the
 // caller's tenant: their roles, groups, sessions, app grants and API keys here,
 // with an audit row and event, in one transaction. A home account gets
@@ -191,6 +216,10 @@ func (h *Handler) removeMembership(w http.ResponseWriter, r *http.Request) {
 		return
 	case !member:
 		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	if err := h.checkActOn(r, tenantID, id); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	out, err := h.removeMembershipWithEvidence(r, tenantID, id)
@@ -236,7 +265,7 @@ func (h *Handler) removeMembershipWithEvidence(r *http.Request, tenantID, userID
 // resetMFA clears a user's MFA factors so a locked-out user can enrol again.
 // It is audited and the user is emailed.
 func (h *Handler) resetMFA(w http.ResponseWriter, r *http.Request) {
-	id, tenantID, err := h.scopedID(r)
+	id, tenantID, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -341,7 +370,7 @@ func (h *Handler) auditUserAction(r *http.Request, action string, target uuid.UU
 }
 
 func (h *Handler) restore(w http.ResponseWriter, r *http.Request) {
-	id, _, err := h.scopedID(r)
+	id, _, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -360,7 +389,7 @@ func (h *Handler) restore(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) purge(w http.ResponseWriter, r *http.Request) {
-	id, _, err := h.scopedID(r)
+	id, _, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -554,7 +583,7 @@ func (h *Handler) updateMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	id, tenantID, err := h.scopedID(r)
+	id, tenantID, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -582,7 +611,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
-	id, tenantID, err := h.scopedID(r)
+	id, tenantID, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -630,7 +659,7 @@ type setPasswordInput struct {
 }
 
 func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request) {
-	id, tenantID, err := h.scopedID(r)
+	id, tenantID, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

@@ -125,6 +125,7 @@ func TestAdminPhoneChangeDropsItsVerification(t *testing.T) {
 func TestAccountViewsDescribeTheCallersOrganisation(t *testing.T) {
 	home, tenant := dbtest.Tenant(t), dbtest.Tenant(t)
 	admin := dbtest.User(t, home, home)
+	dbtest.Assign(t, admin.ID, home, dbtest.Role(t, home, "users.read", "users.write"))
 	member := dbtest.User(t, home, tenant)
 	dbtest.Assign(t, member.ID, home, dbtest.Role(t, home, "users.read"))
 	dbtest.SetPassword(t, member.ID, "Kx7mQ2vLp9Wz")

@@ -81,6 +81,58 @@ func (r *Repository) CheckGrantGroup(ctx context.Context, caller *httpx.Principa
 	return r.checkGrant(ctx, caller, tenantID, keys, ownerRole)
 }
 
+// CheckActOn refuses the caller changing targetID's account or roles in
+// tenantID when the target outranks them: ErrRBACTargetIsOwner for an owner
+// unless the caller is one, ErrRBACTargetOutranks naming a permission the
+// target holds and the caller doesn't. A person acting on themselves passes.
+func (r *Repository) CheckActOn(ctx context.Context, caller *httpx.Principal, tenantID, targetID uuid.UUID) error {
+	if caller == nil {
+		return errs.ErrRBACPermissionDenied
+	}
+	if caller.UserID != nil && *caller.UserID == targetID && !machineActor(caller.ActorType) {
+		return nil
+	}
+	g, err := r.grantorOf(ctx, caller, tenantID)
+	if err != nil || g.all {
+		return err
+	}
+	owner, err := r.IsOwner(ctx, targetID, tenantID)
+	if err != nil {
+		return err
+	}
+	if owner {
+		return errs.ErrRBACTargetIsOwner
+	}
+	perms, err := r.EffectivePermissions(ctx, targetID, tenantID)
+	if err != nil {
+		return err
+	}
+	for _, p := range perms {
+		if !g.holds(p) {
+			return errs.ErrRBACTargetOutranks.WithMetadata(map[string]any{"permission": p})
+		}
+	}
+	return nil
+}
+
+// CheckRoleEditable refuses changing the permissions of roleID of tenantID
+// when it is the built-in owner role, with ErrRBACSystemRoleFixed. A role that
+// isn't tenantID's passes, so the write itself must refuse it.
+func (r *Repository) CheckRoleEditable(ctx context.Context, tenantID, roleID uuid.UUID) error {
+	var fixed bool
+	err := r.pool.QueryRow(ctx, `SELECT is_system AND name = 'owner' FROM rbac.roles WHERE id = $1 AND tenant_id = $2`, roleID, tenantID).Scan(&fixed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if fixed {
+		return errs.ErrRBACSystemRoleFixed
+	}
+	return nil
+}
+
 // CheckGrantScopes refuses the caller issuing a machine credential of tenantID
 // that carries a scope the caller doesn't hold, with ErrRBACGrantExceedsCaller
 // naming it. A vault scope needs secret.read, or for a credential a vault scope

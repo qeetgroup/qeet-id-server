@@ -15,6 +15,9 @@ func init() {
 		errs.CodeRBACPermissionDenied:    http.StatusForbidden,
 		errs.CodeRBACGrantExceedsCaller:  http.StatusForbidden,
 		errs.CodeRBACOwnerOnly:           http.StatusForbidden,
+		errs.CodeRBACTargetIsOwner:       http.StatusForbidden,
+		errs.CodeRBACTargetOutranks:      http.StatusForbidden,
+		errs.CodeRBACSystemRoleFixed:     http.StatusForbidden,
 		errs.CodeRBACPermissionRequired:  http.StatusBadRequest,
 	})
 }

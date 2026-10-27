@@ -147,6 +147,10 @@ func (h *Handler) grant(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	if err := h.Repo.CheckRoleEditable(r.Context(), scope, roleID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	if err := h.Repo.CheckGrantPermission(r.Context(), httpx.PrincipalFromCtx(r.Context()), scope, permID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -167,6 +171,21 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 	permID, err := uuid.Parse(chi.URLParam(r, "permID"))
 	if err != nil {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid permID"))
+		return
+	}
+	scope, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	// Taking a permission away is held to the rule for giving it: the owner
+	// role keeps every permission, and nobody removes one they don't hold.
+	if err := h.Repo.CheckRoleEditable(r.Context(), scope, roleID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Repo.CheckGrantPermission(r.Context(), httpx.PrincipalFromCtx(r.Context()), scope, permID); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if err := h.Service.RevokePermission(r.Context(), roleID, permID, audit.ActorOf(r)); err != nil {
@@ -218,6 +237,17 @@ func (h *Handler) unassign(w http.ResponseWriter, r *http.Request) {
 	rid, err := uuid.Parse(chi.URLParam(r, "roleID"))
 	if err != nil {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid roleID"))
+		return
+	}
+	// Removing a role is held to the rule for giving it, and to the person's
+	// standing: nobody strips someone who outranks them.
+	caller := httpx.PrincipalFromCtx(r.Context())
+	if err := h.Repo.CheckActOn(r.Context(), caller, tid, uid); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Repo.CheckGrantRole(r.Context(), caller, tid, rid); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if err := h.Service.UnassignRole(r.Context(), uid, tid, rid, audit.ActorOf(r)); err != nil {

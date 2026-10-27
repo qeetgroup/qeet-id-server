@@ -370,7 +370,7 @@ func (h *Handler) getSessions(w http.ResponseWriter, r *http.Request) {
 // reports {"revoked": total} with a count per kind. Access tokens already
 // issued stay valid until they expire.
 func (h *Handler) revokeAllSessions(w http.ResponseWriter, r *http.Request) {
-	id, tenantID, err := h.scopedID(r)
+	id, tenantID, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -452,7 +452,7 @@ type setMfaRequiredInput struct {
 // setMfaRequired handles PUT /v1/users/{id}/mfa-required: it sets the user's
 // MFA-required flag and audits the change.
 func (h *Handler) setMfaRequired(w http.ResponseWriter, r *http.Request) {
-	id, _, err := h.scopedID(r)
+	id, _, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

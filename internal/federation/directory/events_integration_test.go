@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
@@ -286,7 +287,7 @@ func TestSuspendedDirectoryPrivacyReviewAndReactivation(test *testing.T) {
 		}
 	}
 	router := chi.NewRouter()
-	(&user.Handler{Repo: repository}).Mount(router)
+	(&user.Handler{Repo: repository, ActOnCheck: rbac.NewRepository(dbtest.Pool(test)).CheckActOn}).Mount(router)
 	call := func(method, path string, body any) *httptest.ResponseRecorder {
 		raw, _ := json.Marshal(body)
 		request := httptest.NewRequest(method, path, bytes.NewReader(raw))

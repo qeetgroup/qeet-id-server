@@ -4,7 +4,11 @@ package rbac
 
 import (
 	"errors"
+	"net/http"
+	"strings"
 	"testing"
+
+	"github.com/go-playground/validator/v10"
 
 	"github.com/google/uuid"
 
@@ -77,5 +81,58 @@ func TestCredentialsCarryNoMoreThanTheirIssuer(t *testing.T) {
 	}
 	if err := repo.CheckGrantScopes(ctx, service, tenant, []string{"secret.read"}); !refused(err, "secret.read") {
 		t.Errorf("a service principal issues a permission it lacks: %v", err)
+	}
+}
+
+// TestOwnersAndTheOwnerRoleStayProtected checks that the built-in owner role's
+// permissions can't be changed, that nobody takes away a permission they don't
+// hold, and that only an owner removes someone's owner role or strips an
+// owner of other roles.
+func TestOwnersAndTheOwnerRoleStayProtected(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	repo := NewRepository(pool)
+	tenant := dbtest.Tenant(t)
+	var ownerRole uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+		t.Fatal(err)
+	}
+	owner, coOwner := dbtest.User(t, tenant), dbtest.User(t, tenant)
+	dbtest.Assign(t, owner.ID, tenant, ownerRole)
+	dbtest.Assign(t, coOwner.ID, tenant, ownerRole)
+	reviewers := dbtest.Role(t, tenant, "audit.read")
+	dbtest.Assign(t, coOwner.ID, tenant, reviewers)
+	admin := dbtest.User(t, tenant)
+	dbtest.Assign(t, admin.ID, tenant, dbtest.Role(t, tenant, "role.read", "role.write", "user.read"))
+	var auditRead, roleWrite uuid.UUID
+	for key, id := range map[string]*uuid.UUID{"audit.read": &auditRead, "role.write": &roleWrite} {
+		if err := pool.QueryRow(ctx, `SELECT id FROM rbac.permissions WHERE key = $1`, key).Scan(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	h := &Handler{Repo: repo, Service: NewService(repo), Validate: validator.New(validator.WithRequiredStructEnabled())}
+	as := func(u uuid.UUID) http.Handler { return dbtest.Serve(dbtest.Principal(u, tenant), h.Mount) }
+	for _, tc := range []struct {
+		name         string
+		caller       uuid.UUID
+		method, path string
+		status       int
+		code         string
+	}{
+		{"an owner revokes from the owner role", owner.ID, http.MethodDelete, "/roles/" + ownerRole.String() + "/permissions/" + roleWrite.String(), http.StatusForbidden, errs.CodeRBACSystemRoleFixed},
+		{"an admin grants to the owner role", admin.ID, http.MethodPost, "/roles/" + ownerRole.String() + "/permissions/" + roleWrite.String(), http.StatusForbidden, errs.CodeRBACSystemRoleFixed},
+		{"an admin revokes a permission they lack", admin.ID, http.MethodDelete, "/roles/" + reviewers.String() + "/permissions/" + auditRead.String(), http.StatusForbidden, errs.CodeRBACGrantExceedsCaller},
+		{"an admin removes an owner's owner role", admin.ID, http.MethodDelete, "/users/" + coOwner.ID.String() + "/tenants/" + tenant.String() + "/roles/" + ownerRole.String(), http.StatusForbidden, errs.CodeRBACTargetIsOwner},
+		{"an admin strips an owner of another role", admin.ID, http.MethodDelete, "/users/" + coOwner.ID.String() + "/tenants/" + tenant.String() + "/roles/" + reviewers.String(), http.StatusForbidden, errs.CodeRBACTargetIsOwner},
+		{"an owner removes a co-owner's owner role", owner.ID, http.MethodDelete, "/users/" + coOwner.ID.String() + "/tenants/" + tenant.String() + "/roles/" + ownerRole.String(), http.StatusNoContent, ""},
+	} {
+		rec := dbtest.Do(t, as(tc.caller), tc.method, tc.path, nil)
+		if rec.Code != tc.status || !strings.Contains(rec.Body.String(), tc.code) {
+			t.Errorf("%s: %d %s, want %d %s", tc.name, rec.Code, rec.Body.String(), tc.status, tc.code)
+		}
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.role_permissions WHERE role_id = $1`, reviewers); n != 1 {
+		t.Errorf("the reviewers' role has %d permissions, want its one kept", n)
 	}
 }
