@@ -35,11 +35,20 @@ cmd_id=$(aws ssm send-command \
   --parameters "commands=[\"/opt/qeet-id/redeploy.sh $version\"]" \
   --query Command.CommandId --output text)
 echo "SSM command: $cmd_id"
-aws ssm wait command-executed --command-id "$cmd_id" --instance-id "$instance_id" || true
 invocation() {
   aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$instance_id" --query "$1" --output text
 }
-status=$(invocation Status)
+# Wait up to 10 minutes for redeploy.sh: it pulls, stops the running server
+# (up to its stop grace period, 30s) and waits up to 2 minutes for health,
+# longer than `aws ssm wait command-executed` waits (100s).
+status=Pending
+for _ in $(seq 1 120); do
+  status=$(invocation Status 2> /dev/null || echo Pending)
+  case "$status" in
+    Pending | InProgress | Delayed) sleep 5 ;;
+    *) break ;;
+  esac
+done
 echo "----- stdout -----"
 invocation StandardOutputContent
 echo "----- stderr -----"
