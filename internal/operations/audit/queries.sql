@@ -8,16 +8,16 @@
 --     void-returning side-effect function; it stays as a raw tx.Exec call.
 
 -- name: GetAuditChainTip :one
--- Fetch the most recent row_hash for a tenant's chain, or the platform chain's
--- when tenant_id is NULL. Called by Record() inside the caller's transaction to
--- chain the next row. One branch per kind of chain, the other always empty, so
+-- Fetch the most recent row_hash and created_at for a tenant's chain, or the
+-- platform chain's when tenant_id is NULL. Called by Record() inside the
+-- caller's transaction to chain the next row. One branch per kind of chain, the other always empty, so
 -- each is an index scan of idx_audit_chain_tip: IS NOT DISTINCT FROM can't use
 -- an index and read the whole table on every audited action.
-(SELECT o.row_hash FROM audit.events o
+(SELECT o.row_hash, o.created_at FROM audit.events o
  WHERE o.tenant_id = @tenant_id AND o.row_hash IS NOT NULL
  ORDER BY o.created_at DESC, o.id DESC LIMIT 1)
 UNION ALL
-(SELECT p.row_hash FROM audit.events p
+(SELECT p.row_hash, p.created_at FROM audit.events p
  WHERE @tenant_id::uuid IS NULL AND p.tenant_id IS NULL AND p.row_hash IS NOT NULL
  ORDER BY p.created_at DESC, p.id DESC LIMIT 1)
 LIMIT 1;

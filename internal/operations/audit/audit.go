@@ -154,6 +154,10 @@ func pgUUIDNullable(id *uuid.UUID) pgtype.UUID {
 // NULL.
 func strRef(s string) *string { return &s }
 
+// clock is this instance's time, which an audit row is stamped with unless
+// its chain's tip is later. A test sets it to stand for another instance.
+var clock = time.Now
+
 // Record writes one audit row in tx, as the next link of its tenant's hash
 // chain. A per-tenant advisory lock serialises concurrent writers until tx
 // ends.
@@ -183,10 +187,17 @@ func Record(ctx context.Context, tx pgx.Tx, e Event) error {
 	q := dbgen.New(tx)
 
 	prevHash := chainSeed
+	createdAt := clock().UTC().Truncate(time.Microsecond)
 	tip, err := q.GetAuditChainTip(ctx, pgUUIDNullable(e.TenantID))
 	switch {
 	case err == nil:
-		prevHash = strings.TrimSpace(*tip)
+		prevHash = strings.TrimSpace(*tip.RowHash)
+		// The chain is ordered by created_at, and each instance has its own
+		// clock: a row stamped no later than the tip would sort before it and
+		// fork the chain, so it goes just after.
+		if !createdAt.After(tip.CreatedAt) {
+			createdAt = tip.CreatedAt.Add(time.Microsecond)
+		}
 	case errors.Is(err, pgx.ErrNoRows):
 		// First row in chain; keep the seed.
 	default:
@@ -194,7 +205,6 @@ func Record(ctx context.Context, tx pgx.Tx, e Event) error {
 	}
 
 	id := uuid.New()
-	createdAt := time.Now().UTC().Truncate(time.Microsecond)
 	canonical, err := canonicalize(e, id, createdAt, meta, prevHash)
 	if err != nil {
 		return err

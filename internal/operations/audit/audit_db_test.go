@@ -170,3 +170,27 @@ func TestVerifyReadsTheChainInPages(t *testing.T) {
 		t.Errorf("verify a relinked chain: %+v, %v; want broken at %s, its link wrong", res, err, ids[2])
 	}
 }
+
+// TestChainSurvivesAnInstanceWhoseClockIsAhead checks that a row written by
+// an instance whose clock is behind the chain's tip still goes after it, so
+// the chain stays whole when two instances disagree about the time.
+func TestChainSurvivesAnInstanceWhoseClockIsAhead(t *testing.T) {
+	ctx := dbtest.Context(t)
+	tenant := dbtest.Tenant(t)
+	clock = func() time.Time { return time.Now().Add(time.Minute) }
+	ahead := record(t, tenant, "user.updated")
+	clock = time.Now
+	t.Cleanup(func() { clock = time.Now })
+	behind := record(t, tenant, "user.deleted")
+
+	var first uuid.UUID
+	if err := dbtest.Pool(t).QueryRow(ctx, `SELECT id FROM audit.events WHERE tenant_id = $1 ORDER BY created_at, id LIMIT 1`, tenant).Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+	if first != ahead {
+		t.Errorf("the chain starts at %s, want the earlier write %s before %s", first, ahead, behind)
+	}
+	if res, err := NewVerifier(dbtest.Pool(t)).Verify(ctx, &tenant); err != nil || !res.OK || res.RowsChecked != 2 {
+		t.Errorf("verify: %+v, %v; want both rows valid", res, err)
+	}
+}
