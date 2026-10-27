@@ -75,7 +75,7 @@ func (q *Queries) DeleteGroupMembers(ctx context.Context, arg DeleteGroupMembers
 }
 
 const deleteScimGroup = `-- name: DeleteScimGroup :execrows
-DELETE FROM tenant.groups WHERE id = $1 AND tenant_id = $2
+DELETE FROM tenant.groups WHERE id = $1 AND tenant_id = $2 AND provisioned_via = 'scim'
 `
 
 type DeleteScimGroupParams struct {
@@ -145,7 +145,7 @@ func (q *Queries) GetProvisionedUser(ctx context.Context, arg GetProvisionedUser
 const getScimGroup = `-- name: GetScimGroup :one
 
 SELECT id, name, external_id, created_at, updated_at
-FROM tenant.groups WHERE id = $1 AND tenant_id = $2
+FROM tenant.groups WHERE id = $1 AND tenant_id = $2 AND provisioned_via = 'scim'
 `
 
 type GetScimGroupParams struct {
@@ -219,8 +219,8 @@ func (q *Queries) GetScimTokenTenant(ctx context.Context, tokenHash string) (uui
 }
 
 const insertScimGroup = `-- name: InsertScimGroup :one
-INSERT INTO tenant.groups (tenant_id, name, external_id)
-VALUES ($1, $2, $3)
+INSERT INTO tenant.groups (tenant_id, name, external_id, provisioned_via)
+VALUES ($1, $2, $3, 'scim')
 RETURNING id, name, external_id, created_at, updated_at
 `
 

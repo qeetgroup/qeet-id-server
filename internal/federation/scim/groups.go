@@ -3,6 +3,9 @@ package scim
 // SCIM 2.0 Groups (RFC 7643 §4.2, RFC 7644), which IdPs use to push groups and
 // sync membership. They are the tenant's ordinary groups: displayName is the
 // name, members[].value are user IDs, and externalId is the IdP's own key.
+// SCIM reads and changes only the groups it created, so an IdP can't put
+// anyone in a group an administrator gave roles to; every change is audited
+// in its transaction.
 
 import (
 	"context"
@@ -18,9 +21,72 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
+
+// scimActor is who a SCIM request acts as, for its audit records: the
+// directory, from r's client.
+func scimActor(r *http.Request) audit.Actor {
+	return audit.Actor{Type: "scim", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
+}
+
+// memberSet is groupID's members, read inside the change's transaction.
+func memberSet(ctx context.Context, q *dbgen.Queries, tenantID, groupID uuid.UUID) (map[uuid.UUID]bool, error) {
+	rows, err := q.ListGroupMembers(ctx, dbgen.ListGroupMembersParams{GroupID: groupID, TenantID: tenantID})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]bool, len(rows))
+	for _, r := range rows {
+		out[r.UserID] = true
+	}
+	return out, nil
+}
+
+// recordGroupChange audits, in tx, a SCIM change to groupID: action on the
+// group ("" for none), then a group.member_added or group.member_removed for
+// each member it has gained or lost against before, each with its event.
+func recordGroupChange(ctx context.Context, tx pgx.Tx, q *dbgen.Queries, actor audit.Actor, tenantID, groupID uuid.UUID, action string, meta map[string]any, before map[uuid.UUID]bool) error {
+	if action != "" {
+		if err := audit.Record(ctx, tx, actor.Event(tenantID, action, "group", groupID, meta)); err != nil {
+			return err
+		}
+		payload := map[string]any{"group_id": groupID, "tenant_id": tenantID, "source": "scim"}
+		if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: groupID, Topic: "group.events", EventType: action, Payload: payload}); err != nil {
+			return err
+		}
+	}
+	after, err := memberSet(ctx, q, tenantID, groupID)
+	if err != nil {
+		return err
+	}
+	change := func(userID uuid.UUID, member string) error {
+		if err := audit.Record(ctx, tx, actor.Event(tenantID, member, "group", groupID, map[string]any{"user_id": userID})); err != nil {
+			return err
+		}
+		return outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: groupID, Topic: "group.events", EventType: member,
+			Payload: map[string]any{"group_id": groupID, "user_id": userID, "tenant_id": tenantID, "source": "scim"}})
+	}
+	for id := range after {
+		if !before[id] {
+			if err := change(id, "group.member_added"); err != nil {
+				return err
+			}
+		}
+	}
+	for id := range before {
+		if !after[id] {
+			if err := change(id, "group.member_removed"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
 
 const schemaGroup = "urn:ietf:params:scim:schemas:core:2.0:Group"
 
@@ -63,7 +129,7 @@ func (s *Service) getGroup(ctx context.Context, tenantID, id uuid.UUID) (*groupR
 
 func (s *Service) listGroups(ctx context.Context, tenantID uuid.UUID, nameFilter string, start, count int) ([]groupRow, int, error) {
 	args := []any{tenantID}
-	where := `tenant_id = $1`
+	where := `tenant_id = $1 AND provisioned_via = 'scim'`
 	if nameFilter != "" {
 		args = append(args, nameFilter)
 		where += ` AND LOWER(name) = LOWER($2)`
@@ -114,7 +180,7 @@ func (s *Service) listMembers(ctx context.Context, tenantID, groupID uuid.UUID) 
 // createGroup inserts a group + its initial members atomically. Members are
 // validated to belong to this tenant; unknown/foreign ids are silently
 // dropped (SCIM imports must not fail wholesale on a stale member ref).
-func (s *Service) createGroup(ctx context.Context, tenantID uuid.UUID, name, externalID string, members []uuid.UUID) (*groupRow, error) {
+func (s *Service) createGroup(ctx context.Context, actor audit.Actor, tenantID uuid.UUID, name, externalID string, members []uuid.UUID) (*groupRow, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -147,6 +213,9 @@ func (s *Service) createGroup(ctx context.Context, tenantID uuid.UUID, name, ext
 			return nil, err
 		}
 	}
+	if err := recordGroupChange(ctx, tx, q, actor, tenantID, g.ID, "group.created", map[string]any{"name": name}, nil); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -155,7 +224,7 @@ func (s *Service) createGroup(ctx context.Context, tenantID uuid.UUID, name, ext
 
 // replaceGroup does a full PUT: it overwrites displayName/externalId and
 // replaces the entire member set with the supplied one, all in one tx.
-func (s *Service) replaceGroup(ctx context.Context, tenantID, id uuid.UUID, name string, externalID *string, members []uuid.UUID) (*groupRow, error) {
+func (s *Service) replaceGroup(ctx context.Context, actor audit.Actor, tenantID, id uuid.UUID, name string, externalID *string, members []uuid.UUID) (*groupRow, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -167,6 +236,10 @@ func (s *Service) replaceGroup(ctx context.Context, tenantID, id uuid.UUID, name
 	if err := touchGroupTx(ctx, tx, tenantID, id, &name, externalID); err != nil {
 		return nil, err
 	}
+	before, err := memberSet(ctx, q, tenantID, id)
+	if err != nil {
+		return nil, err
+	}
 	if err := q.DeleteGroupMembers(ctx, dbgen.DeleteGroupMembersParams{GroupID: id, TenantID: tenantID}); err != nil {
 		return nil, err
 	}
@@ -174,6 +247,9 @@ func (s *Service) replaceGroup(ctx context.Context, tenantID, id uuid.UUID, name
 		if err := addMemberTx(ctx, q, tenantID, id, uid); err != nil {
 			return nil, err
 		}
+	}
+	if err := recordGroupChange(ctx, tx, q, actor, tenantID, id, "group.updated", map[string]any{"name": name}, before); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
@@ -183,7 +259,7 @@ func (s *Service) replaceGroup(ctx context.Context, tenantID, id uuid.UUID, name
 
 // patchGroup applies a parsed PatchOp set in one tx: displayName/externalId
 // changes plus member add/remove/replace.
-func (s *Service) patchGroup(ctx context.Context, tenantID, id uuid.UUID, p *groupPatch) (*groupRow, error) {
+func (s *Service) patchGroup(ctx context.Context, actor audit.Actor, tenantID, id uuid.UUID, p *groupPatch) (*groupRow, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -199,11 +275,17 @@ func (s *Service) patchGroup(ctx context.Context, tenantID, id uuid.UUID, p *gro
 		}
 		return nil, err
 	}
+	before, err := memberSet(ctx, q, tenantID, id)
+	if err != nil {
+		return nil, err
+	}
 
+	action := ""
 	if p.setName != nil || p.setExternalID != nil {
 		if err := touchGroupTx(ctx, tx, tenantID, id, p.setName, p.setExternalID); err != nil {
 			return nil, err
 		}
+		action = "group.updated"
 	}
 	if p.replaceMembers {
 		if err := q.DeleteGroupMembers(ctx, dbgen.DeleteGroupMembersParams{GroupID: id, TenantID: tenantID}); err != nil {
@@ -220,22 +302,39 @@ func (s *Service) patchGroup(ctx context.Context, tenantID, id uuid.UUID, p *gro
 			return nil, err
 		}
 	}
+	if err := recordGroupChange(ctx, tx, q, actor, tenantID, id, action, nil, before); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return s.getGroupTx(ctx, tenantID, id)
 }
 
-// deleteGroup hard-deletes the group (group_members cascade) for this tenant.
-func (s *Service) deleteGroup(ctx context.Context, tenantID, id uuid.UUID) error {
-	n, err := s.q.DeleteScimGroup(ctx, dbgen.DeleteScimGroupParams{ID: id, TenantID: tenantID})
+// deleteGroup hard-deletes the group (group_members cascade) for this tenant,
+// recording it with each member it loses.
+func (s *Service) deleteGroup(ctx context.Context, actor audit.Actor, tenantID, id uuid.UUID) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	q := s.q.WithTx(tx)
+	before, err := memberSet(ctx, q, tenantID, id)
+	if err != nil {
+		return err
+	}
+	n, err := q.DeleteScimGroup(ctx, dbgen.DeleteScimGroupParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		return err
 	}
 	if n == 0 {
 		return errs.ErrNotFound
 	}
-	return nil
+	if err := recordGroupChange(ctx, tx, q, actor, tenantID, id, "group.deleted", nil, before); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Service) getGroupTx(ctx context.Context, tenantID, id uuid.UUID) (*groupRow, error) {
@@ -278,7 +377,7 @@ func touchGroupTx(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, name, 
 			name        = COALESCE($3, name),
 			external_id = CASE WHEN $4::bool THEN $5 ELSE external_id END,
 			updated_at  = NOW()
-		WHERE id = $1 AND tenant_id = $2
+		WHERE id = $1 AND tenant_id = $2 AND provisioned_via = 'scim'
 	`, id, tenantID, name, externalID != nil, ext)
 	if err != nil {
 		return err
@@ -415,7 +514,7 @@ func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	g, err := h.Service.createGroup(ctx, tid, name, p.ExternalID, p.memberIDs())
+	g, err := h.Service.createGroup(ctx, scimActor(r), tid, name, p.ExternalID, p.memberIDs())
 	if err != nil {
 		if !writeGroupConflict(w, err) {
 			writeSCIMErr(w, http.StatusBadRequest, "create failed")
@@ -474,7 +573,7 @@ func (h *Handler) replaceGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ext := &p.ExternalID // PUT is a full replace: externalId is authoritative (empty clears it)
-	g, err := h.Service.replaceGroup(r.Context(), tid, id, name, ext, p.memberIDs())
+	g, err := h.Service.replaceGroup(r.Context(), scimActor(r), tid, id, name, ext, p.memberIDs())
 	if err != nil {
 		if errors.Is(err, errs.ErrNotFound) {
 			writeSCIMErr(w, http.StatusNotFound, "group not found")
@@ -519,7 +618,7 @@ func (h *Handler) patchGroup(w http.ResponseWriter, r *http.Request) {
 		writeSCIMErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	g, err := h.Service.patchGroup(r.Context(), tid, id, p)
+	g, err := h.Service.patchGroup(r.Context(), scimActor(r), tid, id, p)
 	if err != nil {
 		if errors.Is(err, errs.ErrNotFound) {
 			writeSCIMErr(w, http.StatusNotFound, "group not found")
@@ -707,7 +806,7 @@ func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.Service.deleteGroup(r.Context(), tid, id); err != nil {
+	if err := h.Service.deleteGroup(r.Context(), scimActor(r), tid, id); err != nil {
 		writeSCIMErr(w, http.StatusNotFound, "group not found")
 		return
 	}

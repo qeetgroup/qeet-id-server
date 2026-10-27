@@ -675,3 +675,56 @@ func TestSCIMLeavesOwnersAndOthersSuspensionsAlone(t *testing.T) {
 		t.Errorf("reactivate the directory's own suspension: %d, status %s; want active", rec.Code, status(byDirectory))
 	}
 }
+
+// TestSCIMManagesOnlyItsOwnGroups checks that a directory can neither see
+// nor change a group an administrator made, so it can't put anyone in one
+// that carries roles, and that its changes to its own groups are audited
+// member by member.
+func TestSCIMManagesOnlyItsOwnGroups(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	f := newSCIMFixture(t, ctx)
+	member := f.seedUser(t, ctx, dbtest.Unique("member")+"@example.test")
+	var admins uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Admins') RETURNING id`, f.tenantID).Scan(&admins); err != nil {
+		t.Fatal(err)
+	}
+	addMember := map[string]any{
+		"schemas":    []string{schemaPatchOp},
+		"Operations": []map[string]any{{"op": "add", "path": "members", "value": []map[string]string{{"value": member.String()}}}},
+	}
+	path := "/scim/v2/Groups/" + admins.String()
+	for name, rec := range map[string]*httptest.ResponseRecorder{
+		"read":    f.do(t, http.MethodGet, path, nil),
+		"patch":   f.do(t, http.MethodPatch, path, addMember),
+		"replace": f.do(t, http.MethodPut, path, map[string]any{"schemas": []string{schemaGroup}, "displayName": "Admins", "members": []map[string]string{{"value": member.String()}}}),
+		"delete":  f.do(t, http.MethodDelete, path, nil),
+	} {
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s an administrator's group: %d %s, want 404", name, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := f.do(t, http.MethodGet, "/scim/v2/Groups?filter="+url.QueryEscape(`displayName eq "Admins"`), nil); decodeBody(t, rec)["totalResults"] != float64(0) {
+		t.Errorf("listing found the administrator's group: %s", rec.Body.String())
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.group_members WHERE group_id = $1`, admins); n != 0 || dbtest.Count(t, `SELECT count(*) FROM tenant.groups WHERE id = $1`, admins) != 1 {
+		t.Error("the directory changed an administrator's group")
+	}
+
+	rec := f.do(t, http.MethodPost, "/scim/v2/Groups", map[string]any{"schemas": []string{schemaGroup}, "displayName": "Engineering", "externalId": "eng"})
+	id, _ := decodeBody(t, rec)["id"].(string)
+	if rec.Code != http.StatusCreated || id == "" {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.do(t, http.MethodPatch, "/scim/v2/Groups/"+id, addMember); rec.Code != http.StatusOK {
+		t.Fatalf("add a member: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.do(t, http.MethodDelete, "/scim/v2/Groups/"+id, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, action := range []string{"group.created", "group.member_added", "group.member_removed", "group.deleted"} {
+		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE resource_id = $1 AND action = $2 AND actor_type = 'scim'`, uuid.MustParse(id), action); n != 1 {
+			t.Errorf("%d %s records, want 1", n, action)
+		}
+	}
+}

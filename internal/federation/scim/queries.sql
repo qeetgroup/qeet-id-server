@@ -74,7 +74,7 @@ WHERE id = @id;
 
 -- name: GetScimGroup :one
 SELECT id, name, external_id, created_at, updated_at
-FROM tenant.groups WHERE id = @id AND tenant_id = @tenant_id;
+FROM tenant.groups WHERE id = @id AND tenant_id = @tenant_id AND provisioned_via = 'scim';
 
 -- name: ListGroupMembers :many
 SELECT gm.user_id, u.email, u.display_name
@@ -84,8 +84,8 @@ WHERE gm.group_id = @group_id AND gm.tenant_id = @tenant_id AND u.deleted_at IS 
 ORDER BY u.email;
 
 -- name: InsertScimGroup :one
-INSERT INTO tenant.groups (tenant_id, name, external_id)
-VALUES (@tenant_id, @name, sqlc.narg('external_id'))
+INSERT INTO tenant.groups (tenant_id, name, external_id, provisioned_via)
+VALUES (@tenant_id, @name, sqlc.narg('external_id'), 'scim')
 RETURNING id, name, external_id, created_at, updated_at;
 
 -- name: DeleteGroupMembers :exec
@@ -96,7 +96,7 @@ DELETE FROM tenant.group_members
 WHERE group_id = @group_id AND user_id = @user_id AND tenant_id = @tenant_id;
 
 -- name: DeleteScimGroup :execrows
-DELETE FROM tenant.groups WHERE id = @id AND tenant_id = @tenant_id;
+DELETE FROM tenant.groups WHERE id = @id AND tenant_id = @tenant_id AND provisioned_via = 'scim';
 
 -- name: CheckUserInTenant :one
 SELECT EXISTS(

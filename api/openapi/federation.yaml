@@ -3570,7 +3570,7 @@ paths:
   /scim/v2/Groups:
     get:
       operationId: get_scim_v2_Groups
-      description: 'Lists provisioned groups for the tenant identified by the SCIM bearer token, with optional SCIM filtering and pagination, returning a SCIM 2.0 ListResponse, with Qeet acting as the SCIM server. Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope rather than the standard Qeet error shape.'
+      description: 'Lists the groups SCIM provisioned for the tenant identified by the SCIM bearer token (a group an administrator made is neither listed nor readable or changeable here, so a directory can''t put anyone in a group that carries roles), with optional SCIM filtering and pagination, returning a SCIM 2.0 ListResponse, with Qeet acting as the SCIM server. Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope rather than the standard Qeet error shape.'
       summary: "[scim] List groups"
       tags:
         - SCIM
@@ -3602,7 +3602,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
     post:
       operationId: post_scim_v2_Groups
-      description: 'Provisions a new group in the tenant identified by the SCIM bearer token, with Qeet acting as the SCIM 2.0 server for an external IdP. Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope, not the standard Qeet error shape.'
+      description: 'Provisions a new group in the tenant identified by the SCIM bearer token, with Qeet acting as the SCIM 2.0 server for an external IdP. The group, and every later change to it and its members, is audited (group.created, group.updated, group.member_added, group.member_removed, group.deleted; actor scim). Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope, not the standard Qeet error shape.'
       summary: "[scim] Create group"
       tags:
         - SCIM
