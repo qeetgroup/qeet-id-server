@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/go-playground/validator/v10"
@@ -385,9 +386,9 @@ func TestInvitationsAreAudited(t *testing.T) {
 		t.Fatal(err)
 	}
 	asMember := dbtest.Serve(dbtest.Principal(member.ID, home), h.MountAuthed)
-	byLink, linkToken := invite(member.Email, nil)
-	byInbox, _ := invite(member.Email, nil)
-	declined, _ := invite(member.Email, nil)
+	byLink, linkToken := invite(member.Email, &role)
+	byInbox, _ := invite(member.Email, &role)
+	declined, _ := invite(member.Email, &role)
 	if rec := dbtest.Do(t, asMember, http.MethodPost, "/me/invites/accept", map[string]string{"token": linkToken}); rec.Code != http.StatusOK {
 		t.Fatalf("accept by link: %d %s", rec.Code, rec.Body.String())
 	}
@@ -432,5 +433,43 @@ func TestInviteCreatesNoAccountOnAnotherOrganisationsDomain(t *testing.T) {
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, claimed); n != 0 {
 		t.Errorf("the account was created")
+	}
+}
+
+// TestInvitationsMatchAddressesAndNeedARoleForOutsiders checks that an
+// invitation typed in another case reaches the account's inbox and is
+// accepted, and that one with no role, to someone at home elsewhere, is
+// refused rather than joining them to nothing.
+func TestInvitationsMatchAddressesAndNeedARoleForOutsiders(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	h, _ := newHandler(t)
+	tenant, home := dbtest.Tenant(t), dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	byAdmin := audit.Actor{UserID: &admin.ID, Type: "user"}
+	member := dbtest.UserAt(t, dbtest.Unique("bob")+"@example.test", home, home)
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, member.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := h.Service.Create(ctx, CreateInput{TenantID: tenant, Email: strings.ToUpper(member.Email)}, byAdmin); !errors.Is(err, errs.ErrInviteRoleRequired) {
+		t.Errorf("invite someone at home elsewhere with no role: %v, want %v", err, errs.ErrInviteRoleRequired)
+	}
+	role := dbtest.Role(t, tenant)
+	inv, _, err := h.Service.Create(ctx, CreateInput{TenantID: tenant, Email: "  " + strings.ToUpper(member.Email), RoleID: &role}, byAdmin)
+	if err != nil {
+		t.Fatalf("invite with a role: %v", err)
+	}
+	if inv.Email != strings.ToLower(member.Email) {
+		t.Errorf("stored address %q, want it lower-case", inv.Email)
+	}
+	asMember := dbtest.Serve(dbtest.Principal(member.ID, home), h.MountAuthed)
+	if rec := dbtest.Do(t, asMember, http.MethodGet, "/me/invites", nil); !strings.Contains(rec.Body.String(), inv.ID.String()) {
+		t.Errorf("inbox: %d %s; want the invitation", rec.Code, rec.Body.String())
+	}
+	if rec := dbtest.Do(t, asMember, http.MethodPost, "/me/invites/"+inv.ID.String()+"/accept", nil); rec.Code != http.StatusOK {
+		t.Fatalf("accept: %d %s", rec.Code, rec.Body.String())
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, member.ID, tenant); n != 1 {
+		t.Errorf("%d roles in the organisation after accepting, want 1", n)
 	}
 }

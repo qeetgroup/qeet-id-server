@@ -209,8 +209,20 @@ func recordAccepted(ctx context.Context, tx pgx.Tx, actor audit.Actor, userID uu
 }
 
 // Create stores an invitation from actor, recorded as theirs, and emails its
-// link. A role it carries must be the tenant's, or it is errRoleNotFound.
+// link. A role it carries must be the tenant's, or it is errRoleNotFound; one
+// carrying none, to someone at home in another organisation, would join them
+// to nothing and is ErrInviteRoleRequired. The address is kept lower-case.
 func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor) (*Invite, string, error) {
+	in.Email = strings.ToLower(strings.TrimSpace(in.Email))
+	if in.RoleID == nil {
+		elsewhere, err := s.q.AccountHomeElsewhere(ctx, dbgen.AccountHomeElsewhereParams{Email: in.Email, TenantID: in.TenantID})
+		if err != nil {
+			return nil, "", err
+		}
+		if elsewhere {
+			return nil, "", errs.ErrInviteRoleRequired
+		}
+	}
 	// Plan gate: a new invite consumes a seat, so refuse once the tenant's seat
 	// limit (members + pending invites) is reached.
 	if s.limits != nil {
@@ -632,6 +644,16 @@ func (s *Service) grantAuthedAccept(ctx context.Context, tx pgx.Tx, qtx *dbgen.Q
 	}
 	if !strings.EqualFold(strings.TrimSpace(email), strings.TrimSpace(inv.Email)) {
 		return nil, errs.ErrInviteEmailMismatch
+	}
+	// With no role, the invitation joins only someone whose home it is.
+	if !inv.RoleID.Valid {
+		var home bool
+		if err := tx.QueryRow(ctx, `SELECT tenant_id IS NOT DISTINCT FROM $2 FROM "user".users WHERE id = $1`, userID, inv.TenantID).Scan(&home); err != nil {
+			return nil, err
+		}
+		if !home {
+			return nil, errs.ErrInviteRoleRequired
+		}
 	}
 	if roleID := pgtypeToUUIDPtr(inv.RoleID); roleID != nil {
 		if err := qtx.GrantUserRole(ctx, dbgen.GrantUserRoleParams{

@@ -67,7 +67,7 @@ FOR UPDATE;
 -- their own email (scoped by email so one user can't decline another's).
 -- name: DeclineInviteForEmail :one
 UPDATE tenant.invites SET status = 'declined'
-WHERE id = @id AND email = @email AND status = 'pending'
+WHERE id = @id AND LOWER(email) = LOWER(@email) AND status = 'pending'
 RETURNING tenant_id, role_id;
 
 -- name: ListInvitesForEmail :many
@@ -75,7 +75,7 @@ SELECT i.id, i.tenant_id, i.email, i.role_id, i.expires_at, i.created_at,
        t.name AS tenant_name, t.slug AS tenant_slug
 FROM tenant.invites i
 JOIN tenant.tenants t ON t.id = i.tenant_id
-WHERE i.email = @email AND i.status = 'pending' AND i.expires_at > NOW()
+WHERE LOWER(i.email) = LOWER(@email) AND i.status = 'pending' AND i.expires_at > NOW()
 ORDER BY i.created_at DESC
 LIMIT 50;
 
@@ -89,7 +89,17 @@ UPDATE tenant.invites SET status = 'accepted', accepted_at = NOW() WHERE id = $1
 -- pgx.ErrNoRows means no account exists yet. Used by Accept to branch between
 -- creating a new user and attaching a membership to an existing one.
 -- name: FindUserIDByEmail :one
-SELECT id FROM "user".users WHERE email = @email;
+SELECT id FROM "user".users WHERE LOWER(email) = LOWER(@email);
+
+-- AccountHomeElsewhere reports whether an account holds @email and has a home
+-- other than @tenant_id, so an invitation with no role would join it to
+-- nothing.
+-- name: AccountHomeElsewhere :one
+SELECT EXISTS (
+    SELECT 1 FROM "user".users u
+    WHERE LOWER(u.email) = LOWER(@email) AND u.deleted_at IS NULL
+      AND u.tenant_id IS DISTINCT FROM @tenant_id::uuid
+)::bool;
 
 -- GetUserEmailByID returns the caller's email so an authenticated accept can
 -- confirm the invite was addressed to them.
@@ -130,7 +140,7 @@ ON CONFLICT (user_id, tenant_id, role_id) DO NOTHING;
 -- name: LookupInvite :one
 SELECT i.id, i.tenant_id, i.email, i.status, i.expires_at,
        t.name AS tenant_name, t.slug AS tenant_slug,
-       EXISTS (SELECT 1 FROM "user".users u WHERE u.email = i.email) AS account_exists
+       EXISTS (SELECT 1 FROM "user".users u WHERE LOWER(u.email) = LOWER(i.email)) AS account_exists
 FROM tenant.invites i
 JOIN tenant.tenants t ON t.id = i.tenant_id
 WHERE i.token_hash = @token_hash;

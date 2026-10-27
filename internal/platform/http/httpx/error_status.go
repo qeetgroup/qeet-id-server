@@ -64,6 +64,7 @@ var statusByCode = map[string]int{
 	errs.CodeInviteAccountExists:    http.StatusConflict,
 	errs.CodeInviteEmailMismatch:    http.StatusForbidden,
 	errs.CodeInviteEmailNotVerified: http.StatusForbidden,
+	errs.CodeInviteRoleRequired:     http.StatusUnprocessableEntity,
 
 	// Passkeys.
 	errs.CodePasskeyExists:      http.StatusConflict,
