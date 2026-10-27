@@ -144,7 +144,10 @@ internal/platform/database/migrations/NNNN_description.down.sql
 
 Numbering continues from the highest present (currently `0174`; `0082` is absent and is not to be
 reused). Migrations are embedded with `//go:embed` and applied on startup. Additive first —
-expand, migrate, contract across releases.
+expand, migrate, contract across releases. An index on a table that already exists is built with
+`CREATE INDEX CONCURRENTLY`, alone in its file (a plain one blocks writes while it builds;
+`TestNewIndexesDontLockTheirTable` enforces it). A migration waits at most 10s for a busy table,
+then fails and runs again at the next start.
 
 ### 9. Behaviour changes require tests
 
