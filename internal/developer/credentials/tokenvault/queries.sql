@@ -10,14 +10,14 @@ FROM tenant.token_vault_providers WHERE tenant_id = $1 ORDER BY provider;
 DELETE FROM tenant.token_vault_providers WHERE tenant_id = @tenant_id AND provider = @provider;
 
 -- name: InsertConnectState :exec
-INSERT INTO tenant.token_vault_connect_states (state, tenant_id, user_id, provider, expires_at)
-VALUES (@state, @tenant_id, @user_id, @provider, @expires_at);
+INSERT INTO tenant.token_vault_connect_states (state, tenant_id, user_id, provider, expires_at, code_verifier)
+VALUES (@state, @tenant_id, @user_id, @provider, @expires_at, @code_verifier);
 
 -- DeleteConnectState atomically consumes the single-use state for the
 -- FinishConnect ceremony (DELETE … RETURNING validates and consumes in one shot).
 -- name: DeleteConnectState :one
 DELETE FROM tenant.token_vault_connect_states WHERE state = $1
-RETURNING tenant_id, user_id, provider, expires_at;
+RETURNING tenant_id, user_id, provider, expires_at, COALESCE(code_verifier, '')::text AS code_verifier;
 
 -- UpsertTokenGrant writes (or refreshes) a connected account's token pair.
 -- refresh_token_ct / refresh_token_nonce are nullable: NULL means "no refresh

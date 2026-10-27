@@ -7,6 +7,8 @@ package tokenvault
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -231,39 +233,49 @@ func (s *Service) providerConfig(ctx context.Context, tenantID uuid.UUID, provid
 func callbackURL(base string) string { return base + "/v1/vault/tokens/callback" }
 
 // BeginConnect starts an authorization-code ceremony for (tenantID, userID)
-// to connect provider, returning the URL to redirect the user's browser to.
-func (s *Service) BeginConnect(ctx context.Context, tenantID, userID uuid.UUID, provider, base string) (string, error) {
+// to connect provider, returning the URL to redirect the user's browser to
+// and the ceremony's state, which the caller binds to that browser. The code
+// redeems only with this ceremony's PKCE verifier.
+func (s *Service) BeginConnect(ctx context.Context, tenantID, userID uuid.UUID, provider, base string) (string, string, error) {
 	clientID, _, authorizeURL, _, scopes, err := s.providerConfig(ctx, tenantID, provider)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	state, err := randomState()
 	if err != nil {
-		return "", err
+		return "", "", err
+	}
+	verifier, err := randomState()
+	if err != nil {
+		return "", "", err
 	}
 	if err := s.q.InsertConnectState(ctx, dbgen.InsertConnectStateParams{
-		State:     state,
-		TenantID:  tenantID,
-		UserID:    userID,
-		Provider:  provider,
-		ExpiresAt: time.Now().UTC().Add(connectStateTTL),
+		State:        state,
+		TenantID:     tenantID,
+		UserID:       userID,
+		Provider:     provider,
+		ExpiresAt:    time.Now().UTC().Add(connectStateTTL),
+		CodeVerifier: &verifier,
 	}); err != nil {
-		return "", err
+		return "", "", err
 	}
 	u, err := url.Parse(authorizeURL)
 	if err != nil {
-		return "", errs.ErrTokenVaultProviderAuthorizeInvalid
+		return "", "", errs.ErrTokenVaultProviderAuthorizeInvalid
 	}
+	challenge := sha256.Sum256([]byte(verifier))
 	q := u.Query()
 	q.Set("response_type", "code")
 	q.Set("client_id", clientID)
 	q.Set("redirect_uri", callbackURL(base))
 	q.Set("state", state)
+	q.Set("code_challenge", base64.RawURLEncoding.EncodeToString(challenge[:]))
+	q.Set("code_challenge_method", "S256")
 	if scopes != "" {
 		q.Set("scope", scopes)
 	}
 	u.RawQuery = q.Encode()
-	return u.String(), nil
+	return u.String(), state, nil
 }
 
 // oauthTokenResponse is the standard OAuth 2.0 token response (RFC 6749 §5.1).
@@ -307,13 +319,17 @@ func (s *Service) FinishConnect(ctx context.Context, state, code, base string) e
 	if err != nil {
 		return err
 	}
-	tok, err := s.exchange(ctx, tokenURL, url.Values{
+	form := url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
 		"redirect_uri":  {callbackURL(base)},
 		"client_id":     {clientID},
 		"client_secret": {clientSecret},
-	})
+	}
+	if cs.CodeVerifier != "" {
+		form.Set("code_verifier", cs.CodeVerifier)
+	}
+	tok, err := s.exchange(ctx, tokenURL, form)
 	if err != nil {
 		return err
 	}
@@ -489,6 +505,14 @@ func randomState() (string, error) {
 type Handler struct {
 	Service       *Service
 	PublicBaseURL string
+	CookieSecure  bool // the browser-binding cookie's Secure attribute; off only in development
+}
+
+// binding ties a connect ceremony to the browser that began it: the callback
+// stores a connected account only in that browser, or whoever began one could
+// send its link to someone else and keep the account they connect.
+func (h *Handler) binding() httpx.BindingCookie {
+	return httpx.BindingCookie{Name: "qe_vault", Secure: h.CookieSecure, SameSite: http.SameSiteLaxMode, MaxAge: connectStateTTL}
 }
 
 // Mount registers the token vault routes on r.
@@ -566,11 +590,12 @@ func (h *Handler) beginConnect(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	authorizeURL, err := h.Service.BeginConnect(r.Context(), tenantID, userID, chi.URLParam(r, "provider"), httpx.PublicOrigin(r, h.PublicBaseURL))
+	authorizeURL, state, err := h.Service.BeginConnect(r.Context(), tenantID, userID, chi.URLParam(r, "provider"), httpx.PublicOrigin(r, h.PublicBaseURL))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	h.binding().Add(w, r, state)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"authorize_url": authorizeURL})
 }
 
@@ -588,6 +613,11 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		writeCallbackPage(w, false, "missing state or code")
 		return
 	}
+	if !h.binding().Holds(r, state) {
+		writeCallbackPage(w, false, errs.ErrTokenVaultConnectOtherBrowser.Message)
+		return
+	}
+	h.binding().Remove(w, r, state)
 	if err := h.Service.FinishConnect(r.Context(), state, code, httpx.PublicOrigin(r, h.PublicBaseURL)); err != nil {
 		msg := "connection failed"
 		if e := errs.As(err); e != nil {

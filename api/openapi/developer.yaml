@@ -1675,7 +1675,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Returns the authorize_url to redirect the user's browser to, starting a standard OAuth2 authorization-code ceremony against the tenant's registered provider config.
+      description: "Returns the authorize_url to redirect the user's browser to, starting a standard OAuth2 authorization-code ceremony (with PKCE, S256) against the tenant's registered provider config. The answer also sets an HttpOnly cookie binding the ceremony to this browser, so call it with credentials included (fetch credentials: 'include') from the browser that will open the link: the callback connects the account only in that browser."
       responses:
         '200':
           description: OK
@@ -1699,7 +1699,7 @@ paths:
       tags:
         - Token Vault
       security: []
-      description: The fixed, non-caller-supplied redirect_uri registered with the third-party provider. Completes the code exchange and renders a minimal HTML confirmation page — never redirects to a caller-supplied URL.
+      description: "The fixed, non-caller-supplied redirect_uri registered with the third-party provider. Completes the code exchange, with the ceremony's PKCE verifier, and renders a minimal HTML confirmation page — never redirects to a caller-supplied URL. Only the browser that began the ceremony (holding the cookie the connect call set) completes it: another browser gets 400 (tokenvault.connect_other_browser) and nothing is exchanged or stored, so a connect link sent to someone else connects nothing."
       responses:
         '200':
           description: HTML confirmation page

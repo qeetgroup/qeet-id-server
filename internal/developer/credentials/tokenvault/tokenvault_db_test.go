@@ -3,6 +3,8 @@
 package tokenvault
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -55,6 +57,22 @@ func newOAuthProvider(t *testing.T) *oauthProvider {
 	return p
 }
 
+// lastForm is the latest token request the provider received.
+func (p *oauthProvider) lastForm() url.Values {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.forms) == 0 {
+		return nil
+	}
+	return p.forms[len(p.forms)-1]
+}
+
+// s256 is a PKCE verifier's S256 challenge.
+func s256(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
 // exchanges counts the token requests the provider received.
 func (p *oauthProvider) exchanges() int {
 	p.mu.Lock()
@@ -81,8 +99,9 @@ func signedIn(p *httpx.Principal, scopes ...string) *httpx.Principal {
 
 // TestConnectedAccountLifecycle checks that an organisation registers a
 // provider without its secret ever being returned, a person connects an
-// account once per ceremony, its token is refreshed when due and given only to
-// that person signed in with the scope, and it can be disconnected.
+// account once per ceremony, only in the browser that began it and with its
+// PKCE verifier, its token is refreshed when due and given only to that person
+// signed in with the scope, and it can be disconnected.
 func TestConnectedAccountLifecycle(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc := vaultService(t)
@@ -106,9 +125,36 @@ func TestConnectedAccountLifecycle(t *testing.T) {
 		t.Errorf("providers: %s; want acme without its secret", rec.Body.String())
 	}
 
+	var browser []*http.Cookie // the person's browser: the cookies it holds now
+	keep := func(rec *httptest.ResponseRecorder) {
+		for _, set := range rec.Result().Cookies() {
+			kept := browser[:0]
+			for _, c := range browser {
+				if c.Name != set.Name {
+					kept = append(kept, c)
+				}
+			}
+			browser = kept
+			if set.MaxAge >= 0 {
+				browser = append(browser, set)
+			}
+		}
+	}
+	send := func(h http.Handler, target string, cookies []*http.Cookie) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+		for _, c := range cookies {
+			req.AddCookie(c)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	challenges := map[string]string{}
 	connect := func() string {
 		t.Helper()
-		rec := dbtest.Do(t, asPerson, http.MethodGet, "/vault/tokens/acme/connect", nil)
+		rec := send(asPerson, "/vault/tokens/acme/connect", browser)
+		keep(rec)
 		var out struct {
 			AuthorizeURL string `json:"authorize_url"`
 		}
@@ -121,13 +167,32 @@ func TestConnectedAccountLifecycle(t *testing.T) {
 		if q.Get("client_id") != "qeet-client" || q.Get("redirect_uri") != "https://id.example.test/v1/vault/tokens/callback" || q.Get("scope") != "read" || q.Get("prompt") != "consent" {
 			t.Errorf("authorize URL %s; want the client, the fixed callback, the scopes and the provider's own parameters", out.AuthorizeURL)
 		}
+		if q.Get("code_challenge_method") != "S256" || q.Get("code_challenge") == "" {
+			t.Errorf("authorize URL %s; want a PKCE challenge", out.AuthorizeURL)
+		}
+		challenges[q.Get("state")] = q.Get("code_challenge")
 		return q.Get("state")
 	}
+	callback := func(query string, cookies []*http.Cookie) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := send(public, "/vault/tokens/callback?"+query, cookies)
+		if cookies != nil {
+			keep(rec)
+		}
+		return rec
+	}
+	stolen := connect()
+	if rec := callback("state="+stolen+"&code=good-code", nil); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "another browser") || provider.exchanges() != 0 {
+		t.Errorf("a ceremony finished in another browser: %d %s; want refused before any exchange", rec.Code, rec.Body.String())
+	}
 	state := connect()
-	if rec := dbtest.Do(t, public, http.MethodGet, "/vault/tokens/callback?state="+state+"&code=good-code", nil); rec.Code != http.StatusOK {
+	if rec := callback("state="+state+"&code=good-code", browser); rec.Code != http.StatusOK {
 		t.Fatalf("callback: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := dbtest.Do(t, public, http.MethodGet, "/vault/tokens/callback?state="+state+"&code=good-code", nil); rec.Code != http.StatusBadRequest {
+	if form := provider.lastForm(); form.Get("code_verifier") == "" || s256(form.Get("code_verifier")) != challenges[state] {
+		t.Errorf("code exchange %v; want the verifier of the ceremony's challenge", form)
+	}
+	if rec := callback("state="+state+"&code=good-code", browser); rec.Code != http.StatusBadRequest {
 		t.Errorf("the same callback twice: %d, want refused", rec.Code)
 	}
 	for name, query := range map[string]string{
@@ -136,7 +201,7 @@ func TestConnectedAccountLifecycle(t *testing.T) {
 		"with an unknown state":   "state=forged&code=good-code",
 		"with a bad code":         "state=" + connect() + "&code=bad-code",
 	} {
-		if rec := dbtest.Do(t, public, http.MethodGet, "/vault/tokens/callback?"+query, nil); rec.Code != http.StatusBadRequest {
+		if rec := callback(query, browser); rec.Code != http.StatusBadRequest {
 			t.Errorf("a callback %s: %d, want refused", name, rec.Code)
 		}
 	}
@@ -144,7 +209,7 @@ func TestConnectedAccountLifecycle(t *testing.T) {
 	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE tenant.token_vault_connect_states SET expires_at = now() - interval '1 minute' WHERE state = $1`, expired); err != nil {
 		t.Fatal(err)
 	}
-	if rec := dbtest.Do(t, public, http.MethodGet, "/vault/tokens/callback?state="+expired+"&code=good-code", nil); !strings.Contains(rec.Body.String(), "expired") {
+	if rec := callback("state="+expired+"&code=good-code", browser); !strings.Contains(rec.Body.String(), "expired") {
 		t.Errorf("an expired ceremony: %d %s", rec.Code, rec.Body.String())
 	}
 
@@ -219,7 +284,7 @@ func TestProviderSecretIsEncryptedOnUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if _, err := svc.BeginConnect(ctx, tenant, person.ID, "legacy", "https://id.example.test"); err != nil {
+		if _, _, err := svc.BeginConnect(ctx, tenant, person.ID, "legacy", "https://id.example.test"); err != nil {
 			t.Fatal(err)
 		}
 	}

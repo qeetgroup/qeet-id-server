@@ -8,6 +8,7 @@ const (
 	CodeTokenVaultProviderAuthorizeInvalid = "tokenvault.provider_authorize_url_invalid"
 	CodeTokenVaultConnectStateInvalid      = "tokenvault.connect_state_invalid"
 	CodeTokenVaultConnectExpired           = "tokenvault.connect_expired"
+	CodeTokenVaultConnectOtherBrowser      = "tokenvault.connect_other_browser"
 	CodeTokenVaultTokenExchangeFailed      = "tokenvault.token_exchange_failed"
 	CodeTokenVaultGrantNotFound            = "tokenvault.grant_not_found"
 	CodeTokenVaultTokenExpired             = "tokenvault.token_expired"
@@ -23,6 +24,7 @@ var (
 	ErrTokenVaultProviderAuthorizeInvalid = New(CodeTokenVaultProviderAuthorizeInvalid, "This provider is misconfigured and can't be used to connect.")
 	ErrTokenVaultConnectStateInvalid      = New(CodeTokenVaultConnectStateInvalid, "This connection link is invalid or has already been used. Please start again.")
 	ErrTokenVaultConnectExpired           = New(CodeTokenVaultConnectExpired, "This connection request has expired. Please start again.")
+	ErrTokenVaultConnectOtherBrowser      = New(CodeTokenVaultConnectOtherBrowser, "This connection was started in another browser. Start it again in the browser you are using.")
 	ErrTokenVaultTokenExchangeFailed      = New(CodeTokenVaultTokenExchangeFailed, "We couldn't complete the connection with the provider. Please try again.").AsRetryable()
 	ErrTokenVaultGrantNotFound            = New(CodeTokenVaultGrantNotFound, "No connected account was found for this provider.")
 	ErrTokenVaultTokenExpired             = New(CodeTokenVaultTokenExpired, "Your connection to this provider has expired. Please reconnect your account.")
