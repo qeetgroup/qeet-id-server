@@ -547,6 +547,19 @@ func (s *Service) ConsumeValidatedResponse(ctx context.Context, connectionID uui
 	return tx.Commit(ctx)
 }
 
+// signInStatus refuses a sign-in through a connection that isn't active: a
+// draft one is still being set up, so it signs nobody in until an
+// administrator turns it on.
+func signInStatus(status string) error {
+	switch status {
+	case "active":
+		return nil
+	case "draft":
+		return errs.ErrSAMLConnectionDraft
+	}
+	return errs.ErrSAMLConnectionDisabled
+}
+
 // findOrCreateUser returns the user the connection linked to the NameID
 // subject, else the user with the asserted email, else a new user, and links
 // the subject to the connection. An address is adopted or given an account
@@ -989,8 +1002,8 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if conn.Status == "disabled" {
-		httpx.WriteError(w, r, errs.ErrSAMLConnectionDisabled)
+	if err := signInStatus(conn.Status); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if !validIdPSSOURL(conn.IdpSSOURL) {
@@ -1041,8 +1054,8 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if conn.Status == "disabled" {
-		httpx.WriteError(w, r, errs.ErrSAMLConnectionDisabled)
+	if err := signInStatus(conn.Status); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if err := httpx.ParseForm(r, httpx.MaxSAMLBodyBytes); err != nil {

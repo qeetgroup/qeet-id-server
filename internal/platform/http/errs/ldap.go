@@ -9,6 +9,7 @@ const (
 	CodeLDAPInvalidCredentials       = "ldap.invalid_credentials"
 	CodeLDAPEmailAttributeMissing    = "ldap.email_attribute_missing"
 	CodeLDAPConnectionDisabled       = "ldap.connection_disabled"
+	CodeLDAPConnectionDraft          = "ldap.connection_draft"
 	CodeLDAPConnectionFieldsRequired = "ldap.connection_fields_required"
 	CodeLDAPServerURLInvalid         = "ldap.server_url_invalid"
 	CodeLDAPStatusInvalid            = "ldap.status_invalid"
@@ -29,6 +30,7 @@ var (
 	ErrLDAPInvalidCredentials       = New(CodeLDAPInvalidCredentials, "That username or password is incorrect.")
 	ErrLDAPEmailAttributeMissing    = New(CodeLDAPEmailAttributeMissing, "Your directory account doesn't have an email address, which is required.")
 	ErrLDAPConnectionDisabled       = New(CodeLDAPConnectionDisabled, "This directory connection is disabled.")
+	ErrLDAPConnectionDraft          = New(CodeLDAPConnectionDraft, "This directory connection is still being set up. Ask your administrator to turn it on.")
 	ErrLDAPConnectionFieldsRequired = New(CodeLDAPConnectionFieldsRequired, "Name, server URL, bind DN, bind password and base DN are required.")
 	ErrLDAPServerURLInvalid         = New(CodeLDAPServerURLInvalid, "The server URL must start with ldap:// or ldaps://.")
 	ErrLDAPStatusInvalid            = New(CodeLDAPStatusInvalid, "Status must be draft, active or disabled.")

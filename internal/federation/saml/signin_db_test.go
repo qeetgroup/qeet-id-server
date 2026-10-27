@@ -770,3 +770,25 @@ func TestSAMLDoesNotAdoptAnAdministrator(t *testing.T) {
 		t.Errorf("an administrator linked before: signed in %s, want %s", got.UserID, reader.ID)
 	}
 }
+
+// TestSAMLDraftConnectionSignsNobodyIn checks that a connection still being
+// set up neither starts a sign-in nor accepts an answer, until it is active.
+func TestSAMLDraftConnectionSignsNobodyIn(t *testing.T) {
+	ctx := dbtest.Context(t)
+	sp := newSPSide(t)
+	idp := newUpstreamIdP(t)
+	tenant := dbtest.Tenant(t)
+	conn := sp.connect(t, tenant, idp)
+	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	verify(t, member.ID)
+	pending := sp.begin(t, conn.ID)
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE tenant.saml_connections SET status = 'draft' WHERE id = $1`, conn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := dbtest.Do(t, sp.public, http.MethodGet, "/saml/login/"+conn.ID.String(), nil); !strings.Contains(rec.Body.String(), errs.CodeSAMLConnectionDraft) {
+		t.Errorf("start a sign-in through a draft connection: %d %s, want %s", rec.Code, rec.Body.String(), errs.CodeSAMLConnectionDraft)
+	}
+	if rec := sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: pending, email: member.Email})); !strings.Contains(rec.Body.String(), errs.CodeSAMLConnectionDraft) {
+		t.Errorf("an answer through a draft connection: %d %s, want %s", rec.Code, rec.Body.String(), errs.CodeSAMLConnectionDraft)
+	}
+}

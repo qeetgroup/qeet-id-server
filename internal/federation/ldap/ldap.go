@@ -676,7 +676,13 @@ func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, passwor
 	}
 	started := time.Now()
 	defer func() { s.recordOperation(ctx, c.TenantID, connID, "sign-in", "user", started, resultError) }()
-	if c.Status == "disabled" {
+	// A draft connection is still being set up: it signs nobody in until an
+	// administrator turns it on.
+	switch c.Status {
+	case "active":
+	case "draft":
+		return nil, errs.ErrLDAPConnectionDraft
+	default:
 		return nil, errs.ErrLDAPConnectionDisabled
 	}
 	if username == "" || password == "" {

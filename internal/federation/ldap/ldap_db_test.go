@@ -189,8 +189,9 @@ func TestLoginAppliesSignInChecks(t *testing.T) {
 
 // TestLoginSpeaksOnlyForTheOrganisation checks that a directory sign-in
 // creates or adopts an account only on a domain the organisation has
-// verified, adopts no administrator by address, and that a DN linked through
-// one connection signs nobody in through another.
+// verified, adopts no administrator by address, that a DN linked through one
+// connection signs nobody in through another, and that a draft connection
+// signs nobody in.
 func TestLoginSpeaksOnlyForTheOrganisation(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
@@ -251,5 +252,12 @@ func TestLoginSpeaksOnlyForTheOrganisation(t *testing.T) {
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = $1`, admin.ID); n != 0 {
 		t.Errorf("the administrator was linked to the directory")
+	}
+
+	if _, err := pool.Exec(ctx, `UPDATE tenant.ldap_connections SET status = 'draft' WHERE id = $1`, conn); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Login(ctx, conn, "alice", "alice-secret", "192.0.2.21", "test"); !errors.Is(err, errs.ErrLDAPConnectionDraft) {
+		t.Errorf("a sign-in through a draft connection: %v, want %v", err, errs.ErrLDAPConnectionDraft)
 	}
 }
