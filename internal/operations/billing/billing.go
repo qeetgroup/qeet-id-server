@@ -54,9 +54,12 @@ type Subscription struct {
 }
 
 // Invoice is an issued invoice. AmountMinor is the total charged: TaxableMinor
-// plus TaxMinor.
+// plus TaxMinor. Status is "paid" once a payment was captured or when nothing
+// is owed, and "open" for a plan granted before payment. Number is the GST
+// invoice number, nil on a zero invoice.
 type Invoice struct {
 	ID            uuid.UUID `json:"id"`
+	Number        *string   `json:"invoice_number"`
 	PlanCode      string    `json:"plan_code"`
 	Currency      string    `json:"currency"`
 	AmountMinor   int64     `json:"amount_minor"`

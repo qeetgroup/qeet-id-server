@@ -71,12 +71,24 @@ WHERE tenant_id = @tenant_id;
 
 -- name: InsertInvoice :exec
 -- Issue an invoice for one billing period (zero-amount plans still get a record).
--- amount_minor is the total charged (taxable + tax).
+-- amount_minor is the total charged (taxable + tax); status is 'paid' when a
+-- payment was captured or nothing is owed, else 'open'.
 INSERT INTO tenant.invoices
     (tenant_id, plan_code, currency, amount_minor, status, period_start, period_end,
-     taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply)
-VALUES (@tenant_id, @plan_code, @currency, @amount_minor, 'paid', @period_start, @period_end,
-        @taxable_amount_minor, @tax_amount_minor, @tax_rate_bps, @tax_type, @place_of_supply);
+     taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply,
+     invoice_number)
+VALUES (@tenant_id, @plan_code, @currency, @amount_minor, @status, @period_start, @period_end,
+        @taxable_amount_minor, @tax_amount_minor, @tax_rate_bps, @tax_type, @place_of_supply,
+        sqlc.narg(invoice_number));
+
+-- name: NextInvoiceNumber :one
+-- Take the next number of a financial year's invoice series. The row stays
+-- locked until the issuing transaction ends, so the numbers have no gaps.
+INSERT INTO platform.invoice_number_series (financial_year, last_number)
+VALUES (@financial_year, 1)
+ON CONFLICT (financial_year) DO UPDATE
+    SET last_number = platform.invoice_number_series.last_number + 1
+RETURNING last_number;
 
 -- name: GetBillingProfile :one
 -- Fetch a tenant's billing & tax details (returns no rows until first save).
@@ -123,9 +135,12 @@ WHERE tenant_id = @tenant_id;
 -- name: InsertBillingCheckout :one
 -- Create a pending card-payment checkout row and return its id, which is
 -- passed to the provider as client_reference_id for webhook correlation.
+-- amount_minor is the total the provider charges (taxable + tax).
 INSERT INTO tenant.billing_checkouts
-    (tenant_id, provider, plan_code, currency, amount_minor)
-VALUES (@tenant_id, @provider, @plan_code, @currency, @amount_minor)
+    (tenant_id, provider, plan_code, currency, amount_minor,
+     taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply)
+VALUES (@tenant_id, @provider, @plan_code, @currency, @amount_minor,
+        @taxable_amount_minor, @tax_amount_minor, @tax_rate_bps, @tax_type, @place_of_supply)
 RETURNING id;
 
 -- name: UpdateCheckoutFailed :exec
@@ -142,17 +157,20 @@ WHERE id = @id;
 
 -- name: CompleteCheckout :one
 -- Atomically flip a pending checkout to completed and return the plan details
--- needed to activate the subscription.  Returns ErrNoRows when the checkout is
--- already completed, failed, or unknown — callers treat that as an idempotent no-op.
+-- needed to activate the subscription, with what it charged.  Returns ErrNoRows
+-- when the checkout is already completed, failed, or unknown — callers treat
+-- that as an idempotent no-op.
 UPDATE tenant.billing_checkouts
 SET status = 'completed', completed_at = NOW()
 WHERE id = @id AND status = 'pending'
-RETURNING tenant_id, plan_code, currency;
+RETURNING tenant_id, plan_code, currency, amount_minor,
+          taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply;
 
 -- name: ListInvoices :many
 -- Return the tenant's billing history, most recent first.
 SELECT id, plan_code, currency, amount_minor, status, period_start, period_end, issued_at,
-       taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply
+       taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply,
+       invoice_number
 FROM tenant.invoices
 WHERE tenant_id = @tenant_id
 ORDER BY issued_at DESC

@@ -70,27 +70,34 @@ func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, cu
 
 	// Free plan → nothing to collect, activate directly.
 	if amt == 0 {
-		return s.activateDirect(ctx, tenantID, planCode, cur)
+		return s.activateDirect(ctx, tenantID, planCode, cur, country)
 	}
 
 	// Never grant a paid plan for free, unless the operator opted into
-	// invoice-only billing.
+	// invoice-only billing, which leaves its invoice open.
 	if provider == nil {
 		if !s.allowUnpaidActivation {
 			return nil, errs.ErrUnprocessable.
 				WithMessage("Online payment isn't available for this country or currency yet.").
 				WithDetail("no card payment provider is configured to charge " + cur + " for the selected billing country")
 		}
-		return s.activateDirect(ctx, tenantID, planCode, cur)
+		return s.activateDirect(ctx, tenantID, planCode, cur, country)
 	}
 
-	// Paid plan with a provider: record a pending checkout and open a payment.
+	// Paid plan with a provider: record a pending checkout and open a payment
+	// for the total, tax included, that the invoice will show.
+	tr := s.taxFor(ctx, s.q, tenantID, amt, country)
 	checkoutID, err := s.q.InsertBillingCheckout(ctx, dbgen.InsertBillingCheckoutParams{
-		TenantID:    tenantID,
-		Provider:    provider.Name(),
-		PlanCode:    planCode,
-		Currency:    cur,
-		AmountMinor: amt,
+		TenantID:           tenantID,
+		Provider:           provider.Name(),
+		PlanCode:           planCode,
+		Currency:           cur,
+		AmountMinor:        tr.TotalMinor,
+		TaxableAmountMinor: tr.TaxableMinor,
+		TaxAmountMinor:     tr.TaxMinor,
+		TaxRateBps:         int32(tr.RateBps), // #nosec G115 -- operator-set GST rate in basis points
+		TaxType:            tr.Type,
+		PlaceOfSupply:      tr.PlaceOfSupply,
 	})
 	if err != nil {
 		return nil, err
@@ -99,7 +106,7 @@ func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, cu
 		Ref:         checkoutID.String(),
 		PlanName:    planName,
 		Currency:    cur,
-		AmountMinor: amt,
+		AmountMinor: tr.TotalMinor,
 		SuccessURL:  successURL,
 		CancelURL:   cancelURL,
 	})
@@ -118,14 +125,15 @@ func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, cu
 }
 
 // activateDirect changes the plan in one transaction with no payment, for free
-// plans and invoice-only billing.
-func (s *Service) activateDirect(ctx context.Context, tenantID uuid.UUID, planCode, currency string) (*CheckoutResult, error) {
+// plans and invoice-only billing, taxing by country when the billing profile
+// names none.
+func (s *Service) activateDirect(ctx context.Context, tenantID uuid.UUID, planCode, currency, country string) (*CheckoutResult, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	if _, err := s.ChangePlan(ctx, tx, tenantID, planCode, currency); err != nil {
+	if _, err := s.activateUnpaid(ctx, s.q.WithTx(tx), tenantID, planCode, currency, country); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -167,7 +175,8 @@ func (s *Service) completeTenantCheckout(ctx context.Context, id uuid.UUID) (boo
 	if err != nil {
 		return false, err
 	}
-	if _, err := s.ChangePlan(ctx, tx, row.TenantID, row.PlanCode, row.Currency); err != nil {
+	charged := checkoutTax(row.AmountMinor, row.TaxableAmountMinor, row.TaxAmountMinor, row.TaxRateBps, row.TaxType, row.PlaceOfSupply)
+	if err := s.activatePaid(ctx, tx, row.TenantID, row.PlanCode, row.Currency, charged); err != nil {
 		return false, err
 	}
 	return true, tx.Commit(ctx)
@@ -185,14 +194,19 @@ func (s *Service) completeSignupCheckout(ctx context.Context, id uuid.UUID) erro
 		userID                                     uuid.UUID
 		name, slug, region, planCode, currencyCode string
 		created                                    *uuid.UUID
+		total, taxable, tax                        int64
+		rateBps                                    int32
+		taxType, place                             string
 	)
 	err := s.pool.QueryRow(ctx, `
 		UPDATE tenant.signup_checkouts
 		SET status = 'completed', completed_at = NOW()
 		WHERE id = $1 AND status = 'pending'
-		RETURNING user_id, org_name, org_slug, region, plan_code, currency, tenant_id`,
+		RETURNING user_id, org_name, org_slug, region, plan_code, currency, tenant_id,
+		          amount_minor, taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply`,
 		id,
-	).Scan(&userID, &name, &slug, &region, &planCode, &currencyCode, &created)
+	).Scan(&userID, &name, &slug, &region, &planCode, &currencyCode, &created,
+		&total, &taxable, &tax, &rateBps, &taxType, &place)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil // unknown, already completed, or failed — idempotent no-op
 	}
@@ -226,7 +240,8 @@ func (s *Service) completeSignupCheckout(ctx context.Context, id uuid.UUID) erro
 		return retryLater(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := s.ChangePlan(ctx, tx, tenantID, planCode, currencyCode); err != nil {
+	charged := checkoutTax(total, taxable, tax, rateBps, taxType, place)
+	if err := s.activatePaid(ctx, tx, tenantID, planCode, currencyCode, charged); err != nil {
 		return retryLater(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -315,13 +330,18 @@ func (s *Service) StartSignupCheckout(ctx context.Context, ownerID uuid.UUID, in
 			WithDetail("no card payment provider is configured to charge " + cur + " for the selected billing country")
 	}
 
+	// The organisation has no billing profile yet, so tax goes by the billing
+	// country given, and the provider charges the total.
+	tr := computeTax(s.tax, TaxInput{AmountMinor: amt, BuyerCountry: in.Country})
 	var checkoutID uuid.UUID
 	if err := s.pool.QueryRow(ctx, `
 		INSERT INTO tenant.signup_checkouts
-			(user_id, org_name, org_slug, region, plan_code, currency, country, provider, amount_minor)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			(user_id, org_name, org_slug, region, plan_code, currency, country, provider, amount_minor,
+			 taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING id`,
-		ownerID, in.OrgName, in.OrgSlug, in.Region, in.PlanCode, cur, in.Country, provider.Name(), amt,
+		ownerID, in.OrgName, in.OrgSlug, in.Region, in.PlanCode, cur, in.Country, provider.Name(), tr.TotalMinor,
+		tr.TaxableMinor, tr.TaxMinor, tr.RateBps, tr.Type, tr.PlaceOfSupply,
 	).Scan(&checkoutID); err != nil {
 		return nil, err
 	}
@@ -330,7 +350,7 @@ func (s *Service) StartSignupCheckout(ctx context.Context, ownerID uuid.UUID, in
 		Ref:         checkoutID.String(),
 		PlanName:    planName,
 		Currency:    cur,
-		AmountMinor: amt,
+		AmountMinor: tr.TotalMinor,
 		SuccessURL:  in.SuccessURL,
 		CancelURL:   in.CancelURL,
 	})

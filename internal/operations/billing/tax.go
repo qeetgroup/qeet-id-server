@@ -2,7 +2,9 @@ package billing
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -11,7 +13,8 @@ import (
 
 // Invoice tax. It is off until an operator configures the seller's jurisdiction
 // (TaxConfig), so tax is never charged on a guess. Catalogue prices are net and
-// tax is added on top, in integer minor units.
+// tax is added on top, in integer minor units, before a checkout opens: the
+// provider charges the total the invoice shows.
 
 // TaxConfig holds the seller's tax settings. Tax applies only when Enabled is
 // set and SellerCountry is not empty. An empty SellerState makes every Indian
@@ -52,15 +55,47 @@ type TaxResult struct {
 }
 
 // taxFor computes the tax on a net amount for the tenant's billing profile,
-// read through q. A profile that cannot be read is treated as empty.
-func (s *Service) taxFor(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, amountMinor int64) TaxResult {
-	in := TaxInput{AmountMinor: amountMinor}
+// read through q. A profile that cannot be read is treated as empty, and one
+// with no country takes country, the billing country the checkout was given.
+func (s *Service) taxFor(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, amountMinor int64, country string) TaxResult {
+	in := TaxInput{AmountMinor: amountMinor, BuyerCountry: country}
 	if p, err := billingProfile(ctx, q, tenantID); err == nil && p != nil {
-		in.BuyerCountry = p.Country
+		if p.Country != "" {
+			in.BuyerCountry = p.Country
+		}
 		in.BuyerState = p.State
 		in.TaxIDType = p.TaxIDType
 	}
 	return computeTax(s.tax, in)
+}
+
+// checkoutTax is the charge a checkout row recorded. A row whose parts don't
+// add up to its total predates the tax columns, and charged no tax.
+func checkoutTax(total, taxable, tax int64, rateBps int32, typ, place string) TaxResult {
+	if taxable+tax != total {
+		return noTax(total, place)
+	}
+	return TaxResult{TaxableMinor: taxable, TaxMinor: tax, TotalMinor: total, RateBps: int(rateBps), Type: typ, PlaceOfSupply: place}
+}
+
+// istZone is India Standard Time, in which a GST financial year is dated.
+var istZone = time.FixedZone("IST", 5*60*60+30*60)
+
+// financialYear names the Indian financial year, April to March, that t falls
+// in, such as "2026-27".
+func financialYear(t time.Time) string {
+	t = t.In(istZone)
+	y := t.Year()
+	if t.Month() < time.April {
+		y--
+	}
+	return fmt.Sprintf("%d-%02d", y, (y+1)%100)
+}
+
+// invoiceNumber is the n-th invoice number of financial year fy, such as
+// 2026-27/000042: under GST's 16-character limit to n = 99,999,999.
+func invoiceNumber(fy string, n int64) string {
+	return fmt.Sprintf("%s/%06d", fy, n)
 }
 
 func noTax(amount int64, place string) TaxResult {

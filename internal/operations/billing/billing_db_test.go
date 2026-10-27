@@ -6,6 +6,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -196,6 +199,166 @@ func TestPutSubscriptionAnswersCheckoutRequired(t *testing.T) {
 	}
 	if got := planOf(t, svc, tenant); got != "starter" {
 		t.Errorf("plan = %q, want starter", got)
+	}
+}
+
+// gstIndia charges 18% GST as a seller in Karnataka.
+var gstIndia = TaxConfig{Enabled: true, SellerCountry: "IN", SellerState: "Karnataka", GSTRateBps: 1800}
+
+// withSandbox gives svc the sandbox card provider, which serves every checkout.
+func withSandbox(svc *Service) {
+	svc.SetPayments(NewPayments("", "", "", "", "").WithSandbox("http://localhost:8080", "test-webhook-secret"))
+}
+
+// sandboxCharge returns the checkout reference and the amount the sandbox
+// provider was asked to charge, read from its hosted-checkout URL.
+func sandboxCharge(t *testing.T, res *CheckoutResult) (string, int64) {
+	t.Helper()
+	if res == nil || res.Status != "checkout" {
+		t.Fatalf("checkout result = %+v, want a hosted checkout", res)
+	}
+	u, err := url.Parse(res.CheckoutURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	amount, err := strconv.ParseInt(u.Query().Get("amount"), 10, 64)
+	if err != nil {
+		t.Fatalf("checkout URL %q has no amount", res.CheckoutURL)
+	}
+	return u.Query().Get("ref"), amount
+}
+
+// latestInvoice returns the tenant's newest invoice.
+func latestInvoice(t *testing.T, svc *Service, tenant uuid.UUID) Invoice {
+	t.Helper()
+	invoices, err := svc.ListInvoices(dbtest.Context(t), tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(invoices) == 0 {
+		t.Fatalf("tenant %s has no invoice", tenant)
+	}
+	return invoices[0]
+}
+
+// serial is the series number at the end of an invoice number.
+func serial(t *testing.T, inv Invoice) int {
+	t.Helper()
+	fy := financialYear(time.Now())
+	if inv.Number == nil || !strings.HasPrefix(*inv.Number, fy+"/") {
+		t.Fatalf("invoice number = %v, want one in the %s series", inv.Number, fy)
+	}
+	n, err := strconv.Atoi(strings.TrimPrefix(*inv.Number, fy+"/"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// TestCheckoutChargesTheInvoiceTotal checks that the provider is asked for the
+// total tax included, and that the paid invoice shows that charge even when the
+// billing profile changes before the payment completes.
+func TestCheckoutChargesTheInvoiceTotal(t *testing.T) {
+	ctx := dbtest.Context(t)
+	svc := newTestService(t)
+	svc.SetTaxConfig(gstIndia)
+	withSandbox(svc)
+	tenant := dbtest.Tenant(t)
+	if err := svc.UpsertBillingProfile(ctx, tenant, BillingProfile{Country: "IN", State: "Maharashtra"}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := svc.Checkout(ctx, tenant, "starter", "INR", "IN", "https://app.example/ok", "https://app.example/cancel")
+	if err != nil {
+		t.Fatalf("checkout: %v", err)
+	}
+	ref, charged := sandboxCharge(t, res)
+	if charged != 283200 {
+		t.Fatalf("provider asked to charge %d, want 283200 (2400.00 plus 18%% GST)", charged)
+	}
+	if err := svc.UpsertBillingProfile(ctx, tenant, BillingProfile{Country: "US"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.CompleteCheckout(ctx, ref); err != nil {
+		t.Fatalf("complete checkout: %v", err)
+	}
+
+	inv := latestInvoice(t, svc, tenant)
+	if inv.AmountMinor != 283200 || inv.TaxableMinor != 240000 || inv.TaxMinor != 43200 || inv.TaxType != TaxTypeGSTInter {
+		t.Errorf("invoice charges %d = %d + %d (%s), want 283200 = 240000 + 43200 (%s)",
+			inv.AmountMinor, inv.TaxableMinor, inv.TaxMinor, inv.TaxType, TaxTypeGSTInter)
+	}
+	if inv.Status != "paid" {
+		t.Errorf("invoice status = %q, want paid", inv.Status)
+	}
+	serial(t, inv)
+}
+
+// TestInvoiceStatusFollowsPayment checks that a plan granted without payment
+// leaves its invoice open, that a free plan's is paid, and that charged
+// invoices are numbered one after another.
+func TestInvoiceStatusFollowsPayment(t *testing.T) {
+	ctx := dbtest.Context(t)
+	svc := newTestService(t)
+	svc.SetTaxConfig(gstIndia)
+	svc.SetAllowUnpaidActivation(true)
+
+	first, second := dbtest.Tenant(t), dbtest.Tenant(t)
+	for _, tenant := range []uuid.UUID{first, second} {
+		res, err := svc.Checkout(ctx, tenant, "starter", "INR", "IN", "https://app.example/ok", "https://app.example/cancel")
+		if err != nil || res.Status != "active" {
+			t.Fatalf("invoice-only checkout: %+v, %v", res, err)
+		}
+	}
+	inv := latestInvoice(t, svc, first)
+	if inv.Status != "open" || inv.AmountMinor != 283200 {
+		t.Errorf("invoice-only invoice: status %q, amount %d; want open, 283200", inv.Status, inv.AmountMinor)
+	}
+	if a, b := serial(t, inv), serial(t, latestInvoice(t, svc, second)); b != a+1 {
+		t.Errorf("invoice numbers %d then %d, want consecutive", a, b)
+	}
+
+	free := dbtest.Tenant(t)
+	if _, err := svc.Checkout(ctx, free, "free", "INR", "IN", "https://app.example/ok", "https://app.example/cancel"); err != nil {
+		t.Fatalf("free checkout: %v", err)
+	}
+	inv = latestInvoice(t, svc, free)
+	if inv.Status != "paid" || inv.AmountMinor != 0 || inv.Number != nil {
+		t.Errorf("free invoice: status %q, amount %d, number %v; want paid, 0, none", inv.Status, inv.AmountMinor, inv.Number)
+	}
+}
+
+// TestSignupCheckoutChargesTheInvoiceTotal checks that a paid plan chosen at
+// signup is charged tax included, taxed by the billing country given, and that
+// the new organisation's invoice shows that charge.
+func TestSignupCheckoutChargesTheInvoiceTotal(t *testing.T) {
+	ctx := dbtest.Context(t)
+	svc := newTestService(t)
+	svc.SetTaxConfig(gstIndia)
+	withSandbox(svc)
+	svc.SetOrgProvisioner(orgProvisioner{pool: dbtest.Pool(t)})
+
+	res, err := svc.StartSignupCheckout(ctx, dbtest.User(t, uuid.Nil).ID, SignupCheckoutInput{
+		OrgName: "Example", OrgSlug: dbtest.Unique("org"), PlanCode: "pro", Currency: "INR", Country: "IN",
+		SuccessURL: "https://app.example/ok", CancelURL: "https://app.example/cancel",
+	})
+	if err != nil {
+		t.Fatalf("signup checkout: %v", err)
+	}
+	ref, charged := sandboxCharge(t, res)
+	if charged != 944000 {
+		t.Fatalf("provider asked to charge %d, want 944000 (8000.00 plus 18%% GST)", charged)
+	}
+	if err := svc.CompleteCheckout(ctx, ref); err != nil {
+		t.Fatalf("complete checkout: %v", err)
+	}
+	var org uuid.UUID
+	if err := dbtest.Pool(t).QueryRow(ctx, `SELECT tenant_id FROM tenant.signup_checkouts WHERE id = $1`, ref).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	inv := latestInvoice(t, svc, org)
+	if inv.AmountMinor != 944000 || inv.TaxMinor != 144000 || inv.Status != "paid" {
+		t.Errorf("invoice: amount %d, tax %d, status %q; want 944000, 144000, paid", inv.AmountMinor, inv.TaxMinor, inv.Status)
 	}
 }
 

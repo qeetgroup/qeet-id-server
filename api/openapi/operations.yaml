@@ -2668,6 +2668,7 @@ paths:
       summary: Start checkout
       description: >-
         Returns a hosted-payment URL to redirect the admin to, or {status:"active"} when the plan is free or no card provider serves the request (direct activation). The provider is chosen by billing country (config-driven; an omitted country falls back to currency-based routing: INR → Razorpay, else the default provider). The provider's webhook later activates the subscription.
+        When invoice tax is configured, it is worked out from the billing profile (or, when the profile names no country, from country) before the payment opens, and the provider charges the total, tax included; the paid invoice shows that charge. A plan activated directly by invoice-only billing gets an open invoice; a free plan a paid zero one.
         Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key.
       tags:
         - Billing
@@ -2919,7 +2920,8 @@ paths:
         Any other paid plan, such as one that costs more, must go through checkout
         (POST /v1/tenants/{tenantID}/billing/checkout) and is refused with 402
         billing.checkout_required, unless invoice-only billing
-        (BILLING_ALLOW_UNPAID_ACTIVATION) is on and no card provider serves the currency.
+        (BILLING_ALLOW_UNPAID_ACTIVATION) is on and no card provider serves the currency, which
+        activates it with an open invoice.
       responses:
         '200':
           description: OK
@@ -2979,7 +2981,7 @@ paths:
   /v1/signup/checkout:
     post:
       operationId: post_v1_signup_checkout
-      description: 'Begins a hosted payment for a plan chosen during signup, before any organization exists. The organization is created only once payment completes, so an abandoned checkout never leaves a dangling tenant. Scoped to the authenticated user; the organization name and slug are required and the return URLs must be valid absolute URLs. Returns the details needed to redirect the browser to the payment provider.'
+      description: 'Begins a hosted payment for a plan chosen during signup, before any organization exists. The organization is created only once payment completes, so an abandoned checkout never leaves a dangling tenant. Scoped to the authenticated user; the organization name and slug are required and the return URLs must be valid absolute URLs. Returns the details needed to redirect the browser to the payment provider. When invoice tax is configured, the provider charges the total tax included, taxed by the billing country given, and the new organization''s paid invoice shows that charge.'
       summary: Start paid-plan checkout before tenant creation
       tags: [Billing]
       security:
@@ -4154,15 +4156,19 @@ components:
           type: string
     Invoice:
       type: object
-      required: [amount_minor, currency, id, issued_at, period_end, period_start, place_of_supply, plan_code, status, tax_amount_minor, tax_rate_bps, tax_type, taxable_amount_minor]
+      required: [amount_minor, currency, id, invoice_number, issued_at, period_end, period_start, place_of_supply, plan_code, status, tax_amount_minor, tax_rate_bps, tax_type, taxable_amount_minor]
       properties:
         amount_minor:
           type: integer
+          description: The total charged, taxable_amount_minor plus tax_amount_minor; for a checkout, what the payment provider charged.
         currency:
           type: string
         id:
           type: string
           format: uuid
+        invoice_number:
+          type: [string, 'null']
+          description: The GST invoice number, one series per Indian financial year (April to March), such as 2026-27/000042. Null on an invoice that charges nothing.
         issued_at:
           type: string
           format: date-time
@@ -4178,6 +4184,7 @@ components:
           type: string
         status:
           type: string
+          description: paid when a payment was captured or nothing is owed; open when the plan was granted before payment (invoice-only billing); void when withdrawn.
         tax_amount_minor:
           type: integer
         tax_rate_bps:

@@ -27,6 +27,7 @@ const allowlist = `
 #   pending-review     not shown to be safe; needs a tenant condition or removal
 #   dev-seed           the development seed, which writes every organisation's data by design
 
+cmd/seed/internal/activity/billing.go#numberInvoices  dev-seed: numbers every organisation's invoices in the one GST series
 cmd/seed/internal/world/audit.go#World.Rechain  dev-seed: lists every audit chain to rehash it
 cmd/seed/internal/world/audit.go#World.rechain  dev-seed: reads one chain, the tenant or platform one, to rehash it
 cmd/seed/internal/world/audit.go#World.VerifyChains  dev-seed: lists every audit chain to verify it

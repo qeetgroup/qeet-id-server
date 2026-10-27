@@ -109,15 +109,33 @@ func periodEnd(start time.Time, interval string) time.Time {
 }
 
 // ChangePlan sets or switches the tenant's subscription within tx and issues an
-// invoice for the new period. The plan must have a price in currency. It takes
-// no payment, so callers check that the plan is paid for or free first.
+// invoice for the new period, taxed by the billing profile. The plan must have
+// a price in currency. It takes no payment, so a paid plan's invoice is left
+// open; callers check that the plan may be granted unpaid first.
 func (s *Service) ChangePlan(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, planCode, currency string) (*Subscription, error) {
-	q := s.q.WithTx(tx)
+	return s.activateUnpaid(ctx, s.q.WithTx(tx), tenantID, planCode, currency, "")
+}
+
+// activateUnpaid is ChangePlan through q, taxing by country, the billing
+// country of the request, when the profile names none.
+func (s *Service) activateUnpaid(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, planCode, currency, country string) (*Subscription, error) {
 	p, err := lookupPlanPrice(ctx, q, planCode, currency)
 	if err != nil {
 		return nil, err
 	}
-	return s.activate(ctx, q, tenantID, p)
+	return s.activate(ctx, q, tenantID, p, s.taxFor(ctx, q, tenantID, p.amountMinor, country), false)
+}
+
+// activatePaid puts the tenant on planCode within tx for a period a completed
+// checkout paid for. The invoice records what the checkout charged.
+func (s *Service) activatePaid(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, planCode, currency string, charged TaxResult) error {
+	q := s.q.WithTx(tx)
+	p, err := lookupPlanPrice(ctx, q, planCode, currency)
+	if err != nil {
+		return err
+	}
+	_, err = s.activate(ctx, q, tenantID, p, charged, true)
+	return err
 }
 
 // SwitchPlan is ChangePlan for a tenant changing its own plan without a
@@ -132,7 +150,7 @@ func (s *Service) SwitchPlan(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID,
 		return nil, err
 	}
 	if p.amountMinor == 0 || s.unpaidActivation(p.currency) {
-		return s.activate(ctx, q, tenantID, p)
+		return s.activate(ctx, q, tenantID, p, s.taxFor(ctx, q, tenantID, p.amountMinor, ""), false)
 	}
 	current, err := q.GetSubscription(ctx, tenantID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -174,8 +192,9 @@ func (s *Service) unpaidActivation(currency string) bool {
 }
 
 // activate puts the tenant on p through q, which must run on a transaction, and
-// issues an invoice for the new period.
-func (s *Service) activate(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, p planPrice) (*Subscription, error) {
+// issues an invoice for the new period charging tr. The invoice is paid when a
+// payment was captured, or it charges nothing, and open otherwise.
+func (s *Service) activate(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, p planPrice, tr TaxResult, paid bool) (*Subscription, error) {
 	start := time.Now().UTC()
 	end := periodEnd(start, p.interval)
 	if err := q.UpsertSubscription(ctx, dbgen.UpsertSubscriptionParams{
@@ -187,15 +206,28 @@ func (s *Service) activate(ctx context.Context, q *dbgen.Queries, tenantID uuid.
 	}); err != nil {
 		return nil, err
 	}
-	// Tax comes from the tenant's billing profile and is zero until a tax
-	// configuration is set. amount_minor is the total including tax.
-	tr := s.taxFor(ctx, q, tenantID, p.amountMinor)
-	// Zero-amount plans still get an invoice record.
+	status := "open"
+	if paid || tr.TotalMinor == 0 {
+		status = "paid"
+	}
+	// Zero-amount plans still get an invoice record, without a number.
+	var number *string
+	if tr.TotalMinor > 0 {
+		fy := financialYear(start)
+		n, err := q.NextInvoiceNumber(ctx, fy)
+		if err != nil {
+			return nil, err
+		}
+		v := invoiceNumber(fy, n)
+		number = &v
+	}
 	if err := q.InsertInvoice(ctx, dbgen.InsertInvoiceParams{
 		TenantID:           tenantID,
 		PlanCode:           p.code,
 		Currency:           p.currency,
 		AmountMinor:        tr.TotalMinor,
+		Status:             status,
+		InvoiceNumber:      number,
 		PeriodStart:        start,
 		PeriodEnd:          end,
 		TaxableAmountMinor: tr.TaxableMinor,
@@ -253,6 +285,7 @@ func (s *Service) ListInvoices(ctx context.Context, tenantID uuid.UUID) ([]Invoi
 			TaxType:       r.TaxType,
 			PlaceOfSupply: r.PlaceOfSupply,
 			Status:        r.Status,
+			Number:        r.InvoiceNumber,
 			PeriodStart:   r.PeriodStart,
 			PeriodEnd:     r.PeriodEnd,
 			IssuedAt:      r.IssuedAt,

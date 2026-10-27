@@ -33,22 +33,40 @@ const completeCheckout = `-- name: CompleteCheckout :one
 UPDATE tenant.billing_checkouts
 SET status = 'completed', completed_at = NOW()
 WHERE id = $1 AND status = 'pending'
-RETURNING tenant_id, plan_code, currency
+RETURNING tenant_id, plan_code, currency, amount_minor,
+          taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply
 `
 
 type CompleteCheckoutRow struct {
-	TenantID uuid.UUID
-	PlanCode string
-	Currency string
+	TenantID           uuid.UUID
+	PlanCode           string
+	Currency           string
+	AmountMinor        int64
+	TaxableAmountMinor int64
+	TaxAmountMinor     int64
+	TaxRateBps         int32
+	TaxType            string
+	PlaceOfSupply      string
 }
 
 // Atomically flip a pending checkout to completed and return the plan details
-// needed to activate the subscription.  Returns ErrNoRows when the checkout is
-// already completed, failed, or unknown — callers treat that as an idempotent no-op.
+// needed to activate the subscription, with what it charged.  Returns ErrNoRows
+// when the checkout is already completed, failed, or unknown — callers treat
+// that as an idempotent no-op.
 func (q *Queries) CompleteCheckout(ctx context.Context, id uuid.UUID) (CompleteCheckoutRow, error) {
 	row := q.db.QueryRow(ctx, completeCheckout, id)
 	var i CompleteCheckoutRow
-	err := row.Scan(&i.TenantID, &i.PlanCode, &i.Currency)
+	err := row.Scan(
+		&i.TenantID,
+		&i.PlanCode,
+		&i.Currency,
+		&i.AmountMinor,
+		&i.TaxableAmountMinor,
+		&i.TaxAmountMinor,
+		&i.TaxRateBps,
+		&i.TaxType,
+		&i.PlaceOfSupply,
+	)
 	return i, err
 }
 
@@ -165,21 +183,29 @@ func (q *Queries) GetSubscription(ctx context.Context, tenantID uuid.UUID) (GetS
 
 const insertBillingCheckout = `-- name: InsertBillingCheckout :one
 INSERT INTO tenant.billing_checkouts
-    (tenant_id, provider, plan_code, currency, amount_minor)
-VALUES ($1, $2, $3, $4, $5)
+    (tenant_id, provider, plan_code, currency, amount_minor,
+     taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply)
+VALUES ($1, $2, $3, $4, $5,
+        $6, $7, $8, $9, $10)
 RETURNING id
 `
 
 type InsertBillingCheckoutParams struct {
-	TenantID    uuid.UUID
-	Provider    string
-	PlanCode    string
-	Currency    string
-	AmountMinor int64
+	TenantID           uuid.UUID
+	Provider           string
+	PlanCode           string
+	Currency           string
+	AmountMinor        int64
+	TaxableAmountMinor int64
+	TaxAmountMinor     int64
+	TaxRateBps         int32
+	TaxType            string
+	PlaceOfSupply      string
 }
 
 // Create a pending card-payment checkout row and return its id, which is
 // passed to the provider as client_reference_id for webhook correlation.
+// amount_minor is the total the provider charges (taxable + tax).
 func (q *Queries) InsertBillingCheckout(ctx context.Context, arg InsertBillingCheckoutParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, insertBillingCheckout,
 		arg.TenantID,
@@ -187,6 +213,11 @@ func (q *Queries) InsertBillingCheckout(ctx context.Context, arg InsertBillingCh
 		arg.PlanCode,
 		arg.Currency,
 		arg.AmountMinor,
+		arg.TaxableAmountMinor,
+		arg.TaxAmountMinor,
+		arg.TaxRateBps,
+		arg.TaxType,
+		arg.PlaceOfSupply,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -196,9 +227,11 @@ func (q *Queries) InsertBillingCheckout(ctx context.Context, arg InsertBillingCh
 const insertInvoice = `-- name: InsertInvoice :exec
 INSERT INTO tenant.invoices
     (tenant_id, plan_code, currency, amount_minor, status, period_start, period_end,
-     taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply)
-VALUES ($1, $2, $3, $4, 'paid', $5, $6,
-        $7, $8, $9, $10, $11)
+     taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply,
+     invoice_number)
+VALUES ($1, $2, $3, $4, $5, $6, $7,
+        $8, $9, $10, $11, $12,
+        $13)
 `
 
 type InsertInvoiceParams struct {
@@ -206,6 +239,7 @@ type InsertInvoiceParams struct {
 	PlanCode           string
 	Currency           string
 	AmountMinor        int64
+	Status             string
 	PeriodStart        time.Time
 	PeriodEnd          time.Time
 	TaxableAmountMinor int64
@@ -213,16 +247,19 @@ type InsertInvoiceParams struct {
 	TaxRateBps         int32
 	TaxType            string
 	PlaceOfSupply      string
+	InvoiceNumber      *string
 }
 
 // Issue an invoice for one billing period (zero-amount plans still get a record).
-// amount_minor is the total charged (taxable + tax).
+// amount_minor is the total charged (taxable + tax); status is 'paid' when a
+// payment was captured or nothing is owed, else 'open'.
 func (q *Queries) InsertInvoice(ctx context.Context, arg InsertInvoiceParams) error {
 	_, err := q.db.Exec(ctx, insertInvoice,
 		arg.TenantID,
 		arg.PlanCode,
 		arg.Currency,
 		arg.AmountMinor,
+		arg.Status,
 		arg.PeriodStart,
 		arg.PeriodEnd,
 		arg.TaxableAmountMinor,
@@ -230,6 +267,7 @@ func (q *Queries) InsertInvoice(ctx context.Context, arg InsertInvoiceParams) er
 		arg.TaxRateBps,
 		arg.TaxType,
 		arg.PlaceOfSupply,
+		arg.InvoiceNumber,
 	)
 	return err
 }
@@ -336,7 +374,8 @@ func (q *Queries) ListBillingPlans(ctx context.Context) ([]ListBillingPlansRow, 
 
 const listInvoices = `-- name: ListInvoices :many
 SELECT id, plan_code, currency, amount_minor, status, period_start, period_end, issued_at,
-       taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply
+       taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply,
+       invoice_number
 FROM tenant.invoices
 WHERE tenant_id = $1
 ORDER BY issued_at DESC
@@ -357,6 +396,7 @@ type ListInvoicesRow struct {
 	TaxRateBps         int32
 	TaxType            string
 	PlaceOfSupply      string
+	InvoiceNumber      *string
 }
 
 // Return the tenant's billing history, most recent first.
@@ -383,6 +423,7 @@ func (q *Queries) ListInvoices(ctx context.Context, tenantID uuid.UUID) ([]ListI
 			&i.TaxRateBps,
 			&i.TaxType,
 			&i.PlaceOfSupply,
+			&i.InvoiceNumber,
 		); err != nil {
 			return nil, err
 		}
@@ -392,6 +433,23 @@ func (q *Queries) ListInvoices(ctx context.Context, tenantID uuid.UUID) ([]ListI
 		return nil, err
 	}
 	return items, nil
+}
+
+const nextInvoiceNumber = `-- name: NextInvoiceNumber :one
+INSERT INTO platform.invoice_number_series (financial_year, last_number)
+VALUES ($1, 1)
+ON CONFLICT (financial_year) DO UPDATE
+    SET last_number = platform.invoice_number_series.last_number + 1
+RETURNING last_number
+`
+
+// Take the next number of a financial year's invoice series. The row stays
+// locked until the issuing transaction ends, so the numbers have no gaps.
+func (q *Queries) NextInvoiceNumber(ctx context.Context, financialYear string) (int64, error) {
+	row := q.db.QueryRow(ctx, nextInvoiceNumber, financialYear)
+	var last_number int64
+	err := row.Scan(&last_number)
+	return last_number, err
 }
 
 const setTenantPlan = `-- name: SetTenantPlan :exec
