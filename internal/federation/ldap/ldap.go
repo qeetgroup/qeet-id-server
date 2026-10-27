@@ -639,6 +639,9 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 		if !verified {
 			return uuid.Nil, errs.ErrLDAPAccountUnverified
 		}
+		if err := identitylink.MarkAddressVerified(ctx, tx, userID); err != nil {
+			return uuid.Nil, err
+		}
 		admin, aerr := identitylink.Administers(ctx, tx, userID, tenantID)
 		if aerr != nil {
 			return uuid.Nil, aerr

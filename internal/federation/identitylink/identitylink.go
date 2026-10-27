@@ -8,11 +8,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Querier is the part of pgx.Tx and *pgxpool.Pool the checks need.
 type Querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
 // HomeIn reports whether tenantID is userID's home tenant and the account isn't
@@ -28,13 +30,25 @@ func HomeIn(ctx context.Context, q Querier, userID, tenantID uuid.UUID) (bool, e
 	return ok, err
 }
 
-// AddressVerified reports whether userID has proved owning its email address.
-// Adopting an account by email needs it, or a squatter who registered the
-// address unverified would keep a working password on the adopted account.
+// AddressVerified reports whether userID's email address is vouched for: the
+// account proved owning it, or its organisation's directory provisioned it
+// (SCIM). Adopting an account by email needs it, or a squatter who registered
+// the address unverified would keep a working password on the adopted account.
 func AddressVerified(ctx context.Context, q Querier, userID uuid.UUID) (bool, error) {
 	var ok bool
-	err := q.QueryRow(ctx, `SELECT email_verified_at IS NOT NULL FROM "user".users WHERE id = $1`, userID).Scan(&ok)
+	err := q.QueryRow(ctx, `
+		SELECT email_verified_at IS NOT NULL OR provisioned_via IS NOT DISTINCT FROM 'scim'
+		FROM "user".users WHERE id = $1`, userID).Scan(&ok)
 	return ok, err
+}
+
+// MarkAddressVerified records that userID's address is proved, when an
+// organisation's identity provider adopting the account vouched for it.
+func MarkAddressVerified(ctx context.Context, q Querier, userID uuid.UUID) error {
+	_, err := q.Exec(ctx, `
+		UPDATE "user".users SET email_verified_at = NOW(), updated_at = NOW()
+		WHERE id = $1 AND email_verified_at IS NULL`, userID)
+	return err
 }
 
 // adminPermissions change who signs in to an organisation, or with what

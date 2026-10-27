@@ -108,6 +108,7 @@ internal/federation/adminportal/adminportal.go#Service.ResolveSession  secret-lo
 internal/federation/adminportal/queries.sql#GetAdminPortalLinkByHash  pending-review: unused query; delete it or add a tenant condition
 internal/federation/adminportal/queries.sql#TouchAdminPortalLinkUsed  pending-review: unused query; delete it or add a tenant condition
 internal/federation/identitylink/identitylink.go#AddressVerified  pre-tenant: federated sign-in checks the account it found
+internal/federation/identitylink/identitylink.go#MarkAddressVerified  pre-tenant: federated sign-in marks the home account it just adopted
 internal/federation/ldap/ldap.go#Service.getFull  parent-scoped: re-encrypts the connection row just read
 internal/federation/ldap/queries.sql#GetUserByEmail  pre-tenant: federated sign-in finds the account by email
 internal/federation/ldap/queries.sql#TouchLdapLastLogin  parent-scoped: connection row read for this sign-in

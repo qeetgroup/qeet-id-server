@@ -843,3 +843,24 @@ func TestSAMLAnswerCompletesOnlyInTheBrowserThatAsked(t *testing.T) {
 		t.Errorf("a sign-in begun and answered in one browser signed in %s, want %s", got.UserID, attacker.ID)
 	}
 }
+
+// TestSAMLAdoptsADirectoryProvisionedAccount checks that an account the
+// organisation's directory provisioned, its address never proved, is adopted
+// by the organisation's IdP and marked verified.
+func TestSAMLAdoptsADirectoryProvisionedAccount(t *testing.T) {
+	ctx := dbtest.Context(t)
+	sp := newSPSide(t)
+	idp := newUpstreamIdP(t)
+	tenant := dbtest.Tenant(t)
+	conn := sp.connect(t, tenant, idp)
+	provisioned := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE "user".users SET provisioned_via = 'scim', email_verified_at = NULL WHERE id = $1`, provisioned.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := sp.signIn(t, idp, conn.ID, answer{nameID: "okta|provisioned", email: provisioned.Email}); got.UserID != provisioned.ID {
+		t.Fatalf("signed in %s, want the provisioned account %s", got.UserID, provisioned.ID)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND email_verified_at IS NOT NULL`, provisioned.ID); n != 1 {
+		t.Error("the adopted account's address was not marked verified")
+	}
+}

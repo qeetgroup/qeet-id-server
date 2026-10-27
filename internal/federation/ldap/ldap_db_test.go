@@ -261,3 +261,35 @@ func TestLoginSpeaksOnlyForTheOrganisation(t *testing.T) {
 		t.Errorf("a sign-in through a draft connection: %v, want %v", err, errs.ErrLDAPConnectionDraft)
 	}
 }
+
+// TestLoginAdoptsADirectoryProvisionedAccount checks that an account the
+// organisation's directory provisioned over SCIM, its address never proved,
+// signs in through the organisation's LDAP connection.
+func TestLoginAdoptsADirectoryProvisionedAccount(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	tenant := dbtest.Tenant(t)
+	a := dbtest.UserAt(t, dbtest.Unique("alice")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET provisioned_via = 'scim', email_verified_at = NULL WHERE id = $1`, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	const userDN = "uid=alice,dc=example,dc=test"
+	dir := &directory{
+		binds:   map[string]string{"cn=service,dc=example,dc=test": "service-secret", userDN: "alice-secret"},
+		entries: map[string]dirEntry{"alice": {dn: userDN, attrs: map[string]string{"mail": a.Email, "cn": "Alice"}}},
+	}
+	var connID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO tenant.ldap_connections (tenant_id, name, server_url, bind_dn, bind_password, base_dn, status)
+		VALUES ($1, 'Directory', $2, 'cn=service,dc=example,dc=test', 'service-secret', 'dc=example,dc=test', 'active')
+		RETURNING id
+	`, tenant, dir.start(t)).Scan(&connID); err != nil {
+		t.Fatal(err)
+	}
+	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
+	authSvc.SetMFA(noFactors{})
+	res, err := NewService(pool, authSvc, egress.DevelopmentPolicy()).Login(ctx, connID, "alice", "alice-secret", "192.0.2.22", "test")
+	if err != nil || res.Pair == nil || res.Pair.UserID != a.ID {
+		t.Fatalf("sign in: %+v, %v; want the provisioned account", res, err)
+	}
+}

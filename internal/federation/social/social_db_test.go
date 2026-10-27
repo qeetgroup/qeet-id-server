@@ -73,3 +73,30 @@ func TestSocialSignUpWithOneConnection(t *testing.T) {
 		t.Errorf("sign-up where self-registration is off: %v; want %v and no account", err, errs.ErrAuthSelfRegistrationDisabled)
 	}
 }
+
+// TestSocialSignInAdoptsADirectoryProvisionedAccount checks that an account
+// the organisation's directory provisioned, its address never proved, is
+// adopted by a verified sign-in and marked verified, while an unproved account
+// registered any other way is still refused.
+func TestSocialSignInAdoptsADirectoryProvisionedAccount(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := NewService(pool, nil, "https://api.id.qeet.in")
+	tenant := dbtest.Tenant(t)
+	provisioned, registered := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET provisioned_via = 'scim' WHERE id = $1`, provisioned.ID); err != nil {
+		t.Fatal(err)
+	}
+	signIn := func(email string) (uuid.UUID, error) {
+		return svc.findOrCreateUser(ctx, tenant, "google", userInfo{Subject: uuid.NewString(), Email: email, EmailVerified: true})
+	}
+	if got, err := signIn(provisioned.Email); err != nil || got != provisioned.ID {
+		t.Errorf("a directory-provisioned account: %s, %v; want it adopted", got, err)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND email_verified_at IS NOT NULL`, provisioned.ID); n != 1 {
+		t.Error("the adopted account's address was not marked verified")
+	}
+	if _, err := signIn(registered.Email); !errors.Is(err, errs.ErrSocialAccountUnverified) {
+		t.Errorf("an unproved account registered otherwise: %v, want %v", err, errs.ErrSocialAccountUnverified)
+	}
+}

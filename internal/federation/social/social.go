@@ -751,9 +751,18 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 		if !home {
 			return uuid.Nil, errs.ErrSocialAccountNotInTenant
 		}
-		// Third, the account must have proved owning the address, or a squatter who
-		// registered it unverified keeps a working password on the adopted account.
-		if err := requireVerifiedAddress(ctx, tx, userID); err != nil {
+		// Third, the address must be vouched for — proved by the account or its
+		// organisation's directory provisioned it — or a squatter who registered
+		// it unverified keeps a working password on the adopted account. The
+		// provider proved it, so it is verified from now on.
+		vouched, err := identitylink.AddressVerified(ctx, tx, userID)
+		if err != nil {
+			return uuid.Nil, err
+		}
+		if !vouched {
+			return uuid.Nil, errs.ErrSocialAccountUnverified
+		}
+		if err := identitylink.MarkAddressVerified(ctx, tx, userID); err != nil {
 			return uuid.Nil, err
 		}
 	}
