@@ -12,6 +12,7 @@ import (
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/risk"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
@@ -98,6 +99,19 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller) []wor
 				}
 				slog.Info("expired MFA codes and push requests cleaned", "codes", codes, "push_requests", push,
 					"pairing_codes", pairings)
+				return nil
+			},
+		},
+		{
+			// A SAML test sign-in holds what the IdP asserted about a person.
+			Name:     "saml-test-sign-in-cleanup",
+			Interval: 15 * time.Minute,
+			Run: func(ctx context.Context) error {
+				n, err := saml.PurgeTestSignIns(ctx, pool, saml.TestSignInRetention)
+				if err != nil {
+					return err
+				}
+				slog.Info("SAML test sign-ins cleaned", "deleted", n)
 				return nil
 			},
 		},

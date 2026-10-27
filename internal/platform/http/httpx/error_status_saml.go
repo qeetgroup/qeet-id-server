@@ -43,5 +43,6 @@ func init() {
 		errs.CodeSAMLEmailDomainUnverified:    http.StatusForbidden,
 		errs.CodeSAMLAccountAdministers:       http.StatusForbidden,
 		errs.CodeSAMLSPEntityIDTaken:          http.StatusConflict,
+		errs.CodeSAMLTestSignInNotFound:       http.StatusNotFound,
 	})
 }

@@ -1072,6 +1072,10 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	// The answer to a test sign-in is reported, and signs nobody in.
+	if h.answerTestSignIn(w, r, conn) {
+		return
+	}
 	if err := signInStatus(conn.Status); err != nil {
 		httpx.WriteError(w, r, err)
 		return

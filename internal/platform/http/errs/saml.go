@@ -36,6 +36,7 @@ const (
 	CodeSAMLSPEntityIDTaken          = "saml.sp_entity_id_taken"
 	CodeSAMLEmailDomainUnverified    = "saml.email_domain_unverified"
 	CodeSAMLAccountAdministers       = "saml.account_administers"
+	CodeSAMLTestSignInNotFound       = "saml.test_sign_in_not_found"
 )
 
 // SAML errors. Message is the end-user-facing text; edit wording here. Handlers
@@ -78,4 +79,5 @@ var (
 		"Single sign-on can't sign in this address: its domain isn't one this organization has verified. Ask your administrator to verify it.")
 	ErrSAMLAccountAdministers = New(CodeSAMLAccountAdministers,
 		"This account administers the organization, so single sign-on can't take it over by its email address. Sign in with the account's own password or passkey.")
+	ErrSAMLTestSignInNotFound = New(CodeSAMLTestSignInNotFound, "We couldn't find that test sign-in. Start a new one.")
 )
