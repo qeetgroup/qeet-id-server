@@ -12,6 +12,7 @@ func init() {
 		errs.CodeMFANotEnrolled:         http.StatusBadRequest,
 		errs.CodeMFAFactorNotConfirmed:  http.StatusBadRequest,
 		errs.CodeMFAAttemptsExceeded:    http.StatusTooManyRequests,
+		errs.CodeMFALocked:              http.StatusForbidden,
 		errs.CodeMFAEnrollmentRequired:  http.StatusForbidden,
 		errs.CodeMFACodeSendLimited:     http.StatusTooManyRequests,
 		errs.CodeMFADeliveryUnavailable: http.StatusServiceUnavailable,

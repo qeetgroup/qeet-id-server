@@ -13,6 +13,7 @@ const (
 	CodeMFANotEnrolled         = "mfa.not_enrolled"
 	CodeMFAFactorNotConfirmed  = "mfa.factor_not_confirmed"
 	CodeMFAAttemptsExceeded    = "mfa.attempts_exceeded"
+	CodeMFALocked              = "mfa.locked"
 	CodeMFAEnrollmentRequired  = "mfa.enrollment_required"
 	CodeMFACodeSendLimited     = "mfa.code_send_limited"
 	CodeMFADeliveryUnavailable = "mfa.delivery_unavailable"
@@ -45,6 +46,7 @@ var (
 	ErrMFANotEnrolled         = New(CodeMFANotEnrolled, "Set up multi-factor authentication first.")
 	ErrMFAFactorNotConfirmed  = New(CodeMFAFactorNotConfirmed, "Confirm this factor before requesting a code.")
 	ErrMFAAttemptsExceeded    = New(CodeMFAAttemptsExceeded, "Too many verification attempts. Start again or wait before retrying.").AsRetryable()
+	ErrMFALocked              = New(CodeMFALocked, "Too many wrong codes were entered for this account, so signing in with a second factor is locked. Reset your password to unlock it.")
 	ErrMFAEnrollmentRequired  = New(CodeMFAEnrollmentRequired, "Your organisation requires two-step verification. Set up an authenticator app to continue.")
 	ErrMFACodeSendLimited     = New(CodeMFACodeSendLimited, "A code was sent recently. Wait a moment before asking for another.").AsRetryable()
 	ErrMFADeliveryUnavailable = New(CodeMFADeliveryUnavailable, "Codes can't be sent this way right now. Use another way to verify, or ask your administrator.")

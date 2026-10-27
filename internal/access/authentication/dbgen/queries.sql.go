@@ -59,6 +59,27 @@ func (q *Queries) ClearSignInFailures(ctx context.Context, arg ClearSignInFailur
 	return err
 }
 
+const countMFAAttempt = `-- name: CountMFAAttempt :one
+INSERT INTO auth.mfa_failure_streaks (user_id, failures) VALUES ($1, 1)
+ON CONFLICT (user_id) DO UPDATE SET failures = auth.mfa_failure_streaks.failures + 1
+RETURNING failures, (locked_at IS NOT NULL)::bool AS locked
+`
+
+type CountMFAAttemptRow struct {
+	Failures int32
+	Locked   bool
+}
+
+// CountMFAAttempt counts one more second-factor attempt in the user's run of
+// wrong answers, which a right one ends, and returns the run and whether
+// their second-factor sign-in is already locked.
+func (q *Queries) CountMFAAttempt(ctx context.Context, userID uuid.UUID) (CountMFAAttemptRow, error) {
+	row := q.db.QueryRow(ctx, countMFAAttempt, userID)
+	var i CountMFAAttemptRow
+	err := row.Scan(&i.Failures, &i.Locked)
+	return i, err
+}
+
 const countSourceAccounts = `-- name: CountSourceAccounts :one
 SELECT COUNT(*) FROM auth.login_source_failures WHERE network = $1
 `
@@ -148,6 +169,17 @@ func (q *Queries) EndLoginSession(ctx context.Context, tokenHash string) (EndLog
 	var i EndLoginSessionRow
 	err := row.Scan(&i.ID, &i.UserID, &i.TenantID)
 	return i, err
+}
+
+const endMFAFailureStreak = `-- name: EndMFAFailureStreak :exec
+DELETE FROM auth.mfa_failure_streaks WHERE user_id = $1
+`
+
+// EndMFAFailureStreak ends the user's run of wrong answers, and any lock it
+// set.
+func (q *Queries) EndMFAFailureStreak(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, endMFAFailureStreak, userID)
+	return err
 }
 
 const expireAuthorizationCodesForLoginSession = `-- name: ExpireAuthorizationCodesForLoginSession :execrows
@@ -502,6 +534,17 @@ func (q *Queries) IsSessionOfUser(ctx context.Context, arg IsSessionOfUserParams
 	var owned bool
 	err := row.Scan(&owned)
 	return owned, err
+}
+
+const lockMFASignIn = `-- name: LockMFASignIn :exec
+UPDATE auth.mfa_failure_streaks SET locked_at = NOW() WHERE user_id = $1
+`
+
+// LockMFASignIn locks the user's second-factor sign-in, at the end of a run of
+// wrong answers.
+func (q *Queries) LockMFASignIn(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockMFASignIn, userID)
+	return err
 }
 
 const lockUserForSessionRevocation = `-- name: LockUserForSessionRevocation :one

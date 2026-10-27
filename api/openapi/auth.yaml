@@ -160,7 +160,7 @@ paths:
         up for it (POST /v1/auth/mfa/enroll) — the response then carries the account's new
         recovery codes, shown once — or skipped while its grace period runs. A wrong proof
         counts against the challenge's and the account's attempt budgets.
-        A wrong proof is recorded in the organisation's audit trail as auth.sign_in_failed (method mfa, reason code_invalid, with the proof kind and the attempts left).
+        A wrong proof is recorded in the organisation's audit trail as auth.sign_in_failed (method mfa, reason code_invalid, with the proof kind and the attempts left). Fifty wrong proofs in a row, however far apart, lock the person's second-factor sign-in: that answer and every later one is 403 mfa.locked, even with the right proof, the lock is audited as auth.mfa_locked and the person is emailed. A right proof ends a shorter run; a password reset, a password change or set, or an administrator's reset of their factors lifts the lock.
       tags:
         - Auth
       security: []
@@ -765,7 +765,7 @@ paths:
         a code from the authenticator app set up for it, or skipped while its grace period
         runs, as for POST /v1/auth/mfa; a skipped setup never remembers the device.
         A body not sent as JSON is refused (415 unsupported_media_type).
-        A wrong proof is recorded in the organisation's audit trail as auth.sign_in_failed (method mfa, reason code_invalid, with the proof kind and the attempts left).
+        A wrong proof is recorded in the organisation's audit trail as auth.sign_in_failed (method mfa, reason code_invalid, with the proof kind and the attempts left). Fifty wrong proofs in a row, however far apart, lock the person's second-factor sign-in: that answer and every later one is 403 mfa.locked, even with the right proof, the lock is audited as auth.mfa_locked and the person is emailed. A right proof ends a shorter run; a password reset, a password change or set, or an administrator's reset of their factors lifts the lock.
       tags:
         - Auth
       security: []

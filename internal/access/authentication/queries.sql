@@ -483,3 +483,21 @@ WITH resets AS (
 UPDATE auth.magic_links SET expires_at = NOW() - INTERVAL '1 minute'
 WHERE LOWER(email) = (SELECT LOWER(u.email) FROM "user".users u WHERE u.id = @user_id)
   AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute';
+
+-- CountMFAAttempt counts one more second-factor attempt in the user's run of
+-- wrong answers, which a right one ends, and returns the run and whether
+-- their second-factor sign-in is already locked.
+-- name: CountMFAAttempt :one
+INSERT INTO auth.mfa_failure_streaks (user_id, failures) VALUES (@user_id, 1)
+ON CONFLICT (user_id) DO UPDATE SET failures = auth.mfa_failure_streaks.failures + 1
+RETURNING failures, (locked_at IS NOT NULL)::bool AS locked;
+
+-- LockMFASignIn locks the user's second-factor sign-in, at the end of a run of
+-- wrong answers.
+-- name: LockMFASignIn :exec
+UPDATE auth.mfa_failure_streaks SET locked_at = NOW() WHERE user_id = @user_id;
+
+-- EndMFAFailureStreak ends the user's run of wrong answers, and any lock it
+-- set.
+-- name: EndMFAFailureStreak :exec
+DELETE FROM auth.mfa_failure_streaks WHERE user_id = @user_id;

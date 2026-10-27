@@ -455,7 +455,7 @@ func (s *Service) VerifyForLoginTx(ctx context.Context, tx pgx.Tx, userID uuid.U
 // ResetForUser removes every second factor userID holds (authenticator app,
 // recovery codes, email/SMS factors, push devices, pending push requests and
 // unused pairing codes) and what they earned: trusted devices and step-ups.
-// Passkeys stay. It returns the count removed per kind, for the audit record.
+// It lifts a lock of their second-factor sign-in. Passkeys stay. It returns the count removed per kind, for the audit record.
 func (s *Service) ResetForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (map[string]int64, error) {
 	removed := map[string]int64{}
 	for _, step := range []struct {
@@ -470,6 +470,7 @@ func (s *Service) ResetForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID)
 		{"push_pairings", `DELETE FROM auth.mfa_push_pairings WHERE user_id = $1 AND used_at IS NULL AND expires_at > NOW()`},
 		{"trusted_devices", `DELETE FROM auth.trusted_devices WHERE user_id = $1`},
 		{"step_ups", `DELETE FROM auth.mfa_verifications WHERE user_id = $1`},
+		{"failure_streaks", `DELETE FROM auth.mfa_failure_streaks WHERE user_id = $1`},
 	} {
 		tag, err := tx.Exec(ctx, step.sql, userID)
 		if err != nil {

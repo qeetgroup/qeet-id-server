@@ -68,6 +68,7 @@ internal/access/authentication/risksignin.go#Service.sendRiskEmailCode  secret-l
 internal/access/authentication/password.go#Service.ChangePassword  session-scoped: locks the caller's own account
 internal/access/authentication/sessions.go#Service.ListSessionsPageFor  session-scoped: the caller's own sessions
 internal/access/authentication/mfachallenge.go#Service.deferEnrollment  secret-lookup: challenge found by its random MFA token
+internal/access/authentication/mfachallenge.go#Service.noticeMFALocked  pre-tenant: emails the account whose second-factor sign-in just locked
 internal/access/authentication/mfachallenge.go#Service.verifyAndConsumeMFAChallenge  secret-lookup: challenge found by its random MFA token
 internal/access/authentication/switch.go#continueSession  session-scoped: the session issued in the same transaction, from one of the same person's
 internal/access/authentication/sessionlimit.go#Service.enforceSessionLimit  parent-scoped: session IDs from the tenant-scoped list above

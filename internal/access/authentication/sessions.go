@@ -229,8 +229,9 @@ func EndSignIns(ctx context.Context, tx pgx.Tx, signals *sessionsignal.Signaller
 // endOtherSignIns ends, inside tx, every way the user signs in besides their
 // API sessions: hosted-login sessions, unused password-reset and sign-in
 // links, remembered devices, which skip the second factor, pending
-// authorisations, which would become grants, and application grants. The
-// caller has locked the user row.
+// authorisations, which would become grants, and application grants. It also
+// lifts a lock of their second-factor sign-in: the person proved who they are
+// another way. The caller has locked the user row.
 func endOtherSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (SignInsEnded, error) {
 	var ended SignInsEnded
 	q := dbgen.New(tx)
@@ -239,6 +240,9 @@ func endOtherSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (SignInsE
 		return SignInsEnded{}, err
 	}
 	if err := q.ExpireRecoveryLinksForUser(ctx, userID); err != nil {
+		return SignInsEnded{}, err
+	}
+	if err := q.EndMFAFailureStreak(ctx, userID); err != nil {
 		return SignInsEnded{}, err
 	}
 	if ended.TrustedDevices, err = q.DeleteTrustedDevicesForUser(ctx, userID); err != nil {
