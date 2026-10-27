@@ -66,3 +66,42 @@ func TestAPIKeysStayInTheirTenant(t *testing.T) {
 		t.Errorf("tenant B holds %d keys acting for tenant A's user", n)
 	}
 }
+
+// TestPersonalKeysStopWithTheirPerson checks that a key acting for a person
+// works only while their account is active: not while suspended, again once
+// reactivated, and never once deleted. A key acting for no one is unaffected.
+func TestPersonalKeysStopWithTheirPerson(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := NewService(pool)
+	tenant := dbtest.Tenant(t)
+	a := dbtest.User(t, tenant, tenant)
+	actor := audit.Actor{UserID: &a.ID, Type: "user"}
+	_, personal, err := svc.Create(ctx, CreateInput{TenantID: tenant, Name: "laptop", UserID: &a.ID, Actor: actor})
+	if err != nil {
+		t.Fatalf("create a personal key: %v", err)
+	}
+	_, shared, err := svc.Create(ctx, CreateInput{TenantID: tenant, Name: "ci", Actor: actor})
+	if err != nil {
+		t.Fatalf("create a key for no one: %v", err)
+	}
+	for _, step := range []struct {
+		name, change string
+		works        bool
+	}{
+		{"active", `UPDATE "user".users SET status = 'active' WHERE id = $1`, true},
+		{"suspended", `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, false},
+		{"reactivated", `UPDATE "user".users SET status = 'active' WHERE id = $1`, true},
+		{"deleted", `UPDATE "user".users SET deleted_at = NOW() WHERE id = $1`, false},
+	} {
+		if _, err := pool.Exec(ctx, step.change, a.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.Verify(ctx, personal); (err == nil) != step.works {
+			t.Errorf("the personal key of a %s account: %v, want works=%v", step.name, err, step.works)
+		}
+		if _, err := svc.Verify(ctx, shared); err != nil {
+			t.Errorf("a key for no one, its creator %s: %v", step.name, err)
+		}
+	}
+}

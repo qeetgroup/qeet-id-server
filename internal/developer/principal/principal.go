@@ -114,6 +114,16 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Principal, er
 	return out, nil
 }
 
+// PrincipalLive reports whether service principal id exists and isn't
+// disabled.
+func (s *Service) PrincipalLive(ctx context.Context, id uuid.UUID) (bool, error) {
+	live, err := s.q.PrincipalLive(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return live, err
+}
+
 // Disable marks a service principal disabled. Returns the (tenantID,
 // name) for the audit row so the caller doesn't have to re-query.
 func (s *Service) Disable(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (uuid.UUID, string, error) {

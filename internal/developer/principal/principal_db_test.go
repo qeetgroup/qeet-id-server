@@ -56,8 +56,17 @@ func TestClientCredentialsErrorsUseTheOAuthShape(t *testing.T) {
 		t.Errorf("token response %s: want a positive expires_in (err %v)", rec.Body.String(), err)
 	}
 
+	if live, err := svc.PrincipalLive(ctx, p.ID); err != nil || !live {
+		t.Errorf("an enabled principal: live %v, %v; want live", live, err)
+	}
+	if live, err := svc.PrincipalLive(ctx, uuid.New()); err != nil || live {
+		t.Errorf("an unknown principal: live %v, %v; want not live", live, err)
+	}
 	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE auth.service_principals SET disabled_at = NOW() WHERE id = $1 AND tenant_id = $2`, p.ID, tenant); err != nil {
 		t.Fatal(err)
 	}
 	wantTokenError(t, tokenRequest(t, router, cc, id, secret), http.StatusBadRequest, "unauthorized_client", "")
+	if live, err := svc.PrincipalLive(ctx, p.ID); err != nil || live {
+		t.Errorf("a disabled principal: live %v, %v; want not live", live, err)
+	}
 }

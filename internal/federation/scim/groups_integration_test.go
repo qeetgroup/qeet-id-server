@@ -574,3 +574,48 @@ func TestSCIMCreatesNoAccountOnAnotherOrganisationsDomain(t *testing.T) {
 		t.Errorf("provision on the organisation's domain: %d %s, want 201", rec.Code, rec.Body.String())
 	}
 }
+
+// TestSCIMDeprovisioningEndsEverySignIn checks that deactivating or deleting
+// a user through SCIM ends their sessions, remembered devices and application
+// grants, as an administrator's suspension does.
+func TestSCIMDeprovisioningEndsEverySignIn(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	f := newSCIMFixture(t, ctx)
+	signedIn := func() uuid.UUID {
+		t.Helper()
+		id := f.seedUser(t, ctx, dbtest.Unique("scim")+"@example.test")
+		if _, err := pool.Exec(ctx, `
+			WITH s AS (INSERT INTO auth.sessions (user_id, tenant_id) VALUES ($1, $2)),
+			     d AS (INSERT INTO auth.trusted_devices (user_id, tenant_id, token_hash, expires_at) VALUES ($1, $2, $3, NOW() + INTERVAL '1 day'))
+			INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, tenant_id, expires_at)
+			VALUES ($4, 'app', $1, $2, NOW() + INTERVAL '1 day')
+		`, id, f.tenantID, dbtest.Unique("device"), dbtest.Unique("grant")); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	live := func(id uuid.UUID) int {
+		return dbtest.Count(t, `
+			SELECT (SELECT count(*) FROM auth.sessions WHERE user_id = $1 AND revoked_at IS NULL)
+			     + (SELECT count(*) FROM auth.trusted_devices WHERE user_id = $1)
+			     + (SELECT count(*) FROM auth.oidc_refresh_tokens WHERE user_id = $1 AND revoked_at IS NULL)
+		`, id)
+	}
+
+	deactivated, deleted := signedIn(), signedIn()
+	if rec := f.do(t, http.MethodPatch, "/scim/v2/Users/"+deactivated.String(), map[string]any{
+		"schemas":    []string{schemaPatchOp},
+		"Operations": []map[string]any{{"op": "replace", "path": "active", "value": false}},
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("deactivate: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.do(t, http.MethodDelete, "/scim/v2/Users/"+deleted.String(), nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
+	}
+	for name, id := range map[string]uuid.UUID{"deactivated": deactivated, "deleted": deleted} {
+		if n := live(id); n != 0 {
+			t.Errorf("a %s user kept %d ways in", name, n)
+		}
+	}
+}

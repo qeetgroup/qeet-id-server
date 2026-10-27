@@ -30,6 +30,9 @@ type AuthVerifier struct {
 	// access token has not ended, so a signed-out, revoked or timed-out
 	// session's tokens are refused at once rather than when they expire.
 	SessionLive func(ctx context.Context, sessionID, userID uuid.UUID) (bool, error)
+	// PrincipalLive, when set, reports whether a service principal exists and
+	// isn't disabled, so disabling or deleting one refuses its tokens at once.
+	PrincipalLive func(ctx context.Context, principalID uuid.UUID) (bool, error)
 }
 
 // RequireAuth wraps a handler so it only sees authenticated requests.
@@ -110,6 +113,22 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 				}
 				if v.SessionUsed != nil {
 					v.SessionUsed(r.Context(), *p.SessionID)
+				}
+			}
+			if p.ActorType == "service" && v.PrincipalLive != nil {
+				id, perr := uuid.Parse(claims.Subject)
+				live := false
+				if perr == nil {
+					var err error
+					if live, err = v.PrincipalLive(r.Context(), id); err != nil {
+						WriteError(w, r, errs.ErrInternalServer.Wrap(err))
+						return
+					}
+				}
+				if !live {
+					w.Header().Set("WWW-Authenticate", `Bearer realm="qeet", error="invalid_token"`)
+					WriteError(w, r, errs.ErrUnauthorized.WithDetail("service principal disabled"))
+					return
 				}
 			}
 			// AI-agent token: capture the agent id and enforce the agent's

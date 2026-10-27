@@ -22,10 +22,15 @@ UPDATE auth.api_keys SET revoked_at = NOW() WHERE id = $1 AND tenant_id = $2 AND
 
 -- VerifyAPIKey fetches by prefix for the auth path; includes key_hash for
 -- bcrypt/argon2 comparison. Only non-revoked keys are eligible.
+-- VerifyAPIKey finds a live key by its prefix. A personal key works only
+-- while its person's account is active, so suspending, deleting or
+-- deprovisioning them stops it too.
 -- name: VerifyAPIKey :one
-SELECT id, tenant_id, user_id, name, prefix, scopes, expires_at, last_used_at, revoked_at, created_at, key_hash
-FROM auth.api_keys
-WHERE prefix = $1 AND revoked_at IS NULL;
+SELECT k.id, k.tenant_id, k.user_id, k.name, k.prefix, k.scopes, k.expires_at, k.last_used_at, k.revoked_at, k.created_at, k.key_hash
+FROM auth.api_keys k
+LEFT JOIN "user".users u ON u.id = k.user_id
+WHERE k.prefix = $1 AND k.revoked_at IS NULL
+  AND (k.user_id IS NULL OR (u.status = 'active' AND u.deleted_at IS NULL));
 
 -- name: TouchAPIKeyLastUsed :exec
 UPDATE auth.api_keys SET last_used_at = NOW() WHERE id = $1;

@@ -99,6 +99,7 @@ internal/developer/api-keys/queries.sql#VerifyAPIKey  secret-lookup: key found b
 internal/developer/credentials/tokenvault/queries.sql#DeleteConnectState  secret-lookup: single-use random OAuth state
 internal/developer/credentials/vc/queries.sql#GetCredentialRevocation  parent-scoped: ID of a credential whose signature was just verified
 internal/developer/principal/queries.sql#GetServicePrincipalForAuth  secret-lookup: the client secret is verified against this row
+internal/developer/principal/queries.sql#PrincipalLive  session-scoped: principal named by the verified access token
 internal/developer/webhooks/webhook.go#Service.tick  background-sweep: delivery worker for every tenant
 
 internal/federation/adminportal/adminportal.go#Service.Exchange  secret-lookup: link found by its token hash

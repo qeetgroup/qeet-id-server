@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
@@ -1068,12 +1069,12 @@ func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenant
 			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
 			return false
 		}
-		ended, err := sessionsignal.EndUserSessions(ctx, tx, userID)
-		if err != nil {
+		// Every way in ends, as an administrator's suspension ends them, so a
+		// later reactivation revives none.
+		if _, err := auth.EndSignIns(ctx, tx, h.Service.signals, userID, sessionsignal.ReasonDeprovisioned); err != nil {
 			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
 			return false
 		}
-		h.Service.signals.Revoked(ctx, tx, sessionsignal.ReasonDeprovisioned, ended...)
 	}
 	if h.Service.mapper != nil && len(profiles) > 0 {
 		if err := h.Service.mapper.StoreProfile(ctx, tx, tenantID, userID, "scim:"+tenantID.String(), profiles[0]); err != nil {
@@ -1099,8 +1100,8 @@ func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenant
 	return true
 }
 
-// deprovision soft-deletes a SCIM-managed user and records it in the same
-// transaction.
+// deprovision soft-deletes a SCIM-managed user, ending every way they sign
+// in, and records it in the same transaction.
 func (h *Handler) deprovision(r *http.Request, tenantID, userID uuid.UUID) error {
 	ctx := r.Context()
 	tx, err := h.Service.users.Pool().Begin(ctx)
@@ -1109,6 +1110,9 @@ func (h *Handler) deprovision(r *http.Request, tenantID, userID uuid.UUID) error
 	}
 	defer tx.Rollback(ctx)
 	if err := h.Service.users.SoftDeleteTx(ctx, tx, userID); err != nil {
+		return err
+	}
+	if _, err := auth.EndSignIns(ctx, tx, h.Service.signals, userID, sessionsignal.ReasonDeprovisioned); err != nil {
 		return err
 	}
 	if err := recordUserEvidence(ctx, tx, r, tenantID, userID, "user.deleted", nil); err != nil {

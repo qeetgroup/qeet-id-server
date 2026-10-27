@@ -1081,7 +1081,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Disables a service principal: its credentials no longer get tokens. Requires apikey.write. Needs a recent step-up.'
+      description: 'Disables a service principal: its credentials no longer get tokens, and the tokens it already holds are refused at once (401) and introspect inactive. Requires apikey.write. Needs a recent step-up.'
       responses:
         '204':
           description: No Content
@@ -3903,7 +3903,7 @@ paths:
   /scim/v2/Users/{id}:
     delete:
       operationId: delete_scim_v2_Users_ById
-      description: 'Deprovisions a user by id for the tenant identified by the SCIM bearer token, soft-deleting the account after confirming it belongs to the tenant, with Qeet acting as the SCIM server. Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope rather than the standard Qeet error shape.'
+      description: 'Deprovisions a user by id for the tenant identified by the SCIM bearer token, soft-deleting the account after confirming it belongs to the tenant and ending every way it signs in (sessions, hosted-login sessions, remembered devices, application grants, pending authorizations and unused recovery links), with Qeet acting as the SCIM server. Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope rather than the standard Qeet error shape.'
       summary: "[scim] Delete user"
       tags:
         - SCIM
@@ -3949,7 +3949,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_scim_v2_Users_ById
-      description: 'Applies a SCIM PatchOp to a user for the tenant identified by the SCIM bearer token; setting active to false is the deprovisioning path IdPs rely on and suspends the account, and displayName may also be updated, with Qeet acting as the SCIM server. Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope, not the standard Qeet error shape.'
+      description: 'Applies a SCIM PatchOp to a user for the tenant identified by the SCIM bearer token; setting active to false is the deprovisioning path IdPs rely on and suspends the account, ending every way it signs in as an administrator''s suspension does, and displayName may also be updated, with Qeet acting as the SCIM server. Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope, not the standard Qeet error shape.'
       summary: "[scim] Patch user (deprovision)"
       tags:
         - SCIM

@@ -98,9 +98,6 @@ type GetServicePrincipalForAuthRow struct {
 	DisabledAt pgtype.Timestamptz
 }
 
-// GetServicePrincipalForAuth fetches the full credential row for the
-// client_credentials grant (IssueClientCredentials). Includes secret_hash
-// for argon2/bcrypt verification — never returned to the API caller.
 func (q *Queries) GetServicePrincipalForAuth(ctx context.Context, id uuid.UUID) (GetServicePrincipalForAuthRow, error) {
 	row := q.db.QueryRow(ctx, getServicePrincipalForAuth, id)
 	var i GetServicePrincipalForAuthRow
@@ -153,6 +150,22 @@ func (q *Queries) ListServicePrincipals(ctx context.Context, tenantID uuid.UUID)
 		return nil, err
 	}
 	return items, nil
+}
+
+const principalLive = `-- name: PrincipalLive :one
+SELECT (disabled_at IS NULL)::bool AS live FROM auth.service_principals WHERE id = $1
+`
+
+// GetServicePrincipalForAuth fetches the full credential row for the
+// client_credentials grant (IssueClientCredentials). Includes secret_hash
+// for argon2/bcrypt verification — never returned to the API caller.
+// PrincipalLive reports whether a service principal exists and isn't
+// disabled. No row: it doesn't exist.
+func (q *Queries) PrincipalLive(ctx context.Context, id uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, principalLive, id)
+	var live bool
+	err := row.Scan(&live)
+	return live, err
 }
 
 const upgradeServicePrincipalSecretHash = `-- name: UpgradeServicePrincipalSecretHash :exec

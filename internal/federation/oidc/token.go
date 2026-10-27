@@ -757,6 +757,15 @@ func (s *Service) tokenSubjectLive(ctx context.Context, claims *tokens.Claims) (
 			return false, err
 		}
 	}
+	if claims.ActorType == "service" && s.principalLive != nil {
+		id, err := uuid.Parse(claims.Subject)
+		if err != nil {
+			return false, nil //nolint:nilerr // an unparseable principal ID means the token is not active
+		}
+		if live, err := s.principalLive(ctx, id); err != nil || !live {
+			return false, err
+		}
+	}
 	if claims.AgentID != "" && s.agentStatus != nil {
 		id, err := uuid.Parse(claims.AgentID)
 		if err != nil {

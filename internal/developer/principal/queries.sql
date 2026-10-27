@@ -21,6 +21,11 @@ RETURNING tenant_id, name;
 -- GetServicePrincipalForAuth fetches the full credential row for the
 -- client_credentials grant (IssueClientCredentials). Includes secret_hash
 -- for argon2/bcrypt verification — never returned to the API caller.
+-- PrincipalLive reports whether a service principal exists and isn't
+-- disabled. No row: it doesn't exist.
+-- name: PrincipalLive :one
+SELECT (disabled_at IS NULL)::bool AS live FROM auth.service_principals WHERE id = $1;
+
 -- name: GetServicePrincipalForAuth :one
 SELECT id, tenant_id, secret_hash, scopes, disabled_at
 FROM auth.service_principals WHERE id = $1;

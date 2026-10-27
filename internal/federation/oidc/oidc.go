@@ -49,6 +49,9 @@ type Service struct {
 	// access tokens introspect inactive and can't be exchanged once it has
 	// (nil: not checked).
 	sessionLive func(ctx context.Context, sessionID, userID uuid.UUID) (bool, error)
+	// principalLive reports whether a service principal exists and isn't
+	// disabled, so its tokens introspect inactive once it is (nil: not checked).
+	principalLive func(ctx context.Context, principalID uuid.UUID) (bool, error)
 }
 
 // SetAgentStatus wires the agent lifecycle lookup introspection consults.
@@ -60,6 +63,11 @@ func (s *Service) SetAgentStatus(f func(ctx context.Context, agentID uuid.UUID) 
 // consult.
 func (s *Service) SetSessionLive(f func(ctx context.Context, sessionID, userID uuid.UUID) (bool, error)) {
 	s.sessionLive = f
+}
+
+// SetPrincipalLive wires the service-principal lookup introspection consults.
+func (s *Service) SetPrincipalLive(f func(ctx context.Context, principalID uuid.UUID) (bool, error)) {
+	s.principalLive = f
 }
 
 // NewService returns the OIDC provider service.

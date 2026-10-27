@@ -250,6 +250,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	authService.SetSessionLifetime(cfg.SessionMaxAge, cfg.SessionIdleTimeout) // session bounds where the organisation sets none
 	verifier.SessionUsed = authService.SessionUsed                            // a session's last use, for its idle timeout and the session list
 	verifier.SessionLive = authService.SessionLive                            // an ended session's access tokens are refused at once
+	verifier.PrincipalLive = principalService.PrincipalLive                   // a disabled service principal's tokens are refused at once
 	recoveryService.SetSessionSignals(sessionSignals)
 	rbacService.SetEmitter(webhookService.Enqueue)
 	gdprService := gdpr.NewService(pool, 30*24*time.Hour)
@@ -269,6 +270,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	oidcService := oidc.NewService(pool, issuer)
 	oidcService.SetAgentStatus(agentService.AgentStatus)            // a suspended agent's tokens introspect inactive
 	oidcService.SetSessionLive(authService.SessionLive)             // an ended session's tokens introspect inactive and can't be exchanged
+	oidcService.SetPrincipalLive(principalService.PrincipalLive)    // a disabled service principal's tokens introspect inactive
 	oidcService.SetGrantMaxAge(cfg.SessionMaxAge)                   // grant bound where the organisation sets none
 	oidcService.SetTokenExchangeMaxDepth(cfg.TokenExchangeMaxDepth) // bound a chain of exchanges
 	oidcService.SetClientLockout(oidc.ClientLockout{                // wrong application secrets
