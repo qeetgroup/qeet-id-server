@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,6 +54,7 @@ type Service struct {
 	magicLinks      MagicLinkPolicy
 	magicPerAddress Limiter
 	magicPerCaller  Limiter
+	resetPerAddress Limiter
 	signals         *sessionsignal.Signaller
 	requestRecords  Limiter
 	// deliveries tracks the work requests leave running; see afterAnswer.
@@ -148,17 +150,28 @@ func (s *Service) resetLink(raw string, from ResetOrigin) string {
 	return fmt.Sprintf("%s/forgot-password?token=%s", s.baseAppURL, raw)
 }
 
+// SetResetLimit bounds password-reset requests per address (nil: unbounded).
+func (s *Service) SetResetLimit(perAddress Limiter) { s.resetPerAddress = perAddress }
+
 // StartPasswordReset emails a reset link to the account with this email, if
 // any (email is globally unique), landing back on the application from names
 // (see resetLink). It answers alike either way, storing and sending the link
 // after it returns (see afterAnswer), and returns the raw token for dev-mode
-// handlers, empty when no account matched.
+// handlers, empty when no account matched. The link goes to the address as
+// stored, and ends the account's earlier ones. Past the per-address bound it
+// returns ErrTooManyRequests, whether or not an account matched.
 func (s *Service) StartPasswordReset(ctx context.Context, email string, from ResetOrigin) (string, error) {
+	if s.resetPerAddress != nil {
+		if ok, _ := s.resetPerAddress.Take(ctx, "password-reset:address:"+strings.ToLower(strings.TrimSpace(email))); !ok {
+			return "", errs.ErrTooManyRequests
+		}
+	}
 	var userID uuid.UUID
 	var tenantID *uuid.UUID
+	var stored string
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, tenant_id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`, email,
-	).Scan(&userID, &tenantID)
+		`SELECT id, tenant_id, email FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`, email,
+	).Scan(&userID, &tenantID, &stored)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -171,6 +184,9 @@ func (s *Service) StartPasswordReset(ctx context.Context, email string, from Res
 	}
 	resetURL := s.resetLink(raw, from)
 	s.afterAnswer(ctx, "send a password reset link", func(ctx context.Context) error {
+		if err := s.q.ExpirePasswordResets(ctx, userID); err != nil {
+			return err
+		}
 		if err := s.q.InsertPasswordReset(ctx, dbgen.InsertPasswordResetParams{
 			UserID:    userID,
 			TokenHash: hash,
@@ -180,7 +196,7 @@ func (s *Service) StartPasswordReset(ctx context.Context, email string, from Res
 		}
 		if err := s.sender.Send(ctx, notifier.Message{
 			Channel: "email",
-			To:      email,
+			To:      stored,
 			Subject: "Reset your password",
 			Body:    fmt.Sprintf("Reset your Qeet ID password: %s", resetURL),
 			HTML: emailtmpl.Action(

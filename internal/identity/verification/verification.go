@@ -405,6 +405,10 @@ func (s *Service) confirmEmailChange(ctx context.Context, userID uuid.UUID, code
 	if err := qtx.MarkEmailVerificationUsed(ctx, row.id); err != nil {
 		return "", "", err
 	}
+	// Links already sent to the old address stop working with it.
+	if err := qtx.ExpireRecoveryLinksForUser(ctx, userID); err != nil {
+		return "", "", err
+	}
 	if _, err := qtx.UpdateUserEmail(ctx, dbgen.UpdateUserEmailParams{
 		Email:  row.value,
 		UserID: userID,

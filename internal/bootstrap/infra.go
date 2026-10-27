@@ -68,6 +68,7 @@ type rateLimits struct {
 	store                     ratelimit.Store // Redis, shared across replicas; nil keeps limits per instance
 	tenant, user, apiKey      *ratelimit.TenantLimiter
 	magicAddress, magicCaller *ratelimit.Limiter
+	resetAddress              *ratelimit.Limiter
 }
 
 // newRateLimits builds the limiters, exiting when REDIS_URL is set but
@@ -105,6 +106,7 @@ func newRateLimits(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Po
 	}
 	// Magic-link requests are bounded more tightly than sign-in: three per
 	// address, then one every five minutes; ten per caller, then one a minute.
+	// Password-reset requests share the per-address bound.
 	magicStore := rlStore
 	if magicStore == nil {
 		magicStore = ratelimit.NewMemStore()
@@ -116,6 +118,7 @@ func newRateLimits(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Po
 		apiKey:       newTenantLim(50, 200, "api_key"),
 		magicAddress: ratelimit.NewWithStore(magicStore, 1.0/300, 3),
 		magicCaller:  ratelimit.NewWithStore(magicStore, 1.0/60, 10),
+		resetAddress: ratelimit.NewWithStore(magicStore, 1.0/300, 3),
 	}
 }
 

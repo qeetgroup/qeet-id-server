@@ -402,6 +402,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 
 	limits := newRateLimits(rootCtx, cfg, pool)
 	recoveryService.SetMagicLinkLimits(limits.magicAddress, limits.magicCaller)
+	recoveryService.SetResetLimit(limits.resetAddress)
 	rlStore, tenantTenantLim, tenantUserLim, tenantAPIKeyLim := limits.store, limits.tenant, limits.user, limits.apiKey
 	rateLimitsHandler := &ratelimits.Handler{
 		Pool:      pool,

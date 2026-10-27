@@ -57,6 +57,7 @@ internal/access/authentication/queries.sql#RevokeOtherSessionsForUser  session-s
 internal/access/authentication/queries.sql#RevokeSessionById  session-scoped: the session of the refresh token in use
 internal/access/authentication/queries.sql#RevokeSessionForUser  session-scoped: only a session of the caller's own user
 internal/access/authentication/queries.sql#SessionEnd  session-scoped: the caller's own session and user
+internal/access/authentication/queries.sql#ExpireRecoveryLinksForUser  parent-scoped: EndAllSignIns callers check the user first; an account's links are its own in every organisation
 internal/access/authentication/queries.sql#SpendAuthorizationCodesForUser  parent-scoped: EndAllSignIns callers check the user first
 internal/access/authentication/queries.sql#SupersedeSession  session-scoped: the caller's own session, replaced on tenant switch
 internal/access/authentication/queries.sql#TouchSession  session-scoped: the session of the verified access token
@@ -81,6 +82,7 @@ internal/access/mfa/pairing.go#Service.WithdrawPushPairing  session-scoped: the 
 internal/access/mfa/queries.sql#RecordStepUp  session-scoped: the caller's own session and user
 internal/access/passkeys/queries.sql#GetUserForWebAuthn  pre-tenant: the caller's own account, or the one a passkey sign-in asserts
 internal/access/passkeys/queries.sql#GetUserIDByEmail  pre-tenant: passkey sign-in finds the account by email
+internal/access/recovery/queries.sql#ExpireMagicLinks  pre-tenant: a new sign-in link ends the earlier ones to the same account's address
 internal/access/recovery/queries.sql#GetMagicLinkAccount  pre-tenant: magic-link sign-in finds the account by email
 internal/access/recovery/queries.sql#GetMagicLinkByToken  secret-lookup: link found by its token hash
 internal/access/recovery/queries.sql#GetResetAccount  secret-lookup: account named by the reset token
@@ -184,6 +186,7 @@ internal/identity/users/queries.sql#SoftDeleteUserBy  parent-scoped: the handler
 internal/identity/users/repository.go#Repository.update  parent-scoped: callers pass their own or a tenant-checked account
 internal/identity/users/signinmethods.go#LockSignInMethods  parent-scoped: callers pass their own or a tenant-checked account
 internal/identity/verification/queries.sql#EmailTakenByOther  session-scoped: the caller's email change; email is unique platform-wide
+internal/identity/verification/queries.sql#ExpireRecoveryLinksForUser  session-scoped: the caller's own links, ended as their address changes
 internal/identity/verification/queries.sql#GetUserEmail  session-scoped: the caller's own account
 internal/identity/verification/queries.sql#GetUserPhone  session-scoped: the caller's own account
 internal/identity/verification/queries.sql#MarkUserEmailVerified  session-scoped: the caller's own account

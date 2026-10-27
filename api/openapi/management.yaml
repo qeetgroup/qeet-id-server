@@ -1743,7 +1743,7 @@ paths:
     post:
       operationId: post_v1_me_email_change_confirm
       summary: Confirm my email change
-      description: 'Verifies the code sent to the new address and swaps it onto the account (marking it verified). Returns the new email. Only a code from the start-email-change call counts. The previous address is sent a notice of the change.'
+      description: 'Verifies the code sent to the new address and swaps it onto the account (marking it verified). Returns the new email. Only a code from the start-email-change call counts. The previous address is sent a notice of the change, and the reset and magic links already sent to it stop working.'
       tags:
         - Verification
       security:

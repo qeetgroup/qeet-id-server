@@ -129,9 +129,14 @@ func (s *Service) sendMagicLink(ctx context.Context, req MagicLinkRequest, accou
 	if req.ReturnTo != "" {
 		returnTo = &req.ReturnTo
 	}
+	// The address as stored, not as typed: an address that only folds to the
+	// account's under lower-casing belongs to someone else.
+	if err := s.q.ExpireMagicLinks(ctx, account.Email); err != nil {
+		return err
+	}
 	if err := s.q.InsertMagicLink(ctx, dbgen.InsertMagicLinkParams{
 		TenantID:  pgtype.UUID{Bytes: req.TenantID, Valid: req.TenantID != uuid.Nil},
-		Email:     req.Email,
+		Email:     account.Email,
 		TokenHash: hash,
 		ExpiresAt: time.Now().UTC().Add(ttl),
 		App:       app,
@@ -149,7 +154,7 @@ func (s *Service) sendMagicLink(ctx context.Context, req MagicLinkRequest, accou
 		TemplateVariables: map[string]string{"magic_url": magicURL},
 		TenantID:          tenant,
 		Channel:           "email",
-		To:                req.Email,
+		To:                account.Email,
 		Subject:           "Your sign-in link",
 		Body:              fmt.Sprintf("Sign in to Qeet ID: %s", magicURL),
 		HTML: emailtmpl.Action(

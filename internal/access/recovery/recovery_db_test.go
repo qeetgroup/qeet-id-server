@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
@@ -160,11 +161,76 @@ func TestRecoveryLinksWithOneConnection(t *testing.T) {
 		t.Fatalf("links: %v", err)
 	}
 
+	// The magic link first: a reset ends the links still outstanding.
 	dbtest.LeaveOneConnection(t)
-	if err := svc.ConfirmPasswordReset(ctx, reset, "Pw4!nKx7mQ2v-new", AuditCtx{}); err != nil {
-		t.Errorf("confirm reset: %v", err)
-	}
 	if res, err := svc.ConsumeMagicLink(ctx, link, AuditCtx{}); err != nil || res.UserID != a.ID {
 		t.Errorf("consume magic link: %+v, %v; want %s", res, err, a.ID)
 	}
+	if err := svc.ConfirmPasswordReset(ctx, reset, "Pw4!nKx7mQ2v-new", AuditCtx{}); err != nil {
+		t.Errorf("confirm reset: %v", err)
+	}
+}
+
+// TestRecoveryLinksGoToTheStoredAddress checks that reset and sign-in links
+// are sent to the address as the account stores it, whatever case it was
+// typed in; that only the newest of each works; that a reset ends the links
+// still outstanding; and that resets are bounded per address.
+func TestRecoveryLinksGoToTheStoredAddress(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	mail := &dbtest.Mailbox{}
+	svc := NewService(pool, mail, time.Hour, "https://console.example.test")
+	policy := authpolicy.NewService(pool)
+	svc.SetPasswordRules(policy)
+	svc.SetMagicLinkPolicy(policy)
+	tenant := dbtest.Tenant(t)
+	a := dbtest.UserAt(t, "Ada."+dbtest.Unique("Lovelace")+"@example.test", tenant, tenant)
+	tokenOf := func(msg notifier.Message) string {
+		t.Helper()
+		_, query, _ := strings.Cut(msg.Body, "?")
+		link, err := url.ParseQuery(query)
+		if msg.To != a.Email || err != nil || link.Get("token") == "" {
+			t.Fatalf("mail to %s with body %q; want a link with a token to %s", msg.To, msg.Body, a.Email)
+		}
+		return link.Get("token")
+	}
+	reset := func() string {
+		t.Helper()
+		if _, err := svc.StartPasswordReset(ctx, strings.ToLower(a.Email), ResetOrigin{}); err != nil {
+			t.Fatalf("start reset: %v", err)
+		}
+		svc.deliveries.Wait()
+		return tokenOf(mail.Last(t))
+	}
+	magic := func() string {
+		t.Helper()
+		if err := svc.RequestMagicLink(ctx, MagicLinkRequest{Email: strings.ToUpper(a.Email), TenantID: tenant}); err != nil {
+			t.Fatalf("request magic link: %v", err)
+		}
+		svc.deliveries.Wait()
+		return tokenOf(mail.Last(t))
+	}
+
+	oldReset, newReset := reset(), reset()
+	if err := svc.ConfirmPasswordReset(ctx, oldReset, "Pw4!nKx7mQ2v-old", AuditCtx{}); !errors.Is(err, errs.ErrRecoveryLinkExpired) {
+		t.Errorf("an earlier reset link: %v, want %v", err, errs.ErrRecoveryLinkExpired)
+	}
+	oldLink, newLink := magic(), magic()
+	if _, err := svc.ConsumeMagicLink(ctx, oldLink, AuditCtx{}); !errors.Is(err, errs.ErrRecoveryLinkExpired) {
+		t.Errorf("an earlier sign-in link: %v, want %v", err, errs.ErrRecoveryLinkExpired)
+	}
+	if err := svc.ConfirmPasswordReset(ctx, newReset, "Pw4!nKx7mQ2v-new", AuditCtx{}); err != nil {
+		t.Fatalf("the newest reset link: %v", err)
+	}
+	if _, err := svc.ConsumeMagicLink(ctx, newLink, AuditCtx{}); !errors.Is(err, errs.ErrRecoveryLinkExpired) {
+		t.Errorf("a sign-in link sent before the reset: %v, want %v", err, errs.ErrRecoveryLinkExpired)
+	}
+
+	svc.SetResetLimit(ratelimit.NewWithStore(ratelimit.NewMemStore(), 1.0/300, 1))
+	for i, want := range []error{nil, errs.ErrTooManyRequests} {
+		if _, err := svc.StartPasswordReset(ctx, strings.ToUpper(a.Email), ResetOrigin{}); !errors.Is(err, want) {
+			t.Errorf("reset request %d: %v, want %v", i+1, err, want)
+		}
+	}
+	svc.deliveries.Wait()
 }
