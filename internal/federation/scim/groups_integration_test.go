@@ -32,6 +32,7 @@ type scimFixture struct {
 	tenantID uuid.UUID
 	token    string
 	router   chi.Router
+	svc      *Service
 }
 
 func newSCIMFixture(t *testing.T, ctx context.Context) *scimFixture {
@@ -51,7 +52,7 @@ func newSCIMFixture(t *testing.T, ctx context.Context) *scimFixture {
 	h := &Handler{Service: svc}
 	r := chi.NewRouter()
 	h.MountPublic(r)
-	return &scimFixture{tenantID: tid, token: token, router: r}
+	return &scimFixture{tenantID: tid, token: token, router: r, svc: svc}
 }
 
 // seedUser creates a tenant user and returns its id.

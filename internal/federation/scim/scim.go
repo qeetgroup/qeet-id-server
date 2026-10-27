@@ -46,7 +46,8 @@ const (
 )
 
 // Service manages SCIM tokens and provisioned users and groups. A nil signals
-// announces no ended sessions; a nil gate leaves token rotation ungated.
+// announces no ended sessions; a nil gate leaves token rotation and SCIM
+// requests ungated.
 type Service struct {
 	signals  *sessionsignal.Signaller
 	pool     *pgxpool.Pool
@@ -74,6 +75,15 @@ type PlanGate interface {
 
 // SetPlanGate wires the plan-feature gate (nil allows all features).
 func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
+
+// planIncludesSCIM reports whether the tenant's plan includes SCIM; with no
+// gate set, every plan does.
+func (s *Service) planIncludesSCIM(ctx context.Context, tenantID uuid.UUID) (bool, error) {
+	if s.gate == nil {
+		return true, nil
+	}
+	return s.gate.FeatureAllowed(ctx, tenantID, "scim")
+}
 
 // Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
@@ -365,6 +375,18 @@ func (h *Handler) scimAuth(next http.Handler) http.Handler {
 		tid, err := h.Service.resolveToken(r.Context(), raw)
 		if err != nil {
 			writeSCIMErr(w, http.StatusUnauthorized, "invalid SCIM token")
+			return
+		}
+		// The plan is checked on every request, not only when the token was
+		// issued, so a token from a plan that has since lapsed provisions nothing.
+		allowed, err := h.Service.planIncludesSCIM(r.Context(), tid)
+		if err != nil {
+			slog.Error("scim: plan check", "err", err, "tenant_id", tid)
+			writeSCIMErr(w, http.StatusInternalServerError, "the organisation's plan could not be checked")
+			return
+		}
+		if !allowed {
+			writeSCIMErr(w, http.StatusForbidden, "the organisation's plan does not include SCIM provisioning")
 			return
 		}
 		ctx := context.WithValue(r.Context(), tenantCtxKey, tid)

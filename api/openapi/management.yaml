@@ -3137,7 +3137,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Organization branding, including optional background_color and email_reply_to values in settings. Unknown settings are preserved by clients. Custom sender addresses are configuration preferences and do not activate a provider identity.
+      description: Organization branding, including optional background_color and email_reply_to values in settings. Unknown settings are preserved by clients. Custom sender addresses are configuration preferences and do not activate a provider identity. The saved branding is returned whatever the plan, but the hosted login and emails show it only while the organisation's plan includes custom_branding; after the plan lapses they use the default appearance.
       responses:
         '200':
           description: OK

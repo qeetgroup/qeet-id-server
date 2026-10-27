@@ -135,6 +135,42 @@ func (noFactors) LoginFactors(context.Context, uuid.UUID) ([]auth.LoginFactor, e
 	return nil, nil
 }
 
+// TestLapsedPlanStopsLDAPSignIn checks that a connection set up while the plan
+// included LDAP signs no one in once the plan has lapsed.
+func TestLapsedPlanStopsLDAPSignIn(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	tenant := dbtest.Tenant(t)
+	a := dbtest.User(t, tenant, tenant)
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	const userDN = "uid=alice,dc=example,dc=test"
+	dir := &directory{
+		binds:   map[string]string{"cn=service,dc=example,dc=test": "service-secret", userDN: "alice-secret"},
+		entries: map[string]dirEntry{"alice": {dn: userDN, attrs: map[string]string{"mail": a.Email, "cn": "Alice"}}},
+	}
+	var connID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO tenant.ldap_connections (tenant_id, name, server_url, bind_dn, bind_password, base_dn, status)
+		VALUES ($1, 'Directory', $2, 'cn=service,dc=example,dc=test', 'service-secret', 'dc=example,dc=test', 'active')
+		RETURNING id
+	`, tenant, dir.start(t)).Scan(&connID); err != nil {
+		t.Fatalf("connection: %v", err)
+	}
+	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
+	authSvc.SetMFA(noFactors{})
+	svc := NewService(pool, authSvc, egress.DevelopmentPolicy())
+	svc.SetPlanGate(noLDAP{})
+
+	if _, err := svc.Login(ctx, connID, "alice", "alice-secret", "192.0.2.20", "test"); !errors.Is(err, errs.ErrUpgradeRequired) {
+		t.Errorf("sign in after the plan lapsed: %v, want %v", err, errs.ErrUpgradeRequired)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.sessions WHERE user_id = $1`, a.ID); n != 0 {
+		t.Errorf("%d sessions after the plan lapsed, want none", n)
+	}
+}
+
 // TestLoginAppliesSignInChecks checks that a directory sign-in adopts an
 // existing account only once its address is verified, is held to the
 // sign-in lockout, counted across spellings of one username, and answers with

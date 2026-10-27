@@ -1180,7 +1180,7 @@ paths:
   /v1/webhooks/{id}/deliveries:
     get:
       operationId: get_v1_webhooks_ById_deliveries
-      description: 'Lists recent delivery attempts for a webhook, including status and response codes, for debugging failures. Retry a failed one with the retry-delivery endpoint.'
+      description: 'Lists recent delivery attempts for a webhook, including status and response codes, for debugging failures. Retry a failed one with the retry-delivery endpoint. While the organisation''s plan does not include webhooks (one that has lapsed since the webhook was set up), deliveries are dead-lettered unsent, with error "not sent: the organisation''s plan does not include webhooks"; once paid again they can be retried.'
       summary: List deliveries
       tags:
         - Webhooks

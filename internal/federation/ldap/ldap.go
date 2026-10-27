@@ -115,6 +115,22 @@ func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 // Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
+// requireLDAP refuses with errs.ErrUpgradeRequired when the gate, if set,
+// finds that the tenant's plan doesn't include LDAP.
+func (s *Service) requireLDAP(ctx context.Context, tenantID uuid.UUID) error {
+	if s.gate == nil {
+		return nil
+	}
+	ok, err := s.gate.FeatureAllowed(ctx, tenantID, "ldap")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "ldap"})
+	}
+	return nil
+}
+
 // pgLastLogin converts a nullable timestamptz to *time.Time for LastLoginAt.
 func pgLastLogin(t pgtype.Timestamptz) *time.Time {
 	if !t.Valid {
@@ -177,14 +193,8 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 		return nil, err
 	}
 	// Plan gate: LDAP/AD directory sync is an Enterprise feature.
-	if s.gate != nil {
-		ok, err := s.gate.FeatureAllowed(ctx, tenantID, "ldap")
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "ldap"})
-		}
+	if err := s.requireLDAP(ctx, tenantID); err != nil {
+		return nil, err
 	}
 	if s.box == nil {
 		return nil, errs.ErrInternalServer.WithDetail("LDAP secret encryption is unavailable")
@@ -712,6 +722,11 @@ func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, passwor
 		return nil, errs.ErrLDAPConnectionDraft
 	default:
 		return nil, errs.ErrLDAPConnectionDisabled
+	}
+	// The plan is checked at every sign-in, not only when the connection was
+	// set up, so one set up on a plan that has since lapsed signs no one in.
+	if err := s.requireLDAP(ctx, c.TenantID); err != nil {
+		return nil, err
 	}
 	if username == "" || password == "" {
 		return nil, errs.ErrLDAPCredentialsRequired

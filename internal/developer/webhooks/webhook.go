@@ -201,10 +201,7 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Subsc
 // planAllows refuses webhooks to an organisation whose plan doesn't include
 // them (Free).
 func (s *Service) planAllows(ctx context.Context, tenantID uuid.UUID) error {
-	if s.gate == nil {
-		return nil
-	}
-	ok, err := s.gate.FeatureAllowed(ctx, tenantID, "webhooks")
+	ok, err := s.planIncludesWebhooks(ctx, tenantID)
 	if err != nil {
 		return err
 	}
@@ -213,6 +210,19 @@ func (s *Service) planAllows(ctx context.Context, tenantID uuid.UUID) error {
 	}
 	return nil
 }
+
+// planIncludesWebhooks reports whether the organisation's plan includes
+// webhooks; with no gate set, every plan does.
+func (s *Service) planIncludesWebhooks(ctx context.Context, tenantID uuid.UUID) (bool, error) {
+	if s.gate == nil {
+		return true, nil
+	}
+	return s.gate.FeatureAllowed(ctx, tenantID, "webhooks")
+}
+
+// errNotInPlan is the error recorded on a delivery dead-lettered because the
+// organisation's plan no longer includes webhooks.
+const errNotInPlan = "not sent: the organisation's plan does not include webhooks"
 
 // List returns the tenant's webhook subscriptions.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Subscription, error) {
@@ -503,7 +513,27 @@ func (s *Service) tick(ctx context.Context) error {
 		return err
 	}
 	rows.Close()
+	plans := map[uuid.UUID]bool{} // tenants whose plan includes webhooks, asked once a batch
 	for _, it := range batch {
+		allowed, known := plans[it.TenantID]
+		if !known {
+			if allowed, err = s.planIncludesWebhooks(ctx, it.TenantID); err != nil {
+				return err
+			}
+			plans[it.TenantID] = allowed
+		}
+		if !allowed {
+			// Set up on a plan that has since lapsed: the delivery is
+			// dead-lettered unsent, and can be sent again once paid for.
+			if _, err := s.pool.Exec(ctx, `
+				UPDATE tenant.webhook_deliveries
+				SET error = $3, dead_at = NOW(), lease_owner = NULL, lease_until = NULL
+				WHERE id = $1 AND lease_owner = $2
+			`, it.ID, s.workerID, errNotInPlan); err != nil {
+				return err
+			}
+			continue
+		}
 		secretValue := it.LegacySecret
 		if len(it.SecretCT) > 0 {
 			if s.box == nil {
