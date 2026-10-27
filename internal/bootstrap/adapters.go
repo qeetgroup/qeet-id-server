@@ -40,21 +40,13 @@ type entitlementPlanResolver struct {
 func (r entitlementPlanResolver) EffectivePlan(ctx context.Context, tenantID uuid.UUID) (string, error) {
 	if r.billing != nil {
 		if sub, err := r.billing.GetSubscription(ctx, tenantID); err == nil && sub != nil && sub.PlanCode != "" {
-			switch sub.Status {
-			case "active", "past_due":
+			// A subscription past its paid period or trial, or canceled, grants
+			// nothing: the tenant is on free, not on the stale label. Evaluated
+			// lazily here, with no scheduler.
+			if sub.Grants(time.Now()) {
 				return sub.PlanCode, nil
-			case "trialing":
-				// Trial grants the tier only until it expires; afterwards the
-				// tenant reverts to free (evaluated lazily here — no scheduler).
-				if sub.TrialEnd != nil && sub.TrialEnd.After(time.Now()) {
-					return sub.PlanCode, nil
-				}
-				return "free", nil
-			default:
-				// canceled / unknown: a subscription row exists but isn't granting,
-				// so this is a paid org that lapsed — free, not the stale label.
-				return "free", nil
 			}
+			return "free", nil
 		}
 	}
 	if r.tenants != nil {

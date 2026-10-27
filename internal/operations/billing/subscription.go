@@ -46,6 +46,20 @@ func subscriptionFromRow(row dbgen.GetSubscriptionRow) *Subscription {
 	return &sub
 }
 
+// Grants reports whether the subscription grants its plan at now: an active or
+// past-due one until the end of the period paid for, a trial until it ends.
+// Nothing renews a period, so a plan lapses when its period ends.
+func (s *Subscription) Grants(now time.Time) bool {
+	switch s.Status {
+	case "active", "past_due":
+		return s.CurrentPeriodEnd != nil && now.Before(*s.CurrentPeriodEnd)
+	case "trialing":
+		return s.TrialEnd != nil && now.Before(*s.TrialEnd)
+	default:
+		return false
+	}
+}
+
 // trialDuration is the length of a no-card trial.
 const trialDuration = 14 * 24 * time.Hour
 
@@ -176,10 +190,12 @@ func (s *Service) SwitchPlan(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID,
 }
 
 // costsNoMore reports whether the current subscription already pays for p: it
-// is active, not a trial, in p's currency and interval, and its plan is priced
-// at least as high as p. Prices in another currency or interval don't compare.
+// is active, not a trial, with its paid period still running, in p's currency
+// and interval, and its plan is priced at least as high as p. Prices in another
+// currency or interval don't compare.
 func costsNoMore(p planPrice, current dbgen.GetSubscriptionRow) bool {
 	return current.Status == "active" &&
+		time.Now().Before(current.CurrentPeriodEnd) &&
 		current.Currency == p.currency &&
 		current.Interval == p.interval &&
 		p.amountMinor <= current.AmountMinor

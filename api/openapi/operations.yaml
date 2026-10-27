@@ -2868,7 +2868,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Returns the organisation''s subscription. Requires billing.read.'
+      description: 'Returns the organisation''s subscription. It grants its plan until current_period_end, or trial_end for a trial; nothing renews it, so once that has passed the organisation is on the free plan, whatever status says, until it pays again through checkout. Requires billing.read.'
       responses:
         '200':
           description: OK
@@ -2916,7 +2916,8 @@ paths:
         Puts the tenant on plan_code, priced in currency; no payment is taken here. A free
         plan starts a new period with a zero invoice. A paid plan that costs no more than the
         tenant's active subscription in the same currency and billing interval takes over the
-        period already paid for, with no new invoice; the current plan itself changes nothing.
+        period already paid for, while it lasts, with no new invoice; the current plan itself
+        changes nothing.
         Any other paid plan, such as one that costs more, must go through checkout
         (POST /v1/tenants/{tenantID}/billing/checkout) and is refused with 402
         billing.checkout_required, unless invoice-only billing
@@ -3145,8 +3146,11 @@ paths:
         Returns the tenant's resolved entitlements: the effective plan code, the
         boolean feature flags, and the numeric limits (-1 = unlimited). Resolved
         from the active subscription (falling back to the tenant's plan label),
-        so an in-app upgrade is reflected immediately. Readable by any
-        authenticated member of the tenant; scoped to the caller's own tenant.
+        so an in-app upgrade is reflected immediately. A subscription grants its
+        plan only until current_period_end (a trial until trial_end): nothing
+        renews it, so after that the tenant has the free plan's entitlements
+        until it pays again. Readable by any authenticated member of the
+        tenant; scoped to the caller's own tenant.
       parameters:
         - name: tenantID
           in: path

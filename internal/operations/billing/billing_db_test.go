@@ -68,6 +68,40 @@ func switchPlan(t *testing.T, svc *Service, tenant uuid.UUID, plan, currency str
 	return nil
 }
 
+// lapse ends the tenant's paid period an hour ago, as if a month had passed
+// with no renewal.
+func lapse(t *testing.T, tenant uuid.UUID) {
+	t.Helper()
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
+		UPDATE tenant.subscriptions
+		SET current_period_start = NOW() - interval '1 month 1 hour', current_period_end = NOW() - interval '1 hour'
+		WHERE tenant_id = $1`, tenant); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestPlanLapsesAtPeriodEnd checks that a paid subscription stops granting its
+// plan once the period it paid for ends.
+func TestPlanLapsesAtPeriodEnd(t *testing.T) {
+	svc := newTestService(t)
+	tenant := dbtest.Tenant(t)
+	subscribe(t, svc, tenant, "pro", "USD")
+	sub, err := svc.GetSubscription(dbtest.Context(t), tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sub.Grants(time.Now()) {
+		t.Fatalf("a new subscription grants nothing: %+v", sub)
+	}
+	lapse(t, tenant)
+	if sub, err = svc.GetSubscription(dbtest.Context(t), tenant); err != nil {
+		t.Fatal(err)
+	}
+	if sub.Grants(time.Now()) {
+		t.Errorf("a subscription past its period still grants %s", sub.PlanCode)
+	}
+}
+
 // planOf returns the tenant's subscribed plan code, or "" with none.
 func planOf(t *testing.T, svc *Service, tenant uuid.UUID) string {
 	t.Helper()
@@ -84,6 +118,7 @@ func TestSwitchPlan(t *testing.T) {
 		name          string
 		from, fromCur string // current plan; "" for no subscription
 		trial         bool   // from is a trial rather than a paid plan
+		lapsed        bool   // from's paid period has ended
 		to, toCur     string
 		wantSwitched  bool
 		keepsPeriod   bool // the paid period stays, with no new invoice
@@ -97,6 +132,7 @@ func TestSwitchPlan(t *testing.T) {
 		{name: "refuses a paid plan during a trial", from: "pro", fromCur: "USD", trial: true, to: "starter", toCur: "USD"},
 		{name: "refuses a paid plan in another currency", from: "pro", fromCur: "USD", to: "starter", toCur: "INR"},
 		{name: "refuses a paid plan with another interval", from: "pro_year", fromCur: "USD", to: "starter", toCur: "USD"},
+		{name: "refuses a cheaper plan once the paid period ended", from: "pro", fromCur: "USD", lapsed: true, to: "starter", toCur: "USD"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -108,6 +144,9 @@ func TestSwitchPlan(t *testing.T) {
 				}
 			case c.from != "":
 				subscribe(t, svc, tenant, c.from, c.fromCur)
+			}
+			if c.lapsed {
+				lapse(t, tenant)
 			}
 			invoices := dbtest.Count(t, `SELECT count(*) FROM tenant.invoices WHERE tenant_id = $1`, tenant)
 			before, err := svc.GetSubscription(dbtest.Context(t), tenant)

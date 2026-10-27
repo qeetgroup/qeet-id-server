@@ -38,8 +38,8 @@ type Plan struct {
 }
 
 // Subscription is a tenant's subscription; Status is "none" if it has none.
-// TrialEnd is set while Status is "trialing", after which entitlements revert
-// to free.
+// Its plan lapses to free at CurrentPeriodEnd, or at TrialEnd, which is set
+// while Status is "trialing" (see Grants).
 type Subscription struct {
 	PlanCode           string     `json:"plan_code"`
 	PlanName           string     `json:"plan_name"`
