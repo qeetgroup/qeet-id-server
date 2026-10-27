@@ -472,6 +472,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Search:        &search.Handler{Service: searchService},
 		Activity:      activity.NewHandler(pool, activityHub),
 		Health:        healthHandler,
+		MetricsToken:  cfg.MetricsToken,
+		MetricsOpen:   cfg.IsDev(),
 		InFlight:      inFlight,
 
 		AuthVerifier:     verifier,

@@ -55,6 +55,11 @@ type Config struct {
 	// they forward trusted (see httpx.SetRelayKeys); several allow rotation.
 	// Empty: no relay is trusted.
 	RelayKeysRaw string `envconfig:"RELAY_KEYS" default:""`
+	// MetricsToken is the bearer token a scraper presents for /metrics. Empty:
+	// /metrics is open in development and off everywhere else, as its counters
+	// (sign-in throttles among them) tell an attacker how close they are to a
+	// limit.
+	MetricsToken string `envconfig:"METRICS_TOKEN" default:""`
 	LogLevel     string `envconfig:"LOG_LEVEL" default:"info"`
 	// LogFormat controls the log output format. "json" forces JSON lines (good
 	// for structured log ingestion and dev with jq). "text" forces the colored

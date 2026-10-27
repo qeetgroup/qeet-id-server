@@ -115,9 +115,8 @@ func TestReadiness_503WhenAnyCheckFails(t *testing.T) {
 	if checks["db"] != "ok" {
 		t.Errorf("passing check should still be reported ok: %v", checks)
 	}
-	failMsg, _ := checks["outbox"].(string)
-	if failMsg == "" || failMsg[:4] != "fail" {
-		t.Errorf("failing check should prefix with 'fail': %v", checks)
+	if checks["outbox"] != "fail" || strings.Contains(rec.Body.String(), "queue depth") {
+		t.Errorf("failing check: %v; want fail, without the cause", checks)
 	}
 }
 

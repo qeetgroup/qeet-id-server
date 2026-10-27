@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strings"
 	"time"
@@ -132,6 +133,8 @@ type Deps struct {
 	Search        *search.Handler
 	Activity      *activity.Handler
 	Health        *health.Handler
+	MetricsToken  string // the bearer token /metrics needs ("": see MetricsOpen)
+	MetricsOpen   bool   // with no token, /metrics is open (development only)
 	InFlight      *httpx.InFlight
 
 	AuthVerifier     *httpx.AuthVerifier
@@ -282,6 +285,28 @@ func NewRouter(d Deps) http.Handler {
 	return r
 }
 
+// metricsGuard serves next only to a caller presenting token as a bearer
+// token, or, with no token, to anyone where open (development). Otherwise it
+// answers 404, as if there were no metrics.
+func metricsGuard(token string, open bool, next http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if token == "" {
+			if open {
+				next.ServeHTTP(w, r)
+				return
+			}
+			http.NotFound(w, r)
+			return
+		}
+		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	}
+}
+
 // mountRootPublicRoutes registers the protocol and operational routes outside
 // /v1. Groups add rate limits without changing route patterns. Health probes are
 // unlimited, so a busy pod isn't killed.
@@ -289,7 +314,7 @@ func mountRootPublicRoutes(r chi.Router, d Deps, credentialLimiter, protocolLimi
 	r.Get("/healthz", d.Health.Liveness)
 	r.Get("/readyz", d.Health.Readiness)
 	r.Get("/version", d.Health.Version)
-	r.Get("/metrics", metrics.Handler().ServeHTTP)
+	r.Get("/metrics", metricsGuard(d.MetricsToken, d.MetricsOpen, metrics.Handler()))
 
 	// Directory credential verification — same throttle as /v1 login.
 	r.Group(func(r chi.Router) {
