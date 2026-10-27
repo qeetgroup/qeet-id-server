@@ -141,12 +141,11 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller) []wor
 			Name:     "outbox-dlq-cleanup",
 			Interval: time.Hour,
 			Run: func(ctx context.Context) error {
-				tag, err := pool.Exec(ctx,
-					`DELETE FROM platform.outbox_dead_letter WHERE dead_lettered_at < now() - interval '30 days'`)
+				n, err := outbox.PurgeDeadLetters(ctx, pool, outbox.DeadLetterRetention)
 				if err != nil {
 					return err
 				}
-				slog.Info("outbox DLQ cleaned", "deleted", tag.RowsAffected())
+				slog.Info("outbox DLQ cleaned", "deleted", n)
 				return nil
 			},
 		},

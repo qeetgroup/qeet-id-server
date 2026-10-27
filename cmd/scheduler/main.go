@@ -2,6 +2,10 @@
 // verification and the cleanups) standalone. The API normally runs them as
 // its embedded "scheduler" worker; either way each job runs once per interval
 // across every instance, so running this beside the API is safe.
+//
+// "scheduler replay-dead-letters [-type event.type] [-since RFC3339]" instead
+// moves dead-lettered outbox events back to the outbox, to be published again,
+// and exits.
 package main
 
 import (
@@ -60,6 +64,11 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+	if len(os.Args) > 1 && os.Args[1] == replayCommand {
+		code := replayDeadLetters(rootCtx, pool, os.Args[2:])
+		pool.Close()
+		os.Exit(code)
+	}
 	// Sessions the cleanup removes that were never ended are announced
 	// (session.revoked, reason expired) to the organisations' subscribers.
 	sessionSignals := sessionsignal.New(webhook.NewService(pool).EnqueueTx)
