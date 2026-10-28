@@ -223,8 +223,14 @@ func (s *Service) createGroup(ctx context.Context, actor audit.Actor, tenantID u
 }
 
 // replaceGroup does a full PUT: it overwrites displayName/externalId and
-// replaces the entire member set with the supplied one, all in one tx.
+// replaces the entire member set with the supplied one, all in one tx. A
+// member it gives a first role, through the group's, takes a seat, refused
+// with errs.ErrPlanLimit beyond the plan's seats.
 func (s *Service) replaceGroup(ctx context.Context, actor audit.Actor, tenantID, id uuid.UUID, name string, externalID *string, members []uuid.UUID) (*groupRow, error) {
+	limit, err := s.seatLimit(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -240,13 +246,18 @@ func (s *Service) replaceGroup(ctx context.Context, actor audit.Actor, tenantID,
 	if err != nil {
 		return nil, err
 	}
-	if err := q.DeleteGroupMembers(ctx, dbgen.DeleteGroupMembersParams{GroupID: id, TenantID: tenantID}); err != nil {
-		return nil, err
-	}
-	for _, uid := range members {
-		if err := addMemberTx(ctx, q, tenantID, id, uid); err != nil {
-			return nil, err
+	if err := s.withinSeats(ctx, tx, tenantID, limit, func() error {
+		if err := q.DeleteGroupMembers(ctx, dbgen.DeleteGroupMembersParams{GroupID: id, TenantID: tenantID}); err != nil {
+			return err
 		}
+		for _, uid := range members {
+			if err := addMemberTx(ctx, q, tenantID, id, uid); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	if err := recordGroupChange(ctx, tx, q, actor, tenantID, id, "group.updated", map[string]any{"name": name}, before); err != nil {
 		return nil, err
@@ -258,8 +269,13 @@ func (s *Service) replaceGroup(ctx context.Context, actor audit.Actor, tenantID,
 }
 
 // patchGroup applies a parsed PatchOp set in one tx: displayName/externalId
-// changes plus member add/remove/replace.
+// changes plus member add/remove/replace. A member it gives a first role takes
+// a seat, as replaceGroup does.
 func (s *Service) patchGroup(ctx context.Context, actor audit.Actor, tenantID, id uuid.UUID, p *groupPatch) (*groupRow, error) {
+	limit, err := s.seatLimit(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -287,20 +303,25 @@ func (s *Service) patchGroup(ctx context.Context, actor audit.Actor, tenantID, i
 		}
 		action = "group.updated"
 	}
-	if p.replaceMembers {
-		if err := q.DeleteGroupMembers(ctx, dbgen.DeleteGroupMembersParams{GroupID: id, TenantID: tenantID}); err != nil {
-			return nil, err
+	if err := s.withinSeats(ctx, tx, tenantID, limit, func() error {
+		if p.replaceMembers {
+			if err := q.DeleteGroupMembers(ctx, dbgen.DeleteGroupMembersParams{GroupID: id, TenantID: tenantID}); err != nil {
+				return err
+			}
 		}
-	}
-	for _, uid := range p.addMembers {
-		if err := addMemberTx(ctx, q, tenantID, id, uid); err != nil {
-			return nil, err
+		for _, uid := range p.addMembers {
+			if err := addMemberTx(ctx, q, tenantID, id, uid); err != nil {
+				return err
+			}
 		}
-	}
-	for _, uid := range p.removeMembers {
-		if err := q.RemoveGroupMember(ctx, dbgen.RemoveGroupMemberParams{GroupID: id, UserID: uid, TenantID: tenantID}); err != nil {
-			return nil, err
+		for _, uid := range p.removeMembers {
+			if err := q.RemoveGroupMember(ctx, dbgen.RemoveGroupMemberParams{GroupID: id, UserID: uid, TenantID: tenantID}); err != nil {
+				return err
+			}
 		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	if err := recordGroupChange(ctx, tx, q, actor, tenantID, id, action, nil, before); err != nil {
 		return nil, err
@@ -540,6 +561,17 @@ func writeGroupConflict(w http.ResponseWriter, err error) bool {
 	return true
 }
 
+// writeSeatLimit answers, in the SCIM error format, a membership change that
+// needs more seats than the organisation's plan has, and reports whether err
+// was that refusal.
+func writeSeatLimit(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, errs.ErrPlanLimit) {
+		return false
+	}
+	writeSCIMErr(w, http.StatusForbidden, "the organisation's plan has no seat left for another person holding a role")
+	return true
+}
+
 func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request) {
 	tid, id, ok := h.scimTarget(w, r)
 	if !ok {
@@ -579,7 +611,7 @@ func (h *Handler) replaceGroup(w http.ResponseWriter, r *http.Request) {
 			writeSCIMErr(w, http.StatusNotFound, "group not found")
 			return
 		}
-		if !writeGroupConflict(w, err) {
+		if !writeSeatLimit(w, err) && !writeGroupConflict(w, err) {
 			writeSCIMErr(w, http.StatusBadRequest, "replace failed")
 		}
 		return
@@ -624,7 +656,7 @@ func (h *Handler) patchGroup(w http.ResponseWriter, r *http.Request) {
 			writeSCIMErr(w, http.StatusNotFound, "group not found")
 			return
 		}
-		if !writeGroupConflict(w, err) {
+		if !writeSeatLimit(w, err) && !writeGroupConflict(w, err) {
 			writeSCIMErr(w, http.StatusBadRequest, "patch failed")
 		}
 		return

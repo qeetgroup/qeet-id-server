@@ -48,16 +48,32 @@ type GroupRole struct {
 	Name   string    `json:"name"`
 }
 
-// Service manages the groups.
+// Service manages the groups. seats keeps the people holding a role, which a
+// group can carry, within the plan's seats; nil turns that off.
 type Service struct {
-	pool *pgxpool.Pool
-	q    *dbgen.Queries
+	pool  *pgxpool.Pool
+	q     *dbgen.Queries
+	seats SeatGuard
 }
 
 // NewService returns the group service.
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool)}
 }
+
+// SeatGuard keeps the people holding a role in a tenant within its plan's
+// seats. Satisfied by *invite.Service.
+type SeatGuard interface {
+	// SeatLimit returns the tenant's seat cap, negative for none; it reads on
+	// the pool, so it is asked before the transaction.
+	SeatLimit(ctx context.Context, tenantID uuid.UUID) (int, error)
+	// WithinSeats runs change in tx and refuses it when it gives someone a
+	// first role beyond limit.
+	WithinSeats(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, limit int, change func() error) error
+}
+
+// SetSeatGuard wires the seat limit (nil disables it).
+func (s *Service) SetSeatGuard(g SeatGuard) { s.seats = g }
 
 // CreateInput is what Create takes.
 type CreateInput struct {
@@ -367,7 +383,16 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 }
 
 // AddMember adds a user to one of the tenant's groups, recorded as actor's.
+// Joining a group that carries a role gives a user holding none a seat,
+// refused with errs.ErrPlanLimit once the plan's seats are all taken.
 func (s *Service) AddMember(ctx context.Context, groupID, userID, tenantID uuid.UUID, actor audit.Actor) error {
+	limit := -1
+	if s.seats != nil {
+		var err error
+		if limit, err = s.seats.SeatLimit(ctx, tenantID); err != nil {
+			return err
+		}
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -383,14 +408,22 @@ func (s *Service) AddMember(ctx context.Context, groupID, userID, tenantID uuid.
 		return errs.ErrGroupNotFound
 	}
 	// Only add someone who is a live member of this tenant; the insert checks it.
-	valid, err := s.q.WithTx(tx).InsertGroupMember(ctx, dbgen.InsertGroupMemberParams{
-		GroupID: groupID, UserID: userID, TenantID: tenantID,
-	})
-	if err != nil {
+	insert := func() error {
+		valid, err := s.q.WithTx(tx).InsertGroupMember(ctx, dbgen.InsertGroupMemberParams{
+			GroupID: groupID, UserID: userID, TenantID: tenantID,
+		})
+		if err == nil && !valid {
+			err = errs.ErrGroupUserNotFound
+		}
 		return err
 	}
-	if !valid {
-		return errs.ErrGroupUserNotFound
+	if s.seats != nil {
+		err = s.seats.WithinSeats(ctx, tx, tenantID, limit, insert)
+	} else {
+		err = insert()
+	}
+	if err != nil {
+		return err
 	}
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "group.member_added", "group", groupID,
 		map[string]any{"user_id": userID})); err != nil {

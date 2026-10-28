@@ -4727,7 +4727,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_scim_v2_Groups_ById
-      description: 'Applies a SCIM PatchOp to a group, typically a membership add or remove or an attribute change, for the tenant identified by the SCIM bearer token, with Qeet acting as the SCIM server. Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope, not the standard Qeet error shape.'
+      description: 'Applies a SCIM PatchOp to a group, typically a membership add or remove or an attribute change, for the tenant identified by the SCIM bearer token, with Qeet acting as the SCIM server. Mounted at the root under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope, not the standard Qeet error shape. Adding someone holding no role to a group that carries one takes a seat; when the plan''s seats are all taken the whole change is refused with 403 in that envelope and nothing changes.'
       summary: "[scim] Patch group"
       tags:
         - SCIM
@@ -4762,7 +4762,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     put:
       operationId: put_scim_v2_Groups_ById
-      description: 'Replaces a group''s attributes wholesale with the supplied SCIM representation for the tenant identified by the SCIM bearer token, with Qeet acting as the SCIM server. Use PATCH for incremental membership or attribute changes. Mounted at the root under /scim/v2; errors use the RFC 7644 SCIM error envelope, not the standard Qeet error shape.'
+      description: 'Replaces a group''s attributes wholesale with the supplied SCIM representation for the tenant identified by the SCIM bearer token, with Qeet acting as the SCIM server. Use PATCH for incremental membership or attribute changes. Mounted at the root under /scim/v2; errors use the RFC 7644 SCIM error envelope, not the standard Qeet error shape. A member set that gives someone a first role, through the group''s, beyond the plan''s seats is refused with 403 in that envelope and nothing changes.'
       summary: "[scim] Replace group"
       tags:
         - SCIM

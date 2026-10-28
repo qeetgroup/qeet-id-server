@@ -49,17 +49,55 @@ func (q *Queries) ActivateInvitedAccount(ctx context.Context, userID uuid.UUID) 
 	return err
 }
 
+const countPendingInvites = `-- name: CountPendingInvites :one
+SELECT COUNT(*)::bigint AS pending FROM tenant.invites
+WHERE tenant_id = $1::uuid AND status = 'pending' AND expires_at > NOW()
+`
+
+func (q *Queries) CountPendingInvites(ctx context.Context, tenantID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countPendingInvites, tenantID)
+	var pending int64
+	err := row.Scan(&pending)
+	return pending, err
+}
+
+const countSeatHolders = `-- name: CountSeatHolders :one
+SELECT COUNT(*)::bigint AS holders FROM (
+    SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1::uuid
+    UNION
+    SELECT gm.user_id FROM tenant.group_members gm
+    JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+    WHERE gm.tenant_id = $1::uuid
+) holders
+`
+
+// CountSeatHolders counts the people holding a role in the tenant, directly or
+// through a group that carries one: one seat each, however many roles.
+func (q *Queries) CountSeatHolders(ctx context.Context, tenantID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countSeatHolders, tenantID)
+	var holders int64
+	err := row.Scan(&holders)
+	return holders, err
+}
+
 const countSeats = `-- name: CountSeats :one
 SELECT (
-    (SELECT COUNT(DISTINCT user_id) FROM rbac.user_roles WHERE tenant_id = $1::uuid)
+    (SELECT COUNT(*) FROM (
+        SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1::uuid
+        UNION
+        SELECT gm.user_id FROM tenant.group_members gm
+        JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+        WHERE gm.tenant_id = $1::uuid
+    ) holders)
     + (SELECT COUNT(*) FROM tenant.invites
         WHERE tenant_id = $1::uuid AND status = 'pending' AND expires_at > NOW())
 )::bigint AS seats
 `
 
 // CountSeats returns the tenant's seats in use = distinct members (users holding
-// any role in the tenant) plus still-actionable pending invites. Backs the plan
-// seat limit checked before an invite/user is created.
+// any role in the tenant, directly or through a group that carries one) plus
+// still-actionable pending invites. Backs the plan seat limit and the usage
+// display; CountSeatHolders and CountPendingInvites are its two halves.
 func (q *Queries) CountSeats(ctx context.Context, tenantID uuid.UUID) (int64, error) {
 	row := q.db.QueryRow(ctx, countSeats, tenantID)
 	var seats int64
@@ -419,6 +457,17 @@ func (q *Queries) ListInvitesForEmail(ctx context.Context, email string) ([]List
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockSeats = `-- name: LockSeats :exec
+SELECT pg_advisory_xact_lock(hashtext('seats'), hashtext($1::uuid::text))
+`
+
+// LockSeats holds the tenant's seats until the transaction ends, so two
+// changes can't each take the last one.
+func (q *Queries) LockSeats(ctx context.Context, tenantID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockSeats, tenantID)
+	return err
 }
 
 const lookupInvite = `-- name: LookupInvite :one

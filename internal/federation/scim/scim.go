@@ -47,7 +47,7 @@ const (
 
 // Service manages SCIM tokens and provisioned users and groups. A nil signals
 // announces no ended sessions; a nil gate leaves token rotation and SCIM
-// requests ungated.
+// requests ungated, and nil seats leaves group membership uncapped.
 type Service struct {
 	signals  *sessionsignal.Signaller
 	pool     *pgxpool.Pool
@@ -56,6 +56,38 @@ type Service struct {
 	observer OperationObserver
 	mapper   ProfileMapper
 	gate     PlanGate
+	seats    SeatGuard
+}
+
+// SeatGuard keeps the people holding a role in a tenant within its plan's
+// seats; joining a group that carries a role takes one. Satisfied by
+// *invite.Service.
+type SeatGuard interface {
+	// SeatLimit returns the tenant's seat cap, negative for none; it reads on
+	// the pool, so it is asked before the transaction.
+	SeatLimit(ctx context.Context, tenantID uuid.UUID) (int, error)
+	// WithinSeats runs change in tx and refuses it when it gives someone a
+	// first role beyond limit.
+	WithinSeats(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, limit int, change func() error) error
+}
+
+// SetSeatGuard wires the seat limit on group membership (nil disables it).
+func (s *Service) SetSeatGuard(g SeatGuard) { s.seats = g }
+
+// seatLimit returns the tenant's seat cap, or -1 without a seat guard.
+func (s *Service) seatLimit(ctx context.Context, tenantID uuid.UUID) (int, error) {
+	if s.seats == nil {
+		return -1, nil
+	}
+	return s.seats.SeatLimit(ctx, tenantID)
+}
+
+// withinSeats runs change in tx through the seat guard, if there is one.
+func (s *Service) withinSeats(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, limit int, change func() error) error {
+	if s.seats == nil {
+		return change()
+	}
+	return s.seats.WithinSeats(ctx, tx, tenantID, limit, change)
 }
 
 // SetSessionSignals sets where the sessions ended by a SCIM suspension are

@@ -387,6 +387,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	// boolean features (webhooks/SSO/SCIM/LDAP) use SetPlanGate. Free-tier caps
 	// bite here; paid tiers resolve to unlimited/enabled, so it's a no-op for them.
 	inviteService.SetPlanLimiter(entitlementSvc) // seats
+	rbacService.SetSeatGuard(inviteService)      // seats: a person's first role, directly
+	groupService.SetSeatGuard(inviteService)     // seats: a person's first role, through a group
+	scimService.SetSeatGuard(inviteService)      // seats: the same, through a directory-managed group
 	oidcService.SetPlanLimiter(entitlementSvc)   // apps (relying parties)
 	apikeyService.SetPlanLimiter(entitlementSvc) // api_keys
 	rbacService.SetPlanLimiter(entitlementSvc)   // custom_roles
