@@ -132,14 +132,14 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 // MountPublic registers GET /audit/verify, an unauthenticated check of the
-// platform audit chain, so anyone can confirm it is intact. Tenant chains are
+// platform audit chains, so anyone can confirm they are intact. Tenant chains are
 // verified only behind auth, in Mount.
 func (h *Handler) MountPublic(r chi.Router) {
 	r.Get("/audit/verify", h.verifyPublic)
 }
 
 // publicVerifyResult is verifyPublic's deliberately minimal result: whether the
-// platform chain is intact, with no tenant data or row identifiers.
+// platform chains are intact, with no tenant data or row identifiers.
 type publicVerifyResult struct {
 	ChainValid  bool `json:"chain_valid"`
 	RowsChecked int  `json:"rows_checked"`
@@ -205,8 +205,8 @@ func (h *Handler) lastVerification(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
-// verifyPublic verifies the platform audit chain (rows with a NULL tenant_id)
-// and returns only whether it is intact and how many rows were checked.
+// verifyPublic verifies the platform audit chains (rows with a NULL tenant_id)
+// and returns only whether they are intact and how many rows were checked.
 func (h *Handler) verifyPublic(w http.ResponseWriter, r *http.Request) {
 	res, err := h.Verifier.Verify(r.Context(), nil)
 	if err != nil {

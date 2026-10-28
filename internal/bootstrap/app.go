@@ -13,6 +13,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/migrations"
@@ -135,6 +136,12 @@ func Run() {
 	if err != nil {
 		slog.Error("connect db", "err", err)
 		os.Exit(1)
+	}
+	// Every platform audit chain gets a first row, so verification can tell a
+	// chain whose rows were removed from one never written to. A failure here
+	// is reported by the next verification, and retried at the next start.
+	if err := audit.OpenPlatformChains(rootCtx, pool); err != nil {
+		slog.Error("open the platform audit chains", "err", err)
 	}
 
 	// Outbox event publisher: NATS when NATS_URL is set, else log-only.

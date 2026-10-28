@@ -155,33 +155,6 @@ func TestVerifyAllWalksFromTheStartWeekly(t *testing.T) {
 	}
 }
 
-// TestPlatformChainHasOneCheckpoint checks that the platform chain, whose
-// tenant_id is NULL, keeps a single checkpoint, however many runs write one.
-func TestPlatformChainHasOneCheckpoint(t *testing.T) {
-	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(ctx)
-	if err := Record(ctx, tx, Actor{Type: "system"}.PlatformEvent("platform.tested", "platform", uuid.New(), nil)); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	verifyAllOf(t, true)
-	v := NewVerifier(pool)
-	for range 2 {
-		if err := v.keepCheckpoint(ctx, nil, nil, &checkpoint{EventID: uuid.New(), CreatedAt: time.Now(), RowHash: chainSeed}, true); err != nil {
-			t.Fatalf("a second first checkpoint of the platform chain: %v", err)
-		}
-	}
-	if n := dbtest.Count(t, `SELECT count(*) FROM platform.audit_chain_checkpoints WHERE tenant_id IS NULL`); n != 1 {
-		t.Errorf("the platform chain has %d checkpoints, want 1", n)
-	}
-}
-
 // TestLastVerificationIsRead checks that an organisation's last verification
 // is read from what the scheduled run stored: nothing before it reaches the
 // chain, then when and how far, and a break once found.

@@ -267,7 +267,9 @@ credentials/vc/vc.go         W3C JWT-VC
 **Purpose** — audit: *"records actor-visible mutations to `audit.events`. Each write happens inside
 the caller's `pgx.Tx`, so the row commits atomically with the business write. Every row carries a
 SHA-256 hash chaining to the previous row in the same tenant; tampering (delete, edit, reorder)
-breaks the chain and is caught by `Verifier.Verify`."*
+breaks the chain and is caught by `Verifier.Verify`."* Rows with no tenant go on one of 16
+platform chains (`chain_shard`, the writer's database connection's), so their writers don't
+queue on one lock; each is a whole chain with its own tip, lock and checkpoint.
 **Path** `internal/operations/{audit,billing,gdpr,analytics,retention,siem,activity,notifications,entitlements,ratelimits,search,sales,email,qeetai}/`
 **Key dependencies** `platform/http/{errs,httpx}` · `platform/ai` (+`openai`, `anthropic`) — **sole
 consumer** · `platform/cache/ratelimit`

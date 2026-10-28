@@ -41,11 +41,11 @@ func sampleEvent() Event {
 func TestCanonicalize_Deterministic(t *testing.T) {
 	e := sampleEvent()
 	meta, _ := json.Marshal(e.Metadata)
-	a, err := canonicalize(e, fixedID, fixedCreatedAt, meta, chainSeed)
+	a, err := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, chainSeed)
 	if err != nil {
 		t.Fatalf("canonicalize: %v", err)
 	}
-	b, _ := canonicalize(e, fixedID, fixedCreatedAt, meta, chainSeed)
+	b, _ := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, chainSeed)
 	if string(a) != string(b) {
 		t.Errorf("canonicalize must be deterministic: %s vs %s", a, b)
 	}
@@ -54,7 +54,7 @@ func TestCanonicalize_Deterministic(t *testing.T) {
 func TestCanonicalize_Snapshot(t *testing.T) {
 	e := sampleEvent()
 	meta, _ := json.Marshal(e.Metadata)
-	got, err := canonicalize(e, fixedID, fixedCreatedAt, meta, chainSeed)
+	got, err := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, chainSeed)
 	if err != nil {
 		t.Fatalf("canonicalize: %v", err)
 	}
@@ -67,6 +67,28 @@ func TestCanonicalize_Snapshot(t *testing.T) {
 	}
 }
 
+// TestCanonicalize_ShardIsHashedBeyondTheFirstChain checks that a row of
+// platform chain 0 hashes exactly as the single platform chain's rows did, and
+// that a row of another platform chain names its chain in what is hashed, so
+// moving it to another chain changes its hash.
+func TestCanonicalize_ShardIsHashedBeyondTheFirstChain(t *testing.T) {
+	e := sampleEvent()
+	e.TenantID = nil
+	meta, _ := json.Marshal(e.Metadata)
+	first, _ := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, chainSeed)
+	if strings.Contains(string(first), "chain_shard") {
+		t.Errorf("a chain 0 row names its chain: %s", first)
+	}
+	other, _ := canonicalize(e, 7, fixedID, fixedCreatedAt, meta, chainSeed)
+	if want := strings.TrimSuffix(string(first), "}") + `,"chain_shard":7}`; string(other) != want {
+		t.Errorf("a chain 7 row:\n got: %s\nwant: %s", other, want)
+	}
+	moved, _ := canonicalize(e, 8, fixedID, fixedCreatedAt, meta, chainSeed)
+	if hashHex(moved) == hashHex(other) {
+		t.Error("a row moved to another platform chain hashes the same")
+	}
+}
+
 func TestCanonicalize_NilUUIDsRenderEmpty(t *testing.T) {
 	e := Event{
 		ActorType:    "system",
@@ -75,7 +97,7 @@ func TestCanonicalize_NilUUIDsRenderEmpty(t *testing.T) {
 		Metadata:     nil,
 	}
 	meta := []byte("{}")
-	out, err := canonicalize(e, fixedID, fixedCreatedAt, meta, chainSeed)
+	out, err := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, chainSeed)
 	if err != nil {
 		t.Fatalf("canonicalize: %v", err)
 	}
@@ -95,8 +117,8 @@ func TestCanonicalize_MetadataKeyOrderIndependent(t *testing.T) {
 	e2.Metadata = map[string]any{"n": 42.0, "k": "v"}
 	m1, _ := json.Marshal(e1.Metadata)
 	m2, _ := json.Marshal(e2.Metadata)
-	a, _ := canonicalize(e1, fixedID, fixedCreatedAt, m1, chainSeed)
-	b, _ := canonicalize(e2, fixedID, fixedCreatedAt, m2, chainSeed)
+	a, _ := canonicalize(e1, 0, fixedID, fixedCreatedAt, m1, chainSeed)
+	b, _ := canonicalize(e2, 0, fixedID, fixedCreatedAt, m2, chainSeed)
 	if string(a) != string(b) {
 		t.Errorf("canonical bytes must be map-order-independent:\n a=%s\n b=%s", a, b)
 	}
@@ -174,12 +196,12 @@ func TestChainHashes_LinkProperly(t *testing.T) {
 	e := sampleEvent()
 	meta, _ := json.Marshal(e.Metadata)
 
-	canon1, _ := canonicalize(e, fixedID, fixedCreatedAt, meta, chainSeed)
+	canon1, _ := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, chainSeed)
 	hash1 := hashHex(canon1)
 
 	id2 := uuid.MustParse("55555555-5555-4555-8555-555555555555")
 	t2 := fixedCreatedAt.Add(time.Second)
-	canon2, _ := canonicalize(e, id2, t2, meta, hash1)
+	canon2, _ := canonicalize(e, 0, id2, t2, meta, hash1)
 	hash2 := hashHex(canon2)
 
 	if hash1 == hash2 {
@@ -190,7 +212,7 @@ func TestChainHashes_LinkProperly(t *testing.T) {
 	tampered := e
 	tampered.Action = "user.delete"
 	tamperedMeta, _ := json.Marshal(tampered.Metadata)
-	canon1b, _ := canonicalize(tampered, fixedID, fixedCreatedAt, tamperedMeta, chainSeed)
+	canon1b, _ := canonicalize(tampered, 0, fixedID, fixedCreatedAt, tamperedMeta, chainSeed)
 	if hashHex(canon1b) == hash1 {
 		t.Error("tampering with action must change row hash")
 	}
@@ -199,8 +221,8 @@ func TestChainHashes_LinkProperly(t *testing.T) {
 func TestCanonicalize_PrevHashAffectsOutput(t *testing.T) {
 	e := sampleEvent()
 	meta, _ := json.Marshal(e.Metadata)
-	a, _ := canonicalize(e, fixedID, fixedCreatedAt, meta, chainSeed)
-	b, _ := canonicalize(e, fixedID, fixedCreatedAt, meta, strings.Repeat("f", 64))
+	a, _ := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, chainSeed)
+	b, _ := canonicalize(e, 0, fixedID, fixedCreatedAt, meta, strings.Repeat("f", 64))
 	if string(a) == string(b) {
 		t.Error("prev_hash must be embedded in canonical output")
 	}

@@ -1,7 +1,8 @@
 // Package audit records mutations to audit.events inside the caller's
 // transaction, so each row commits with the change it describes. Each row's
-// SHA-256 hash chains to the previous row of its tenant: deleting, editing or
-// reordering a row breaks the chain, which Verifier detects.
+// SHA-256 hash chains to the previous row of its chain, its tenant's or one of
+// the PlatformChainShards platform chains: deleting, editing or reordering a
+// row breaks the chain, which Verifier detects.
 package audit
 
 import (
@@ -12,12 +13,14 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -26,7 +29,20 @@ import (
 // chainSeed is the prev_hash of the first row of a chain.
 const chainSeed = "0000000000000000000000000000000000000000000000000000000000000000"
 
-// Event is an audit row to record. A nil TenantID puts it on the platform
+// PlatformChainShards is how many platform chains there are, numbered from 0,
+// so writers of events with no tenant don't all queue on one chain's lock.
+// Changing it leaves rows outside the range, which verification reports.
+const PlatformChainShards = 16
+
+// platformShard is the platform chain tx's events go on: its database
+// connection's, so a transaction only ever takes one platform chain's lock
+// (two taken in opposite orders by two transactions would deadlock), and
+// concurrent transactions spread across the chains. Tests replace it.
+var platformShard = func(tx pgx.Tx) int16 {
+	return int16(tx.Conn().PgConn().PID() % PlatformChainShards) // #nosec G115 -- below PlatformChainShards
+}
+
+// Event is an audit row to record. A nil TenantID puts it on a platform
 // chain, and an empty ActorType means "user".
 type Event struct {
 	TenantID     *uuid.UUID
@@ -108,7 +124,8 @@ func Changes(before, after map[string]any) map[string]any {
 
 // canonicalRow is the serialisation each row's hash covers; its field order is
 // fixed by this declaration. Changing it breaks every existing chain, so add a
-// chain-version column first.
+// chain-version column first. ChainShard is left out at 0, so a row of an
+// organisation's chain or of platform chain 0 hashes as it always has.
 type canonicalRow struct {
 	ID           string          `json:"id"`
 	TenantID     string          `json:"tenant_id"`
@@ -123,9 +140,10 @@ type canonicalRow struct {
 	Metadata     json.RawMessage `json:"metadata"`
 	CreatedAt    string          `json:"created_at"`
 	PrevHash     string          `json:"prev_hash"`
+	ChainShard   int16           `json:"chain_shard,omitempty"`
 }
 
-func canonicalize(e Event, id uuid.UUID, createdAt time.Time, metaJSON []byte, prevHash string) ([]byte, error) {
+func canonicalize(e Event, shard int16, id uuid.UUID, createdAt time.Time, metaJSON []byte, prevHash string) ([]byte, error) {
 	return json.Marshal(canonicalRow{
 		ID:           id.String(),
 		TenantID:     uuidStr(e.TenantID),
@@ -140,6 +158,7 @@ func canonicalize(e Event, id uuid.UUID, createdAt time.Time, metaJSON []byte, p
 		Metadata:     metaJSON,
 		CreatedAt:    createdAt.UTC().Format(time.RFC3339Nano),
 		PrevHash:     prevHash,
+		ChainShard:   shard,
 	})
 }
 
@@ -258,9 +277,10 @@ func idOf(v any) (uuid.UUID, bool) {
 	return uuid.Nil, false
 }
 
-// Record writes one audit row in tx, as the next link of its tenant's hash
-// chain, with the names of what it is about (see labelled). A per-tenant
-// advisory lock serialises concurrent writers until tx ends.
+// Record writes one audit row in tx, as the next link of its chain, with the
+// names of what it is about (see labelled): its tenant's chain, or with no
+// tenant the platform chain of tx's connection. A per-chain advisory lock
+// serialises concurrent writers until tx ends.
 func Record(ctx context.Context, tx pgx.Tx, e Event) error {
 	if e.ActorType == "" {
 		e.ActorType = "user"
@@ -270,6 +290,32 @@ func Record(ctx context.Context, tx pgx.Tx, e Event) error {
 		return err
 	}
 	e.Metadata = labels
+	var shard int16
+	if e.TenantID == nil {
+		shard = platformShard(tx)
+	}
+	return appendEvent(ctx, tx, e, shard)
+}
+
+// lockChain takes the advisory lock of a chain, held until tx ends: a
+// tenant's, or with no tenant platform chain shard. Chain 0's key is the one
+// the single platform chain had.
+func lockChain(ctx context.Context, tx pgx.Tx, tenantID *uuid.UUID, shard int16) error {
+	key := "audit:platform"
+	switch {
+	case tenantID != nil:
+		key = "audit:" + tenantID.String()
+	case shard != 0:
+		key += ":" + strconv.Itoa(int(shard))
+	}
+	// Raw SQL: pg_advisory_xact_lock returns void, which sqlc cannot model.
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, key)
+	return err
+}
+
+// appendEvent writes e in tx as the next link of its tenant's chain, or with no
+// tenant of platform chain shard.
+func appendEvent(ctx context.Context, tx pgx.Tx, e Event, shard int16) error {
 	meta, err := json.Marshal(e.Metadata)
 	if err != nil {
 		return err
@@ -277,15 +323,7 @@ func Record(ctx context.Context, tx pgx.Tx, e Event) error {
 	if len(meta) == 0 || string(meta) == "null" {
 		meta = []byte("{}")
 	}
-
-	lockKey := "audit:"
-	if e.TenantID != nil {
-		lockKey += e.TenantID.String()
-	} else {
-		lockKey += "platform"
-	}
-	// Raw SQL: pg_advisory_xact_lock returns void, which sqlc cannot model.
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
+	if err := lockChain(ctx, tx, e.TenantID, shard); err != nil {
 		return err
 	}
 
@@ -293,7 +331,7 @@ func Record(ctx context.Context, tx pgx.Tx, e Event) error {
 
 	prevHash := chainSeed
 	createdAt := clock().UTC().Truncate(time.Microsecond)
-	tip, err := q.GetAuditChainTip(ctx, pgUUIDNullable(e.TenantID))
+	tip, err := q.GetAuditChainTip(ctx, dbgen.GetAuditChainTipParams{TenantID: pgUUIDNullable(e.TenantID), ChainShard: shard})
 	switch {
 	case err == nil:
 		prevHash = strings.TrimSpace(*tip.RowHash)
@@ -310,7 +348,7 @@ func Record(ctx context.Context, tx pgx.Tx, e Event) error {
 	}
 
 	id := uuid.New()
-	canonical, err := canonicalize(e, id, createdAt, meta, prevHash)
+	canonical, err := canonicalize(e, shard, id, createdAt, meta, prevHash)
 	if err != nil {
 		return err
 	}
@@ -331,5 +369,42 @@ func Record(ctx context.Context, tx pgx.Tx, e Event) error {
 		CreatedAt:    createdAt,
 		PrevHash:     strRef(prevHash),
 		RowHash:      strRef(rowHash),
+		ChainShard:   shard,
 	})
+}
+
+// OpenPlatformChains starts each platform chain that has no row yet with an
+// audit.chain_opened event, so every chain always has a tip and verification
+// can tell one whose rows were removed from one never written to.
+func OpenPlatformChains(ctx context.Context, pool *pgxpool.Pool) error {
+	for shard := range int16(PlatformChainShards) {
+		if err := openPlatformChain(ctx, pool, shard); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func openPlatformChain(ctx context.Context, pool *pgxpool.Pool, shard int16) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := lockChain(ctx, tx, nil, shard); err != nil {
+		return err
+	}
+	_, err = dbgen.New(tx).GetAuditChainTip(ctx, dbgen.GetAuditChainTipParams{ChainShard: shard})
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	opened := Event{ActorType: "system", Action: "audit.chain_opened", ResourceType: "audit_chain",
+		Metadata: map[string]any{"chain_shard": shard}}
+	if err := appendEvent(ctx, tx, opened, shard); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

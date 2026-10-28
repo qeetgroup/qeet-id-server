@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -36,6 +37,12 @@ const (
 // names is gone. Only a scheduled run, which starts from checkpoints, finds it.
 const chainCheckpointGone = "audit.chain_checkpoint_gone"
 
+// Why the platform chains are broken where no row of a chain is at fault.
+const (
+	chainShardMissing    = "audit.chain_shard_missing"      // a platform chain has no row, not even its first
+	chainShardOutOfRange = "audit.chain_shard_out_of_range" // a platform row is on none of the platform chains
+)
+
 // verifyPageSize is how many rows of a chain each verification query reads.
 var verifyPageSize int32 = 5000
 
@@ -51,11 +58,47 @@ func NewVerifier(pool *pgxpool.Pool) *Verifier {
 }
 
 // Verify recomputes the hash chain of tenantID's audit rows, oldest first, or
-// of the platform chain when tenantID is nil. At the first row that fails it
-// returns OK=false with BrokenAtID set. Rows without a hash are skipped.
+// when tenantID is nil every platform chain in turn, each of which must have a
+// row, and checks no platform row is outside them. At the first row that fails
+// it returns OK=false with BrokenAtID set. Rows without a hash are skipped.
 func (v *Verifier) Verify(ctx context.Context, tenantID *uuid.UUID) (VerifyResult, error) {
-	res, _, err := v.walk(ctx, tenantID, nil, true)
-	return res, err
+	if tenantID != nil {
+		res, _, err := v.walk(ctx, tenantID, 0, nil, true)
+		return res, err
+	}
+	all := VerifyResult{OK: true}
+	for shard := range int16(PlatformChainShards) {
+		res, _, err := v.walk(ctx, nil, shard, nil, true)
+		if err != nil {
+			return VerifyResult{}, err
+		}
+		res.RowsChecked += all.RowsChecked
+		if !res.OK {
+			return res, nil
+		}
+		all = res
+	}
+	if stray, err := v.strayPlatformRow(ctx); err != nil || stray != nil {
+		if stray != nil {
+			all.OK, all.BrokenAtID, all.ReasonCode, all.BrokenReason = false, stray.EventID, chainShardOutOfRange, stray.Reason
+		}
+		return all, err
+	}
+	return all, nil
+}
+
+// strayPlatformRow is the first platform row on none of the platform chains,
+// as a BrokenChain, or nil when there is none.
+func (v *Verifier) strayPlatformRow(ctx context.Context) (*BrokenChain, error) {
+	row, err := v.q.FindAuditRowOutsideShards(ctx, PlatformChainShards)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	reason := fmt.Sprintf("a platform row is on chain %d, outside 0..%d", row.ChainShard, PlatformChainShards-1)
+	return &BrokenChain{EventID: &row.ID, Shard: row.ChainShard, Reason: reason}, nil
 }
 
 // checkpoint is a chain's last verified row, where a later walk can go on.
@@ -67,11 +110,12 @@ type checkpoint struct {
 	Broken    bool
 }
 
-// walk verifies tenantID's chain as Verify does. Given from, a checkpoint, it
-// first checks that from's row is unchanged and, unless fromStart, walks on
-// from the row after it instead of the first row. It also returns the last row
-// it found intact: nil for none, from itself when no row follows it.
-func (v *Verifier) walk(ctx context.Context, tenantID *uuid.UUID, from *checkpoint, fromStart bool) (VerifyResult, *checkpoint, error) {
+// walk verifies tenantID's chain, or with a nil tenantID platform chain shard,
+// as Verify does. Given from, a checkpoint, it first checks that from's row is
+// unchanged and, unless fromStart, walks on from the row after it instead of
+// the first row. It also returns the last row it found intact: nil for none,
+// from itself when no row follows it. A platform chain with no row is broken.
+func (v *Verifier) walk(ctx context.Context, tenantID *uuid.UUID, shard int16, from *checkpoint, fromStart bool) (VerifyResult, *checkpoint, error) {
 	expectedPrev := chainSeed
 	var (
 		rowsChecked int
@@ -85,9 +129,9 @@ func (v *Verifier) walk(ctx context.Context, tenantID *uuid.UUID, from *checkpoi
 		}, last, nil
 	}
 	// The chain is read a page at a time, so memory doesn't grow with it.
-	page := dbgen.ListAuditEventsForVerifyParams{TenantID: pgUUIDNullable(tenantID), PageSize: verifyPageSize}
+	page := dbgen.ListAuditEventsForVerifyParams{TenantID: pgUUIDNullable(tenantID), ChainShard: shard, PageSize: verifyPageSize}
 	if from != nil {
-		row, err := v.q.GetAuditEventForVerify(ctx, dbgen.GetAuditEventForVerifyParams{ID: from.EventID, TenantID: page.TenantID})
+		row, err := v.q.GetAuditEventForVerify(ctx, dbgen.GetAuditEventForVerifyParams{ID: from.EventID, TenantID: page.TenantID, ChainShard: shard})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return broken(from.EventID, chainCheckpointGone, "the last verified row is gone")
 		}
@@ -130,6 +174,12 @@ func (v *Verifier) walk(ctx context.Context, tenantID *uuid.UUID, from *checkpoi
 			last = &checkpoint{EventID: row.ID, CreatedAt: row.CreatedAt, RowHash: stored}
 		}
 		if len(rows) < int(page.PageSize) {
+			if tenantID == nil && last == nil {
+				return VerifyResult{
+					OK: false, ReasonCode: chainShardMissing,
+					BrokenReason: fmt.Sprintf("platform chain %d has no row", shard),
+				}, nil, nil
+			}
 			return VerifyResult{OK: true, RowsChecked: rowsChecked, LastVerifiedID: lastID}, last, nil
 		}
 		end := rows[len(rows)-1]
@@ -155,7 +205,7 @@ func rowHash(row dbgen.ListAuditEventsForVerifyRow) (string, error) {
 		IP:           ip,
 		UserAgent:    row.UserAgent, // already COALESCE'd to ""
 		RequestID:    row.RequestID, // already COALESCE'd to ""
-	}, row.ID, row.CreatedAt, metaJSON, trimmed(row.PrevHash))
+	}, row.ChainShard, row.ID, row.CreatedAt, metaJSON, trimmed(row.PrevHash))
 	if err != nil {
 		return "", err
 	}
