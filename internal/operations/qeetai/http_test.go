@@ -34,7 +34,9 @@ func (s stubResolver) ProviderFor(_ context.Context, _ uuid.UUID) (ai.Provider, 
 // track method invocations so tests can assert on what was or was not called.
 type stubStore struct {
 	getConvErr   error
+	turnErr      error
 	appendCalled bool
+	turns        int // turns begun and not yet released
 }
 
 func (s *stubStore) Pool() *pgxpool.Pool { return nil }
@@ -55,6 +57,13 @@ func (s *stubStore) DeleteConversation(_ context.Context, _, _, _ uuid.UUID) err
 func (s *stubStore) AppendMessage(_ context.Context, _, _ uuid.UUID, _ string, _ json.RawMessage) (*Message, error) {
 	s.appendCalled = true
 	return nil, nil
+}
+func (s *stubStore) BeginTurn(_ context.Context, _, _ uuid.UUID) (func(), error) {
+	if s.turnErr != nil {
+		return nil, s.turnErr
+	}
+	s.turns++
+	return func() { s.turns-- }, nil
 }
 
 // newHandlerRequest builds a POST .../messages request with the chi URL param
@@ -139,4 +148,31 @@ func TestStreamMessages_AuthorizedUserCanStream(t *testing.T) {
 		}
 	}()
 	h.streamMessages(rr, req)
+}
+
+// TestStreamMessages_OneTurnAtATime checks that a message to a conversation
+// whose previous turn is still running is refused 409 before anything is
+// stored, and that a turn that runs releases the conversation when it ends.
+func TestStreamMessages_OneTurnAtATime(t *testing.T) {
+	tenantID, userID, convID := uuid.New(), uuid.New(), uuid.New()
+	busy := &stubStore{turnErr: errs.ErrQeetAITurnInProgress}
+	h := &Handler{Service: busy, Resolver: stubResolver{source: SourceTenant}}
+	rr := httptest.NewRecorder()
+	h.streamMessages(rr, newHandlerRequest(tenantID, userID, convID, `{"message":"again"}`))
+	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), errs.CodeQeetAITurnInProgress) {
+		t.Errorf("a second turn: %d %s, want 409 %s", rr.Code, rr.Body.String(), errs.CodeQeetAITurnInProgress)
+	}
+	if busy.appendCalled {
+		t.Error("a refused turn stored its message")
+	}
+
+	free := &stubStore{}
+	h = &Handler{Service: free, Resolver: stubResolver{source: SourceTenant}}
+	func() {
+		defer func() { _ = recover() }() // the nil Orchestrator panics once the turn has begun
+		h.streamMessages(httptest.NewRecorder(), newHandlerRequest(tenantID, userID, convID, `{"message":"hello"}`))
+	}()
+	if free.turns != 0 {
+		t.Errorf("%d turns still held after the request ended, want 0", free.turns)
+	}
 }

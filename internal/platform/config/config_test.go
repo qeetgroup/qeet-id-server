@@ -353,6 +353,28 @@ func TestLoad_PasswordHashLimits(t *testing.T) {
 	}
 }
 
+// TestLoad_QeetaiLimits checks the Qeet AI turn limits' defaults and that a
+// limit that isn't positive is refused.
+func TestLoad_QeetaiLimits(t *testing.T) {
+	setRequiredEnv(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("defaults should load: %v", err)
+	}
+	if c.QeetaiHistoryMessages != 40 || c.QeetaiHistoryBytes != 256<<10 || c.QeetaiMaxOutputBytes != 64<<10 {
+		t.Errorf("Qeet AI limits = %d / %d / %d, want 40 / 262144 / 65536", c.QeetaiHistoryMessages, c.QeetaiHistoryBytes, c.QeetaiMaxOutputBytes)
+	}
+	for _, key := range []string{"QEETAI_HISTORY_MESSAGES", "QEETAI_HISTORY_BYTES", "QEETAI_MAX_OUTPUT_BYTES"} {
+		t.Run(key, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv(key, "0")
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), key) {
+				t.Errorf("%s=0: want a Qeet AI limits error, got %v", key, err)
+			}
+		})
+	}
+}
+
 func TestLoad_RejectsUnsafeSignInLockout(t *testing.T) {
 	for name, env := range map[string][2]string{
 		"default above its maximum":   {"LOGIN_LOCKOUT_THRESHOLD", "50"},

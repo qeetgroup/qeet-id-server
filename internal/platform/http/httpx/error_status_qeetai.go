@@ -14,5 +14,6 @@ func init() {
 		errs.CodeQeetAIProviderKeyInvalid:   http.StatusBadRequest,
 		errs.CodeQeetAIProviderModelInvalid: http.StatusBadRequest,
 		errs.CodeQeetAIProviderError:        http.StatusBadRequest,
+		errs.CodeQeetAITurnInProgress:       http.StatusConflict,
 	})
 }

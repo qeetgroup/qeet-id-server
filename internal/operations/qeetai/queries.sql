@@ -49,6 +49,31 @@ FROM qeetai.messages
 WHERE conversation_id = @conversation_id AND tenant_id = @tenant_id
 ORDER BY created_at ASC;
 
+-- name: ListRecentMessages :many
+-- The conversation's latest @max_messages messages, newest first: the most of
+-- its history one turn sends the model.
+SELECT id, tenant_id, conversation_id, role, content, created_at
+FROM qeetai.messages
+WHERE conversation_id = @conversation_id AND tenant_id = @tenant_id
+ORDER BY created_at DESC
+LIMIT @max_messages;
+
+-- name: ClaimConversationTurn :one
+-- Start a turn of the conversation, unless another started less than
+-- @stale_after_seconds ago and so may still be running; no row then. Returns
+-- when this turn started, which releasing it names.
+INSERT INTO qeetai.conversation_turns (conversation_id, tenant_id)
+VALUES (@conversation_id, @tenant_id)
+ON CONFLICT (conversation_id) DO UPDATE SET started_at = now()
+WHERE qeetai.conversation_turns.tenant_id = @tenant_id
+  AND qeetai.conversation_turns.started_at < now() - make_interval(secs => @stale_after_seconds::float8)
+RETURNING started_at;
+
+-- name: ReleaseConversationTurn :exec
+-- End the turn that started at @started_at, unless a later one has taken over.
+DELETE FROM qeetai.conversation_turns
+WHERE conversation_id = @conversation_id AND tenant_id = @tenant_id AND started_at = @started_at;
+
 -- Per-tenant BYOK provider settings. The key is stored encrypted (ciphertext +
 -- nonce); it is never selected into any response DTO — only the service layer
 -- decrypts it to build the provider client.

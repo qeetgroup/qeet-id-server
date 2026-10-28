@@ -275,13 +275,24 @@ func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// One turn at a time in a conversation, on any instance: a second is
+	// refused before anything is stored.
+	release, err := h.Service.BeginTurn(r.Context(), tenantID, convID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(r.Context(), turnTimeout)
+	defer cancel()
+
 	// Extend write deadline: the default HTTP_WRITE_TIMEOUT (30s) is too short
-	// for a full streaming turn. Reset it to 10 minutes on this connection.
+	// for a full streaming turn. Reset it to turnTimeout on this connection.
 	if rc := http.NewResponseController(w); rc != nil {
 		if conn, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok && conn != nil {
 			_ = conn // addr obtained; deadline set below via ResponseController
 		}
-		if err := rc.SetWriteDeadline(time.Now().Add(10 * time.Minute)); err != nil {
+		if err := rc.SetWriteDeadline(time.Now().Add(turnTimeout)); err != nil {
 			// Not fatal — log and continue; worst case the connection times out.
 			slog.Warn("qeetai: extend write deadline", "err", err)
 		}
@@ -359,7 +370,7 @@ func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
 	if len(body.Context) > 0 && string(body.Context) != "null" {
 		pageCtx = string(body.Context)
 	}
-	h.Orchestrator.Run(r.Context(), turnContext{
+	h.Orchestrator.Run(ctx, turnContext{
 		tenantID:       tenantID,
 		userID:         userID,
 		conversationID: convID,

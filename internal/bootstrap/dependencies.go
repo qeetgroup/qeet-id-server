@@ -340,9 +340,12 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	} else {
 		slog.Info("Qeet AI: no platform provider set — tenants must bring their own key (BYOK)")
 	}
+	qeetaiLimits := qeetai.Limits{
+		HistoryMessages: cfg.QeetaiHistoryMessages, HistoryBytes: cfg.QeetaiHistoryBytes, OutputBytes: cfg.QeetaiMaxOutputBytes,
+	}
 	qeetaiHandler := &qeetai.Handler{
 		Service:      qeetaiService,
-		Orchestrator: qeetai.NewOrchestrator(qeetaiProviderCfg, qeetaiService),
+		Orchestrator: qeetai.NewOrchestrator(qeetaiProviderCfg, qeetaiService, qeetaiLimits),
 		Resolver:     qeetaiProviderCfg,
 		Config:       qeetaiProviderCfg,
 		Plan:         entitlementSvc, // platform fallback is a Pro+ feature; BYOK bypasses the gate

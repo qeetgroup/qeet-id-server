@@ -2474,6 +2474,18 @@ paths:
 
         Requires `QEETAI_PROVIDER` configured server-side; returns
         `409 qeetai_unconfigured` otherwise.
+
+
+        A conversation answers one turn at a time: a message while its
+        previous turn is still running, on any instance, is refused with
+        `409 qeetai.turn_in_progress` (retryable) and not stored. A turn sends
+        the model only the conversation's latest messages
+        (`QEETAI_HISTORY_MESSAGES`, within `QEETAI_HISTORY_BYTES`), from a
+        message of the user's, so earlier ones are left out; a turn whose own
+        messages are larger ends with an `error` frame of code
+        `history_too_long` (start a new conversation). A reply longer than
+        `QEETAI_MAX_OUTPUT_BYTES` is cut there and kept, as at the model's own
+        token limit. A turn runs for at most 10 minutes.
       tags:
         - Qeet AI
       parameters:
@@ -2539,7 +2551,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Qeet AI not configured (QEETAI_PROVIDER/QEETAI_API_KEY unset)
+          description: Qeet AI not configured (QEETAI_PROVIDER/QEETAI_API_KEY unset, `qeetai_unconfigured`), or the conversation's previous turn is still running (`qeetai.turn_in_progress`, retryable)
           content:
             application/json:
               schema:

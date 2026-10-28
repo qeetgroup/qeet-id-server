@@ -8,10 +8,36 @@ package dbgen
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const claimConversationTurn = `-- name: ClaimConversationTurn :one
+INSERT INTO qeetai.conversation_turns (conversation_id, tenant_id)
+VALUES ($1, $2)
+ON CONFLICT (conversation_id) DO UPDATE SET started_at = now()
+WHERE qeetai.conversation_turns.tenant_id = $2
+  AND qeetai.conversation_turns.started_at < now() - make_interval(secs => $3::float8)
+RETURNING started_at
+`
+
+type ClaimConversationTurnParams struct {
+	ConversationID    uuid.UUID
+	TenantID          uuid.UUID
+	StaleAfterSeconds float64
+}
+
+// Start a turn of the conversation, unless another started less than
+// @stale_after_seconds ago and so may still be running; no row then. Returns
+// when this turn started, which releasing it names.
+func (q *Queries) ClaimConversationTurn(ctx context.Context, arg ClaimConversationTurnParams) (time.Time, error) {
+	row := q.db.QueryRow(ctx, claimConversationTurn, arg.ConversationID, arg.TenantID, arg.StaleAfterSeconds)
+	var started_at time.Time
+	err := row.Scan(&started_at)
+	return started_at, err
+}
 
 const createConversation = `-- name: CreateConversation :one
 
@@ -247,6 +273,49 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]Q
 	return items, nil
 }
 
+const listRecentMessages = `-- name: ListRecentMessages :many
+SELECT id, tenant_id, conversation_id, role, content, created_at
+FROM qeetai.messages
+WHERE conversation_id = $1 AND tenant_id = $2
+ORDER BY created_at DESC
+LIMIT $3
+`
+
+type ListRecentMessagesParams struct {
+	ConversationID uuid.UUID
+	TenantID       uuid.UUID
+	MaxMessages    int32
+}
+
+// The conversation's latest @max_messages messages, newest first: the most of
+// its history one turn sends the model.
+func (q *Queries) ListRecentMessages(ctx context.Context, arg ListRecentMessagesParams) ([]QeetaiMessage, error) {
+	rows, err := q.db.Query(ctx, listRecentMessages, arg.ConversationID, arg.TenantID, arg.MaxMessages)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []QeetaiMessage{}
+	for rows.Next() {
+		var i QeetaiMessage
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.ConversationID,
+			&i.Role,
+			&i.Content,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const patchConversation = `-- name: PatchConversation :one
 UPDATE qeetai.conversations
 SET
@@ -284,6 +353,23 @@ func (q *Queries) PatchConversation(ctx context.Context, arg PatchConversationPa
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const releaseConversationTurn = `-- name: ReleaseConversationTurn :exec
+DELETE FROM qeetai.conversation_turns
+WHERE conversation_id = $1 AND tenant_id = $2 AND started_at = $3
+`
+
+type ReleaseConversationTurnParams struct {
+	ConversationID uuid.UUID
+	TenantID       uuid.UUID
+	StartedAt      time.Time
+}
+
+// End the turn that started at @started_at, unless a later one has taken over.
+func (q *Queries) ReleaseConversationTurn(ctx context.Context, arg ReleaseConversationTurnParams) error {
+	_, err := q.db.Exec(ctx, releaseConversationTurn, arg.ConversationID, arg.TenantID, arg.StartedAt)
+	return err
 }
 
 const touchConversation = `-- name: TouchConversation :exec

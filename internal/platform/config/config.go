@@ -394,11 +394,18 @@ type Config struct {
 	QeetaiModel     string `envconfig:"QEETAI_MODEL" default:"claude-sonnet-5"`
 	QeetaiMaxTokens int    `envconfig:"QEETAI_MAX_TOKENS" default:"4096"`
 	QeetaiBaseURL   string `envconfig:"QEETAI_BASE_URL" default:""`
+	// Bounds on one Qeet AI turn, whoever pays the provider: the most recent
+	// messages of the conversation sent to the model and their total size (a
+	// turn whose own messages are larger is refused), and the reply's text, cut
+	// there as at the model's own token limit.
+	QeetaiHistoryMessages int `envconfig:"QEETAI_HISTORY_MESSAGES" default:"40"`
+	QeetaiHistoryBytes    int `envconfig:"QEETAI_HISTORY_BYTES" default:"262144"`
+	QeetaiMaxOutputBytes  int `envconfig:"QEETAI_MAX_OUTPUT_BYTES" default:"65536"`
 }
 
 // Load reads the Config from the environment and rejects an unknown SERVICE_ENV
-// or SERVICE_PROFILE and unsafe sign-in lockout, session lifetime or password
-// hashing settings.
+// or SERVICE_PROFILE and unsafe sign-in lockout, session lifetime, password
+// hashing or Qeet AI limits.
 // Validate applies the production gates.
 func Load() (*Config, error) {
 	var c Config
@@ -416,6 +423,9 @@ func Load() (*Config, error) {
 	}
 	if err := c.checkPasswordHashing(); err != nil {
 		return nil, err
+	}
+	if c.QeetaiHistoryMessages < 1 || c.QeetaiHistoryBytes < 1 || c.QeetaiMaxOutputBytes < 1 {
+		return nil, fmt.Errorf("invalid Qeet AI limits: QEETAI_HISTORY_MESSAGES, QEETAI_HISTORY_BYTES and QEETAI_MAX_OUTPUT_BYTES must be positive")
 	}
 	return &c, nil
 }
