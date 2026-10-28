@@ -59,6 +59,8 @@ func countSignInMethods(ctx context.Context, q querier, userID uuid.UUID) (SignI
 		       ((SELECT count(*) FROM "user".external_identities ei
 		         WHERE ei.user_id = $1
 		           AND (ei.provider IN ('saml', 'ldap') OR EXISTS (
+		                SELECT 1 FROM tenant.oidc_connections oc
+		                WHERE ei.provider = 'oidc' AND oc.tenant_id = ei.tenant_id AND oc.id = ei.connection_id) OR EXISTS (
 		                SELECT 1 FROM tenant.social_providers sp
 		                WHERE sp.tenant_id = ei.tenant_id AND sp.provider = ei.provider AND sp.enabled)))
 		        + (SELECT count(*) FROM auth.platform_social_identities WHERE user_id = $1))::int`,

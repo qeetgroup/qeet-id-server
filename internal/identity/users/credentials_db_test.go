@@ -215,6 +215,24 @@ func TestSignInMethodsCountWhatTheOrganisationAllows(t *testing.T) {
 		t.Errorf("lock an account that doesn't exist: %v, want not found", err)
 	}
 
+	// An OpenID Connect connection's link counts while the connection exists;
+	// an identity merely named "oidc" by no connection doesn't.
+	var conn uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO tenant.oidc_connections (tenant_id, name, issuer, client_id, client_secret_ct, client_secret_nonce)
+		VALUES ($1, 'Entra', 'https://idp.example.test', 'client', '\x00', '\x00') RETURNING id
+	`, tenant).Scan(&conn); err != nil {
+		t.Fatal(err)
+	}
+	exec(t, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'oidc', $3, 'oidc-subject'), ($1, $2, 'oidc', NULL, 'unconnected')`, u.ID, tenant, conn)
+	if m := count(); m.LinkedIdentities != 4 {
+		t.Errorf("counted %+v, want the connection's link as a fourth way in", m)
+	}
+	exec(t, `DELETE FROM tenant.oidc_connections WHERE id = $1`, conn)
+	if m := count(); m.LinkedIdentities != 3 {
+		t.Errorf("counted %+v once the connection is deleted, want its link no longer counted", m)
+	}
+
 	methodID := uuid.New()
 	err = RefuseLastMethodRemoval(ctx, pool, u.ID, &tenant, "passkey", methodID, Remover{UserID: &u.ID})
 	if !errors.Is(err, errs.ErrAuthLastSignInMethod) {
