@@ -28,6 +28,7 @@ const (
 	CodeOIDCSSOUserTenantMismatch      = "oidc_connection.user_tenant_mismatch"
 	CodeOIDCSSOAccountUnverified       = "oidc_connection.account_unverified"
 	CodeOIDCSSOAccountAdministers      = "oidc_connection.account_administers"
+	CodeOIDCSSOJITNotAllowed           = "oidc_connection.jit_not_allowed"
 	CodeOIDCSSOLoginCodeRequired       = "oidc_connection.login_code_required"
 	CodeOIDCSSOLoginCodeInvalid        = "oidc_connection.login_code_invalid"
 	CodeOIDCSSOLoginCodeUsed           = "oidc_connection.login_code_used"
@@ -75,6 +76,8 @@ var (
 	ErrOIDCSSOUserTenantMismatch = New(CodeOIDCSSOUserTenantMismatch, "You aren't a member of the organization this sign-in provider serves.")
 	ErrOIDCSSOAccountUnverified  = New(CodeOIDCSSOAccountUnverified,
 		"An account already uses this email address, but the address hasn't been verified. Verify it, or reset the password from the link we email you, then sign in with single sign-on.")
+	ErrOIDCSSOJITNotAllowed = New(CodeOIDCSSOJITNotAllowed,
+		"There's no account for this address, and your organisation doesn't create one at sign-in for it. Ask your administrator to invite you.")
 	ErrOIDCSSOAccountAdministers = New(CodeOIDCSSOAccountAdministers,
 		"This account administers the organization, so single sign-on can't take it over by its email address. Sign in with the account's own password or passkey.")
 	ErrOIDCSSOLoginCodeRequired       = New(CodeOIDCSSOLoginCodeRequired, "A sign-in code is required.")

@@ -269,3 +269,44 @@ func breakGlassIDs(t *testing.T, rec *httptest.ResponseRecorder) []uuid.UUID {
 	}
 	return ids
 }
+
+// oidcConnection adds an OpenID Connect connection with status to tenant.
+func oidcConnection(t *testing.T, tenant uuid.UUID, status string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `
+		INSERT INTO tenant.oidc_connections (tenant_id, name, issuer, client_id, client_secret_ct, client_secret_nonce, status)
+		VALUES ($1, 'Entra ID', 'https://login.example.test', 'client', '\x00', '\x00', $2) RETURNING id
+	`, tenant, status).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// TestOIDCConnectionsCapture checks that an active OpenID Connect connection
+// captures its organisation's domain as SAML and LDAP do, named as protocol
+// oidc, and that an administrator linked to it is captured.
+func TestOIDCConnectionsCapture(t *testing.T) {
+	svc := captureService(t)
+	tenant := dbtest.Tenant(t)
+	domain := dbtest.Domain(t, tenant)
+	exec(t, `UPDATE tenant.domains SET sso_enabled = TRUE WHERE tenant_id = $1`, tenant)
+	oidcConnection(t, tenant, "draft")
+	if got, _ := captured(t, svc, dbtest.Unique("x")+"@"+domain); got {
+		t.Error("an address is captured while the organisation's only OpenID Connect connection is a draft")
+	}
+	active := oidcConnection(t, tenant, "active")
+	if got, conns := captured(t, svc, dbtest.Unique("x")+"@"+domain); !got || len(conns) != 1 || conns[0]["id"] != active || conns[0]["protocol"] != "oidc" {
+		t.Errorf("with an active OpenID Connect connection: captured %v naming %v; want it, as oidc", got, conns)
+	}
+	admin := dbtest.UserAt(t, dbtest.Unique("admin")+"@"+domain, tenant)
+	dbtest.Assign(t, admin.ID, tenant, dbtest.Role(t, tenant, "connection.write"))
+	if got, _ := captured(t, svc, admin.Email); got {
+		t.Error("an unlinked administrator is captured")
+	}
+	exec(t, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject, email) VALUES ($1, $2, 'oidc', $3, 'entra|admin', $4)`,
+		admin.ID, tenant, active, admin.Email)
+	if got, _ := captured(t, svc, admin.Email); !got {
+		t.Error("an administrator linked to an active OpenID Connect connection is not captured")
+	}
+}

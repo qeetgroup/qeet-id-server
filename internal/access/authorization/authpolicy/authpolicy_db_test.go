@@ -314,3 +314,31 @@ func TestEveryMethodOffNeedsSingleSignOn(t *testing.T) {
 		t.Errorf("sign-in methods of a single-sign-on-only organisation: %+v, %v; want none", m, err)
 	}
 }
+
+// TestEveryMethodOffWithOpenIDConnect checks that an active OpenID Connect
+// connection lets an organisation switch every other method off, as SAML and
+// LDAP do, and a draft one doesn't.
+func TestEveryMethodOffWithOpenIDConnect(t *testing.T) {
+	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
+	tenant := dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: NewService(pool)}).Mount)
+	path := "/tenants/" + tenant.String() + "/auth-policy"
+	ssoOnly := map[string]any{"password_enabled": false, "passkey_enabled": false, "magic_link_enabled": false}
+	connect := func(status string) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO tenant.oidc_connections (tenant_id, name, issuer, client_id, client_secret_ct, client_secret_nonce, status)
+			VALUES ($1, 'Entra ID', 'https://login.example.test', 'client', '\x00', '\x00', $2)`, tenant, status); err != nil {
+			t.Fatal(err)
+		}
+	}
+	connect("draft")
+	if rec := dbtest.Do(t, h, http.MethodPut, path, ssoOnly); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("every method off with a draft OpenID Connect connection: %d, want 422", rec.Code)
+	}
+	connect("active")
+	if rec := dbtest.Do(t, h, http.MethodPut, path, ssoOnly); rec.Code != http.StatusOK {
+		t.Errorf("every method off with an active OpenID Connect connection: %d %s", rec.Code, rec.Body.String())
+	}
+}

@@ -241,14 +241,15 @@ func linkMetadata(p profile) ([]byte, error) {
 // findOrCreateUser returns the person c linked to the token's subject, else
 // the one with its email address, else a new one, and links the subject to c.
 // An address is adopted or given an account only on a domain the organisation
-// manages, and only while the provider hasn't said it is unverified; an
-// adopted account must have the organisation as its home, a verified address,
-// and not administer the organisation. One transaction, so concurrent
-// sign-ins can't duplicate rows.
+// manages, and only while the provider hasn't said it is unverified; a new
+// account only where that domain has just-in-time provisioning on; an adopted
+// account must have the organisation as its home, a verified address, and not
+// administer the organisation. One transaction, so concurrent sign-ins can't
+// duplicate rows.
 func (s *Service) findOrCreateUser(ctx context.Context, c *signInConnection, p profile) (uuid.UUID, error) {
 	tenantID := c.TenantID
 	// Read before the transaction: it reads every organisation's domains.
-	manager, managed, err := domainverify.ManagerOf(postgres.AcrossTenants(ctx), s.pool, p.email)
+	domain, managed, err := domainverify.ManagingDomain(postgres.AcrossTenants(ctx), s.pool, p.email)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -308,7 +309,7 @@ func (s *Service) findOrCreateUser(ctx context.Context, c *signInConnection, p p
 	// only for the organisation's own domains; and an address the provider
 	// itself calls unverified isn't vouched for at all. A provider that doesn't
 	// say (Microsoft Entra ID) is trusted for those domains, as SAML is.
-	if !managed || manager != tenantID {
+	if !managed || domain.TenantID != tenantID {
 		return uuid.Nil, errs.ErrOIDCSSOEmailDomainUnverified
 	}
 	if p.verified != nil && !*p.verified {
@@ -317,6 +318,9 @@ func (s *Service) findOrCreateUser(ctx context.Context, c *signInConnection, p p
 
 	userID, err = q.GetUserByEmail(ctx, p.email)
 	if errors.Is(err, pgx.ErrNoRows) {
+		if !domain.JIT {
+			return uuid.Nil, errs.ErrOIDCSSOJITNotAllowed
+		}
 		var displayName *string
 		if p.name != "" {
 			displayName = &p.name

@@ -76,8 +76,10 @@ GROUP BY sp.provider
 ORDER BY sp.provider;
 
 -- name: HasActiveSSOConnection :one
--- Whether the tenant has an active SAML or LDAP connection to sign in through.
+-- Whether the tenant has an active SAML, LDAP or OpenID Connect connection to
+-- sign in through.
 SELECT (
     EXISTS (SELECT 1 FROM tenant.saml_connections s WHERE s.tenant_id = sqlc.arg(tenant_id)::uuid AND s.status = 'active')
     OR EXISTS (SELECT 1 FROM tenant.ldap_connections l WHERE l.tenant_id = sqlc.arg(tenant_id)::uuid AND l.status = 'active')
+    OR EXISTS (SELECT 1 FROM tenant.oidc_connections o WHERE o.tenant_id = sqlc.arg(tenant_id)::uuid AND o.status = 'active')
 )::boolean;

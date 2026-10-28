@@ -565,3 +565,28 @@ func TestOIDCConnectionsOverHTTP(t *testing.T) {
 		t.Errorf("create on a plan without single sign-on: %d %s, want 402 %s", rec.Code, rec.Body.String(), errs.CodeUpgradeRequired)
 	}
 }
+
+// TestOIDCSignInProvisionsOnlyWithJIT checks that a sign-in creates an
+// account only while the domain that manages the address has just-in-time
+// provisioning on, and adopts an existing member's account either way.
+func TestOIDCSignInProvisionsOnlyWithJIT(t *testing.T) {
+	s := newRP(t)
+	idp := newFakeIdP(t)
+	tenant := dbtest.Tenant(t)
+	conn := s.connect(t, tenant, idp, nil)
+	domain := dbtest.Domain(t, tenant)
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE tenant.domains SET jit_enabled = FALSE WHERE tenant_id = $1`, tenant); err != nil {
+		t.Fatal(err)
+	}
+	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, tenant, tenant)
+	verify(t, member.ID)
+	newcomer := dbtest.Unique("bea") + "@" + domain
+
+	refused(t, "a newcomer with provisioning off", s.answer(t, idp, conn.ID, as(idp, "u-new", newcomer, nil)), errs.CodeOIDCSSOJITNotAllowed)
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, newcomer); n != 0 {
+		t.Errorf("a refused newcomer was given %d accounts", n)
+	}
+	if pair := s.signIn(t, idp, conn.ID, as(idp, "u-member", member.Email, nil)); pair.UserID != member.ID {
+		t.Errorf("the member's sign-in with provisioning off: %s, want %s", pair.UserID, member.ID)
+	}
+}

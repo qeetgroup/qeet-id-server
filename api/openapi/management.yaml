@@ -508,15 +508,17 @@ paths:
         tenant default. Setting a new default clears the previous one. Each
         switch applies to the addresses the domain manages once it is verified:
         the domain itself and those below it that no closer verified domain
-        takes. With sso_enabled on, while the organisation has an active SAML or
-        LDAP connection, those addresses sign in only through it: password
+        takes. With sso_enabled on, while the organisation has an active SAML,
+        LDAP or OpenID Connect connection, those addresses sign in only through
+        it: password
         sign-in, magic links, passkey sign-in, password resets and self sign-up
         answer 403 auth.sso_required (with the connections to use), except for
         the organisation's break-glass members (see the break-glass-members
         calls) and its administrators single sign-on can't sign in. With
-        jit_enabled on, a SAML or LDAP sign-in creates an account for an
-        address that has none; with it off, only existing members are adopted
-        (saml.jit_not_allowed / ldap.jit_not_allowed otherwise). Both are off
+        jit_enabled on, a SAML, LDAP or OpenID Connect sign-in creates an
+        account for an address that has none; with it off, only existing
+        members are adopted (saml.jit_not_allowed / ldap.jit_not_allowed /
+        oidc_connection.jit_not_allowed otherwise). Both are off
         for a new domain.
       parameters:
         - name: tenantID
@@ -3901,7 +3903,7 @@ components:
           type: string
         sso_enabled:
           type: boolean
-          description: Addresses on the domain sign in only through the organisation's active SAML or LDAP connection (break-glass members and administrators single sign-on can't sign in excepted).
+          description: Addresses on the domain sign in only through the organisation's active SAML, LDAP or OpenID Connect connection (break-glass members and administrators single sign-on can't sign in excepted).
         status:
           type: string
         verification_token:

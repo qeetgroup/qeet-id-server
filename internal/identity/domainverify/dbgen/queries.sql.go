@@ -82,7 +82,8 @@ WITH account AS (
 )
 SELECT
     (EXISTS (SELECT 1 FROM tenant.saml_connections s WHERE s.tenant_id = $1::uuid AND s.status = 'active')
-     OR EXISTS (SELECT 1 FROM tenant.ldap_connections l WHERE l.tenant_id = $1::uuid AND l.status = 'active'))::boolean AS sso,
+     OR EXISTS (SELECT 1 FROM tenant.ldap_connections l WHERE l.tenant_id = $1::uuid AND l.status = 'active')
+     OR EXISTS (SELECT 1 FROM tenant.oidc_connections o WHERE o.tenant_id = $1::uuid AND o.status = 'active'))::boolean AS sso,
     EXISTS (
         SELECT 1 FROM account a
         JOIN tenant.break_glass_members b ON b.user_id = a.id AND b.tenant_id = $1::uuid
@@ -110,7 +111,9 @@ SELECT
                     AND (EXISTS (SELECT 1 FROM tenant.saml_connections s
                                  WHERE s.id = ei.connection_id AND s.tenant_id = ei.tenant_id AND ei.provider = 'saml' AND s.status = 'active')
                          OR EXISTS (SELECT 1 FROM tenant.ldap_connections l
-                                    WHERE l.id = ei.connection_id AND l.tenant_id = ei.tenant_id AND ei.provider = 'ldap' AND l.status = 'active'))))
+                                    WHERE l.id = ei.connection_id AND l.tenant_id = ei.tenant_id AND ei.provider = 'ldap' AND l.status = 'active')
+                         OR EXISTS (SELECT 1 FROM tenant.oidc_connections o
+                                    WHERE o.id = ei.connection_id AND o.tenant_id = ei.tenant_id AND ei.provider = 'oidc' AND o.status = 'active'))))
     )::boolean AS unadoptable_admin
 `
 
@@ -126,7 +129,8 @@ type GetCaptureExemptionRow struct {
 	UnadoptableAdmin bool
 }
 
-// Whether the organisation has an active SAML or LDAP connection, and whether
+// Whether the organisation has an active SAML, LDAP or OpenID Connect
+// connection, and whether
 // the address keeps its own sign-in methods there: its account is a
 // break-glass member, or an administrator single sign-on can't sign in (an
 // administrator is never adopted by address, so only a home account linked to
@@ -273,6 +277,9 @@ WHERE s.tenant_id = $1::uuid AND s.status = 'active'
 UNION ALL
 SELECT l.id, 'ldap'::text AS protocol, l.name FROM tenant.ldap_connections l
 WHERE l.tenant_id = $1::uuid AND l.status = 'active'
+UNION ALL
+SELECT o.id, 'oidc'::text AS protocol, o.name FROM tenant.oidc_connections o
+WHERE o.tenant_id = $1::uuid AND o.status = 'active'
 ORDER BY protocol DESC, name
 `
 

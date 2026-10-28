@@ -34,6 +34,7 @@ func init() {
 		errs.CodeOIDCSSOUserTenantMismatch:      http.StatusForbidden,
 		errs.CodeOIDCSSOAccountUnverified:       http.StatusForbidden,
 		errs.CodeOIDCSSOAccountAdministers:      http.StatusForbidden,
+		errs.CodeOIDCSSOJITNotAllowed:           http.StatusForbidden,
 		errs.CodeOIDCSSOLoginCodeRequired:       http.StatusBadRequest,
 		errs.CodeOIDCSSOLoginCodeInvalid:        http.StatusUnauthorized,
 		errs.CodeOIDCSSOLoginCodeUsed:           http.StatusUnauthorized,
