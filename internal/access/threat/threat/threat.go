@@ -170,6 +170,12 @@ func (s *Service) OnSourceThrottled(ctx context.Context, t auth.SourceThrottle) 
 		return
 	}
 	for _, tenantID := range tenants {
+		// Only this organisation's own accounts are named on its event.
+		targeted, terr := s.q.ListTenantUsersForEmails(ctx, dbgen.ListTenantUsersForEmailsParams{TenantID: tenantID, Emails: t.Accounts})
+		if terr != nil {
+			slog.Warn("resolve password_spraying accounts", "err", terr)
+			continue
+		}
 		if rerr := s.Record(ctx, Event{
 			TenantID: tenantID,
 			Type:     "password_spraying",
@@ -184,6 +190,8 @@ func (s *Service) OnSourceThrottled(ctx context.Context, t auth.SourceThrottle) 
 				"distinct_accounts": len(t.Accounts),
 				"window_minutes":    int(t.Window / time.Minute),
 				"throttled_until":   t.ThrottledUntil,
+				"targeted_accounts": len(targeted),
+				"targeted_user_ids": targeted,
 			},
 		}); rerr != nil {
 			slog.Warn("record password_spraying anomaly", "err", rerr)

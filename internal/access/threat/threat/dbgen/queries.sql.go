@@ -17,7 +17,14 @@ const getSecurityEventSummary = `-- name: GetSecurityEventSummary :one
 SELECT
     COUNT(*) FILTER (WHERE resolved_at IS NULL)                                           AS open,
     COUNT(*) FILTER (WHERE resolved_at >= NOW() - INTERVAL '24 hours')                   AS resolved_24h,
-    COUNT(DISTINCT user_id) FILTER (WHERE resolved_at IS NULL AND user_id IS NOT NULL)   AS affected_accounts,
+    (SELECT count(DISTINCT account)::bigint FROM (
+        SELECT open_event.user_id AS account FROM auth.security_events open_event
+        WHERE open_event.tenant_id = $1 AND open_event.resolved_at IS NULL AND open_event.user_id IS NOT NULL
+        UNION ALL
+        SELECT targeted.id::uuid FROM auth.security_events open_event,
+               jsonb_array_elements_text(COALESCE(open_event.metadata->'targeted_user_ids', '[]'::jsonb)) AS targeted(id)
+        WHERE open_event.tenant_id = $1 AND open_event.resolved_at IS NULL
+    ) accounts)                                                                          AS affected_accounts,
     COUNT(*) FILTER (WHERE severity IN ('high', 'critical') AND created_at >= NOW() - INTERVAL '24 hours') AS high_severity_24h
 FROM auth.security_events
 WHERE tenant_id = $1
@@ -35,7 +42,8 @@ type GetSecurityEventSummaryRow struct {
 // making type-safe scanning impossible without runtime assertions.
 // GetSecurityEventSummary feeds the KPI cards. An event is open until it is
 // resolved, whatever its status says: the lockout detections record theirs as
-// rate-limited. High severity includes critical.
+// rate-limited. High severity includes critical. Affected accounts counts the
+// account an open event names and those a spray targeted (targeted_user_ids).
 func (q *Queries) GetSecurityEventSummary(ctx context.Context, tenantID uuid.UUID) (GetSecurityEventSummaryRow, error) {
 	row := q.db.QueryRow(ctx, getSecurityEventSummary, tenantID)
 	var i GetSecurityEventSummaryRow
@@ -70,6 +78,37 @@ func (q *Queries) GetUserForAnomaly(ctx context.Context, lower string) (GetUserF
 	var i GetUserForAnomalyRow
 	err := row.Scan(&i.ID, &i.TenantID)
 	return i, err
+}
+
+const listTenantUsersForEmails = `-- name: ListTenantUsersForEmails :many
+SELECT id FROM "user".users
+WHERE tenant_id = $1::uuid AND LOWER(email) = ANY($2::text[]) AND deleted_at IS NULL
+`
+
+type ListTenantUsersForEmailsParams struct {
+	TenantID uuid.UUID
+	Emails   []string
+}
+
+// The accounts of one organisation among the given (lowercased) addresses.
+func (q *Queries) ListTenantUsersForEmails(ctx context.Context, arg ListTenantUsersForEmailsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listTenantUsersForEmails, arg.TenantID, arg.Emails)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listTenantsForEmails = `-- name: ListTenantsForEmails :many
