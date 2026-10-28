@@ -73,7 +73,7 @@ func leaveTraces(t *testing.T, tenant uuid.UUID, a dbtest.Account) {
 		{`INSERT INTO tenant.group_members (group_id, user_id, tenant_id) VALUES ($1, $2, $3)`, []any{group, u, tenant}},
 		{`INSERT INTO audit.actor_baselines (tenant_id, actor_user_id) VALUES ($1, $2)`, []any{tenant, u}},
 		{`INSERT INTO qeetai.conversations (tenant_id, user_id) VALUES ($1, $2)`, []any{tenant, u}},
-		{`INSERT INTO "user".export_requests (tenant_id, user_id, status, payload, completed_at) VALUES ($1, $2, 'ready', '{"profile": {}}', NOW())`, []any{tenant, u}},
+		{`INSERT INTO "user".export_requests (tenant_id, user_id, subject_id, status, payload, completed_at) VALUES ($1, $2, $2, 'ready', '{"profile": {}}', NOW())`, []any{tenant, u}},
 		{`INSERT INTO auth.magic_links (email, token_hash, expires_at) VALUES ($1, $2, $3)`, []any{email, dbtest.Unique("magic"), soon}},
 		{`INSERT INTO auth.login_attempts (email) VALUES ($1)`, []any{email}},
 		{`INSERT INTO auth.login_attempts_by_network (email, network, failed_count, first_failed_at, last_failed_at) VALUES ($1, '203.0.113.0/24', 1, NOW(), NOW())`, []any{email}},

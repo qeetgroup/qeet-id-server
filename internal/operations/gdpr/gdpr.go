@@ -406,14 +406,14 @@ func (s *Service) RequestExport(ctx context.Context, in ExportInput, actor audit
 	defer tx.Rollback(ctx)
 	row, err := s.q.WithTx(tx).InsertExportRequest(ctx, dbgen.InsertExportRequestParams{
 		TenantID:    in.TenantID,
-		UserID:      in.UserID,
+		SubjectID:   in.UserID,
 		RequestedBy: pgUUIDNullable(actor.UserID),
 	})
 	if err != nil {
 		return nil, err
 	}
 	if err := audit.Record(ctx, tx, actor.Event(row.TenantID, "gdpr.export_requested", "export_request", row.ID,
-		map[string]any{"user_id": row.UserID})); err != nil {
+		map[string]any{"user_id": row.SubjectID})); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -422,7 +422,7 @@ func (s *Service) RequestExport(ctx context.Context, in ExportInput, actor audit
 	return &ExportRequest{
 		ID:          row.ID,
 		TenantID:    row.TenantID,
-		UserID:      row.UserID,
+		UserID:      row.SubjectID,
 		RequestedBy: toUUIDPtr(row.RequestedBy),
 		Status:      row.Status,
 		CompletedAt: toTimePtr(row.CompletedAt),
@@ -442,7 +442,7 @@ func (s *Service) ListExports(ctx context.Context, tenantID uuid.UUID) ([]Export
 		out = append(out, ExportRequest{
 			ID:          r.ID,
 			TenantID:    r.TenantID,
-			UserID:      r.UserID,
+			UserID:      r.SubjectID,
 			RequestedBy: toUUIDPtr(r.RequestedBy),
 			Status:      r.Status,
 			Error:       r.Error,
@@ -469,7 +469,7 @@ func (s *Service) GetExport(ctx context.Context, tenantID, id uuid.UUID) (*Expor
 	out := &ExportRequest{
 		ID:          r.ID,
 		TenantID:    r.TenantID,
-		UserID:      r.UserID,
+		UserID:      r.SubjectID,
 		RequestedBy: toUUIDPtr(r.RequestedBy),
 		Status:      r.Status,
 		Error:       r.Error,
@@ -500,7 +500,7 @@ func (s *Service) exportSweepTick(ctx context.Context) error {
 		SET lease_owner = $1, lease_until = $2
 		FROM candidates
 		WHERE request.id = candidates.id
-		RETURNING request.id, request.tenant_id, request.user_id
+		RETURNING request.id, request.tenant_id, request.subject_id
 	`, s.workerID, time.Now().UTC().Add(s.lease))
 	if err != nil {
 		return err

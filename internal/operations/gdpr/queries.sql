@@ -176,19 +176,20 @@ WHERE id = @id;
 -- -----------------------------------------------------------------------
 
 -- name: InsertExportRequest :one
-INSERT INTO "user".export_requests (tenant_id, user_id, requested_by)
-VALUES (@tenant_id, @user_id, @requested_by)
-RETURNING id, tenant_id, user_id, requested_by, status, completed_at, created_at;
+-- subject_id keeps the account's ID once the account itself is deleted.
+INSERT INTO "user".export_requests (tenant_id, user_id, subject_id, requested_by)
+VALUES (@tenant_id, @subject_id::uuid, @subject_id::uuid, @requested_by)
+RETURNING id, tenant_id, subject_id, requested_by, status, completed_at, created_at;
 
 -- name: ListExportRequests :many
-SELECT id, tenant_id, user_id, requested_by, status, error, completed_at, created_at
+SELECT id, tenant_id, subject_id, requested_by, status, error, completed_at, created_at
 FROM "user".export_requests
 WHERE tenant_id = @tenant_id
 ORDER BY created_at DESC
 LIMIT 200;
 
 -- name: GetExportRequest :one
-SELECT id, tenant_id, user_id, requested_by, status, payload, error,
+SELECT id, tenant_id, subject_id, requested_by, status, payload, error,
        completed_at, created_at
 FROM "user".export_requests
 WHERE id = @id AND tenant_id = @tenant_id;
@@ -206,12 +207,13 @@ SET status = 'ready', payload = @payload, completed_at = NOW()
 WHERE id = @id;
 
 -- ExpireReadyExports deletes the payloads of at most @max_rows exports that
--- became ready before @cutoff and marks them expired.
+-- became ready before @cutoff, or whose account has been deleted, and marks
+-- them expired.
 -- name: ExpireReadyExports :execrows
 UPDATE "user".export_requests SET payload = NULL, status = 'expired'
 WHERE ctid = ANY(ARRAY(
     SELECT r.ctid FROM "user".export_requests r
-    WHERE r.status = 'ready' AND r.completed_at < @cutoff::timestamptz
+    WHERE r.status = 'ready' AND (r.completed_at < @cutoff::timestamptz OR r.user_id IS NULL)
     LIMIT @max_rows));
 
 -- -----------------------------------------------------------------------

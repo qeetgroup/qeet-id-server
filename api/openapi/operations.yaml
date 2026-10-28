@@ -4097,13 +4097,14 @@ components:
           format: uuid
         status:
           type: string
-          description: 'pending, ready, failed, or expired once the payload has been deleted (seven days after it was built, or when the person was erased).'
+          description: 'pending, ready, failed, or expired once the payload has been deleted (seven days after it was built, or when the person was erased or their account deleted).'
         tenant_id:
           type: string
           format: uuid
         user_id:
           type: string
           format: uuid
+          description: The account exported; kept after the account itself is deleted.
     GdprCreateInput:
       type: object
       required: [reason, tenant_id, user_id]

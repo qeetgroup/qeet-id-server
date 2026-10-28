@@ -279,7 +279,7 @@ const expireReadyExports = `-- name: ExpireReadyExports :execrows
 UPDATE "user".export_requests SET payload = NULL, status = 'expired'
 WHERE ctid = ANY(ARRAY(
     SELECT r.ctid FROM "user".export_requests r
-    WHERE r.status = 'ready' AND r.completed_at < $1::timestamptz
+    WHERE r.status = 'ready' AND (r.completed_at < $1::timestamptz OR r.user_id IS NULL)
     LIMIT $2))
 `
 
@@ -289,7 +289,8 @@ type ExpireReadyExportsParams struct {
 }
 
 // ExpireReadyExports deletes the payloads of at most @max_rows exports that
-// became ready before @cutoff and marks them expired.
+// became ready before @cutoff, or whose account has been deleted, and marks
+// them expired.
 func (q *Queries) ExpireReadyExports(ctx context.Context, arg ExpireReadyExportsParams) (int64, error) {
 	result, err := q.db.Exec(ctx, expireReadyExports, arg.Cutoff, arg.MaxRows)
 	if err != nil {
@@ -357,7 +358,7 @@ func (q *Queries) GetEvidenceRun(ctx context.Context, arg GetEvidenceRunParams) 
 }
 
 const getExportRequest = `-- name: GetExportRequest :one
-SELECT id, tenant_id, user_id, requested_by, status, payload, error,
+SELECT id, tenant_id, subject_id, requested_by, status, payload, error,
        completed_at, created_at
 FROM "user".export_requests
 WHERE id = $1 AND tenant_id = $2
@@ -371,7 +372,7 @@ type GetExportRequestParams struct {
 type GetExportRequestRow struct {
 	ID          uuid.UUID
 	TenantID    uuid.UUID
-	UserID      uuid.UUID
+	SubjectID   uuid.UUID
 	RequestedBy pgtype.UUID
 	Status      string
 	Payload     []byte
@@ -386,7 +387,7 @@ func (q *Queries) GetExportRequest(ctx context.Context, arg GetExportRequestPara
 	err := row.Scan(
 		&i.ID,
 		&i.TenantID,
-		&i.UserID,
+		&i.SubjectID,
 		&i.RequestedBy,
 		&i.Status,
 		&i.Payload,
@@ -526,21 +527,21 @@ func (q *Queries) InsertEvidenceRun(ctx context.Context, arg InsertEvidenceRunPa
 
 const insertExportRequest = `-- name: InsertExportRequest :one
 
-INSERT INTO "user".export_requests (tenant_id, user_id, requested_by)
-VALUES ($1, $2, $3)
-RETURNING id, tenant_id, user_id, requested_by, status, completed_at, created_at
+INSERT INTO "user".export_requests (tenant_id, user_id, subject_id, requested_by)
+VALUES ($1, $2::uuid, $2::uuid, $3)
+RETURNING id, tenant_id, subject_id, requested_by, status, completed_at, created_at
 `
 
 type InsertExportRequestParams struct {
 	TenantID    uuid.UUID
-	UserID      uuid.UUID
+	SubjectID   uuid.UUID
 	RequestedBy pgtype.UUID
 }
 
 type InsertExportRequestRow struct {
 	ID          uuid.UUID
 	TenantID    uuid.UUID
-	UserID      uuid.UUID
+	SubjectID   uuid.UUID
 	RequestedBy pgtype.UUID
 	Status      string
 	CompletedAt pgtype.Timestamptz
@@ -550,13 +551,14 @@ type InsertExportRequestRow struct {
 // -----------------------------------------------------------------------
 // GDPR export requests
 // -----------------------------------------------------------------------
+// subject_id keeps the account's ID once the account itself is deleted.
 func (q *Queries) InsertExportRequest(ctx context.Context, arg InsertExportRequestParams) (InsertExportRequestRow, error) {
-	row := q.db.QueryRow(ctx, insertExportRequest, arg.TenantID, arg.UserID, arg.RequestedBy)
+	row := q.db.QueryRow(ctx, insertExportRequest, arg.TenantID, arg.SubjectID, arg.RequestedBy)
 	var i InsertExportRequestRow
 	err := row.Scan(
 		&i.ID,
 		&i.TenantID,
-		&i.UserID,
+		&i.SubjectID,
 		&i.RequestedBy,
 		&i.Status,
 		&i.CompletedAt,
@@ -679,7 +681,7 @@ func (q *Queries) ListEvidenceRuns(ctx context.Context, arg ListEvidenceRunsPara
 }
 
 const listExportRequests = `-- name: ListExportRequests :many
-SELECT id, tenant_id, user_id, requested_by, status, error, completed_at, created_at
+SELECT id, tenant_id, subject_id, requested_by, status, error, completed_at, created_at
 FROM "user".export_requests
 WHERE tenant_id = $1
 ORDER BY created_at DESC
@@ -689,7 +691,7 @@ LIMIT 200
 type ListExportRequestsRow struct {
 	ID          uuid.UUID
 	TenantID    uuid.UUID
-	UserID      uuid.UUID
+	SubjectID   uuid.UUID
 	RequestedBy pgtype.UUID
 	Status      string
 	Error       *string
@@ -709,7 +711,7 @@ func (q *Queries) ListExportRequests(ctx context.Context, tenantID uuid.UUID) ([
 		if err := rows.Scan(
 			&i.ID,
 			&i.TenantID,
-			&i.UserID,
+			&i.SubjectID,
 			&i.RequestedBy,
 			&i.Status,
 			&i.Error,

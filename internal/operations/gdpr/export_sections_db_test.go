@@ -141,13 +141,14 @@ func TestExportsCoverEveryPart(t *testing.T) {
 }
 
 // TestExportPayloadExpires checks that a built export's payload is deleted
-// after the retention window, leaving the request expired, and that an
-// export still within it is kept.
+// after the retention window, or once its account is deleted for good,
+// leaving the request expired and still naming the account, and that an
+// export still within the window is kept.
 func TestExportPayloadExpires(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	tenant := dbtest.Tenant(t)
 	admin := dbtest.User(t, tenant, tenant)
-	old, fresh := account(t, tenant), account(t, tenant)
+	old, fresh, gone := account(t, tenant), account(t, tenant), account(t, tenant)
 	svc := NewService(pool, 0)
 	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
 	queue := func(userID uuid.UUID) uuid.UUID {
@@ -155,7 +156,7 @@ func TestExportPayloadExpires(t *testing.T) {
 		dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodPost, "/gdpr/export", map[string]any{"user_id": userID}), &req)
 		return req.ID
 	}
-	oldReq, freshReq := queue(old.ID), queue(fresh.ID)
+	oldReq, freshReq, goneReq := queue(old.ID), queue(fresh.ID), queue(gone.ID)
 	if err := svc.exportSweepTick(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -163,14 +164,23 @@ func TestExportPayloadExpires(t *testing.T) {
 		oldReq, time.Now().Add(-ExportRetention-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'deleted', deleted_at = NOW() WHERE id = $1`, gone.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM "user".users WHERE id = $1`, gone.ID); err != nil {
+		t.Fatal(err)
+	}
 	n, err := ExpireExports(ctx, pool, ExportRetention)
-	if err != nil || n != 1 {
-		t.Fatalf("expired %d (%v), want 1", n, err)
+	if err != nil || n != 2 {
+		t.Fatalf("expired %d (%v), want 2", n, err)
 	}
 	get := func(id uuid.UUID) ExportRequest {
 		var out ExportRequest
 		dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodGet, "/tenants/"+tenant.String()+"/gdpr/export/"+id.String(), nil), &out)
 		return out
+	}
+	if got := get(goneReq); got.Status != "expired" || got.Payload != nil || got.UserID != gone.ID {
+		t.Errorf("the export of a deleted account: %s for %s, want expired, without a payload, naming the account", got.Status, got.UserID)
 	}
 	if got := get(oldReq); got.Status != "expired" || got.Payload != nil {
 		t.Errorf("an export past retention: %s with payload %v, want expired without one", got.Status, got.Payload != nil)
