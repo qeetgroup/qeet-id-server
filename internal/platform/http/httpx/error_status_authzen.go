@@ -13,5 +13,7 @@ func init() {
 		errs.CodeAuthZENActionNameRequired: http.StatusUnprocessableEntity,
 		errs.CodeAuthZENSubjectIDInvalid:   http.StatusUnprocessableEntity,
 		errs.CodeAuthZENResourceRequired:   http.StatusUnprocessableEntity,
+		errs.CodeAuthZENTooManyEvaluations: http.StatusUnprocessableEntity,
+		errs.CodeAuthZENSemanticInvalid:    http.StatusUnprocessableEntity,
 	})
 }

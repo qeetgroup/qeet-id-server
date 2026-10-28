@@ -87,6 +87,10 @@ func registerStatuses(m map[string]int) {
 	}
 }
 
+// ErrorStatus is the HTTP status WriteError would answer e with, for a handler
+// that reports an error inside its response rather than as one.
+func ErrorStatus(e *errs.Error) int { return statusForCode(e.Code) }
+
 // statusForCode returns the HTTP status for a canonical error code. An unmapped
 // code falls back to 400 (client error) — a forgotten mapping should never
 // surface to a user as a 500.
