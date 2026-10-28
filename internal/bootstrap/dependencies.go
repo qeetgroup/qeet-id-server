@@ -42,6 +42,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/ssosync"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	group "github.com/qeetgroup/qeet-id-server/internal/identity/groups"
 	invite "github.com/qeetgroup/qeet-id-server/internal/identity/invitations"
@@ -464,6 +465,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		SAML:         samlHandler,
 		AdminPortal:  &adminportal.Handler{Service: adminPortalService, SAML: samlService, SAMLSignIn: samlHandler, SCIM: scimService, Domains: domainVerifyService, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev()},
 		LDAP:         &ldap.Handler{Service: ldapService},
+		SSOGroups:    &ssosync.Handler{Service: ssosync.NewService(pool), GrantCheck: rbacRepo.CheckGrantGroup},
 		Directory:    &directory.Handler{Service: directoryService},
 		IPAllow:      &ipallow.Handler{Service: ipAllowService},
 		Threat:       &threat.Handler{Service: threatService},

@@ -39,6 +39,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/ssosync"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	group "github.com/qeetgroup/qeet-id-server/internal/identity/groups"
 	invite "github.com/qeetgroup/qeet-id-server/internal/identity/invitations"
@@ -114,6 +115,7 @@ type Deps struct {
 	SAML          *saml.Handler
 	AdminPortal   *adminportal.Handler
 	LDAP          *ldap.Handler
+	SSOGroups     *ssosync.Handler
 	Directory     *directory.Handler
 	IPAllow       *ipallow.Handler
 	Threat        *threat.Handler
@@ -400,6 +402,7 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.SAML.Mount(r)
 	d.AdminPortal.Mount(r)
 	d.LDAP.Mount(r)
+	d.SSOGroups.Mount(r)
 	d.Directory.Mount(r)
 	d.IPAllow.Mount(r)
 	d.Threat.Mount(r)

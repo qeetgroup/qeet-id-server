@@ -19,6 +19,11 @@ const (
 	// Bulk import.
 	CodeGroupImportEmpty    = "group.import_empty"
 	CodeGroupImportTooLarge = "group.import_too_large"
+
+	// Single sign-on group mappings.
+	CodeGroupMappingPrivileged = "group.mapping_privileged"
+	CodeGroupMappingExists     = "group.mapping_exists"
+	CodeGroupMappingTooMany    = "group.mapping_too_many"
 )
 
 // Group errors. ErrGroupUserNotFound and ErrGroupParentNotFound give the same
@@ -39,4 +44,9 @@ var (
 
 	ErrGroupImportEmpty    = New(CodeGroupImportEmpty, "There are no groups to import.")
 	ErrGroupImportTooLarge = New(CodeGroupImportTooLarge, "Import up to 500 groups at a time.")
+
+	ErrGroupMappingPrivileged = New(CodeGroupMappingPrivileged,
+		"Single sign-on can't manage this group's members: its roles carry the owner role or an administrative permission.")
+	ErrGroupMappingExists  = New(CodeGroupMappingExists, "That identity provider group is already mapped to this group.")
+	ErrGroupMappingTooMany = New(CodeGroupMappingTooMany, "A connection can map up to 1,000 identity provider groups.")
 )

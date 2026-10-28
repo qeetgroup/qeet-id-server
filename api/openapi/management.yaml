@@ -2392,7 +2392,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Removes a user from a group. Requires group.write.'
+      description: 'Removes a user from a group. Requires group.write. Someone whose identity provider still asserts a group mapped to this one rejoins it at their next single sign-on.'
       responses:
         '204':
           description: No Content
@@ -2425,7 +2425,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Adds a user to one of the caller''s groups. The user must be a live member of the caller''s tenant, or have it as their home tenant; otherwise the call answers 404 group.user_not_found, the same for a missing id as for another tenant''s user. Adding someone already in the group is a no-op. Joining a group gives its roles, so the caller must hold every permission they carry (403 rbac.grant_exceeds_caller naming one), and only an owner adds someone to a group holding the owner role (403 rbac.owner_only). Like the other routes that hand out authority, it needs a recent step-up.'
+      description: 'Adds a user to one of the caller''s groups. The user must be a live member of the caller''s tenant, or have it as their home tenant; otherwise the call answers 404 group.user_not_found, the same for a missing id as for another tenant''s user. Adding someone already in the group is a no-op, except that a membership a single sign-on made becomes the administrator''s, so the person''s sign-ins no longer remove it. Joining a group gives its roles, so the caller must hold every permission they carry (403 rbac.grant_exceeds_caller naming one), and only an owner adds someone to a group holding the owner role (403 rbac.owner_only). Like the other routes that hand out authority, it needs a recent step-up.'
       responses:
         '204':
           description: Added

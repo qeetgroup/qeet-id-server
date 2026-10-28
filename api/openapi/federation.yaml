@@ -2253,7 +2253,7 @@ paths:
   /saml/acs/{id}:
     post:
       operationId: post_saml_acs_ById
-      description: 'The SAML Assertion Consumer Service for a specific connection, with Qeet acting as the Service Provider. It validates the external IdP''s signed SAMLResponse and assertion (signature, conditions and replay protection), provisions or resolves the user just-in-time, and redirects to the SPA callback with a one-time login code carried in the URL fragment. An answer to a sign-in request completes only in the browser that began it (holding the cookie the login call set): from another it spends the request and answers 403 saml.other_browser, so a sign-in begun by someone else can''t be completed in a victim''s browser. An IdP-initiated answer, which answers no request, is accepted only where the connection allows those. The SPA then trades that code for tokens at POST /saml/exchange. Mounted at the root, not under /v1, and unauthenticated. An existing account is signed in only while this organisation is its home, and one adopted by email must have a verified address or have been provisioned by the organisation''s directory (SCIM), and is then marked verified: another organisation''s account or a guest whose home is elsewhere is refused with 403 saml.user_tenant_mismatch, an unverified one with 403 saml.account_unverified. A subject is linked to the connection that asserted it, so another connection asserting it doesn''t sign it in. An address not yet linked is adopted or given an account only on a domain the organisation has verified (the most specific verified domain decides, 403 saml.email_domain_unverified otherwise), and an account that owns the organisation or holds an admin permission there (user.write, role.write, group.write, connection.write, policy.write or tenant.write) is not adopted by its address (403 saml.account_administers): it keeps its own credentials.'
+      description: 'The SAML Assertion Consumer Service for a specific connection, with Qeet acting as the Service Provider. It validates the external IdP''s signed SAMLResponse and assertion (signature, conditions and replay protection), provisions or resolves the user just-in-time, and redirects to the SPA callback with a one-time login code carried in the URL fragment. An answer to a sign-in request completes only in the browser that began it (holding the cookie the login call set): from another it spends the request and answers 403 saml.other_browser, so a sign-in begun by someone else can''t be completed in a victim''s browser. An IdP-initiated answer, which answers no request, is accepted only where the connection allows those. The SPA then trades that code for tokens at POST /saml/exchange. Mounted at the root, not under /v1, and unauthenticated. An existing account is signed in only while this organisation is its home, and one adopted by email must have a verified address or have been provisioned by the organisation''s directory (SCIM), and is then marked verified: another organisation''s account or a guest whose home is elsewhere is refused with 403 saml.user_tenant_mismatch, an unverified one with 403 saml.account_unverified. A subject is linked to the connection that asserted it, so another connection asserting it doesn''t sign it in. An address not yet linked is adopted or given an account only on a domain the organisation has verified (the most specific verified domain decides, 403 saml.email_domain_unverified otherwise), and an account that owns the organisation or holds an admin permission there (user.write, role.write, group.write, connection.write, policy.write or tenant.write) is not adopted by its address (403 saml.account_administers): it keeps its own credentials. Every sign-in then brings the account in step with the assertion, each change audited: its display name; its address, when the asserted one is on a domain the organisation has verified, is no other account''s, and the account doesn''t administer the organisation (recovery links sent to the old address then stop working); and its groups, as GET /v1/tenants/{tenantID}/saml/{id}/group-mappings describes.'
       summary: "[acs] Assertion Consumer Service"
       tags:
         - SAML
@@ -2731,6 +2731,128 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/saml/{id}/group-mappings:
+    get:
+      operationId: get_v1_tenants_ByTenantID_saml_ById_group_mappings
+      summary: List group mappings
+      description: 'Lists the group mappings of an inbound SAML connection in the tenant. Each maps a group the connection''s IdP asserts (idp_group, compared ignoring case) to one of the organisation''s groups. At every sign-in through the connection the person joins the groups their asserted groups reach, through these mappings or as the external id of a group SCIM provisioned, and leaves the groups the connection''s sign-ins put them in that they no longer reach; the groups are read from the connection''s groups_attribute. A membership an administrator or SCIM made is never changed, and a group whose roles carry the owner role or an administrative permission (user.write, role.write, group.write, connection.write, policy.write or tenant.write) is never joined: sign-in takes out anyone it put there. Requires connection.read; an unknown connection, or another organisation''s, answers 404.'
+      tags:
+        - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The connection's group mappings
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SSOGroupMapping'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: post_v1_tenants_ByTenantID_saml_ById_group_mappings
+      summary: Map an IdP group
+      description: 'Maps a group the connection''s IdP asserts to one of the organisation''s groups, from each person''s next sign-in. Whoever maps a group hands out what it grants: the caller must hold every permission the group''s roles carry, as adding a member needs (403 rbac.grant_exceeds_caller, or rbac.owner_only for a group holding the owner role). A group whose roles carry the owner role or an administrative permission can''t be mapped at all (422 group.mapping_privileged), and the group must be the organisation''s (404 group.not_found). The same pair twice is refused with 409 group.mapping_exists, an empty or over-long idp_group with 422 validation_failed, and a connection holds up to 1,000 mappings (422 group.mapping_too_many). Audited as saml.group_mapping_created. Requires group.write. Needs a recent step-up.'
+      tags:
+        - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SSOGroupMappingCreate'
+      responses:
+        '201':
+          description: Mapped
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SSOGroupMapping'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/saml/{id}/group-mappings/{mappingID}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_saml_ById_group_mappings_ByMappingID
+      summary: Remove a group mapping
+      description: 'Removes a group mapping of the connection. Once none of the connection''s mappings reaches the group, the memberships of it the connection''s sign-ins made end at once, each audited as group.member_removed; one a SCIM group''s external id still reaches comes back at the person''s next sign-in. Audited as saml.group_mapping_deleted. Requires group.write. Needs a recent step-up.'
+      tags:
+        - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: mappingID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Removed
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/tenants/{tenantID}/saml/{id}:
     delete:
       operationId: delete_v1_tenants_ByTenantID_saml_ById
@@ -2863,7 +2985,7 @@ paths:
                 password:
                   type: string
                   format: password
-      description: 'Signs a person in with their directory username and password and answers with a token pair, or with a challenge to complete at POST /v1/auth/mfa as for a password sign-in. The connection''s organisation''s network rules apply first (403 auth.address_not_allowed, whatever the password), then the password is checked by a bind against the connection''s directory, under the sign-in lockout, login hook, risk and second-factor rules of that organisation, as a password sign-in is. The lockout counts a username case-insensitively, ignoring extra spaces. A wrong username or password is refused with 401 ldap.invalid_credentials and counted by the lockout like a wrong password. A locked account answers 429 auth.account_locked whatever the password (a throttled source network, 429 too_many_requests), and when the lockout counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable. A disabled connection is refused with 403 ldap.connection_disabled, and a draft one, still being set up, with 403 ldap.connection_draft. A sign-in that needs another step (a second factor, setting one up, or a risk confirmation by an emailed code) answers with that challenge, as POST /v1/auth/login does; the session it completes is recorded as an ldap_mfa sign-in. A directory account whose email belongs to an account outside the connection''s organisation is refused with 403 ldap.account_not_in_tenant, and an account that is not active with 403 auth.account_inactive. An empty username or password is refused with 400 ldap.credentials_required, and a connection that does not verify the directory''s certificate with 422 ldap.tls_verify_required. The account signed in must have the connection''s organisation as its home (403 ldap.account_not_in_tenant), and an existing one adopted by email a verified address, or one the organisation''s directory provisioned (SCIM), which is then marked verified (403 ldap.account_unverified otherwise). A directory entry is linked to the connection that bound it. An address not yet linked is adopted or given an account only on a domain the organisation has verified (the most specific verified domain decides, 403 ldap.email_domain_unverified otherwise), and an account that owns the organisation or holds an admin permission there (user.write, role.write, group.write, connection.write, policy.write or tenant.write) is not adopted by its address (403 ldap.account_administers): it keeps its own credentials.'
+      description: 'Signs a person in with their directory username and password and answers with a token pair, or with a challenge to complete at POST /v1/auth/mfa as for a password sign-in. The connection''s organisation''s network rules apply first (403 auth.address_not_allowed, whatever the password), then the password is checked by a bind against the connection''s directory, under the sign-in lockout, login hook, risk and second-factor rules of that organisation, as a password sign-in is. The lockout counts a username case-insensitively, ignoring extra spaces. A wrong username or password is refused with 401 ldap.invalid_credentials and counted by the lockout like a wrong password. A locked account answers 429 auth.account_locked whatever the password (a throttled source network, 429 too_many_requests), and when the lockout counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable. A disabled connection is refused with 403 ldap.connection_disabled, and a draft one, still being set up, with 403 ldap.connection_draft. A sign-in that needs another step (a second factor, setting one up, or a risk confirmation by an emailed code) answers with that challenge, as POST /v1/auth/login does; the session it completes is recorded as an ldap_mfa sign-in. A directory account whose email belongs to an account outside the connection''s organisation is refused with 403 ldap.account_not_in_tenant, and an account that is not active with 403 auth.account_inactive. An empty username or password is refused with 400 ldap.credentials_required, and a connection that does not verify the directory''s certificate with 422 ldap.tls_verify_required. The account signed in must have the connection''s organisation as its home (403 ldap.account_not_in_tenant), and an existing one adopted by email a verified address, or one the organisation''s directory provisioned (SCIM), which is then marked verified (403 ldap.account_unverified otherwise). A directory entry is linked to the connection that bound it. An address not yet linked is adopted or given an account only on a domain the organisation has verified (the most specific verified domain decides, 403 ldap.email_domain_unverified otherwise), and an account that owns the organisation or holds an admin permission there (user.write, role.write, group.write, connection.write, policy.write or tenant.write) is not adopted by its address (403 ldap.account_administers): it keeps its own credentials. Every sign-in then brings the account in step with the directory, each change audited: its display name; its address, when the directory''s is on a domain the organisation has verified, is no other account''s, and the account doesn''t administer the organisation (recovery links sent to the old address then stop working); and its groups, as GET /v1/tenants/{tenantID}/ldap/{id}/group-mappings describes.'
       responses:
         '200':
           description: Signed in with a token pair, or a challenge to complete at POST /v1/auth/mfa (the MFAChallenge of the authentication API).
@@ -3148,6 +3270,128 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/ldap/{id}/group-mappings:
+    get:
+      operationId: get_v1_tenants_ByTenantID_ldap_ById_group_mappings
+      summary: List group mappings
+      description: 'Lists the group mappings of an LDAP connection in the tenant. Each maps a group the directory gives the person (idp_group, compared ignoring case) to one of the organisation''s groups. The groups are the values of the connection''s directory mapping targeting groups when it has one (with its transform, such as extracting the CN), else of the entry''s memberOf. At every sign-in through the connection the person joins the groups those reach, through these mappings or as the external id of a group SCIM provisioned, and leaves the groups the connection''s sign-ins put them in that they no longer reach. A membership an administrator or SCIM made is never changed, and a group whose roles carry the owner role or an administrative permission (user.write, role.write, group.write, connection.write, policy.write or tenant.write) is never joined: sign-in takes out anyone it put there. Requires connection.read; an unknown connection, or another organisation''s, answers 404.'
+      tags:
+        - LDAP
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The connection's group mappings
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SSOGroupMapping'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: post_v1_tenants_ByTenantID_ldap_ById_group_mappings
+      summary: Map a directory group
+      description: 'Maps a group the directory gives the person (a memberOf DN, or the value the connection''s groups mapping makes of it) to one of the organisation''s groups, from each person''s next sign-in. Whoever maps a group hands out what it grants: the caller must hold every permission the group''s roles carry, as adding a member needs (403 rbac.grant_exceeds_caller, or rbac.owner_only for a group holding the owner role). A group whose roles carry the owner role or an administrative permission can''t be mapped at all (422 group.mapping_privileged), and the group must be the organisation''s (404 group.not_found). The same pair twice is refused with 409 group.mapping_exists, an empty or over-long idp_group with 422 validation_failed, and a connection holds up to 1,000 mappings (422 group.mapping_too_many). Audited as ldap.group_mapping_created. Requires group.write. Needs a recent step-up.'
+      tags:
+        - LDAP
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SSOGroupMappingCreate'
+      responses:
+        '201':
+          description: Mapped
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SSOGroupMapping'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/ldap/{id}/group-mappings/{mappingID}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_ldap_ById_group_mappings_ByMappingID
+      summary: Remove a group mapping
+      description: 'Removes a group mapping of the connection. Once none of the connection''s mappings reaches the group, the memberships of it the connection''s sign-ins made end at once, each audited as group.member_removed; one a SCIM group''s external id still reaches comes back at the person''s next sign-in. Audited as ldap.group_mapping_deleted. Requires group.write. Needs a recent step-up.'
+      tags:
+        - LDAP
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: mappingID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Removed
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings:
     get:
       operationId: get_directory_connection_mappings
@@ -5745,6 +5989,21 @@ components:
           type: string
         name_attribute:
           type: string
+          description: >-
+            The attribute carrying the person's display name. When it is empty
+            or the assertion lacks it, the common display-name attributes are
+            read, else the given and family names joined. Each sign-in sets the
+            account's display name to what the assertion carries.
+        groups_attribute:
+          type: string
+          maxLength: 256
+          description: >-
+            The attribute carrying the person's groups, matched against the
+            connection's group mappings and the external ids of groups SCIM
+            provisioned. Empty (the default) reads groups,
+            http://schemas.microsoft.com/ws/2008/06/identity/claims/groups and
+            memberOf. When Microsoft Entra ID leaves the groups out for being
+            too many, memberships stay as they are.
         status:
           type: string
         allow_idp_initiated:
@@ -5788,8 +6047,41 @@ components:
           type: string
         name_attribute:
           type: string
+        groups_attribute:
+          type: string
+          maxLength: 256
+          description: The attribute carrying the person's groups; empty reads the common ones (see SAMLConnection). Over 256 characters is refused with 422 validation_failed.
         status:
           type: string
+    SSOGroupMapping:
+      type: object
+      required: [id, idp_group, group_id, group_name, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        idp_group:
+          type: string
+          description: The group as the identity provider asserts it (a name, an object id or an LDAP DN), compared ignoring case.
+        group_id:
+          type: string
+          format: uuid
+        group_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    SSOGroupMappingCreate:
+      type: object
+      required: [idp_group, group_id]
+      properties:
+        idp_group:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        group_id:
+          type: string
+          format: uuid
     SAMLServiceProvider:
       type: object
       properties:
