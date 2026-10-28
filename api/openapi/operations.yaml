@@ -2646,7 +2646,7 @@ paths:
       summary: Start checkout
       description: >-
         Returns a hosted-payment URL to redirect the admin to, or {status:"active"} when the plan is free or no card provider serves the request (direct activation). The provider is chosen by billing country (config-driven; an omitted country falls back to currency-based routing: INR → Razorpay, else the default provider). The provider's webhook later activates the subscription.
-        Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress.
+        Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key.
       tags:
         - Billing
       parameters:
@@ -2685,7 +2685,7 @@ paths:
                   type: string
                   format: uri
       responses:
-        '409': {description: 'A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly.'}
+        '409': {description: 'A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly. Or the first request stopped before answering and may have taken effect (idempotency.outcome_unknown): check, then retry with a new key.'}
         '200':
           description: Either a checkout URL ({status:"checkout"}) or {status:"active"}
           content:
