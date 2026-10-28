@@ -2,11 +2,13 @@ package directory
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -317,6 +319,187 @@ type Alert struct {
 	ConnectionID *string   `json:"connection_id"`
 	Threshold    int       `json:"threshold"`
 	Enabled      bool      `json:"enabled"`
+
+	// Read-only: who the alert notifies, and when it was made and last sent.
+	UserID         uuid.UUID  `json:"user_id"`
+	CreatedAt      time.Time  `json:"created_at"`
+	LastNotifiedAt *time.Time `json:"last_notified_at"`
+}
+
+// alertUpdate is a PATCH of an alert: each field given is changed. Enabled
+// false pauses it; a connection_id of "" makes it cover every connection.
+type alertUpdate struct {
+	Name         *string `json:"name"`
+	ConnectionID *string `json:"connection_id"`
+	Threshold    *int    `json:"threshold"`
+	Enabled      *bool   `json:"enabled"`
+}
+
+const alertColumns = `id,name,connection_id,threshold,enabled,user_id,created_at,last_notified_at`
+
+func scanAlert(row pgx.Row) (Alert, error) {
+	var a Alert
+	err := row.Scan(&a.ID, &a.Name, &a.ConnectionID, &a.Threshold, &a.Enabled, &a.UserID, &a.CreatedAt, &a.LastNotifiedAt)
+	return a, err
+}
+
+// knownConnection reports whether id is one of the tenant's connections.
+func (handler *Handler) knownConnection(ctx context.Context, tenantID uuid.UUID, id string) (bool, error) {
+	connections, err := handler.Service.List(ctx, tenantID)
+	if err != nil {
+		return false, err
+	}
+	for _, connection := range connections {
+		if connection.ID == id {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// recordAlertAudit records an alert change in the tenant's audit log, on tx.
+func recordAlertAudit(ctx context.Context, tx pgx.Tx, request *http.Request, tenantID, alertID uuid.UUID, action string, meta map[string]any) error {
+	return audit.Record(ctx, tx, audit.ActorOf(request).Event(tenantID, action, "directory_alert", alertID, meta))
+}
+
+// listAlerts serves GET /tenants/{tenantID}/directory/alerts: every alert of
+// the organisation, newest first, with who it notifies.
+func (handler *Handler) listAlerts(response http.ResponseWriter, request *http.Request) {
+	tenantID, err := requireTenant(request)
+	if err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	rows, err := handler.Service.pool.Query(request.Context(), `SELECT `+alertColumns+` FROM tenant.directory_alerts WHERE tenant_id=$1 ORDER BY created_at DESC, id`, tenantID)
+	if err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	defer rows.Close()
+	items := []Alert{}
+	for rows.Next() {
+		alert, err := scanAlert(rows)
+		if err != nil {
+			httpx.WriteError(response, request, err)
+			return
+		}
+		items = append(items, alert)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	httpx.WriteJSON(response, http.StatusOK, map[string]any{"items": items})
+}
+
+// updateAlert serves PATCH /tenants/{tenantID}/directory/alerts/{alertID}.
+func (handler *Handler) updateAlert(response http.ResponseWriter, request *http.Request) {
+	tenantID, err := requireTenant(request)
+	if err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	alertID, err := uuid.Parse(chi.URLParam(request, "alertID"))
+	if err != nil {
+		httpx.WriteError(response, request, errs.ErrBadRequest)
+		return
+	}
+	var in alertUpdate
+	if err := httpx.DecodeJSON(request, &in); err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	if in.Name != nil {
+		trimmed := strings.TrimSpace(*in.Name)
+		in.Name = &trimmed
+	}
+	if (in.Name != nil && (len(*in.Name) == 0 || len(*in.Name) > 100)) || (in.Threshold != nil && (*in.Threshold < 1 || *in.Threshold > 100)) {
+		httpx.WriteError(response, request, errs.ErrBadRequest)
+		return
+	}
+	ctx := request.Context()
+	if in.ConnectionID != nil && *in.ConnectionID != "" {
+		known, err := handler.knownConnection(ctx, tenantID, *in.ConnectionID)
+		if err != nil {
+			httpx.WriteError(response, request, err)
+			return
+		}
+		if !known {
+			httpx.WriteError(response, request, errs.ErrNotFound)
+			return
+		}
+	}
+	tx, err := handler.Service.pool.Begin(ctx)
+	if err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	alert, err := scanAlert(tx.QueryRow(ctx, `UPDATE tenant.directory_alerts SET
+		name = COALESCE($3, name),
+		connection_id = CASE WHEN $4::boolean THEN NULLIF($5, '') ELSE connection_id END,
+		threshold = COALESCE($6, threshold),
+		enabled = COALESCE($7, enabled)
+		WHERE tenant_id=$1 AND id=$2 RETURNING `+alertColumns,
+		tenantID, alertID, in.Name, in.ConnectionID != nil, in.ConnectionID, in.Threshold, in.Enabled))
+	if errors.Is(err, pgx.ErrNoRows) {
+		httpx.WriteError(response, request, errs.ErrNotFound)
+		return
+	}
+	if err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	if err := recordAlertAudit(ctx, tx, request, tenantID, alertID, "directory.alert_updated", map[string]any{
+		"name": alert.Name, "connection_id": alert.ConnectionID, "threshold": alert.Threshold, "enabled": alert.Enabled,
+	}); err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	httpx.WriteJSON(response, http.StatusOK, alert)
+}
+
+// deleteAlert serves DELETE /tenants/{tenantID}/directory/alerts/{alertID}.
+func (handler *Handler) deleteAlert(response http.ResponseWriter, request *http.Request) {
+	tenantID, err := requireTenant(request)
+	if err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	alertID, err := uuid.Parse(chi.URLParam(request, "alertID"))
+	if err != nil {
+		httpx.WriteError(response, request, errs.ErrBadRequest)
+		return
+	}
+	ctx := request.Context()
+	tx, err := handler.Service.pool.Begin(ctx)
+	if err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `DELETE FROM tenant.directory_alerts WHERE tenant_id=$1 AND id=$2`, tenantID, alertID)
+	if err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		httpx.WriteError(response, request, errs.ErrNotFound)
+		return
+	}
+	if err := recordAlertAudit(ctx, tx, request, tenantID, alertID, "directory.alert_deleted", nil); err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	response.WriteHeader(http.StatusNoContent)
 }
 
 func (handler *Handler) createAlert(response http.ResponseWriter, request *http.Request) {
@@ -340,30 +523,41 @@ func (handler *Handler) createAlert(response http.ResponseWriter, request *http.
 		httpx.WriteError(response, request, errs.ErrBadRequest)
 		return
 	}
+	ctx := request.Context()
 	if alert.ConnectionID != nil {
-		connections, err := handler.Service.List(request.Context(), tenantID)
+		known, err := handler.knownConnection(ctx, tenantID, *alert.ConnectionID)
 		if err != nil {
 			httpx.WriteError(response, request, err)
 			return
 		}
-		found := false
-		for _, connection := range connections {
-			if connection.ID == *alert.ConnectionID {
-				found = true
-			}
-		}
-		if !found {
+		if !known {
 			httpx.WriteError(response, request, errs.ErrNotFound)
 			return
 		}
 	}
-	alert.ID, alert.Enabled = uuid.New(), true
-	_, err = handler.Service.pool.Exec(request.Context(), `INSERT INTO tenant.directory_alerts(id,tenant_id,user_id,name,connection_id,threshold,enabled) VALUES($1,$2,$3,$4,$5,$6,true)`, alert.ID, tenantID, userID, alert.Name, alert.ConnectionID, alert.Threshold)
+	tx, err := handler.Service.pool.Begin(ctx)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
 	}
-	httpx.WriteJSON(response, http.StatusCreated, alert)
+	defer tx.Rollback(ctx)
+	created, err := scanAlert(tx.QueryRow(ctx, `INSERT INTO tenant.directory_alerts(id,tenant_id,user_id,name,connection_id,threshold,enabled)
+		VALUES($1,$2,$3,$4,$5,$6,true) RETURNING `+alertColumns, uuid.New(), tenantID, userID, alert.Name, alert.ConnectionID, alert.Threshold))
+	if err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	if err := recordAlertAudit(ctx, tx, request, tenantID, created.ID, "directory.alert_created", map[string]any{
+		"name": created.Name, "connection_id": created.ConnectionID, "threshold": created.Threshold,
+	}); err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	httpx.WriteJSON(response, http.StatusCreated, created)
 }
 
 func (service *Service) notifyAlerts(ctx context.Context, tenantID uuid.UUID, connectionID string) error {

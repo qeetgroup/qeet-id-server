@@ -3451,6 +3451,33 @@ paths:
         '401': {description: Authentication required}
         '403': {description: Tenant mismatch or missing connection.read}
   /v1/tenants/{tenantID}/directory/alerts:
+    get:
+      operationId: get_v1_tenants_ByTenantID_directory_alerts
+      summary: List directory failure alerts
+      description: >-
+        Requires connection.read. Every alert of the organisation, newest first,
+        with the person it notifies (user_id), when it was made and when it last
+        notified.
+      tags: [Directory]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: The alerts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/DirectoryAlert'}
+        '401': {description: Authentication required}
+        '403': {description: Tenant mismatch or missing connection.read}
     post:
       operationId: post_v1_tenants_ByTenantID_directory_alerts
       summary: Create a directory failure alert
@@ -3458,6 +3485,7 @@ paths:
         Requires connection.write and a user principal. Creates an in-app alert
         for the caller when the failure threshold is reached within 15 minutes.
         Notifications are rate limited to once per alert per 15 minutes.
+        Audited as directory.alert_created.
       tags: [Directory]
       security:
         - bearerAuth: []
@@ -3480,18 +3508,63 @@ paths:
           description: Alert created
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  id: {type: string, format: uuid}
-                  name: {type: string}
-                  connection_id: {type: [string, 'null']}
-                  threshold: {type: integer}
-                  enabled: {type: boolean}
+              schema: {$ref: '#/components/schemas/DirectoryAlert'}
         '400': {description: Invalid alert settings}
         '401': {description: Authenticated user required}
         '403': {description: Tenant mismatch or missing connection.write}
         '404': {description: Connection not found in this tenant}
+  /v1/tenants/{tenantID}/directory/alerts/{alertID}:
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_directory_alerts_ByAlertID
+      summary: Change or pause a directory failure alert
+      description: >-
+        Requires connection.write. Changes the fields given on one of the
+        organisation's alerts: enabled false pauses it, a connection_id of ""
+        makes it cover every connection. Audited as directory.alert_updated.
+      tags: [Directory]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: alertID, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: {type: string, minLength: 1, maxLength: 100}
+                connection_id: {type: string, description: 'A connection of the organisation, or "" for every connection.'}
+                threshold: {type: integer, minimum: 1, maximum: 100}
+                enabled: {type: boolean}
+      responses:
+        '200':
+          description: The alert as changed
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DirectoryAlert'}
+        '400': {description: Invalid alert settings}
+        '401': {description: Authentication required}
+        '403': {description: Tenant mismatch or missing connection.write}
+        '404': {description: 'No such alert in the organisation, or an unknown connection'}
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_directory_alerts_ByAlertID
+      summary: Remove a directory failure alert
+      description: Requires connection.write. Removes one of the organisation's alerts. Audited as directory.alert_deleted.
+      tags: [Directory]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: alertID, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '204': {description: Removed}
+        '401': {description: Authentication required}
+        '403': {description: Tenant mismatch or missing connection.write}
+        '404': {description: No such alert in the organisation}
   /v1/tenants/{tenantID}/directory/connections:
     get:
       operationId: get_v1_tenants_ByTenantID_directory_connections
@@ -5386,6 +5459,18 @@ components:
           type: string
           format: date-time
           nullable: true
+    DirectoryAlert:
+      type: object
+      required: [id, name, connection_id, threshold, enabled, user_id, created_at, last_notified_at]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        connection_id: {type: [string, 'null'], description: The connection it watches; null for every connection.}
+        threshold: {type: integer, description: Failures within 15 minutes that notify.}
+        enabled: {type: boolean, description: False while paused.}
+        user_id: {type: string, format: uuid, description: The person it notifies (who made it).}
+        created_at: {type: string, format: date-time}
+        last_notified_at: {type: [string, 'null'], format: date-time}
     SigningKey:
       type: object
       description: Non-secret metadata for an issuer signing key (no key material).
