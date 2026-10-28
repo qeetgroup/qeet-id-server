@@ -152,8 +152,8 @@ func TestIdPNameIDFollowsTheSPFormat(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacy, err := s.idp.GetSP(ctx, legacyID, tenant)
-	if err != nil || !reflect.DeepEqual(legacy.Attributes, defaultAttributes()) {
-		t.Fatalf("an SP saved without the new settings = %+v, %v; want the default attributes", legacy, err)
+	if err != nil || legacy.AssignmentRequired || !reflect.DeepEqual(legacy.Attributes, defaultAttributes()) {
+		t.Fatalf("an SP saved without the new settings = %+v, %v; want the default attributes, open to everyone", legacy, err)
 	}
 
 	persistent := spWith(t, ctx, s.idp, tenant, CreateSPInput{NameIDFormat: nameIDPersistent})
@@ -279,14 +279,14 @@ func TestSPSettingsAreCheckedAndAudited(t *testing.T) {
 	}
 
 	rec := dbtest.Do(t, h, http.MethodPost, base, register(map[string]any{
-		"name_id_format": nameIDPersistent,
-		"attributes":     []map[string]any{{"name": "uid", "source": "user_id", "name_format": "uri"}},
+		"name_id_format": nameIDPersistent, "assignment_required": true,
+		"attributes": []map[string]any{{"name": "uid", "source": "user_id", "name_format": "uri"}},
 	}))
 	var sp ServiceProvider
 	dbtest.Decode(t, rec, &sp)
-	if rec.Code != http.StatusCreated || sp.NameIDAttribute != sourcePersistentID ||
+	if rec.Code != http.StatusCreated || sp.NameIDAttribute != sourcePersistentID || !sp.AssignmentRequired ||
 		!reflect.DeepEqual(sp.Attributes, []AttributeMapping{{Name: "uid", Source: sourceUserID, NameFormat: "uri"}}) {
-		t.Fatalf("register = %d %s, want a persistent NameID and the uid attribute", rec.Code, rec.Body.String())
+		t.Fatalf("register = %d %s, want a persistent NameID, the uid attribute, assigned people only", rec.Code, rec.Body.String())
 	}
 	path := base + "/" + sp.ID.String()
 
@@ -304,9 +304,9 @@ func TestSPSettingsAreCheckedAndAudited(t *testing.T) {
 	if rec, _ := patch(map[string]any{"name_id_attribute": "user_id"}); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), errs.CodeSAMLNameIDAttributeInvalid) {
 		t.Errorf("an emailAddress NameID of the user id: %d %s, want 422", rec.Code, rec.Body.String())
 	}
-	rec, out := patch(map[string]any{"attributes": []any{}})
-	if rec.Code != http.StatusOK || len(out.Attributes) != 0 || out.Attributes == nil {
-		t.Errorf("clearing attributes: %d %s", rec.Code, rec.Body.String())
+	rec, out := patch(map[string]any{"attributes": []any{}, "assignment_required": false})
+	if rec.Code != http.StatusOK || len(out.Attributes) != 0 || out.Attributes == nil || out.AssignmentRequired {
+		t.Errorf("clearing attributes and assignment: %d %s", rec.Code, rec.Body.String())
 	}
 
 	var raw []byte
@@ -315,15 +315,17 @@ func TestSPSettingsAreCheckedAndAudited(t *testing.T) {
 		t.Fatal(err)
 	}
 	var meta struct {
-		Changed    []string           `json:"changed"`
-		Attributes []AttributeMapping `json:"attributes"`
+		Changed            []string           `json:"changed"`
+		Attributes         []AttributeMapping `json:"attributes"`
+		AssignmentRequired *bool              `json:"assignment_required"`
 	}
-	if err := json.Unmarshal(raw, &meta); err != nil || !reflect.DeepEqual(meta.Changed, []string{"attributes"}) ||
-		meta.Attributes == nil || len(meta.Attributes) != 0 {
-		t.Errorf("update audited as %s, want the attributes it changed", raw)
+	if err := json.Unmarshal(raw, &meta); err != nil || !reflect.DeepEqual(meta.Changed, []string{"attributes", "assignment_required"}) ||
+		meta.Attributes == nil || len(meta.Attributes) != 0 || meta.AssignmentRequired == nil || *meta.AssignmentRequired {
+		t.Errorf("update audited as %s, want the attributes and assignment it changed", raw)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'saml.sp_created'
-		AND resource_id = $2 AND metadata->>'name_id_format' = $3 AND metadata->'attributes'->0->>'name' = 'uid'`, tenant, sp.ID, nameIDPersistent); n != 1 {
-		t.Errorf("%d registrations audited with their NameID and attribute settings, want 1", n)
+		AND resource_id = $2 AND metadata->>'name_id_format' = $3 AND metadata->'attributes'->0->>'name' = 'uid'
+		AND (metadata->>'assignment_required')::bool`, tenant, sp.ID, nameIDPersistent); n != 1 {
+		t.Errorf("%d registrations audited with their NameID, attribute and assignment settings, want 1", n)
 	}
 }

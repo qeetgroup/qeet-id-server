@@ -861,6 +861,11 @@ func (h *Handler) Mount(r chi.Router) {
 		r.Get("/tenants/{tenantID}/saml-providers/{id}", h.getSP)
 		r.Patch("/tenants/{tenantID}/saml-providers/{id}", h.updateSP)
 		r.Delete("/tenants/{tenantID}/saml-providers/{id}", h.delSP)
+		r.Get("/tenants/{tenantID}/saml-providers/{id}/assignments", h.listSPAssignments)
+		r.Post("/tenants/{tenantID}/saml-providers/{id}/assignments/users/{userID}", h.assignSPUser)
+		r.Delete("/tenants/{tenantID}/saml-providers/{id}/assignments/users/{userID}", h.unassignSPUser)
+		r.Post("/tenants/{tenantID}/saml-providers/{id}/assignments/groups/{groupID}", h.assignSPGroup)
+		r.Delete("/tenants/{tenantID}/saml-providers/{id}/assignments/groups/{groupID}", h.unassignSPGroup)
 	}
 }
 

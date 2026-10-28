@@ -71,6 +71,44 @@ func (q *Queries) DeleteSamlSP(ctx context.Context, arg DeleteSamlSPParams) (int
 	return result.RowsAffected(), nil
 }
 
+const deleteSamlSPGroupAssignment = `-- name: DeleteSamlSPGroupAssignment :execrows
+DELETE FROM tenant.saml_sp_group_assignments
+WHERE tenant_id = $1 AND sp_id = $2 AND group_id = $3
+`
+
+type DeleteSamlSPGroupAssignmentParams struct {
+	TenantID uuid.UUID
+	SpID     uuid.UUID
+	GroupID  uuid.UUID
+}
+
+func (q *Queries) DeleteSamlSPGroupAssignment(ctx context.Context, arg DeleteSamlSPGroupAssignmentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSamlSPGroupAssignment, arg.TenantID, arg.SpID, arg.GroupID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteSamlSPUserAssignment = `-- name: DeleteSamlSPUserAssignment :execrows
+DELETE FROM tenant.saml_sp_user_assignments
+WHERE tenant_id = $1 AND sp_id = $2 AND user_id = $3
+`
+
+type DeleteSamlSPUserAssignmentParams struct {
+	TenantID uuid.UUID
+	SpID     uuid.UUID
+	UserID   uuid.UUID
+}
+
+func (q *Queries) DeleteSamlSPUserAssignment(ctx context.Context, arg DeleteSamlSPUserAssignmentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSamlSPUserAssignment, arg.TenantID, arg.SpID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getExternalIdentityUser = `-- name: GetExternalIdentityUser :one
 
 SELECT user_id FROM "user".external_identities
@@ -261,7 +299,7 @@ func (q *Queries) GetSamlPersistentID(ctx context.Context, arg GetSamlPersistent
 const getSamlSP = `-- name: GetSamlSP :one
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-       attributes
+       attributes, assignment_required
 FROM tenant.saml_service_providers WHERE id = $1 AND tenant_id = $2
 `
 
@@ -287,6 +325,7 @@ func (q *Queries) GetSamlSP(ctx context.Context, arg GetSamlSPParams) (TenantSam
 		&i.UpdatedAt,
 		&i.LastLoginAt,
 		&i.Attributes,
+		&i.AssignmentRequired,
 	)
 	return i, err
 }
@@ -294,7 +333,7 @@ func (q *Queries) GetSamlSP(ctx context.Context, arg GetSamlSPParams) (TenantSam
 const getSamlSPByEntityID = `-- name: GetSamlSPByEntityID :one
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-       attributes
+       attributes, assignment_required
 FROM tenant.saml_service_providers
 WHERE tenant_id = $1 AND entity_id = $2 AND status <> 'disabled'
 `
@@ -321,6 +360,7 @@ func (q *Queries) GetSamlSPByEntityID(ctx context.Context, arg GetSamlSPByEntity
 		&i.UpdatedAt,
 		&i.LastLoginAt,
 		&i.Attributes,
+		&i.AssignmentRequired,
 	)
 	return i, err
 }
@@ -328,7 +368,7 @@ func (q *Queries) GetSamlSPByEntityID(ctx context.Context, arg GetSamlSPByEntity
 const getSamlSPForUpdate = `-- name: GetSamlSPForUpdate :one
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-       attributes
+       attributes, assignment_required
 FROM tenant.saml_service_providers WHERE id = $1 AND tenant_id = $2
 FOR UPDATE
 `
@@ -357,6 +397,7 @@ func (q *Queries) GetSamlSPForUpdate(ctx context.Context, arg GetSamlSPForUpdate
 		&i.UpdatedAt,
 		&i.LastLoginAt,
 		&i.Attributes,
+		&i.AssignmentRequired,
 	)
 	return i, err
 }
@@ -525,23 +566,26 @@ func (q *Queries) InsertSamlPersistentID(ctx context.Context, arg InsertSamlPers
 const insertSamlSP = `-- name: InsertSamlSP :one
 
 INSERT INTO tenant.saml_service_providers
-    (tenant_id, name, entity_id, acs_url, name_id_format, name_id_attribute, certificate, status, attributes)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    (tenant_id, name, entity_id, acs_url, name_id_format, name_id_attribute, certificate, status,
+     attributes, assignment_required)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+        $9, $10)
 RETURNING id, tenant_id, name, entity_id, acs_url, name_id_format,
           name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-          attributes
+          attributes, assignment_required
 `
 
 type InsertSamlSPParams struct {
-	TenantID        uuid.UUID
-	Name            string
-	EntityID        string
-	AcsUrl          string
-	NameIDFormat    string
-	NameIDAttribute string
-	Certificate     string
-	Status          string
-	Attributes      []byte
+	TenantID           uuid.UUID
+	Name               string
+	EntityID           string
+	AcsUrl             string
+	NameIDFormat       string
+	NameIDAttribute    string
+	Certificate        string
+	Status             string
+	Attributes         []byte
+	AssignmentRequired bool
 }
 
 // ==========================================================================
@@ -558,6 +602,7 @@ func (q *Queries) InsertSamlSP(ctx context.Context, arg InsertSamlSPParams) (Ten
 		arg.Certificate,
 		arg.Status,
 		arg.Attributes,
+		arg.AssignmentRequired,
 	)
 	var i TenantSamlServiceProvider
 	err := row.Scan(
@@ -574,8 +619,61 @@ func (q *Queries) InsertSamlSP(ctx context.Context, arg InsertSamlSPParams) (Ten
 		&i.UpdatedAt,
 		&i.LastLoginAt,
 		&i.Attributes,
+		&i.AssignmentRequired,
 	)
 	return i, err
+}
+
+const insertSamlSPGroupAssignment = `-- name: InsertSamlSPGroupAssignment :execrows
+INSERT INTO tenant.saml_sp_group_assignments (tenant_id, sp_id, group_id, assigned_by)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT DO NOTHING
+`
+
+type InsertSamlSPGroupAssignmentParams struct {
+	TenantID   uuid.UUID
+	SpID       uuid.UUID
+	GroupID    uuid.UUID
+	AssignedBy pgtype.UUID
+}
+
+func (q *Queries) InsertSamlSPGroupAssignment(ctx context.Context, arg InsertSamlSPGroupAssignmentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertSamlSPGroupAssignment,
+		arg.TenantID,
+		arg.SpID,
+		arg.GroupID,
+		arg.AssignedBy,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const insertSamlSPUserAssignment = `-- name: InsertSamlSPUserAssignment :execrows
+INSERT INTO tenant.saml_sp_user_assignments (tenant_id, sp_id, user_id, assigned_by)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT DO NOTHING
+`
+
+type InsertSamlSPUserAssignmentParams struct {
+	TenantID   uuid.UUID
+	SpID       uuid.UUID
+	UserID     uuid.UUID
+	AssignedBy pgtype.UUID
+}
+
+func (q *Queries) InsertSamlSPUserAssignment(ctx context.Context, arg InsertSamlSPUserAssignmentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertSamlSPUserAssignment,
+		arg.TenantID,
+		arg.SpID,
+		arg.UserID,
+		arg.AssignedBy,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const insertUserWithEmail = `-- name: InsertUserWithEmail :one
@@ -595,6 +693,74 @@ func (q *Queries) InsertUserWithEmail(ctx context.Context, arg InsertUserWithEma
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const isAssignedToSamlSP = `-- name: IsAssignedToSamlSP :one
+
+SELECT (EXISTS (
+    SELECT 1 FROM tenant.saml_sp_user_assignments ua
+    WHERE ua.tenant_id = $1 AND ua.sp_id = $2 AND ua.user_id = $3
+) OR EXISTS (
+    SELECT 1 FROM tenant.saml_sp_group_assignments ga
+    JOIN tenant.group_members gm ON gm.group_id = ga.group_id AND gm.tenant_id = ga.tenant_id
+    WHERE ga.tenant_id = $1 AND ga.sp_id = $2 AND gm.user_id = $3
+))::bool AS assigned
+`
+
+type IsAssignedToSamlSPParams struct {
+	TenantID uuid.UUID
+	SpID     uuid.UUID
+	UserID   uuid.UUID
+}
+
+// ==========================================================================
+// IdP-side: who may sign in to a service provider (idp_assignment.go)
+// ==========================================================================
+// IsAssignedToSamlSP reports whether a person is assigned to the service
+// provider, themselves or through a group they belong to.
+func (q *Queries) IsAssignedToSamlSP(ctx context.Context, arg IsAssignedToSamlSPParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isAssignedToSamlSP, arg.TenantID, arg.SpID, arg.UserID)
+	var assigned bool
+	err := row.Scan(&assigned)
+	return assigned, err
+}
+
+const isSamlAssignableGroup = `-- name: IsSamlAssignableGroup :one
+SELECT EXISTS (
+    SELECT 1 FROM tenant.groups WHERE id = $1 AND tenant_id = $2
+)::bool
+`
+
+type IsSamlAssignableGroupParams struct {
+	GroupID  uuid.UUID
+	TenantID uuid.UUID
+}
+
+func (q *Queries) IsSamlAssignableGroup(ctx context.Context, arg IsSamlAssignableGroupParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isSamlAssignableGroup, arg.GroupID, arg.TenantID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const isSamlAssignableUser = `-- name: IsSamlAssignableUser :one
+SELECT EXISTS (
+    SELECT 1 FROM "user".users WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+)::bool
+`
+
+type IsSamlAssignableUserParams struct {
+	UserID   uuid.UUID
+	TenantID pgtype.UUID
+}
+
+// IsSamlAssignableUser reports whether the organisation is the account's home,
+// the only people its service providers sign in.
+func (q *Queries) IsSamlAssignableUser(ctx context.Context, arg IsSamlAssignableUserParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isSamlAssignableUser, arg.UserID, arg.TenantID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const isTenantActive = `-- name: IsTenantActive :one
@@ -794,10 +960,102 @@ func (q *Queries) ListSamlGroupsAttributes(ctx context.Context, tenantID uuid.UU
 	return items, nil
 }
 
+const listSamlSPGroupAssignments = `-- name: ListSamlSPGroupAssignments :many
+SELECT a.group_id, g.name, a.assigned_at, a.assigned_by
+FROM tenant.saml_sp_group_assignments a
+JOIN tenant.groups g ON g.id = a.group_id AND g.tenant_id = a.tenant_id
+WHERE a.tenant_id = $1 AND a.sp_id = $2
+ORDER BY a.assigned_at, a.group_id
+`
+
+type ListSamlSPGroupAssignmentsParams struct {
+	TenantID uuid.UUID
+	SpID     uuid.UUID
+}
+
+type ListSamlSPGroupAssignmentsRow struct {
+	GroupID    uuid.UUID
+	Name       string
+	AssignedAt time.Time
+	AssignedBy pgtype.UUID
+}
+
+func (q *Queries) ListSamlSPGroupAssignments(ctx context.Context, arg ListSamlSPGroupAssignmentsParams) ([]ListSamlSPGroupAssignmentsRow, error) {
+	rows, err := q.db.Query(ctx, listSamlSPGroupAssignments, arg.TenantID, arg.SpID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSamlSPGroupAssignmentsRow{}
+	for rows.Next() {
+		var i ListSamlSPGroupAssignmentsRow
+		if err := rows.Scan(
+			&i.GroupID,
+			&i.Name,
+			&i.AssignedAt,
+			&i.AssignedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSamlSPUserAssignments = `-- name: ListSamlSPUserAssignments :many
+SELECT a.user_id, u.email, u.display_name, a.assigned_at, a.assigned_by
+FROM tenant.saml_sp_user_assignments a
+JOIN "user".users u ON u.id = a.user_id
+WHERE a.tenant_id = $1 AND a.sp_id = $2
+ORDER BY a.assigned_at, a.user_id
+`
+
+type ListSamlSPUserAssignmentsParams struct {
+	TenantID uuid.UUID
+	SpID     uuid.UUID
+}
+
+type ListSamlSPUserAssignmentsRow struct {
+	UserID      uuid.UUID
+	Email       string
+	DisplayName *string
+	AssignedAt  time.Time
+	AssignedBy  pgtype.UUID
+}
+
+func (q *Queries) ListSamlSPUserAssignments(ctx context.Context, arg ListSamlSPUserAssignmentsParams) ([]ListSamlSPUserAssignmentsRow, error) {
+	rows, err := q.db.Query(ctx, listSamlSPUserAssignments, arg.TenantID, arg.SpID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSamlSPUserAssignmentsRow{}
+	for rows.Next() {
+		var i ListSamlSPUserAssignmentsRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.Email,
+			&i.DisplayName,
+			&i.AssignedAt,
+			&i.AssignedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSamlSPs = `-- name: ListSamlSPs :many
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-       attributes
+       attributes, assignment_required
 FROM tenant.saml_service_providers WHERE tenant_id = $1 ORDER BY created_at DESC
 `
 
@@ -824,6 +1082,7 @@ func (q *Queries) ListSamlSPs(ctx context.Context, tenantID uuid.UUID) ([]Tenant
 			&i.UpdatedAt,
 			&i.LastLoginAt,
 			&i.Attributes,
+			&i.AssignmentRequired,
 		); err != nil {
 			return nil, err
 		}
@@ -960,24 +1219,26 @@ UPDATE tenant.saml_service_providers SET
     certificate         = COALESCE($6, certificate),
     status              = COALESCE($7, status),
     attributes          = COALESCE($8, attributes),
+    assignment_required = COALESCE($9, assignment_required),
     updated_at          = NOW()
-WHERE id = $9 AND tenant_id = $10
+WHERE id = $10 AND tenant_id = $11
 RETURNING id, tenant_id, name, entity_id, acs_url, name_id_format,
           name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-          attributes
+          attributes, assignment_required
 `
 
 type UpdateSamlSPParams struct {
-	Name            *string
-	EntityID        *string
-	AcsUrl          *string
-	NameIDFormat    *string
-	NameIDAttribute *string
-	Certificate     *string
-	Status          *string
-	Attributes      []byte
-	ID              uuid.UUID
-	TenantID        uuid.UUID
+	Name               *string
+	EntityID           *string
+	AcsUrl             *string
+	NameIDFormat       *string
+	NameIDAttribute    *string
+	Certificate        *string
+	Status             *string
+	Attributes         []byte
+	AssignmentRequired *bool
+	ID                 uuid.UUID
+	TenantID           uuid.UUID
 }
 
 func (q *Queries) UpdateSamlSP(ctx context.Context, arg UpdateSamlSPParams) (TenantSamlServiceProvider, error) {
@@ -990,6 +1251,7 @@ func (q *Queries) UpdateSamlSP(ctx context.Context, arg UpdateSamlSPParams) (Ten
 		arg.Certificate,
 		arg.Status,
 		arg.Attributes,
+		arg.AssignmentRequired,
 		arg.ID,
 		arg.TenantID,
 	)
@@ -1008,6 +1270,7 @@ func (q *Queries) UpdateSamlSP(ctx context.Context, arg UpdateSamlSPParams) (Ten
 		&i.UpdatedAt,
 		&i.LastLoginAt,
 		&i.Attributes,
+		&i.AssignmentRequired,
 	)
 	return i, err
 }

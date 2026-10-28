@@ -13,5 +13,7 @@ func init() {
 		errs.CodeSAMLNameIDAttributeInvalid: http.StatusUnprocessableEntity,
 		errs.CodeSAMLAttributesInvalid:      http.StatusUnprocessableEntity,
 		errs.CodeSAMLNameIDUnavailable:      http.StatusForbidden,
+		errs.CodeSAMLSPNotAssigned:          http.StatusForbidden,
+		errs.CodeSAMLAssigneeNotFound:       http.StatusNotFound,
 	})
 }

@@ -149,21 +149,23 @@ func GenerateIdPKeyPEM(commonName string) (keyPEM, certPEM string, err error) {
 // =====================================================================
 
 // ServiceProvider is a downstream app that consumes Qeet ID as its IdP.
-// Attributes are what its assertions carry beside the NameID.
+// Attributes are what its assertions carry beside the NameID, and with
+// AssignmentRequired only the people assigned to it may sign in.
 type ServiceProvider struct {
-	ID              uuid.UUID          `json:"id"`
-	TenantID        uuid.UUID          `json:"tenant_id"`
-	Name            string             `json:"name"`
-	EntityID        string             `json:"entity_id"`
-	ACSURL          string             `json:"acs_url"`
-	NameIDFormat    string             `json:"name_id_format"`
-	NameIDAttribute string             `json:"name_id_attribute"`
-	Certificate     string             `json:"certificate"`
-	Status          string             `json:"status"`
-	Attributes      []AttributeMapping `json:"attributes"`
-	CreatedAt       time.Time          `json:"created_at"`
-	UpdatedAt       time.Time          `json:"updated_at"`
-	LastLoginAt     *time.Time         `json:"last_login_at"`
+	ID                 uuid.UUID          `json:"id"`
+	TenantID           uuid.UUID          `json:"tenant_id"`
+	Name               string             `json:"name"`
+	EntityID           string             `json:"entity_id"`
+	ACSURL             string             `json:"acs_url"`
+	NameIDFormat       string             `json:"name_id_format"`
+	NameIDAttribute    string             `json:"name_id_attribute"`
+	Certificate        string             `json:"certificate"`
+	Status             string             `json:"status"`
+	Attributes         []AttributeMapping `json:"attributes"`
+	AssignmentRequired bool               `json:"assignment_required"`
+	CreatedAt          time.Time          `json:"created_at"`
+	UpdatedAt          time.Time          `json:"updated_at"`
+	LastLoginAt        *time.Time         `json:"last_login_at"`
 }
 
 // SessionResolver resolves the hosted-login SSO cookie to a user id. Satisfied
@@ -219,33 +221,35 @@ func toSP(r dbgen.TenantSamlServiceProvider) *ServiceProvider {
 		lastLogin = &v
 	}
 	return &ServiceProvider{
-		ID:              r.ID,
-		TenantID:        r.TenantID,
-		Name:            r.Name,
-		EntityID:        r.EntityID,
-		ACSURL:          r.AcsUrl,
-		NameIDFormat:    r.NameIDFormat,
-		NameIDAttribute: r.NameIDAttribute,
-		Certificate:     r.Certificate,
-		Status:          r.Status,
-		Attributes:      decodeAttributes(r.Attributes),
-		CreatedAt:       r.CreatedAt,
-		UpdatedAt:       r.UpdatedAt,
-		LastLoginAt:     lastLogin,
+		ID:                 r.ID,
+		TenantID:           r.TenantID,
+		Name:               r.Name,
+		EntityID:           r.EntityID,
+		ACSURL:             r.AcsUrl,
+		NameIDFormat:       r.NameIDFormat,
+		NameIDAttribute:    r.NameIDAttribute,
+		Certificate:        r.Certificate,
+		Status:             r.Status,
+		Attributes:         decodeAttributes(r.Attributes),
+		AssignmentRequired: r.AssignmentRequired,
+		CreatedAt:          r.CreatedAt,
+		UpdatedAt:          r.UpdatedAt,
+		LastLoginAt:        lastLogin,
 	}
 }
 
 // CreateSPInput is what CreateSP takes. Attributes nil sends the default
 // attributes; an empty list sends none.
 type CreateSPInput struct {
-	Name            string              `json:"name"`
-	EntityID        string              `json:"entity_id"`
-	ACSURL          string              `json:"acs_url"`
-	NameIDFormat    string              `json:"name_id_format"`
-	NameIDAttribute string              `json:"name_id_attribute"`
-	Certificate     string              `json:"certificate"`
-	Status          string              `json:"status"`
-	Attributes      *[]AttributeMapping `json:"attributes"`
+	Name               string              `json:"name"`
+	EntityID           string              `json:"entity_id"`
+	ACSURL             string              `json:"acs_url"`
+	NameIDFormat       string              `json:"name_id_format"`
+	NameIDAttribute    string              `json:"name_id_attribute"`
+	Certificate        string              `json:"certificate"`
+	Status             string              `json:"status"`
+	Attributes         *[]AttributeMapping `json:"attributes"`
+	AssignmentRequired bool                `json:"assignment_required"`
 }
 
 // check requires the ACS URL to pass validACSURL, a certificate, if given, to
@@ -323,15 +327,16 @@ func (i *IdP) CreateSP(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in Cr
 		return nil, err
 	}
 	r, err := i.q.WithTx(tx).InsertSamlSP(ctx, dbgen.InsertSamlSPParams{
-		TenantID:        tenantID,
-		Name:            in.Name,
-		EntityID:        in.EntityID,
-		AcsUrl:          in.ACSURL,
-		NameIDFormat:    in.NameIDFormat,
-		NameIDAttribute: in.NameIDAttribute,
-		Certificate:     in.Certificate,
-		Status:          status,
-		Attributes:      attributes,
+		TenantID:           tenantID,
+		Name:               in.Name,
+		EntityID:           in.EntityID,
+		AcsUrl:             in.ACSURL,
+		NameIDFormat:       in.NameIDFormat,
+		NameIDAttribute:    in.NameIDAttribute,
+		Certificate:        in.Certificate,
+		Status:             status,
+		Attributes:         attributes,
+		AssignmentRequired: in.AssignmentRequired,
 	})
 	if pgxerr.IsUnique(err) {
 		return nil, errs.ErrSAMLSPEntityIDTaken
@@ -369,14 +374,15 @@ func (i *IdP) GetSP(ctx context.Context, id, tenantID uuid.UUID) (*ServiceProvid
 
 // UpdateSPInput is what UpdateSP takes. Attributes replaces the whole list.
 type UpdateSPInput struct {
-	Name            *string             `json:"name"`
-	EntityID        *string             `json:"entity_id"`
-	ACSURL          *string             `json:"acs_url"`
-	NameIDFormat    *string             `json:"name_id_format"`
-	NameIDAttribute *string             `json:"name_id_attribute"`
-	Certificate     *string             `json:"certificate"`
-	Status          *string             `json:"status"`
-	Attributes      *[]AttributeMapping `json:"attributes"`
+	Name               *string             `json:"name"`
+	EntityID           *string             `json:"entity_id"`
+	ACSURL             *string             `json:"acs_url"`
+	NameIDFormat       *string             `json:"name_id_format"`
+	NameIDAttribute    *string             `json:"name_id_attribute"`
+	Certificate        *string             `json:"certificate"`
+	Status             *string             `json:"status"`
+	Attributes         *[]AttributeMapping `json:"attributes"`
+	AssignmentRequired *bool               `json:"assignment_required"`
 }
 
 // check applies CreateSPInput's checks to the fields being changed; UpdateSP
@@ -443,16 +449,17 @@ func (i *IdP) UpdateSP(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, i
 		}
 	}
 	r, err := q.UpdateSamlSP(ctx, dbgen.UpdateSamlSPParams{
-		ID:              id,
-		TenantID:        tenantID,
-		Name:            in.Name,
-		EntityID:        in.EntityID,
-		AcsUrl:          in.ACSURL,
-		NameIDFormat:    in.NameIDFormat,
-		NameIDAttribute: in.NameIDAttribute,
-		Certificate:     in.Certificate,
-		Status:          in.Status,
-		Attributes:      attributes,
+		ID:                 id,
+		TenantID:           tenantID,
+		Name:               in.Name,
+		EntityID:           in.EntityID,
+		AcsUrl:             in.ACSURL,
+		NameIDFormat:       in.NameIDFormat,
+		NameIDAttribute:    in.NameIDAttribute,
+		Certificate:        in.Certificate,
+		Status:             in.Status,
+		Attributes:         attributes,
+		AssignmentRequired: in.AssignmentRequired,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
@@ -941,7 +948,8 @@ func (h *Handler) idpMetadata(w http.ResponseWriter, r *http.Request) {
 // idpSSO is the tenant's SingleSignOnService. It handles SP-initiated SSO (a
 // SAMLRequest via HTTP-Redirect GET or HTTP-POST) and IdP-initiated SSO
 // (?sp=<id|entityID>), for SPs of the path's tenant only. Without a hosted-login
-// SSO cookie, the browser is bounced to the hosted login and returns here.
+// SSO cookie, the browser is bounced to the hosted login and returns here. An
+// SP set to assigned people only refuses, and audits refusing, anyone else.
 func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 	if h.IdP == nil {
 		writeSSOError(w, r, errs.ErrSAMLIdPNotConfigured)
@@ -1026,6 +1034,18 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 		writeSSOError(w, r, errs.ErrSAMLUserTenantMismatch)
 		return
 	}
+	if sp.AssignmentRequired {
+		assigned, err := h.IdP.assigned(ctx, sp, userID)
+		if err != nil {
+			slog.Error("saml idp sso: assignment lookup", "err", err, "sp", sp.ID)
+			writeSSOError(w, r, errs.ErrInternalServer)
+			return
+		}
+		if !assigned {
+			h.refuse(w, r, sp, userID, errs.ErrSAMLSPNotAssigned, "not_assigned")
+			return
+		}
+	}
 	subj, err := h.IdP.subjectFor(ctx, sp, who)
 	if errors.Is(err, errs.ErrSAMLNameIDUnavailable) {
 		h.refuse(w, r, sp, userID, err, "name_id_unavailable")
@@ -1108,7 +1128,7 @@ func (h *Handler) createSP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.recordSPAudit(ctx, tx, r, tenantID, sp.ID, "saml.sp_created", map[string]any{
 		"name": sp.Name, "entity_id": sp.EntityID, "name_id_format": sp.NameIDFormat, "name_id_attribute": sp.NameIDAttribute,
-		"attributes": sp.Attributes,
+		"attributes": sp.Attributes, "assignment_required": sp.AssignmentRequired,
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1221,7 +1241,7 @@ func (h *Handler) delSP(w http.ResponseWriter, r *http.Request) {
 
 // spUpdateAudit is what the audit records of a change to a service provider:
 // the fields it named, and the new values of those deciding where assertions
-// go and what they say.
+// go, who gets them and what they say.
 func spUpdateAudit(in UpdateSPInput, sp *ServiceProvider) map[string]any {
 	meta := map[string]any{"status": sp.Status}
 	changed := []string{}
@@ -1238,6 +1258,7 @@ func spUpdateAudit(in UpdateSPInput, sp *ServiceProvider) map[string]any {
 		{"certificate", in.Certificate != nil, nil},
 		{"status", in.Status != nil, nil},
 		{"attributes", in.Attributes != nil, sp.Attributes},
+		{"assignment_required", in.AssignmentRequired != nil, sp.AssignmentRequired},
 	} {
 		if !f.set {
 			continue

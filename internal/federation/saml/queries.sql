@@ -104,22 +104,24 @@ ON CONFLICT (tenant_id, provider, connection_id, subject) DO NOTHING;
 
 -- name: InsertSamlSP :one
 INSERT INTO tenant.saml_service_providers
-    (tenant_id, name, entity_id, acs_url, name_id_format, name_id_attribute, certificate, status, attributes)
-VALUES (@tenant_id, @name, @entity_id, @acs_url, @name_id_format, @name_id_attribute, @certificate, @status, @attributes)
+    (tenant_id, name, entity_id, acs_url, name_id_format, name_id_attribute, certificate, status,
+     attributes, assignment_required)
+VALUES (@tenant_id, @name, @entity_id, @acs_url, @name_id_format, @name_id_attribute, @certificate, @status,
+        @attributes, @assignment_required)
 RETURNING id, tenant_id, name, entity_id, acs_url, name_id_format,
           name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-          attributes;
+          attributes, assignment_required;
 
 -- name: ListSamlSPs :many
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-       attributes
+       attributes, assignment_required
 FROM tenant.saml_service_providers WHERE tenant_id = @tenant_id ORDER BY created_at DESC;
 
 -- name: GetSamlSP :one
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-       attributes
+       attributes, assignment_required
 FROM tenant.saml_service_providers WHERE id = @id AND tenant_id = @tenant_id;
 
 -- GetSamlSPForUpdate reads a service provider and holds it until the
@@ -127,14 +129,14 @@ FROM tenant.saml_service_providers WHERE id = @id AND tenant_id = @tenant_id;
 -- name: GetSamlSPForUpdate :one
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-       attributes
+       attributes, assignment_required
 FROM tenant.saml_service_providers WHERE id = @id AND tenant_id = @tenant_id
 FOR UPDATE;
 
 -- name: GetSamlSPByEntityID :one
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-       attributes
+       attributes, assignment_required
 FROM tenant.saml_service_providers
 WHERE tenant_id = @tenant_id AND entity_id = @entity_id AND status <> 'disabled';
 
@@ -153,11 +155,12 @@ UPDATE tenant.saml_service_providers SET
     certificate         = COALESCE(sqlc.narg('certificate'), certificate),
     status              = COALESCE(sqlc.narg('status'), status),
     attributes          = COALESCE(sqlc.narg('attributes'), attributes),
+    assignment_required = COALESCE(sqlc.narg('assignment_required'), assignment_required),
     updated_at          = NOW()
 WHERE id = @id AND tenant_id = @tenant_id
 RETURNING id, tenant_id, name, entity_id, acs_url, name_id_format,
           name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-          attributes;
+          attributes, assignment_required;
 
 -- name: DeleteSamlSP :execrows
 DELETE FROM tenant.saml_service_providers WHERE id = @id AND tenant_id = @tenant_id;
@@ -217,3 +220,63 @@ INSERT INTO tenant.saml_idp_persistent_ids (tenant_id, sp_id, user_id, name_id)
 VALUES (@tenant_id, @sp_id, @user_id, @name_id)
 ON CONFLICT (tenant_id, sp_id, user_id) DO UPDATE SET name_id = saml_idp_persistent_ids.name_id
 RETURNING name_id;
+
+-- ==========================================================================
+-- IdP-side: who may sign in to a service provider (idp_assignment.go)
+-- ==========================================================================
+
+-- IsAssignedToSamlSP reports whether a person is assigned to the service
+-- provider, themselves or through a group they belong to.
+-- name: IsAssignedToSamlSP :one
+SELECT (EXISTS (
+    SELECT 1 FROM tenant.saml_sp_user_assignments ua
+    WHERE ua.tenant_id = @tenant_id AND ua.sp_id = @sp_id AND ua.user_id = @user_id
+) OR EXISTS (
+    SELECT 1 FROM tenant.saml_sp_group_assignments ga
+    JOIN tenant.group_members gm ON gm.group_id = ga.group_id AND gm.tenant_id = ga.tenant_id
+    WHERE ga.tenant_id = @tenant_id AND ga.sp_id = @sp_id AND gm.user_id = @user_id
+))::bool AS assigned;
+
+-- IsSamlAssignableUser reports whether the organisation is the account's home,
+-- the only people its service providers sign in.
+-- name: IsSamlAssignableUser :one
+SELECT EXISTS (
+    SELECT 1 FROM "user".users WHERE id = @user_id AND tenant_id = @tenant_id AND deleted_at IS NULL
+)::bool;
+
+-- name: IsSamlAssignableGroup :one
+SELECT EXISTS (
+    SELECT 1 FROM tenant.groups WHERE id = @group_id AND tenant_id = @tenant_id
+)::bool;
+
+-- name: ListSamlSPUserAssignments :many
+SELECT a.user_id, u.email, u.display_name, a.assigned_at, a.assigned_by
+FROM tenant.saml_sp_user_assignments a
+JOIN "user".users u ON u.id = a.user_id
+WHERE a.tenant_id = @tenant_id AND a.sp_id = @sp_id
+ORDER BY a.assigned_at, a.user_id;
+
+-- name: ListSamlSPGroupAssignments :many
+SELECT a.group_id, g.name, a.assigned_at, a.assigned_by
+FROM tenant.saml_sp_group_assignments a
+JOIN tenant.groups g ON g.id = a.group_id AND g.tenant_id = a.tenant_id
+WHERE a.tenant_id = @tenant_id AND a.sp_id = @sp_id
+ORDER BY a.assigned_at, a.group_id;
+
+-- name: InsertSamlSPUserAssignment :execrows
+INSERT INTO tenant.saml_sp_user_assignments (tenant_id, sp_id, user_id, assigned_by)
+VALUES (@tenant_id, @sp_id, @user_id, sqlc.narg('assigned_by'))
+ON CONFLICT DO NOTHING;
+
+-- name: DeleteSamlSPUserAssignment :execrows
+DELETE FROM tenant.saml_sp_user_assignments
+WHERE tenant_id = @tenant_id AND sp_id = @sp_id AND user_id = @user_id;
+
+-- name: InsertSamlSPGroupAssignment :execrows
+INSERT INTO tenant.saml_sp_group_assignments (tenant_id, sp_id, group_id, assigned_by)
+VALUES (@tenant_id, @sp_id, @group_id, sqlc.narg('assigned_by'))
+ON CONFLICT DO NOTHING;
+
+-- name: DeleteSamlSPGroupAssignment :execrows
+DELETE FROM tenant.saml_sp_group_assignments
+WHERE tenant_id = @tenant_id AND sp_id = @sp_id AND group_id = @group_id;

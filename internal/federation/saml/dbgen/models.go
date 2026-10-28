@@ -12,17 +12,18 @@ import (
 )
 
 type TenantSamlServiceProvider struct {
-	ID              uuid.UUID
-	TenantID        uuid.UUID
-	Name            string
-	EntityID        string
-	AcsUrl          string
-	NameIDFormat    string
-	NameIDAttribute string
-	Certificate     string
-	Status          string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	LastLoginAt     pgtype.Timestamptz
-	Attributes      []byte
+	ID                 uuid.UUID
+	TenantID           uuid.UUID
+	Name               string
+	EntityID           string
+	AcsUrl             string
+	NameIDFormat       string
+	NameIDAttribute    string
+	Certificate        string
+	Status             string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	LastLoginAt        pgtype.Timestamptz
+	Attributes         []byte
+	AssignmentRequired bool
 }
