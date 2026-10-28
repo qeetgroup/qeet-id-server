@@ -49,6 +49,7 @@ type fakeAttributes struct {
 	lastSubject map[string]any
 	lastContext map[string]any
 	lastRequest abac.Request
+	lastInput   abac.EvaluationInput
 }
 
 func (f *fakeAttributes) Presence(context.Context, uuid.UUID) (bool, bool, error) {
@@ -71,7 +72,7 @@ func (f *fakeAttributes) PlatformAttributes(_ context.Context, r abac.Request) (
 
 func (f *fakeAttributes) Evaluate(_ context.Context, _ uuid.UUID, in abac.EvaluationInput) (*abac.Decision, error) {
 	f.evals++
-	f.lastSubject, f.lastContext = in.Subject, in.Context
+	f.lastSubject, f.lastContext, f.lastInput = in.Subject, in.Context, in
 	if f.evalErr != nil {
 		return nil, f.evalErr
 	}
@@ -298,6 +299,36 @@ func TestRouteGuardSeesTheCall(t *testing.T) {
 	d := New(&fakeRoles{grants: map[string]bool{"user.read": true}}, &fakeRelations{}, attrs)
 	if ok, err := d.Check(callCtx(t, own, "203.0.113.7"), uma, tenant, "user.read"); ok || err == nil || attrs.evals != 0 {
 		t.Errorf("attributes unreadable: allowed %v, %v after %d evaluations; want refused with the error", ok, err, attrs.evals)
+	}
+}
+
+// TestPropertiesReachABAC checks that a caller's properties reach ABAC as the
+// subject, resource, action and context attributes of both questions, and
+// that what the platform knows of the user wins over a property of its name.
+func TestPropertiesReachABAC(t *testing.T) {
+	props := Properties{
+		Subject:  map[string]any{"id": "someone-else", "tenant_id": "elsewhere", "department": "sales"},
+		Resource: map[string]any{"classification": "secret"},
+		Action:   map[string]any{"channel": "api"},
+		Context:  map[string]any{"ip": "198.51.100.4", "mfa": true},
+	}
+	attrs := &fakeAttributes{deny: map[string]bool{"doc/write": true}}
+	d := New(&fakeRoles{}, &fakeRelations{}, attrs)
+	for name, ask := range map[string]func(){
+		"a permission check":   func() { _, _ = d.PermissionWith(ctx, tenant, uma, "doc:write", props) },
+		"a relationship check": func() { _, _ = d.RelationWith(ctx, tenant, uma.String(), "doc:42", "write", props) },
+	} {
+		ask()
+		in := attrs.lastInput
+		if in.Subject["id"] != uma.String() || in.Subject["tenant_id"] != tenant.String() || in.Subject["department"] != "sales" {
+			t.Errorf("%s: subject %v, want the user as the platform knows them, with the department", name, in.Subject)
+		}
+		if in.Resource.Attrs["classification"] != "secret" || in.ActionAttrs["channel"] != "api" {
+			t.Errorf("%s: resource %+v, action %v; want the properties", name, in.Resource, in.ActionAttrs)
+		}
+		if in.Context["ip"] != "198.51.100.4" || in.Context["mfa"] != true {
+			t.Errorf("%s: context %v, want the caller's", name, in.Context)
+		}
 	}
 }
 

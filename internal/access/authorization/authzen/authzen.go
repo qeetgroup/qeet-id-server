@@ -18,26 +18,33 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// Subject is the AuthZEN subject of an evaluation request.
+// Subject is the AuthZEN subject of an evaluation request. Properties are its
+// attributes for ABAC policies (subject.*), beside what the platform knows of
+// the user, which wins where both name one.
 type Subject struct {
-	Type string `json:"type"`
-	ID   string `json:"id"`
+	Type       string         `json:"type"`
+	ID         string         `json:"id"`
+	Properties map[string]any `json:"properties,omitempty"`
 }
 
-// Resource is the AuthZEN resource of an evaluation request.
+// Resource is the AuthZEN resource of an evaluation request. Properties are
+// its attributes for ABAC policies (resource.*); type and id win over them.
 type Resource struct {
-	Type string `json:"type"`
-	ID   string `json:"id"`
+	Type       string         `json:"type"`
+	ID         string         `json:"id"`
+	Properties map[string]any `json:"properties,omitempty"`
 }
 
-// Action is the AuthZEN action of an evaluation request.
+// Action is the AuthZEN action of an evaluation request. Properties are its
+// attributes for ABAC policies (action.*); name wins over them.
 type Action struct {
-	Name string `json:"name"`
+	Name       string         `json:"name"`
+	Properties map[string]any `json:"properties,omitempty"`
 }
 
-// EvaluationRequest is the AuthZEN §5 evaluation request. Of Context only
-// {"explain": true} is read: it adds the grant path and the decision's trace
-// to the response's context.
+// EvaluationRequest is the AuthZEN §5 evaluation request. Context is the
+// request's context for ABAC policies (context.*), but for "explain": true,
+// which adds the grant path and the decision's trace to the response's context.
 type EvaluationRequest struct {
 	Subject  Subject        `json:"subject"`
 	Resource Resource       `json:"resource"`
@@ -92,6 +99,15 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, req Evaluati
 		return nil, errs.ErrAuthZENActionNameRequired
 	}
 	explain, _ := req.Context["explain"].(bool)
+	props := decide.Properties{Subject: req.Subject.Properties, Resource: req.Resource.Properties, Action: req.Action.Properties}
+	if len(req.Context) > 0 {
+		props.Context = make(map[string]any, len(req.Context))
+		for k, v := range req.Context {
+			if k != "explain" {
+				props.Context[k] = v
+			}
+		}
+	}
 
 	var (
 		dec  decide.Decision
@@ -103,7 +119,7 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, req Evaluati
 		if perr != nil {
 			return nil, errs.ErrAuthZENSubjectIDInvalid
 		}
-		if dec, err = s.decider.Permission(ctx, tenantID, userID, req.Action.Name); err != nil {
+		if dec, err = s.decider.PermissionWith(ctx, tenantID, userID, req.Action.Name, props); err != nil {
 			return nil, err
 		}
 		if explain {
@@ -118,7 +134,7 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, req Evaluati
 			return nil, errs.ErrAuthZENResourceRequired
 		}
 		object := req.Resource.Type + ":" + req.Resource.ID
-		if dec, err = s.decider.Relation(ctx, tenantID, req.Subject.ID, object, req.Action.Name); err != nil {
+		if dec, err = s.decider.RelationWith(ctx, tenantID, req.Subject.ID, object, req.Action.Name, props); err != nil {
 			return nil, err
 		}
 		if explain {

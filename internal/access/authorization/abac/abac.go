@@ -91,7 +91,10 @@ type EvaluationInput struct {
 	Subject  map[string]any     `json:"subject"`
 	Resource EvaluationResource `json:"resource"`
 	Action   string             `json:"action"`
-	Context  map[string]any     `json:"context"`
+	// ActionAttrs are the action's attributes beside its name, the action
+	// namespace (action.name is Action).
+	ActionAttrs map[string]any `json:"action_attrs,omitempty"`
+	Context     map[string]any `json:"context"`
 }
 
 // Decision is the result of an Evaluate call. ReasonCode is one of the
@@ -385,7 +388,7 @@ func (t truth) applies(effect string) bool {
 }
 
 // refNamespaces are the namespaces an attribute reference may name.
-var refNamespaces = map[string]bool{"subject": true, "resource": true, "context": true}
+var refNamespaces = map[string]bool{"subject": true, "resource": true, "action": true, "context": true}
 
 // refOps are the operators whose value may reference another attribute. Not
 // regex, so a pattern never comes from request data, nor prefix and suffix,
@@ -414,7 +417,7 @@ func leafReference(m map[string]json.RawMessage, attr, op string) (string, error
 	}
 	ns, path, _ := strings.Cut(ref, ".")
 	if !refNamespaces[ns] || path == "" || slices.Contains(strings.Split(path, "."), "") {
-		return "", fmt.Errorf("leaf 'value' references %q, which is not a subject., resource. or context. attribute", ref)
+		return "", fmt.Errorf("leaf 'value' references %q, which is not a subject., resource., action. or context. attribute", ref)
 	}
 	if ref == attr {
 		return "", errors.New("leaf 'value' references the leaf's own attribute")
@@ -1094,15 +1097,12 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in Evaluatio
 }
 
 // attributeBag builds the bag policies see for in, with the resource's type,
-// id and attrs merged into one namespace.
+// id and attrs merged into one namespace, and the action's name and attrs into
+// another. The type, id and name the request decides on win over an attribute
+// of the same name, so a condition never sees a resource the policies weren't
+// chosen for.
 func attributeBag(in EvaluationInput) AttributeBag {
-	resourceAttrs := map[string]any{
-		"type": in.Resource.Type,
-		"id":   in.Resource.ID,
-	}
-	for k, v := range in.Resource.Attrs {
-		resourceAttrs[k] = v
-	}
+	resourceAttrs := withAttrs(in.Resource.Attrs, map[string]any{"type": in.Resource.Type, "id": in.Resource.ID})
 	subject := in.Subject
 	if subject == nil {
 		subject = map[string]any{}
@@ -1114,8 +1114,21 @@ func attributeBag(in EvaluationInput) AttributeBag {
 	return AttributeBag{
 		"subject":  subject,
 		"resource": resourceAttrs,
+		"action":   withAttrs(in.ActionAttrs, map[string]any{"name": in.Action}),
 		"context":  ctxAttrs,
 	}
+}
+
+// withAttrs is attrs with over set on top: over wins where both name a key.
+func withAttrs(attrs, over map[string]any) map[string]any {
+	out := make(map[string]any, len(attrs)+len(over))
+	for k, v := range attrs {
+		out[k] = v
+	}
+	for k, v := range over {
+		out[k] = v
+	}
+	return out
 }
 
 // combine decides policies, in order, against bag deny-wins: a policy that

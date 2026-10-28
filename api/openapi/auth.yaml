@@ -4000,7 +4000,7 @@ paths:
     post:
       operationId: post_v1_tenants_ByTenantID_access_v1_evaluation
       summary: AuthZEN evaluation
-      description: OpenID AuthZEN core PDP evaluation request, answered by the same composed decision as the permission and relation checks (an ABAC deny refuses; then roles, relationships and ABAC allow policies are a union). When resource.type is "permission", action.name is the permission key; otherwise resource becomes "type:id" and action.name the relation. The response context always carries decided_by.
+      description: OpenID AuthZEN core PDP evaluation request, answered by the same composed decision as the permission and relation checks (an ABAC deny refuses; then roles, relationships and ABAC allow policies are a union). When resource.type is "permission", action.name is the permission key; otherwise resource becomes "type:id" and action.name the relation. The response context always carries decided_by. ABAC policies see the request's properties, subject.properties as subject.*, resource.properties as resource.*, action.properties as action.*, and context (but for explain) as context.*. What the platform knows of the subject (id, type, tenant_id, and for a person, groups and roles) wins over a property of the same name, as resource.type and resource.id and action.name win over theirs.
       tags:
         - AuthZEN
       parameters:
@@ -4029,6 +4029,10 @@ paths:
                       type: string
                     id:
                       type: string
+                    properties:
+                      type: object
+                      description: The subject's attributes for ABAC policies (subject.*).
+                      additionalProperties: true
                 resource:
                   type: object
                   properties:
@@ -4036,14 +4040,23 @@ paths:
                       type: string
                     id:
                       type: string
+                    properties:
+                      type: object
+                      description: The resource's attributes for ABAC policies (resource.*).
+                      additionalProperties: true
                 action:
                   type: object
                   properties:
                     name:
                       type: string
+                    properties:
+                      type: object
+                      description: The action's attributes for ABAC policies (action.*).
+                      additionalProperties: true
                 context:
                   type: object
-                  description: 'Optional. { explain: true } includes the grant path and the decision''s trace inline in the response context.'
+                  description: 'Optional. The request''s attributes for ABAC policies (context.*), such as ip or mfa. { explain: true } includes the grant path and the decision''s trace inline in the response context, and is not an attribute.'
+                  additionalProperties: true
       responses:
         '200':
           description: '{ decision: bool, context: { decided_by, paths | path, trace } }'
@@ -5540,7 +5553,7 @@ components:
             {"attr":"subject.region","op":"eq","value":{"attr":"resource.region"}},
             for eq, ne, gt, gte, lt, lte, in, nin and contains (not regex, prefix,
             suffix or exists). The reference is exactly
-            {"attr":"<subject|resource|context>.<path>"}, names an attribute other
+            {"attr":"<subject|resource|action|context>.<path>"}, names an attribute other
             than the leaf's own, and is the whole value, never an array element. A
             string value is always a literal, even "resource.region". A comparison
             with a missing attribute (absent or null), on either side and with any
@@ -5626,11 +5639,15 @@ components:
               description: Resource identifier.
             attrs:
               type: object
-              description: Additional resource attributes.
+              description: Additional resource attributes; type and id above win over attributes of those names.
               additionalProperties: true
         action:
           type: string
-          description: The action being attempted, e.g. "read".
+          description: The action being attempted, e.g. "read"; policies see it as action.name.
+        action_attrs:
+          type: object
+          description: Optional attributes of the action, the action namespace beside action.name (which wins over an attribute of that name), e.g. {"channel":"api"}.
+          additionalProperties: true
         context:
           type: object
           description: Request-context attributes, e.g. {"ip":"1.2.3.4","hour":14}.
