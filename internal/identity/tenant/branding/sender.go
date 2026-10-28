@@ -35,7 +35,7 @@ func (r *Repository) EmailAppearance(ctx context.Context, tenantID uuid.UUID) (n
 		name = *brand.EmailFromName
 	}
 	if brand.LogoURL != nil {
-		logo = *brand.LogoURL
+		logo = r.publicLogo(tenantID, *brand.LogoURL)
 	}
 	if brand.PrimaryColor != nil {
 		primary = *brand.PrimaryColor

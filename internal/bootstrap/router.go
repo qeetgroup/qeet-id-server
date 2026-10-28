@@ -346,6 +346,7 @@ func mountV1PublicRoutes(r chi.Router, d Deps) {
 	d.Audit.MountPublic(r)
 	d.Passkey.MountPublic(r)
 	d.AdminPortal.MountPublic(r)
+	d.Branding.MountPublic(r)
 	d.OIDC.MountBrowser(r)
 	d.TokenVault.MountPublic(r)
 	d.MFA.MountPublic(r)

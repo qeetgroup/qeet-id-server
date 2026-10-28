@@ -396,7 +396,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	scimService.SetPlanGate(entitlementSvc)      // SCIM
 	ldapService.SetPlanGate(entitlementSvc)      // LDAP
 	brandingRepo.SetPlanGate(entitlementSvc)     // custom branding
-	abacService.SetPlanGate(entitlementSvc)      // ABAC
+	brandingRepo.SetPublicBaseURL(cfg.PublicBaseURL)
+	abacService.SetPlanGate(entitlementSvc) // ABAC
 	// Current-usage provider for the billing usage-vs-limits display.
 	entitlementSvc.SetUsageResolver(entitlementUsageResolver{
 		invites: inviteService, oidc: oidcService, apikeys: apikeyService, rbacRepo: rbacRepo,

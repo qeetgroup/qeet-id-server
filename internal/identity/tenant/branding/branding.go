@@ -38,9 +38,10 @@ type Branding struct {
 
 // Repository reads and writes tenant branding.
 type Repository struct {
-	pool *pgxpool.Pool
-	q    *dbgen.Queries
-	gate PlanGate
+	pool       *pgxpool.Pool
+	q          *dbgen.Queries
+	gate       PlanGate
+	publicBase string // this API's public origin, for links to an uploaded logo
 }
 
 // NewRepository returns a Repository over pool.
@@ -108,7 +109,8 @@ func (r *Repository) LoginBranding(ctx context.Context, tenantID uuid.UUID) (log
 	if err != nil || b == nil {
 		return "", "", "", ""
 	}
-	return loginAppearance(b)
+	logoURL, primaryColor, secondaryColor, backgroundColor = loginAppearance(b)
+	return r.publicLogo(tenantID, logoURL), primaryColor, secondaryColor, backgroundColor
 }
 
 func loginAppearance(b *Branding) (logoURL, primaryColor, secondaryColor, backgroundColor string) {
@@ -142,7 +144,7 @@ func decodeBranding(r *http.Request) (Branding, error) {
 func normalizeAppearance(b *Branding) error {
 	if b.LogoURL != nil && strings.HasPrefix(*b.LogoURL, "data:") {
 		header, content, found := strings.Cut(*b.LogoURL, ",")
-		if !found || (header != "data:image/png;base64" && header != "data:image/jpeg;base64" && header != "data:image/webp;base64" && header != "data:image/svg+xml;base64") {
+		if _, known := logoTypes[header]; !found || !known {
 			return errs.ErrBadRequest.WithDetail("logo must be a PNG, JPEG, WEBP or SVG image")
 		}
 		if len(content) > base64.StdEncoding.EncodedLen(2<<20) {
