@@ -316,7 +316,7 @@ const listTenantsForUser = `-- name: ListTenantsForUser :many
 
 
 SELECT t.id, t.slug, t.name, t.status, t.plan, t.region, t.logo_url,
-       t.metadata, t.created_at, t.updated_at,
+       t.metadata, t.created_at, t.updated_at, t.deletion_due_at,
   (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
      WHERE ur.tenant_id = t.id)::bigint AS member_count,
   (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
@@ -348,6 +348,7 @@ type ListTenantsForUserRow struct {
 	Metadata        []byte
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+	DeletionDueAt   pgtype.Timestamptz
 	MemberCount     int64
 	MfaEnabledCount int64
 }
@@ -379,6 +380,7 @@ func (q *Queries) ListTenantsForUser(ctx context.Context, arg ListTenantsForUser
 			&i.Metadata,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DeletionDueAt,
 			&i.MemberCount,
 			&i.MfaEnabledCount,
 		); err != nil {
@@ -394,7 +396,7 @@ func (q *Queries) ListTenantsForUser(ctx context.Context, arg ListTenantsForUser
 
 const listTenantsForUserAfter = `-- name: ListTenantsForUserAfter :many
 SELECT t.id, t.slug, t.name, t.status, t.plan, t.region, t.logo_url,
-       t.metadata, t.created_at, t.updated_at,
+       t.metadata, t.created_at, t.updated_at, t.deletion_due_at,
   (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
      WHERE ur.tenant_id = t.id)::bigint AS member_count,
   (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
@@ -430,6 +432,7 @@ type ListTenantsForUserAfterRow struct {
 	Metadata        []byte
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+	DeletionDueAt   pgtype.Timestamptz
 	MemberCount     int64
 	MfaEnabledCount int64
 }
@@ -459,6 +462,7 @@ func (q *Queries) ListTenantsForUserAfter(ctx context.Context, arg ListTenantsFo
 			&i.Metadata,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DeletionDueAt,
 			&i.MemberCount,
 			&i.MfaEnabledCount,
 		); err != nil {

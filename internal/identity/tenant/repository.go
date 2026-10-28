@@ -64,7 +64,7 @@ func timeOrNil(t pgtype.Timestamptz) *time.Time {
 // listRowToTenant maps an enriched list row (tenant columns + the two per-org
 // counts) to the domain Tenant. The two ListTenantsForUser* variants generate
 // distinct-but-identical row structs, so callers pass the fields positionally.
-func listRowToTenant(id uuid.UUID, slug, name, status, plan, region, logoURL string, metadata []byte, createdAt, updatedAt time.Time, memberCount, mfaCount int64) Tenant {
+func listRowToTenant(id uuid.UUID, slug, name, status, plan, region, logoURL string, metadata []byte, createdAt, updatedAt time.Time, deletionDueAt pgtype.Timestamptz, memberCount, mfaCount int64) Tenant {
 	mc, mfa := memberCount, mfaCount
 	return Tenant{
 		ID:              id,
@@ -77,6 +77,7 @@ func listRowToTenant(id uuid.UUID, slug, name, status, plan, region, logoURL str
 		Metadata:        dbutil.Metadata(metadata),
 		CreatedAt:       createdAt,
 		UpdatedAt:       updatedAt,
+		DeletionDueAt:   timeOrNil(deletionDueAt),
 		MemberCount:     &mc,
 		MFAEnabledCount: &mfa,
 	}
@@ -206,7 +207,7 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit int, curs
 		for _, row := range rows {
 			out = append(out, listRowToTenant(row.ID, row.Slug, row.Name, row.Status, row.Plan,
 				row.Region, row.LogoUrl, row.Metadata, row.CreatedAt, row.UpdatedAt,
-				row.MemberCount, row.MfaEnabledCount))
+				row.DeletionDueAt, row.MemberCount, row.MfaEnabledCount))
 		}
 	} else {
 		curT, curID, perr := paging.DecodeTimeUUID(cursor)
@@ -225,7 +226,7 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit int, curs
 		for _, row := range rows {
 			out = append(out, listRowToTenant(row.ID, row.Slug, row.Name, row.Status, row.Plan,
 				row.Region, row.LogoUrl, row.Metadata, row.CreatedAt, row.UpdatedAt,
-				row.MemberCount, row.MfaEnabledCount))
+				row.DeletionDueAt, row.MemberCount, row.MfaEnabledCount))
 		}
 	}
 	var next string

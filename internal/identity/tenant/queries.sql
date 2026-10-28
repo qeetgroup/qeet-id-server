@@ -90,7 +90,7 @@ WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: ListTenantsForUser :many
 SELECT t.id, t.slug, t.name, t.status, t.plan, t.region, t.logo_url,
-       t.metadata, t.created_at, t.updated_at,
+       t.metadata, t.created_at, t.updated_at, t.deletion_due_at,
   (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
      WHERE ur.tenant_id = t.id)::bigint AS member_count,
   (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
@@ -107,7 +107,7 @@ LIMIT $2;
 
 -- name: ListTenantsForUserAfter :many
 SELECT t.id, t.slug, t.name, t.status, t.plan, t.region, t.logo_url,
-       t.metadata, t.created_at, t.updated_at,
+       t.metadata, t.created_at, t.updated_at, t.deletion_due_at,
   (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
      WHERE ur.tenant_id = t.id)::bigint AS member_count,
   (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur

@@ -268,6 +268,23 @@ func TestOrganisationLifecycleIsTheOwners(t *testing.T) {
 	if scheduled.DeletionDueAt == nil || ended(since) {
 		t.Errorf("after scheduling: %+v, session ended %v; want it working with its deletion due", scheduled, ended(since))
 	}
+	// The list of a member's organisations shows the same date.
+	listed := func() *time.Time {
+		var page struct {
+			Items []Tenant `json:"items"`
+		}
+		dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodGet, "/tenants", nil), &page)
+		for _, it := range page.Items {
+			if it.ID == org.ID {
+				return it.DeletionDueAt
+			}
+		}
+		t.Fatal("the organisation is missing from its admin's list")
+		return nil
+	}
+	if due := listed(); due == nil || !due.Equal(*scheduled.DeletionDueAt) {
+		t.Errorf("listed deletion_due_at %v, want %v as the organisation itself says", due, scheduled.DeletionDueAt)
+	}
 	refused("delete it twice", dbtest.Do(t, asOwner, http.MethodDelete, path, nil), http.StatusConflict, errs.CodeTenantDeletionScheduled)
 	refused("an admin calls it off", dbtest.Do(t, asAdmin, http.MethodPost, path+"/deletion/cancel", nil), http.StatusForbidden, errs.CodeTenantOwnerOnly)
 	rec = dbtest.Do(t, asOwner, http.MethodPost, path+"/deletion/cancel", nil)
@@ -275,6 +292,9 @@ func TestOrganisationLifecycleIsTheOwners(t *testing.T) {
 	dbtest.Decode(t, rec, &kept)
 	if rec.Code != http.StatusOK || kept.DeletionDueAt != nil || audited("tenant.deletion_cancelled") != 1 {
 		t.Errorf("call it off: %d %s", rec.Code, rec.Body.String())
+	}
+	if due := listed(); due != nil {
+		t.Errorf("listed deletion_due_at %v once called off, want none", due)
 	}
 	refused("call it off twice", dbtest.Do(t, asOwner, http.MethodPost, path+"/deletion/cancel", nil), http.StatusConflict, errs.CodeTenantDeletionNotScheduled)
 
