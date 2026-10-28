@@ -276,7 +276,7 @@ var sensitiveLooking = regexp.MustCompile(`/mfa/|/passkeys|/api-keys|/service-pr
 	`/roles|/permissions|/invites|/relation-tuples|/abac|/reactivate|/restore|/email|` +
 	`/oidc/clients|/scim/token|/credentials|/webhooks|/auth-hooks|/secrets|/vault/tokens|/provider-config|` +
 	`/policy$|/auth-policy|/risk-settings|/bots/settings|/ip-rules|/rate-limits|/mfa-required|/mfa$|` +
-	`/password$|/saml|/ldap|/social/|/domains|/mappings|/admin-portal|/email-templates|/retention|` +
+	`/password$|/saml|/ldap|/oidc-connections|/social/|/domains|/mappings|/admin-portal|/email-templates|/retention|` +
 	`/anomaly-settings|/log-sinks|/purge|/account/|/sessions|/gdpr/|/oauth/(grants|devices)|/anomalies/|` +
 	`^/v1/tenants/\{tenantID\}$|^/v1/users/\{id\}$`)
 

@@ -39,6 +39,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/directory"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcsso"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social"
@@ -358,6 +359,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	}
 
 	samlService := saml.NewService(pool, authService, cfg.AppBaseURL)
+	oidcSSOService := oidcsso.NewService(pool, authService, cfg.AppBaseURL, outboundPolicy)
+	oidcSSOService.SetCipher(sharedCipher)
 
 	samlIdPKeyPEM, samlIdPCertPEM := samlIdPIdentity(cfg)
 	samlIdP, err := saml.NewIdP(pool, samlIdPKeyPEM, samlIdPCertPEM, cfg.LoginBaseURL, authService)
@@ -394,6 +397,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	rbacService.SetPlanLimiter(entitlementSvc)   // custom_roles
 	webhookService.SetPlanGate(entitlementSvc)   // webhooks (feature)
 	samlIdP.SetPlanGate(entitlementSvc)          // SSO (SAML)
+	oidcSSOService.SetPlanGate(entitlementSvc)   // SSO (OpenID Connect connections)
 	scimService.SetPlanGate(entitlementSvc)      // SCIM
 	ldapService.SetPlanGate(entitlementSvc)      // LDAP
 	brandingRepo.SetPlanGate(entitlementSvc)     // custom branding
@@ -466,6 +470,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		AdminPortal:  &adminportal.Handler{Service: adminPortalService, SAML: samlService, SAMLSignIn: samlHandler, SCIM: scimService, Domains: domainVerifyService, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev()},
 		LDAP:         &ldap.Handler{Service: ldapService},
 		SSOGroups:    &ssosync.Handler{Service: ssosync.NewService(pool), GrantCheck: rbacRepo.CheckGrantGroup},
+		OIDCSSO:      &oidcsso.Handler{Service: oidcSSOService, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev()},
 		Directory:    &directory.Handler{Service: directoryService},
 		IPAllow:      &ipallow.Handler{Service: ipAllowService},
 		Threat:       &threat.Handler{Service: threatService},

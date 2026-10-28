@@ -10,7 +10,7 @@ info:
     Qeet ID federates in both directions — know which role applies:
 
     - **Qeet ID → your app:** OIDC provider and SAML **Identity Provider**.
-    - **External IdP → Qeet ID:** SAML **Service Provider**, **LDAP** client, and **OAuth client** for social logins.
+    - **External IdP → Qeet ID:** SAML **Service Provider**, **OpenID Connect relying party** for an organisation's own provider, **LDAP** client, and **OAuth client** for social logins.
     - **External IdP → Qeet ID (provisioning):** **SCIM** server.
 
     ## Two OAuth token endpoints (current behavior)
@@ -28,7 +28,7 @@ info:
 
     Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to cookie sessions (`ssoCookie`): requests authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the client-credentials token exchange (POST /v1/oauth/token) and the directory sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the request. Basic credentials do not bypass it.
 
-    The responses of the two token endpoints, device and back-channel authorization, the consent decision (an authorization code), directory sign-in, social and SAML code exchange, the SAML IdP's sign-on page (a signed assertion), and of the operations returning a new client secret, service-principal credential, SCIM token or admin-portal link, are sent with `Cache-Control: no-store` and `Pragma: no-cache`.
+    The responses of the two token endpoints, device and back-channel authorization, the consent decision (an authorization code), directory sign-in, social, SAML and OpenID Connect connection code exchange, the SAML IdP's sign-on page (a signed assertion), and of the operations returning a new client secret, service-principal credential, SCIM token or admin-portal link, are sent with `Cache-Control: no-store` and `Pragma: no-cache`.
 
     ## Related APIs
 
@@ -54,6 +54,8 @@ tags:
     description: SAML 2.0 SSO — Qeet as Service Provider (consuming external IdPs) and as Identity Provider (serving downstream SPs).
   - name: LDAP
     description: LDAP / Active Directory connection management and bind authentication.
+  - name: OIDC Connections
+    description: 'An organisation''s own OpenID Connect identity provider (Microsoft Entra ID, Okta, Google Workspace and the like), with Qeet as the relying party: connection management and the browser sign-in.'
   - name: Directory
     description: Tenant-scoped directory connection inventory and synchronization metadata.
   - name: SCIM
@@ -2959,6 +2961,298 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/oidc-connections:
+    get:
+      operationId: get_v1_tenants_ByTenantID_oidc_connections
+      description: 'Lists the organisation''s OpenID Connect connections, through which its people sign in with its own identity provider (Microsoft Entra ID, Okta, Google Workspace and the like), with Qeet acting as the relying party. Scoped to the tenant in the path. Client secrets are never returned. Each connection carries the redirect_uri to register with the provider. Requires connection.read.'
+      summary: List OIDC connections
+      tags:
+        - OIDC Connections
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Connections
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OIDCConnection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: post_v1_tenants_ByTenantID_oidc_connections
+      description: 'Creates an OpenID Connect connection in the organisation, a draft unless a status is given. The issuer must be an absolute https URL without a query or fragment (422 oidc_connection.issuer_invalid); the discovery document is read from discovery_url, or from the issuer''s /.well-known/openid-configuration when none is given (422 oidc_connection.discovery_url_invalid). The client secret is stored encrypted and never returned. Scopes default to openid, email and profile, and openid is always asked for (422 oidc_connection.scopes_invalid). allowed_idp_tenant_ids are the provider''s own tenant IDs (the tid claim, as Microsoft Entra ID issues it) a token must name: an Entra issuer that serves every organisation (common, organizations or consumers) is refused without them (422 oidc_connection.idp_tenant_ids_required), or anyone with a Microsoft account could sign in. claim_mapping names the claims read for the email address (required, default email), name, given and family names and groups. Missing fields answer 422 oidc_connection.fields_required, an unknown status 422 oidc_connection.status_invalid. The organisation''s plan must include single sign-on (402 billing.upgrade_required). Audited as oidc_connection.created. Requires connection.write. Needs a recent step-up.'
+      summary: Create OIDC connection
+      tags:
+        - OIDC Connections
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OIDCConnectionCreate'
+      responses:
+        '201':
+          description: Connection created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OIDCConnection'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '402':
+          description: The organisation's plan does not include single sign-on (billing.upgrade_required).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/oidc-connections/{id}:
+    get:
+      operationId: get_v1_tenants_ByTenantID_oidc_connections_ById
+      description: 'Returns one of the organisation''s OpenID Connect connections, without its client secret. Another organisation''s connection answers 404. Requires connection.read.'
+      summary: Get OIDC connection
+      tags:
+        - OIDC Connections
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Connection
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OIDCConnection'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_oidc_connections_ById
+      description: 'Changes the given fields of one of the organisation''s OpenID Connect connections, checked as on create; an absent field is kept, as is the client secret when client_secret is absent or empty. Only an active connection signs anyone in. A change that would leave a Microsoft issuer serving every organisation without allowed_idp_tenant_ids is refused (422 oidc_connection.idp_tenant_ids_required). Audited as oidc_connection.updated with the fields changed. Another organisation''s connection answers 404. Requires connection.write. Needs a recent step-up.'
+      summary: Update OIDC connection
+      tags:
+        - OIDC Connections
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OIDCConnectionUpdate'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OIDCConnection'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_oidc_connections_ById
+      description: 'Deletes one of the organisation''s OpenID Connect connections, with the sign-ins and login codes it has in flight. Its people no longer sign in through it. Audited as oidc_connection.deleted. Another organisation''s connection answers 404. Requires connection.write. Needs a recent step-up.'
+      summary: Delete OIDC connection
+      tags:
+        - OIDC Connections
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/oidc-connections/{id}/login:
+    get:
+      operationId: get_v1_oidc_connections_ById_login
+      description: 'Begins a sign-in through an OpenID Connect connection: it records the sign-in''s state, PKCE verifier (S256) and nonce, sets an HttpOnly cookie binding the sign-in to this browser, and redirects the browser to the provider''s authorization endpoint, which must be https, asking for the connection''s scopes. The provider sends the browser back to GET /v1/oidc-connections/{id}/callback. Only an active connection signs anyone in: a draft one answers 403 oidc_connection.connection_draft and a disabled one 403 oidc_connection.connection_disabled. A provider that can''t be reached answers 502 oidc_connection.provider_unreachable; a discovery document that can''t be used, or whose issuer isn''t the connection''s (unless it serves many tenants and the connection lists those it accepts), 500 oidc_connection.misconfigured. Unauthenticated.'
+      summary: Begin OIDC sign-in (public)
+      tags:
+        - OIDC Connections
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security: []
+      responses:
+        '302':
+          description: Redirect to the provider's authorization endpoint
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/oidc-connections/{id}/callback:
+    get:
+      operationId: get_v1_oidc_connections_ById_callback
+      description: 'Where the provider sends the browser back; register it as the connection''s redirect URI. The state is spent whatever happens next, and an unknown, spent or expired one answers 400 oidc_connection.state_invalid. A sign-in completes only in the browser that began it, holding the cookie the login call set (403 oidc_connection.other_browser). A refusal by the provider (an error parameter) answers 401 oidc_connection.provider_refused. Otherwise the code is traded at the provider''s token endpoint with the PKCE verifier (502 oidc_connection.token_exchange_failed) and the ID token is validated: its signature against the provider''s published keys (fetched again once for a key not yet seen), an asymmetric algorithm, iss equal to the connection''s issuer (or, for a provider serving many tenants, the issuer of a tid the connection lists), aud naming the client (and azp the client when it names several), exp and iat within a minute''s skew, and the nonce this sign-in sent; any failure answers 401 oidc_connection.id_token_invalid. The subject (issuer and sub) is linked to the connection, so another connection asserting it signs nobody in. A linked subject signs in while the organisation is still its account''s home (403 oidc_connection.user_tenant_mismatch). An address not yet linked is adopted or given an account only on a domain the organisation has verified (403 oidc_connection.email_domain_unverified), and not when the provider''s email_verified is false (403 oidc_connection.email_unverified); a provider that doesn''t say (Microsoft Entra ID) is trusted for those domains. An adopted account must have the organisation as its home and a verified address (403 oidc_connection.account_unverified), and one that owns or administers the organisation is never adopted by its address (403 oidc_connection.account_administers). A suspended account is refused. Every refusal is audited as auth.sign_in_failed with the error code as its reason. On success the browser goes to the console''s /sso/callback with a one-time code in the fragment (#oidc_code=...), to trade at POST /v1/oidc-connections/exchange. Unauthenticated.'
+      summary: Complete OIDC sign-in (public)
+      tags:
+        - OIDC Connections
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: error
+          in: query
+          schema:
+            type: string
+      security: []
+      responses:
+        '302':
+          description: Redirect to the console with a one-time login code in the fragment
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/oidc-connections/exchange:
+    post:
+      operationId: post_v1_oidc_connections_exchange
+      description: 'Trades the one-time login code an OpenID Connect sign-in handed the console for a Qeet access and refresh token pair in the connection''s organisation, while the connection is still active. The code is single-use (401 oidc_connection.login_code_used) and lasts five minutes (401 oidc_connection.login_code_expired); an unknown one answers 401 oidc_connection.login_code_invalid and none 400 oidc_connection.login_code_required. The organisation''s login hook and address rules apply. Unauthenticated; sent with Cache-Control: no-store.'
+      summary: Exchange OIDC sign-in code (public)
+      tags:
+        - OIDC Connections
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - code
+              properties:
+                code:
+                  type: string
+      responses:
+        '200':
+          description: Token pair
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /ldap/{id}/authenticate:
     post:
       operationId: post_ldap_ById_authenticate
@@ -6053,6 +6347,142 @@ components:
           description: The attribute carrying the person's groups; empty reads the common ones (see SAMLConnection). Over 256 characters is refused with 422 validation_failed.
         status:
           type: string
+    OIDCClaimMapping:
+      type: object
+      description: The ID token claims a sign-in reads. An empty name reads none, except for email, which is required.
+      properties:
+        email:
+          type: string
+          default: email
+          description: The claim holding the email address, such as email, preferred_username or upn. The provider's email_verified is consulted only when this is email.
+        name:
+          type: string
+          default: name
+        given_name:
+          type: string
+          default: given_name
+        family_name:
+          type: string
+          default: family_name
+        groups:
+          type: string
+          default: ''
+          description: The claim listing the person's groups, kept on their linked identity.
+    OIDCConnection:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        issuer:
+          type: string
+          description: The iss an ID token must carry.
+        discovery_url:
+          type: string
+          description: Where the discovery document is read; empty for the issuer's /.well-known/openid-configuration.
+        client_id:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        allowed_idp_tenant_ids:
+          type: array
+          items:
+            type: string
+          description: The provider's own tenant IDs (tid) accepted; empty accepts the issuer alone.
+        claim_mapping:
+          $ref: '#/components/schemas/OIDCClaimMapping'
+        status:
+          type: string
+          enum: [draft, active, disabled]
+        redirect_uri:
+          type: string
+          format: uri
+          description: The redirect URI to register with the provider.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        last_login_at:
+          type: [string, 'null']
+          format: date-time
+    OIDCConnectionCreate:
+      type: object
+      required:
+        - name
+        - issuer
+        - client_id
+        - client_secret
+      properties:
+        name:
+          type: string
+        issuer:
+          type: string
+          format: uri
+        discovery_url:
+          type: string
+        client_id:
+          type: string
+        client_secret:
+          type: string
+          writeOnly: true
+        scopes:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+        allowed_idp_tenant_ids:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            format: uuid
+        claim_mapping:
+          $ref: '#/components/schemas/OIDCClaimMapping'
+        status:
+          type: string
+          enum: [draft, active, disabled]
+          default: draft
+    OIDCConnectionUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        issuer:
+          type: string
+          format: uri
+        discovery_url:
+          type: string
+        client_id:
+          type: string
+        client_secret:
+          type: string
+          writeOnly: true
+          description: A new client secret; absent or empty keeps the stored one.
+        scopes:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+        allowed_idp_tenant_ids:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            format: uuid
+        claim_mapping:
+          $ref: '#/components/schemas/OIDCClaimMapping'
+        status:
+          type: string
+          enum: [draft, active, disabled]
     SSOGroupMapping:
       type: object
       required: [id, idp_group, group_id, group_name, created_at]

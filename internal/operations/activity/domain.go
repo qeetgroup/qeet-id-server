@@ -107,6 +107,7 @@ var categoryPrefixes = []struct {
 	{"social.", CategoryAuthentication},
 	{"social_provider.", CategoryAuthentication},
 	{"ldap.", CategoryAuthentication},
+	{"oidc_connection.", CategoryAuthentication},
 	{"oidc.", CategoryAuthentication},
 	{"oauth.", CategoryAuthentication},
 	{"mfa.", CategoryAuthentication},

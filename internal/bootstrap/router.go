@@ -36,6 +36,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/directory"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcsso"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social"
@@ -116,6 +117,7 @@ type Deps struct {
 	AdminPortal   *adminportal.Handler
 	LDAP          *ldap.Handler
 	SSOGroups     *ssosync.Handler
+	OIDCSSO       *oidcsso.Handler
 	Directory     *directory.Handler
 	IPAllow       *ipallow.Handler
 	Threat        *threat.Handler
@@ -351,6 +353,7 @@ func mountV1PublicRoutes(r chi.Router, d Deps) {
 	d.Branding.MountPublic(r)
 	d.OIDC.MountBrowser(r)
 	d.TokenVault.MountPublic(r)
+	d.OIDCSSO.MountPublic(r)
 	d.MFA.MountPublic(r)
 	d.SESWebhook.Mount(r)
 }
@@ -403,6 +406,7 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.AdminPortal.Mount(r)
 	d.LDAP.Mount(r)
 	d.SSOGroups.Mount(r)
+	d.OIDCSSO.Mount(r)
 	d.Directory.Mount(r)
 	d.IPAllow.Mount(r)
 	d.Threat.Mount(r)
@@ -532,6 +536,7 @@ func NoStoreRoutes() []string {
 		"POST /v1/me/invites/{id}/accept",
 		"POST /v1/social/exchange",
 		"POST /saml/exchange",
+		"POST /v1/oidc-connections/exchange",
 		"POST /v1/tenants",
 
 		// A secret, key, code or credential returned to its holder.

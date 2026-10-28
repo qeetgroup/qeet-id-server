@@ -145,7 +145,7 @@ func userPermissionMap() map[string]string {
 		"GET /v1/auth/trusted-devices/count":               "connection.read",
 		"DELETE /v1/tenants/{tenantID}/oauth/devices/{id}": "connection.write",
 
-		// SSO connections: SAML / SCIM / LDAP / social provider config.
+		// SSO connections: SAML / OIDC / SCIM / LDAP / social provider config.
 		"GET /v1/tenants/{tenantID}/saml":                                                         "connection.read",
 		"POST /v1/tenants/{tenantID}/saml":                                                        "connection.write",
 		"GET /v1/tenants/{tenantID}/saml/{id}":                                                    "connection.read",
@@ -195,6 +195,11 @@ func userPermissionMap() map[string]string {
 		"PATCH /v1/tenants/{tenantID}/ldap/{id}":                                                  "connection.write",
 		"DELETE /v1/tenants/{tenantID}/ldap/{id}":                                                 "connection.write",
 		"POST /v1/tenants/{tenantID}/ldap/{id}/test":                                              "connection.write",
+		"GET /v1/tenants/{tenantID}/oidc-connections":                                             "connection.read",
+		"POST /v1/tenants/{tenantID}/oidc-connections":                                            "connection.write",
+		"GET /v1/tenants/{tenantID}/oidc-connections/{id}":                                        "connection.read",
+		"PATCH /v1/tenants/{tenantID}/oidc-connections/{id}":                                      "connection.write",
+		"DELETE /v1/tenants/{tenantID}/oidc-connections/{id}":                                     "connection.write",
 		"GET /v1/tenants/{tenantID}/social/providers":                                             "connection.read",
 		"POST /v1/social/providers":                                                               "connection.write",
 		"PATCH /v1/social/providers/{provider}":                                                   "connection.write",
