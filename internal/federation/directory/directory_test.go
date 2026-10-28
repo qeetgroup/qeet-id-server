@@ -82,15 +82,25 @@ func TestConnectionSnapshotDoesNotInventHealthOrExposeCredentials(test *testing.
 
 func TestOperationClassificationAndFilterBounds(test *testing.T) {
 	for _, status := range []int{200, 201, 204} {
-		outcome, _, code, _, _ := classifyOperation(status)
+		outcome, _, code, _, _ := classifyOperation("post", status)
 		if outcome != "success" || code != "" {
 			test.Fatalf("status %d misclassified", status)
 		}
 	}
 	for _, status := range []int{400, 401, 403, 404, 409, 422, 429, 500, 502} {
-		outcome, category, code, message, severity := classifyOperation(status)
+		outcome, category, code, message, severity := classifyOperation("post", status)
 		if outcome != "failed" || category == "" || code == "" || message == "" || severity == "" {
 			test.Fatalf("status %d lacks safe error metadata", status)
+		}
+	}
+	// At sign-in a person's refused credentials are a warning; the directory
+	// itself refusing (403) or failing stays an error.
+	if outcome, category, _, _, severity := classifyOperation("sign-in", 401); outcome != "warning" || category != "credentials" || severity != "" {
+		test.Fatalf("a refused sign-in classified %s/%s/%s, want a warning without severity", outcome, category, severity)
+	}
+	for _, status := range []int{403, 502} {
+		if outcome, _, _, _, severity := classifyOperation("sign-in", status); outcome != "failed" || severity != "critical" {
+			test.Fatalf("sign-in status %d classified %s/%s, want a critical failure", status, outcome, severity)
 		}
 	}
 	for _, query := range []string{"days=0", "days=91", "limit=0", "limit=101", "offset=-1", "status=invalid"} {

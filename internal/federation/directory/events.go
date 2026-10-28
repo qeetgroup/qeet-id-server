@@ -79,9 +79,14 @@ func (service *Service) SetEventStore(pool *pgxpool.Pool) {
 	service.pool = pool
 }
 
-func classifyOperation(status int) (outcome, category, code, message, severity string) {
+func classifyOperation(operation string, status int) (outcome, category, code, message, severity string) {
 	if status >= 200 && status < 300 {
 		return "success", "", "", "Operation completed", ""
+	}
+	// A person's own credentials refused at sign-in is a sign-in's outcome, not
+	// a fault of the connection: a warning, never an open error or an alert.
+	if operation == "sign-in" && status == http.StatusUnauthorized {
+		return "warning", "credentials", "DIR-401", "The person's directory credentials were refused", ""
 	}
 	outcome, category, severity = "failed", "provisioning", "warning"
 	switch {
@@ -115,7 +120,7 @@ func (service *Service) RecordOperation(ctx context.Context, tenantID uuid.UUID,
 	if len(resourceID) > 128 {
 		resourceID = ""
 	}
-	outcome, category, code, message, severity := classifyOperation(status)
+	outcome, category, code, message, severity := classifyOperation(operation, status)
 	trigger := "manual"
 	if strings.HasPrefix(connectionID, "scim:") {
 		trigger = "push"
@@ -137,7 +142,7 @@ func (service *Service) RecordOperation(ctx context.Context, tenantID uuid.UUID,
 	if err != nil {
 		return err
 	}
-	if outcome != "success" {
+	if outcome == "failed" {
 		return service.notifyAlerts(ctx, tenantID, connectionID)
 	}
 	return nil
@@ -315,7 +320,7 @@ func (service *Service) notifyAlerts(ctx context.Context, tenantID uuid.UUID, co
 		UPDATE tenant.directory_alerts SET last_notified_at=NOW()
 		WHERE tenant_id=$1 AND enabled AND (connection_id IS NULL OR connection_id=$2)
 		AND (last_notified_at IS NULL OR last_notified_at < NOW()-INTERVAL '15 minutes')
-		AND threshold <= (SELECT count(*) FROM tenant.directory_events WHERE tenant_id=$1 AND status <> 'success' AND started_at >= NOW()-INTERVAL '15 minutes' AND (directory_alerts.connection_id IS NULL OR connection_id=directory_alerts.connection_id))
+		AND threshold <= (SELECT count(*) FROM tenant.directory_events WHERE tenant_id=$1 AND status = 'failed' AND started_at >= NOW()-INTERVAL '15 minutes' AND (directory_alerts.connection_id IS NULL OR connection_id=directory_alerts.connection_id))
 		RETURNING user_id,name
 	) INSERT INTO auth.notifications(user_id,tenant_id,kind,title,description,href)
 	SELECT user_id,$1,'warning',name,$3,'/directory/sync-errors' FROM notified`, tenantID, connectionID, "Directory failures reached your alert threshold in the last 15 minutes.")

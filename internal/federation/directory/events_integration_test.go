@@ -326,3 +326,47 @@ func TestSuspendedDirectoryPrivacyReviewAndReactivation(test *testing.T) {
 		test.Fatalf("reactivated user remained listed: %+v %v", page, err)
 	}
 }
+
+// TestRefusedSignInIsNotASyncError checks that a person's refused LDAP
+// password is recorded as a warning in Sync activity, never an open sync
+// error or an alert, while the service account being refused still is both.
+func TestRefusedSignInIsNotASyncError(test *testing.T) {
+	pool := dbtest.Pool(test)
+	ctx := dbtest.Context(test)
+	tenantID, userID, connection := uuid.New(), uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant.tenants(id,slug,name) VALUES($1,$2,'Directory test')`, tenantID, tenantID.String()); err != nil {
+		test.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO "user".users(id,tenant_id,email,status) VALUES($1,$2,$3,'active')`, userID, tenantID, userID.String()+"@example.test"); err != nil {
+		test.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant.directory_alerts(id,tenant_id,user_id,name,threshold) VALUES($1,$2,$3,'Directory failures',1)`, uuid.New(), tenantID, userID); err != nil {
+		test.Fatal(err)
+	}
+	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{})
+	service.SetEventStore(pool)
+	notifications := func() int {
+		return dbtest.Count(test, `SELECT count(*) FROM auth.notifications WHERE tenant_id=$1 AND user_id=$2`, tenantID, userID)
+	}
+	since := eventFilter{Since: time.Now().Add(-time.Hour), Limit: 25}
+
+	if err := service.RecordOperation(ctx, tenantID, connection.String(), "sign-in", "user", "", http.StatusUnauthorized, time.Now(), time.Second); err != nil {
+		test.Fatal(err)
+	}
+	page, err := service.Events(ctx, tenantID, since)
+	if err != nil || page.Total != 1 || page.Summary.Warnings != 1 || page.Summary.Failed != 0 {
+		test.Fatalf("a refused password in Sync activity: %+v %v, want one warning", page.Summary, err)
+	}
+	errorsPage, err := service.Errors(ctx, tenantID, errorFilter{eventFilter: since})
+	if err != nil || errorsPage.Total != 0 || notifications() != 0 {
+		test.Fatalf("a refused password: %d sync errors, %d alerts (%v); want none", errorsPage.Total, notifications(), err)
+	}
+
+	if err := service.RecordOperation(ctx, tenantID, connection.String(), "sign-in", "user", "", http.StatusForbidden, time.Now(), time.Second); err != nil {
+		test.Fatal(err)
+	}
+	errorsPage, err = service.Errors(ctx, tenantID, errorFilter{eventFilter: since})
+	if err != nil || errorsPage.Total != 1 || errorsPage.Summary.Critical != 1 || notifications() != 1 {
+		test.Fatalf("the service account refused: %+v, %d alerts (%v); want one critical error and an alert", errorsPage.Summary, notifications(), err)
+	}
+}

@@ -129,7 +129,9 @@ func TestDirectoryConnectionsOverHTTP(t *testing.T) {
 		t.Errorf("an unknown status: %d %s", rec.Code, rec.Body.String())
 	}
 	observed.mu.Lock()
-	if got := strings.Join(observed.got, ","); got != "test OK,test Bad Gateway" {
+	// The refused service account is recorded as the directory refusing (403),
+	// not as unreachable.
+	if got := strings.Join(observed.got, ","); got != "test OK,test Forbidden" {
 		t.Errorf("operations recorded %q", got)
 	}
 	observed.mu.Unlock()

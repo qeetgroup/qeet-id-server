@@ -3303,7 +3303,7 @@ paths:
     get:
       operationId: get_v1_tenants_ByTenantID_directory_errors
       summary: List directory errors and remediation summary
-      description: Requires connection.read. Only errors from the authenticated tenant are returned. Unknown affected-user counts are null, not inferred from request volume.
+      description: Requires connection.read. Only errors from the authenticated tenant are returned. Unknown affected-user counts are null, not inferred from request volume. A person's own credentials refused at an LDAP sign-in is not an error here (it shows in the sync activity as a warning and doesn't count towards alerts); the service account or the directory refusing is.
       tags: [Directory]
       security:
         - bearerAuth: []
