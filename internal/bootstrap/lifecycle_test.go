@@ -91,6 +91,7 @@ func (s *stoppingServer) open(t *testing.T, path string) <-chan struct{} {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
 	ended := make(chan struct{})
 	go readToEnd(resp, ended)
 	return ended

@@ -95,8 +95,7 @@ func (h *Handler) applyTemplate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	created, err := h.Service.ApplyTemplate(r.Context(), id, tenantID,
-		ApplyOptions{ParentID: in.ParentID, Prefix: in.Prefix, RootName: in.RootName}, audit.ActorOf(r))
+	created, err := h.Service.ApplyTemplate(r.Context(), id, tenantID, ApplyOptions(in), audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
