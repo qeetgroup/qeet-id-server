@@ -173,7 +173,43 @@ func (handler *Handler) previewMappings(response http.ResponseWriter, request *h
 		httpx.WriteError(response, request, err)
 		return
 	}
-	httpx.WriteJSON(response, http.StatusOK, PreviewMappings(items, body.Source, false))
+	defaults, err := handler.Service.defaultAttributes(request.Context(), tenantID, connectionID)
+	if err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	preview := PreviewMappings(items, body.Source, false)
+	preview.withDefaults(items, defaults, body.Source)
+	httpx.WriteJSON(response, http.StatusOK, preview)
+}
+
+// defaultAttributes is where a connection reads a person's email and name
+// when no mapping says otherwise: SCIM's userName and displayName, an LDAP
+// connection's email and name attributes (mail and cn unless set).
+func (service *Service) defaultAttributes(ctx context.Context, tenantID uuid.UUID, connectionID string) (map[string]string, error) {
+	if strings.HasPrefix(connectionID, "scim:") {
+		return map[string]string{"email": "userName", "display_name": "displayName"}, nil
+	}
+	sources, err := service.ldap.List(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	for _, source := range sources {
+		if source.ID.String() == connectionID {
+			return map[string]string{
+				"email":        defaultedAttribute(source.EmailAttribute, "mail"),
+				"display_name": defaultedAttribute(source.NameAttribute, "cn"),
+			}, nil
+		}
+	}
+	return map[string]string{}, nil
+}
+
+func defaultedAttribute(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 func (handler *Handler) saveMapping(response http.ResponseWriter, request *http.Request) {

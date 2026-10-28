@@ -3263,6 +3263,16 @@ paths:
                   valid: {type: boolean}
                   profile: {type: object, additionalProperties: true}
                   values: {type: object, additionalProperties: true}
+                  effective:
+                    type: object
+                    description: "Every field the person would get, with its value and where it came from: a mapping, or the connection's own default where no mapping sets it (SCIM userName and displayName; an LDAP connection's email and name attributes, mail and cn unless set)."
+                    additionalProperties:
+                      type: object
+                      required: [value, from, attribute]
+                      properties:
+                        value: {}
+                        from: {type: string, enum: [mapping, default]}
+                        attribute: {type: string, description: The source attribute it was read from.}
                   issues:
                     type: array
                     items:
