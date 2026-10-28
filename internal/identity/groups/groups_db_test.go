@@ -304,3 +304,79 @@ func TestImportRowCodes(t *testing.T) {
 		t.Errorf("totals: created %d, skipped %d, failed %d; want 3, 1, 3", res.Created, res.Skipped, res.Failed)
 	}
 }
+
+// TestGroupsListTheirRoles checks that the list carries each group's roles,
+// from one organisation only, for a caller who may read roles; that it filters
+// by role; and that without role.read neither roles nor role filters are given.
+func TestGroupsListTheirRoles(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	svc := NewService(pool)
+	group := func(tenantID uuid.UUID, name string) uuid.UUID {
+		var id uuid.UUID
+		if err := pool.QueryRow(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, $2) RETURNING id`, tenantID, name).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	role := func(tenantID uuid.UUID, name string) uuid.UUID {
+		var id uuid.UUID
+		if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name) VALUES ($1, $2) RETURNING id`, tenantID, name).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	grant := func(tenantID, groupID, roleID uuid.UUID) {
+		if _, err := pool.Exec(ctx, `INSERT INTO rbac.group_roles (tenant_id, group_id, role_id) VALUES ($1, $2, $3)`, tenantID, groupID, roleID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	engineering := group(tenant, "Engineering")
+	group(tenant, "Sales")
+	editor, viewer := role(tenant, "Editor"), role(tenant, "Viewer")
+	grant(tenant, engineering, editor)
+	grant(tenant, engineering, viewer)
+	elsewhere := group(other, "Elsewhere")
+	grant(other, elsewhere, role(other, "Owner elsewhere"))
+
+	serve := func(readsRoles bool) http.Handler {
+		return dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc, ReadsRoles: func(*http.Request) bool { return readsRoles }}).Mount)
+	}
+	list := func(h http.Handler, query string) (map[string]string, int) {
+		rec := dbtest.Do(t, h, http.MethodGet, "/tenants/"+tenant.String()+"/groups"+query, nil)
+		var page struct {
+			Items []Group `json:"items"`
+		}
+		dbtest.Decode(t, rec, &page)
+		out := map[string]string{}
+		for _, g := range page.Items {
+			roles := "absent"
+			if g.Roles != nil {
+				names := []string{}
+				for _, r := range *g.Roles {
+					names = append(names, r.Name)
+				}
+				roles = strings.Join(names, "+")
+			}
+			out[g.Name] = roles
+		}
+		return out, rec.Code
+	}
+	if got, _ := list(serve(true), ""); got["Engineering"] != "Editor+Viewer" || got["Sales"] != "" || len(got) != 2 {
+		t.Errorf("with role.read: %v; want Engineering's two roles, Sales none, and nothing of another organisation", got)
+	}
+	if got, _ := list(serve(true), "?grants=none"); len(got) != 1 || got["Sales"] != "" {
+		t.Errorf("grants=none: %v, want Sales only", got)
+	}
+	if got, _ := list(serve(true), "?role="+viewer.String()); len(got) != 1 || got["Engineering"] == "absent" {
+		t.Errorf("role filter: %v, want Engineering only", got)
+	}
+	if got, _ := list(serve(false), ""); got["Engineering"] != "absent" || got["Sales"] != "absent" {
+		t.Errorf("without role.read: %v, want no roles", got)
+	}
+	if _, code := list(serve(false), "?grants=some"); code != http.StatusForbidden {
+		t.Errorf("a role filter without role.read: %d, want 403", code)
+	}
+}

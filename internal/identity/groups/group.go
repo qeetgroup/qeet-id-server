@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -36,6 +37,15 @@ type Group struct {
 	CreatedAt   time.Time  `json:"created_at"`
 	// MemberCount is set by List only; Create and Update leave it zero.
 	MemberCount int `json:"member_count"`
+	// Roles are the roles granted to the group itself, set by List only for a
+	// caller who may read roles; absent otherwise.
+	Roles *[]GroupRole `json:"roles,omitempty"`
+}
+
+// GroupRole is a role granted to a group.
+type GroupRole struct {
+	RoleID uuid.UUID `json:"role_id"`
+	Name   string    `json:"name"`
 }
 
 // Service manages the groups.
@@ -209,6 +219,59 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Group, error)
 		out = append(out, g)
 	}
 	return out, rows.Err()
+}
+
+// WithRoles sets on each of the tenant's groups the roles granted to it, all
+// read in one query.
+func (s *Service) WithRoles(ctx context.Context, tenantID uuid.UUID, groups []Group) error {
+	rows, err := s.pool.Query(ctx, `
+		SELECT gr.group_id, gr.role_id, ro.name
+		FROM rbac.group_roles gr
+		JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.tenant_id = gr.tenant_id
+		WHERE gr.tenant_id = $1
+		ORDER BY ro.name, gr.role_id
+	`, tenantID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	byGroup := map[uuid.UUID][]GroupRole{}
+	for rows.Next() {
+		var groupID uuid.UUID
+		var role GroupRole
+		if err := rows.Scan(&groupID, &role.RoleID, &role.Name); err != nil {
+			return err
+		}
+		byGroup[groupID] = append(byGroup[groupID], role)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range groups {
+		roles := byGroup[groups[i].ID]
+		if roles == nil {
+			roles = []GroupRole{}
+		}
+		groups[i].Roles = &roles
+	}
+	return nil
+}
+
+// filterByRoles keeps the groups that grant role (when set) and that grant some
+// or no role (grants "some" or "none"; "" for either).
+func filterByRoles(groups []Group, role *uuid.UUID, grants string) []Group {
+	out := groups[:0]
+	for _, g := range groups {
+		roles := *g.Roles
+		if grants == "some" && len(roles) == 0 || grants == "none" && len(roles) > 0 {
+			continue
+		}
+		if role != nil && !slices.ContainsFunc(roles, func(r GroupRole) bool { return r.RoleID == *role }) {
+			continue
+		}
+		out = append(out, g)
+	}
+	return out
 }
 
 // Delete removes one of the tenant's groups and its subgroups, recorded as
@@ -399,6 +462,9 @@ type Handler struct {
 	// the caller doesn't hold (rbac.Repository.CheckGrantGroup). Without it
 	// adding a member is refused.
 	GrantCheck func(ctx context.Context, caller *httpx.Principal, tenantID, groupID uuid.UUID) error
+	// ReadsRoles reports whether the caller may read roles (role.read), and so
+	// sees each listed group's roles. Without it no one does.
+	ReadsRoles func(r *http.Request) bool
 }
 
 // Mount registers the group routes on r.
@@ -447,10 +513,37 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("tenant mismatch"))
 		return
 	}
+	query := r.URL.Query()
+	var role *uuid.UUID
+	if raw := query.Get("role"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid role"))
+			return
+		}
+		role = &id
+	}
+	grants := query.Get("grants")
+	if grants != "" && grants != "some" && grants != "none" {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("grants must be some or none"))
+		return
+	}
+	readsRoles := h.ReadsRoles != nil && h.ReadsRoles(r)
+	if !readsRoles && (role != nil || grants != "") {
+		httpx.WriteError(w, r, errs.ErrRBACPermissionDenied.WithDetail("filtering by role needs role.read"))
+		return
+	}
 	out, err := h.Service.List(r.Context(), tenantID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
+	}
+	if readsRoles {
+		if err := h.Service.WithRoles(r.Context(), tenantID, out); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		out = filterByRoles(out, role, grants)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }

@@ -2410,10 +2410,24 @@ paths:
           required: true
           schema:
             type: string
+        - name: role
+          in: query
+          required: false
+          description: Only the groups granted this role. Needs role.read.
+          schema:
+            type: string
+            format: uuid
+        - name: grants
+          in: query
+          required: false
+          description: Only the groups that grant some role, or none. Needs role.read.
+          schema:
+            type: string
+            enum: [some, none]
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Lists the organisation''s groups. Requires group.read.'
+      description: 'Lists the organisation''s groups. Requires group.read. A caller who also holds role.read gets each group''s roles (those granted to the group itself), all read in one query, and may filter by them; without it roles are left out, and a role filter is refused with 403.'
       responses:
         '200':
           description: OK
@@ -3750,6 +3764,15 @@ components:
         tenant_id:
           type: string
           format: uuid
+        roles:
+          type: array
+          description: The roles granted to the group itself, in the list only and only for a caller with role.read.
+          items:
+            type: object
+            required: [role_id, name]
+            properties:
+              role_id: {type: string, format: uuid}
+              name: {type: string}
     GroupCreateInput:
       type: object
       required: [description, name, parent_id, tenant_id]
