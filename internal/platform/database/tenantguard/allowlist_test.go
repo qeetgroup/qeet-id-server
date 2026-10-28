@@ -145,6 +145,9 @@ internal/federation/oidc/queries.sql#RevokeRefreshTokenGrant  secret-lookup: by 
 internal/federation/oidc/queries.sql#SessionClients  session-scoped: clients of the login session being ended
 internal/federation/oidc/queries.sql#TouchCIBAPollTime  secret-lookup: request found by its auth_req_id hash
 internal/federation/oidc/queries.sql#TouchDevicePollTime  secret-lookup: request found by its device code hash
+internal/federation/oidcsso/queries.sql#ConsumeOidcConnectionLoginCode  secret-lookup: by login code hash; the connection it joins names the tenant
+internal/federation/oidcsso/queries.sql#GetOidcConnectionForSignIn  pre-tenant: public sign-in endpoints; the connection in the path names the tenant
+internal/federation/oidcsso/queries.sql#GetUserByEmail  pre-tenant: federated sign-in finds the account by email
 internal/federation/saml/queries.sql#ConsumeSamlLoginCode  secret-lookup: by login code hash
 internal/federation/saml/queries.sql#GetSamlConnectionByID  pre-tenant: public SSO endpoints; the connection in the path names the tenant
 internal/federation/saml/queries.sql#GetUserByEmail  pre-tenant: federated sign-in finds the account by email
