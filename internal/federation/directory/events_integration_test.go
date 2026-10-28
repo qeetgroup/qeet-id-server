@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -527,5 +528,61 @@ func TestAlertsCanBeListedChangedPausedAndRemoved(test *testing.T) {
 		if n := dbtest.Count(test, `SELECT count(*) FROM audit.events WHERE tenant_id=$1 AND action=$2`, tenantID, action); n != want {
 			test.Errorf("%d %s records, want %d", n, action, want)
 		}
+	}
+}
+
+// TestConnectionsCountTheirPeopleAndGroups checks that each LDAP connection
+// counts the people it signed in, not deleted ones or another connection's,
+// and that SCIM counts the groups it provisioned, in this organisation only.
+func TestConnectionsCountTheirPeopleAndGroups(test *testing.T) {
+	pool := dbtest.Pool(test)
+	ctx := dbtest.Context(test)
+	tenantID, other := dbtest.Tenant(test), dbtest.Tenant(test)
+	first, second := uuid.New(), uuid.New()
+	service := NewService(&scimFixture{config: &scim.ConfigView{TokenSet: true}}, &ldapFixture{records: []ldap.Connection{
+		{ID: first, TenantID: tenantID, Name: "Head office"}, {ID: second, TenantID: tenantID, Name: "Branch"},
+	}})
+	service.SetEventStore(pool)
+	link := func(tenant uuid.UUID, connection uuid.UUID) uuid.UUID {
+		person := dbtest.User(test, tenant, tenant)
+		if _, err := pool.Exec(ctx, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, connection_id) VALUES ($1, $2, 'ldap', $3, $4)`,
+			person.ID, tenant, uuid.NewString(), connection); err != nil {
+			test.Fatal(err)
+		}
+		return person.ID
+	}
+	link(tenantID, first)
+	link(tenantID, first)
+	gone := link(tenantID, first)
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET deleted_at = NOW() WHERE id = $1`, gone); err != nil {
+		test.Fatal(err)
+	}
+	link(other, first) // another organisation's identity naming the same id
+	for _, tenant := range []uuid.UUID{tenantID, tenantID, other} {
+		if _, err := pool.Exec(ctx, `INSERT INTO tenant.groups (tenant_id, name, provisioned_via) VALUES ($1, $2, 'scim')`, tenant, uuid.NewString()); err != nil {
+			test.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Made by an admin')`, tenantID); err != nil {
+		test.Fatal(err)
+	}
+
+	connections, err := service.List(ctx, tenantID)
+	if err != nil {
+		test.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, c := range connections {
+		users, groups := "nil", "nil"
+		if c.UserCount != nil {
+			users = strconv.Itoa(*c.UserCount)
+		}
+		if c.GroupCount != nil {
+			groups = strconv.Itoa(*c.GroupCount)
+		}
+		got[c.Type+":"+c.Name] = users + "/" + groups
+	}
+	if got["ldap:Head office"] != "2/nil" || got["ldap:Branch"] != "0/nil" || got["scim:SCIM"] != "0/2" {
+		test.Errorf("counts %v; want Head office 2 people, Branch 0, SCIM 2 groups", got)
 	}
 }

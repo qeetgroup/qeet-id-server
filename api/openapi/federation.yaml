@@ -3634,9 +3634,11 @@ paths:
                         user_count:
                           type: [integer, 'null']
                           minimum: 0
+                          description: SCIM, the people it provisioned; LDAP, the people with an identity this connection signed in (not deleted ones).
                         group_count:
                           type: [integer, 'null']
                           minimum: 0
+                          description: SCIM, the groups it provisioned; null for LDAP, which provisions none.
                         server_url:
                           type: [string, 'null']
         '400':
