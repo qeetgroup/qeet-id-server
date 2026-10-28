@@ -62,7 +62,7 @@ func loginRecords(tenantID uuid.UUID, host string) []DNSRecord {
 		{Type: "CNAME", Name: host, Value: fmt.Sprintf("%s.%s", shortTenant(tenantID), loginHostSuffix)},
 		{
 			Type:  "TXT",
-			Name:  loginVerifyHost,
+			Name:  loginVerifyHost + "." + host, // where LoginDomain looks it up
 			Value: fmt.Sprintf("qeetid-verify=%s", shortTenant(tenantID)),
 		},
 	}
