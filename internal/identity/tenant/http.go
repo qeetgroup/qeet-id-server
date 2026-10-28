@@ -3,7 +3,10 @@ package tenant
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/http"
+	"reflect"
+	"slices"
 	"strconv"
 	"time"
 
@@ -226,12 +229,36 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	t, err := h.Repo.Update(r.Context(), id, in, h.lifecycle(r))
+	t, err := h.Repo.Update(r.Context(), id, in, h.lifecycle(r), recordUpdate(audit.ActorOf(r)))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, t)
+}
+
+// recordUpdate returns the Changed that audits, as actor's, an update to the
+// organisation's profile: tenant.updated naming every field that changed, the
+// name and region with their old and new values (the logo and metadata by name
+// alone: they can be large). A status change is audited by its StatusChange.
+func recordUpdate(actor audit.Actor) Changed {
+	return func(ctx context.Context, tx pgx.Tx, before, after *Tenant) error {
+		changes := audit.Changes(
+			map[string]any{"name": before.Name, "region": before.Region},
+			map[string]any{"name": after.Name, "region": after.Region})
+		changed := slices.Sorted(maps.Keys(changes))
+		if before.LogoURL != after.LogoURL {
+			changed = append(changed, "logo_url")
+		}
+		if !reflect.DeepEqual(before.Metadata, after.Metadata) {
+			changed = append(changed, "metadata")
+		}
+		if len(changed) == 0 {
+			return nil
+		}
+		return audit.Record(ctx, tx, actor.Event(after.ID, "tenant.updated", "tenant", after.ID,
+			map[string]any{"changed": changed, "changes": changes}))
+	}
 }
 
 // delete schedules the organisation's deletion, which an owner can call off

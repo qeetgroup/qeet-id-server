@@ -57,7 +57,7 @@ func (s *seeder) profile(o *world.Org) {
 	w := s.w
 	logo := monogram(o.Spec.Name, o.Spec.Brand)
 	w.At(o.Spec.Since.Add(5*time.Minute), func() {
-		_, err := w.Deps.Tenant.Repo.Update(w.Ctx, o.ID, tenant.UpdateInput{LogoURL: &logo}, nil)
+		_, err := w.Deps.Tenant.Repo.Update(w.Ctx, o.ID, tenant.UpdateInput{LogoURL: &logo}, nil, nil)
 		w.Check(err, "logo of "+o.Spec.Slug)
 	})
 	o.Tenant.LogoURL = logo

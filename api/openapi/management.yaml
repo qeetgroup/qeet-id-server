@@ -245,7 +245,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_tenants_ByTenantID
-      description: 'Updates mutable tenant attributes such as name and slug. Requires an administrative role within the tenant. Only the fields supplied in the request body are changed. Changing status is an owner''s (403 tenant.owner_only otherwise), and a tenant can''t suspend itself (403 tenant.self_suspend): that would lock out every member, its owners too, with nobody left to reactivate it; delete it instead. A tenant suspended another way that is reactivated is audited as tenant.reactivated and queued as an event.'
+      description: 'Updates mutable tenant attributes such as name and slug. Requires an administrative role within the tenant. Only the fields supplied in the request body are changed. Changing status is an owner''s (403 tenant.owner_only otherwise), and a tenant can''t suspend itself (403 tenant.self_suspend): that would lock out every member, its owners too, with nobody left to reactivate it; delete it instead. A tenant suspended another way that is reactivated is audited as tenant.reactivated and queued as an event. A change to the name, region, logo or metadata is audited, in the same transaction, as tenant.updated naming every field that changed (changed), with the old and new name and region (changes); the logo and metadata are named but not copied. An update that changes nothing records nothing.'
       summary: Update tenant
       tags:
         - Tenants

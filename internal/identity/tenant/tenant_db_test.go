@@ -4,8 +4,10 @@ package tenant
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -231,7 +233,7 @@ func TestOrganisationLifecycleIsTheOwners(t *testing.T) {
 	}
 
 	before := signIn()
-	if _, err := h.Repo.Update(ctx, org.ID, UpdateInput{Status: ptr("suspended")}, statusChange(h.Signals, org.ID, audit.Actor{Type: "system"})); err != nil {
+	if _, err := h.Repo.Update(ctx, org.ID, UpdateInput{Status: ptr("suspended")}, statusChange(h.Signals, org.ID, audit.Actor{Type: "system"}), nil); err != nil {
 		t.Fatalf("suspend: %v", err)
 	}
 	if !ended(before) {
@@ -320,6 +322,89 @@ func TestOrganisationLifecycleIsTheOwners(t *testing.T) {
 
 // ptr is a pointer to v.
 func ptr[T any](v T) *T { return &v }
+
+// TestOrganisationProfileChangesAreAudited checks that an update to an
+// organisation's name, region, logo or metadata is recorded as one
+// tenant.updated naming every field that changed (the name and region with
+// their old and new values, the logo and metadata by name only); that an update
+// changing nothing records nothing; and that a status change is recorded as
+// such, not as an update.
+func TestOrganisationProfileChangesAreAudited(t *testing.T) {
+	ctx := dbtest.Context(t)
+	h, _, _ := newHandler(t)
+	owner := verifiedAccount(t)
+	org, err := h.Repo.CreateWithOwner(ctx, CreateInput{Slug: dbtest.Unique("org"), Name: "Acme", Metadata: map[string]any{"tier": "gold"}}, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := dbtest.User(t, org.ID)
+	dbtest.Assign(t, admin.ID, org.ID, dbtest.Role(t, org.ID, "tenant.read", "tenant.write"))
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, org.ID), h.Mount)
+	path := "/tenants/" + org.ID.String()
+	type record struct {
+		Changed []string                  `json:"changed"`
+		Changes map[string]map[string]any `json:"changes"`
+	}
+	updates := func() []record {
+		t.Helper()
+		rows, err := dbtest.Pool(t).Query(ctx, `
+			SELECT metadata FROM audit.events
+			WHERE tenant_id = $1 AND action = 'tenant.updated' AND resource_id = $1 AND actor_user_id = $2
+			ORDER BY created_at`, org.ID, admin.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []record
+		for rows.Next() {
+			var raw []byte
+			var r record
+			if err := rows.Scan(&raw); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(raw, &r); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, r)
+		}
+		return out
+	}
+	patch := func(body map[string]any) {
+		t.Helper()
+		if rec := dbtest.Do(t, asAdmin, http.MethodPatch, path, body); rec.Code != http.StatusOK {
+			t.Fatalf("update %v: %d %s", body, rec.Code, rec.Body.String())
+		}
+	}
+
+	patch(map[string]any{"name": "Acme Ltd", "region": "eu-west-1", "logo_url": "data:image/png;base64,AAAA", "metadata": map[string]any{"tier": "platinum"}})
+	got := updates()
+	want := record{
+		Changed: []string{"name", "region", "logo_url", "metadata"},
+		Changes: map[string]map[string]any{"name": {"from": "Acme", "to": "Acme Ltd"}, "region": {"from": org.Region, "to": "eu-west-1"}},
+	}
+	if len(got) != 1 || !reflect.DeepEqual(got[0], want) {
+		t.Fatalf("recorded %+v, want %+v", got, want)
+	}
+	patch(map[string]any{"name": "Acme Ltd", "metadata": map[string]any{"tier": "platinum"}})
+	if got := updates(); len(got) != 1 {
+		t.Errorf("an update changing nothing was recorded: %+v", got)
+	}
+	patch(map[string]any{"logo_url": ""})
+	if got := updates(); len(got) != 2 || !reflect.DeepEqual(got[1].Changed, []string{"logo_url"}) || len(got[1].Changes) != 0 {
+		t.Errorf("recorded %+v, want a second naming only the logo", got)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE resource_id = $1 AND strpos(metadata::text, 'base64') > 0`, org.ID); n != 0 {
+		t.Errorf("%d audit records hold the logo itself", n)
+	}
+
+	asOwner := dbtest.Serve(dbtest.Principal(owner.ID, org.ID), h.Mount)
+	if rec := dbtest.Do(t, asOwner, http.MethodPatch, path, map[string]any{"status": "active"}); rec.Code != http.StatusOK {
+		t.Fatalf("set the status: %d %s", rec.Code, rec.Body.String())
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'tenant.updated' AND resource_id = $1`, org.ID); n != 2 {
+		t.Errorf("%d tenant.updated records after an unchanged status, want 2", n)
+	}
+}
 
 // TestCreateOrganisationFromAnother checks that a member signed in to one
 // organisation, and so scoped to it by row-level security, creates another

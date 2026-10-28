@@ -243,26 +243,20 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit int, curs
 // audit row, the event — commit together or not at all.
 type StatusChange func(ctx context.Context, tx pgx.Tx, from, to string) error
 
+// Changed runs inside the transaction that updates an organisation, given it
+// before and after the update, so what records the change commits with it.
+type Changed func(ctx context.Context, tx pgx.Tx, before, after *Tenant) error
+
 // Update applies the non-nil fields of in to tenant id. The SET clause is built
-// at run time, so this is hand-written rather than sqlc. When the status
-// changes, onStatus (if non-nil) runs in the same transaction.
-func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput, onStatus StatusChange) (*Tenant, error) {
+// at run time, so this is hand-written rather than sqlc. In the same
+// transaction onChange (if non-nil) runs after any update, and onStatus (if
+// non-nil) when the status changes.
+func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput, onStatus StatusChange, onChange Changed) (*Tenant, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-
-	var from string
-	if in.Status != nil {
-		if err := tx.QueryRow(ctx, `SELECT status FROM tenant.tenants WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, id).
-			Scan(&from); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil, errs.ErrNotFound
-			}
-			return nil, err
-		}
-	}
 
 	ub := dbutil.NewUpdate()
 	if in.Name != nil {
@@ -291,34 +285,50 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput, o
 		}
 		return r.Get(ctx, id)
 	}
+	old, err := scanTenant(tx.QueryRow(ctx, `SELECT `+tenantCols+` FROM tenant.tenants WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, id))
+	if err != nil {
+		return nil, err
+	}
 	ub.SetRaw("updated_at = NOW()")
 	idAt := ub.NextPlaceholder()
 	args := append(ub.Args(), id)
 	q := `UPDATE tenant.tenants SET ` + ub.Assignments() +
 		` WHERE id = $` + strconv.Itoa(idAt) + ` AND deleted_at IS NULL RETURNING ` + tenantCols
-	row := tx.QueryRow(ctx, q, args...)
-	var rec dbgen.TenantTenant
-	if err := row.Scan(&rec.ID, &rec.Slug, &rec.Name, &rec.Status, &rec.Plan,
-		&rec.Region, &rec.LogoUrl, &rec.Metadata, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrNotFound
-		}
+	rec, err := scanTenant(tx.QueryRow(ctx, q, args...))
+	if err != nil {
 		return nil, err
 	}
-	if in.Status != nil && *in.Status != from && onStatus != nil {
-		if err := onStatus(ctx, tx, from, *in.Status); err != nil {
+	before, after := toDomain(old), toDomain(rec)
+	if onChange != nil {
+		if err := onChange(ctx, tx, before, after); err != nil {
+			return nil, err
+		}
+	}
+	if in.Status != nil && *in.Status != before.Status && onStatus != nil {
+		if err := onStatus(ctx, tx, before.Status, *in.Status); err != nil {
 			return nil, err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return toDomain(rec), nil
+	return after, nil
 }
 
-// tenantCols is the column list for the hand-written Update RETURNING clause;
-// it matches the field order scanned into dbgen.TenantTenant above (sans deleted_at).
-const tenantCols = `id, slug, name, status, plan, region, logo_url, metadata, created_at, updated_at`
+// tenantCols is the column list of the hand-written queries Update runs, in
+// the order scanTenant reads it (dbgen.TenantTenant without deleted_at).
+const tenantCols = `id, slug, name, status, plan, region, logo_url, metadata, created_at, updated_at, deletion_due_at`
+
+// scanTenant reads a row of tenantCols; ErrNotFound for none.
+func scanTenant(row pgx.Row) (dbgen.TenantTenant, error) {
+	var rec dbgen.TenantTenant
+	err := row.Scan(&rec.ID, &rec.Slug, &rec.Name, &rec.Status, &rec.Plan,
+		&rec.Region, &rec.LogoUrl, &rec.Metadata, &rec.CreatedAt, &rec.UpdatedAt, &rec.DeletionDueAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return rec, errs.ErrNotFound
+	}
+	return rec, err
+}
 
 // SoftDelete deletes the organisation (its rows stay, marked deleted).
 // onDeleted (nil: none) runs in the same transaction, given the status it had.
