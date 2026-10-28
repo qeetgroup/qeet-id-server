@@ -153,7 +153,7 @@ func TestGroupNamesAreUniquePerOrganization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create template: %v", err)
 	}
-	if _, err := svc.ApplyTemplate(ctx, tmpl.ID, tenantA, nil, actor); !errors.Is(err, errs.ErrGroupNameExists) {
+	if _, err := svc.ApplyTemplate(ctx, tmpl.ID, tenantA, ApplyOptions{}, actor); !errors.Is(err, errs.ErrGroupNameExists) {
 		t.Errorf("apply a template naming Ops: %v, want %v", err, errs.ErrGroupNameExists)
 	}
 }
@@ -181,15 +181,35 @@ func TestTemplateGroupNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("save template: %v", err)
 	}
-	if _, err := svc.ApplyTemplate(ctx, tmpl.ID, tenant, nil, actor); err != nil {
+	if _, err := svc.ApplyTemplate(ctx, tmpl.ID, tenant, ApplyOptions{}, actor); err != nil {
 		t.Fatalf("apply the template: %v", err)
 	}
-	_, err = svc.ApplyTemplate(ctx, tmpl.ID, tenant, nil, actor)
+	_, err = svc.ApplyTemplate(ctx, tmpl.ID, tenant, ApplyOptions{}, actor)
 	if e := errs.As(err); !errors.Is(err, errs.ErrGroupNameExists) || e == nil || !strings.Contains(e.Detail, `"Sales"`) {
 		t.Errorf("apply the template again: %v, want %v naming Sales", err, errs.ErrGroupNameExists)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.groups WHERE tenant_id = $1`, tenant); n != 2 {
 		t.Errorf("tenant has %d groups after applying twice, want 2", n)
+	}
+
+	// A prefix, or a new name for the top group, applies it again elsewhere.
+	created, err := svc.ApplyTemplate(ctx, tmpl.ID, tenant, ApplyOptions{Prefix: "Pune · "}, actor)
+	if err != nil || len(created) != 2 || created[0].Name != "Pune · Sales" || created[1].Name != "Pune · Sales leads" {
+		t.Fatalf("apply with a prefix: %+v, %v; want both groups prefixed", created, err)
+	}
+	created, err = svc.ApplyTemplate(ctx, tmpl.ID, tenant, ApplyOptions{Prefix: "Mumbai · ", RootName: "Office"}, actor)
+	if err != nil || len(created) != 2 || created[0].Name != "Mumbai · Office" || created[1].Name != "Mumbai · Sales leads" {
+		t.Errorf("apply with a prefix and a top name: %+v, %v", created, err)
+	}
+	_, err = svc.ApplyTemplate(ctx, tmpl.ID, tenant, ApplyOptions{Prefix: strings.Repeat("x", 199)}, actor)
+	if e := errs.As(err); e == nil || e.Code != errs.CodeValidation {
+		t.Errorf("a prefix making names too long: %v, want a validation error", err)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.groups WHERE tenant_id = $1`, tenant); n != 6 {
+		t.Errorf("tenant has %d groups, want 6: the refused apply made none", n)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'group_template.applied' AND metadata->>'prefix' = 'Pune · '`, tenant); n != 1 {
+		t.Errorf("%d applies audited with their prefix, want 1", n)
 	}
 }
 

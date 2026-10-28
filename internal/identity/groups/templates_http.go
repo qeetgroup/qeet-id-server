@@ -74,6 +74,9 @@ func (h *Handler) deleteTemplate(w http.ResponseWriter, r *http.Request) {
 type applyTemplateInput struct {
 	// Optional: graft the template under an existing group instead of at root.
 	ParentID *uuid.UUID `json:"parent_id"`
+	// Optional: put before every group's name, and rename the one top group.
+	Prefix   string `json:"prefix"`
+	RootName string `json:"root_name"`
 }
 
 func (h *Handler) applyTemplate(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +95,8 @@ func (h *Handler) applyTemplate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	created, err := h.Service.ApplyTemplate(r.Context(), id, tenantID, in.ParentID, audit.ActorOf(r))
+	created, err := h.Service.ApplyTemplate(r.Context(), id, tenantID,
+		ApplyOptions{ParentID: in.ParentID, Prefix: in.Prefix, RootName: in.RootName}, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

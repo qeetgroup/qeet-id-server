@@ -2226,11 +2226,14 @@ paths:
       description: >-
         Creates every group in the template in one transaction, optionally under
         an existing parent. The parent must belong to the caller's tenant.
-        A template applies once per organization. Group names are unique in an
-        organization, ignoring case, so applying a template whose groups already
-        exist, including applying it a second time, answers 409
-        group.name_exists with the first colliding name in the error detail, and
-        creates nothing.
+        Group names are unique in an organization, ignoring case, so applying a
+        template whose groups already exist, including applying it a second
+        time, answers 409 group.name_exists with the first colliding name in the
+        error detail, and creates nothing. To apply it again (say, for another
+        office), give a prefix, put before every group's name, and optionally a
+        root_name for a template with one top group; names are checked
+        trimmed, at most 200 characters (422 validation_failed before anything
+        is made), and the audit event records both.
       requestBody:
         required: false
         content:
@@ -2241,6 +2244,12 @@ paths:
                 parent_id:
                   type: string
                   nullable: true
+                prefix:
+                  type: string
+                  description: Put before every group's name, such as "Pune · ".
+                root_name:
+                  type: string
+                  description: A new name for the template's one top group.
       security:
         - bearerAuth: []
         - apiKeyAuth: []
