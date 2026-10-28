@@ -294,7 +294,7 @@ func (d *directory) scimConnection() {
 	if len(people) > 0 {
 		last := f.ago(14*time.Minute, 44*time.Minute)
 		d.success(d.scim, "patch", "push", "user", world.Pick(w, people).ID.String(), last)
-		w.Exec("SCIM token last use", `UPDATE tenant.scim_tokens SET last_used_at = $2 WHERE tenant_id = $1`, o.ID, last)
+		w.Exec("SCIM token last use", `UPDATE tenant.scim_tokens SET last_used_at = $2 WHERE tenant_id = $1 AND revoked_at IS NULL`, o.ID, last)
 	}
 	f.scim = append(f.scim, scimNote{org: o.Spec.Name, token: token})
 }

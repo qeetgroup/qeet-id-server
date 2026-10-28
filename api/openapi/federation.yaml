@@ -4030,7 +4030,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Returns the organisation''s SCIM settings: whether a token is set and its prefix, never the token. Requires connection.read.'
+      description: 'Returns the organisation''s SCIM settings, never a token: whether one works, the newest working token''s prefix and creation, the latest use of any, and how many work (token_count). List the tokens themselves with GET /v1/tenants/{tenantID}/scim/tokens. Requires connection.read.'
       responses:
         '200':
           description: OK
@@ -4063,7 +4063,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Deletes the organisation''s SCIM token, which stops provisioning. Requires connection.write. Needs a recent step-up.'
+      description: 'Revokes every SCIM token of the organisation that still works, which stops provisioning; 404 when none does. To stop one token of several, use DELETE /v1/tenants/{tenantID}/scim/tokens/{id}. Requires connection.write. Needs a recent step-up.'
       responses:
         '204':
           description: No Content
@@ -4091,7 +4091,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Issues a new SCIM token, replacing any earlier one; it is shown only in this answer. Requires connection.write. Needs a recent step-up.'
+      description: 'Issues a new SCIM token, named "SCIM token", and revokes every earlier one at once; the token is shown only in this answer. To switch an identity provider over without a gap, rotate one token with POST /v1/tenants/{tenantID}/scim/tokens/{id}/rotate instead, which keeps the old one working for an overlap. Requires connection.write. Needs a recent step-up.'
       responses:
         '201':
           description: Created
@@ -4111,6 +4111,207 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/scim/tokens:
+    get:
+      operationId: get_v1_tenants_ByTenantID_scim_tokens
+      summary: List SCIM tokens
+      tags:
+        - SCIM
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: 'Lists the organisation''s SCIM tokens, newest first, including revoked and expired ones, never the tokens themselves. Requires connection.read.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SCIMToken'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    post:
+      operationId: post_v1_tenants_ByTenantID_scim_tokens
+      summary: Create a SCIM token
+      tags:
+        - SCIM
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: 'Issues a named SCIM token beside the organisation''s others, for a second identity provider or a staged switch; the token is shown only in this answer and only its hash is kept. Without expires_at it works until revoked or rotated. An organisation holds at most 10 working tokens that have not been rotated (409 scim.token_limit). Requires connection.write. Needs a recent step-up.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                expires_at:
+                  type: [string, 'null']
+                  format: date-time
+                  description: When the token stops working; in the future. Omit for none.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [scim_token, token]
+                properties:
+                  scim_token:
+                    $ref: '#/components/schemas/SCIMToken'
+                  token:
+                    type: string
+                    description: The token to give the identity provider, shown only here.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '402': {description: 'The organisation''s plan does not include SCIM.'}
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/scim/tokens/{id}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_scim_tokens_ById
+      summary: Revoke a SCIM token
+      tags:
+        - SCIM
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: 'Revokes one of the organisation''s SCIM tokens at once, including a rotated one still in its overlap; the organisation''s other tokens keep working. 404 scim.token_not_found when the token is not the organisation''s or is already revoked. Requires connection.write. Needs a recent step-up.'
+      responses:
+        '204':
+          description: Revoked
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/scim/tokens/{id}/rotate:
+    post:
+      operationId: post_v1_tenants_ByTenantID_scim_tokens_ById_rotate
+      summary: Rotate a SCIM token
+      tags:
+        - SCIM
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: 'Issues a token in place of one of the organisation''s, under its name, shown only in this answer. The old token keeps working for overlap_hours (default 168, a week; at most 720), or until its own earlier expiry, so the identity provider can be switched without a gap; then it is refused. An overlap of 0 revokes it at once. Revoke it early with DELETE /v1/tenants/{tenantID}/scim/tokens/{id}. Only a working token that has not been rotated can be (409 scim.token_inactive). The body is optional. Requires connection.write. Needs a recent step-up.'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                overlap_hours:
+                  type: integer
+                  minimum: 0
+                  maximum: 720
+                  description: How long the old token keeps working, in hours. Default 168.
+                expires_at:
+                  type: [string, 'null']
+                  format: date-time
+                  description: When the new token stops working; in the future. Omit for none.
+      responses:
+        '201':
+          description: Rotated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [replaced, scim_token, token]
+                properties:
+                  replaced:
+                    $ref: '#/components/schemas/SCIMToken'
+                  scim_token:
+                    $ref: '#/components/schemas/SCIMToken'
+                  token:
+                    type: string
+                    description: The new token to give the identity provider, shown only here.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '402': {description: 'The organisation''s plan does not include SCIM.'}
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -4744,7 +4945,7 @@ components:
     scimBearer:
       type: http
       scheme: bearer
-      description: 'Per-tenant SCIM provisioning token presented by the IdP: `Authorization: Bearer <scim-token>`. Distinct from user JWTs; rotated via the SCIM admin endpoints.'
+      description: 'An organisation''s SCIM provisioning token, presented by its identity provider: `Authorization: Bearer <scim-token>`. Distinct from user JWTs. An organisation can hold several, managed under /v1/tenants/{tenantID}/scim/tokens. A revoked or expired token, and every token of an organisation that is suspended or due for deletion, is refused with 401.'
     clientCredentials:
       type: oauth2
       description: OAuth 2.0 client credentials. Clients authenticate at the token endpoint via form params (`client_id`/`client_secret`) or HTTP Basic. Revocation/introspection use the same client auth.
@@ -5817,20 +6018,61 @@ components:
             type: string
     ConfigView:
       type: object
-      required: [created_at, last_used_at, provisioned_count, token_set]
+      required: [created_at, last_used_at, provisioned_count, token_count, token_set]
       properties:
         created_at:
+          type: [string, 'null']
+          format: date-time
+          description: When the newest working token was issued.
+        last_used_at:
+          type: [string, 'null']
+          format: date-time
+          description: The latest use of any working token, recorded at most once a minute.
+        provisioned_count:
+          type: integer
+        token_count:
+          type: integer
+          description: How many tokens work, rotated ones still in their overlap included.
+        token_prefix:
+          type: string
+          description: The newest working token's prefix.
+        token_set:
+          type: boolean
+          description: Whether any token works.
+    SCIMToken:
+      type: object
+      description: A SCIM bearer token, without the token itself.
+      required: [created_at, expires_at, id, last_used_at, name, replaced_by, revoked_at, status, token_prefix]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        token_prefix:
+          type: string
+          description: The token's first characters, to recognise it by.
+        status:
+          type: string
+          enum: [active, rotated, expired, revoked]
+          description: 'active: works. rotated: replaced, and works until expires_at, when its overlap ends. expired: past expires_at. revoked: revoked.'
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
           type: [string, 'null']
           format: date-time
         last_used_at:
           type: [string, 'null']
           format: date-time
-        provisioned_count:
-          type: integer
-        token_prefix:
-          type: string
-        token_set:
-          type: boolean
+          description: Recorded at most once a minute.
+        revoked_at:
+          type: [string, 'null']
+          format: date-time
+        replaced_by:
+          type: [string, 'null']
+          format: uuid
+          description: The token that replaced this one when it was rotated.
     ExternalIdentity:
       type: object
       required: [email, id, linked_at, provider, subject, tenant_id, user_id]

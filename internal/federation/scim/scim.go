@@ -30,7 +30,6 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -78,99 +77,6 @@ func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 
 // Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
-
-// ConfigView is the admin-facing status of a tenant's SCIM endpoint. The
-// token itself is never returned here — only on rotation.
-type ConfigView struct {
-	TokenSet         bool       `json:"token_set"`
-	TokenPrefix      string     `json:"token_prefix,omitempty"`
-	CreatedAt        *time.Time `json:"created_at"`
-	LastUsedAt       *time.Time `json:"last_used_at"`
-	ProvisionedCount int        `json:"provisioned_count"`
-}
-
-// Config returns the tenant's SCIM settings, without its token.
-func (s *Service) Config(ctx context.Context, tenantID uuid.UUID) (*ConfigView, error) {
-	v := &ConfigView{}
-	tok, err := s.q.GetScimTokenConfig(ctx, tenantID)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return nil, err
-	}
-	if err == nil {
-		v.TokenSet = true
-		v.TokenPrefix = tok.TokenPrefix
-		v.CreatedAt = &tok.CreatedAt
-		if tok.LastUsedAt.Valid {
-			t := tok.LastUsedAt.Time
-			v.LastUsedAt = &t
-		}
-	}
-	pgTID := pgtype.UUID{Bytes: tenantID, Valid: true}
-	count, err := s.q.CountProvisionedUsers(ctx, pgTID)
-	if err != nil {
-		return nil, err
-	}
-	v.ProvisionedCount = int(count)
-	return v, nil
-}
-
-// Rotate generates a new bearer token (replacing any existing one) and
-// returns the full plaintext exactly once. Stored as SHA-256 + a short
-// display prefix.
-func (s *Service) Rotate(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (full string, err error) {
-	// Plan gate: SCIM directory sync is an Enterprise feature, not on Free/lower.
-	if s.gate != nil {
-		ok, gerr := s.gate.FeatureAllowed(ctx, tenantID, "scim")
-		if gerr != nil {
-			return "", gerr
-		}
-		if !ok {
-			return "", errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "scim"})
-		}
-	}
-	raw, _, err := codes.URLToken()
-	if err != nil {
-		return "", err
-	}
-	full = tokenPrefix + raw
-	hash := codes.Hash(full)
-	display := tokenPrefix + raw[:6]
-	if err := s.q.WithTx(tx).UpsertScimToken(ctx, dbgen.UpsertScimTokenParams{
-		TenantID:    tenantID,
-		TokenHash:   hash,
-		TokenPrefix: display,
-	}); err != nil {
-		return "", err
-	}
-	return full, nil
-}
-
-// Revoke deletes the tenant's SCIM token, which ends provisioning.
-func (s *Service) Revoke(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
-	n, err := s.q.WithTx(tx).DeleteScimToken(ctx, tenantID)
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return errs.ErrNotFound
-	}
-	return nil
-}
-
-// resolveToken maps a presented bearer token to its tenant and records use.
-func (s *Service) resolveToken(ctx context.Context, raw string) (uuid.UUID, error) {
-	hash := codes.Hash(raw)
-	tid, err := s.q.GetScimTokenTenant(ctx, hash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, errs.ErrUnauthorized
-	}
-	if err != nil {
-		return uuid.Nil, err
-	}
-	// Best-effort last-used stamp; never block the request on it.
-	_ = s.q.TouchScimTokenUsed(ctx, tid)
-	return tid, nil
-}
 
 // userRow is the SCIM read side (includes external_id, which user.User omits).
 type userRow struct {
@@ -271,6 +177,10 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/scim/users", h.adminListUsers)
 	r.Post("/tenants/{tenantID}/scim/token", h.rotate)
 	r.Delete("/tenants/{tenantID}/scim/token", h.revoke)
+	r.Get("/tenants/{tenantID}/scim/tokens", h.listTokens)
+	r.Post("/tenants/{tenantID}/scim/tokens", h.createToken)
+	r.Post("/tenants/{tenantID}/scim/tokens/{id}/rotate", h.rotateToken)
+	r.Delete("/tenants/{tenantID}/scim/tokens/{id}", h.revokeToken)
 }
 
 // adminUser is the plain (non-SCIM-envelope) shape the admin console renders.
@@ -365,7 +275,7 @@ func (h *Handler) rotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	full, err := h.Service.Rotate(ctx, tx, tenantID)
+	issued, full, err := h.Service.replaceAll(ctx, tx, tenantID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -378,9 +288,11 @@ func (h *Handler) rotate(w http.ResponseWriter, r *http.Request) {
 		ActorType:    actorType,
 		Action:       "scim.token_rotated",
 		ResourceType: "scim_token",
+		ResourceID:   &issued.ID,
 		IP:           httpx.ClientIP(r),
 		UserAgent:    r.UserAgent(),
 		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"name": issued.Name, "replaced": "all"},
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return

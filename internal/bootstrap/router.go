@@ -546,6 +546,8 @@ func NoStoreRoutes() []string {
 		"POST /v1/mfa/push/pairing",
 		"POST /v1/mfa/push/pairing/claim",
 		"POST /v1/tenants/{tenantID}/scim/token",
+		"POST /v1/tenants/{tenantID}/scim/tokens",
+		"POST /v1/tenants/{tenantID}/scim/tokens/{id}/rotate",
 		"POST /v1/tenants/{tenantID}/admin-portal/links",
 		"POST /v1/tenants/{tenantID}/secrets/{id}/reveal",
 		"POST /v1/tenants/{tenantID}/credentials",

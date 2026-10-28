@@ -48,6 +48,21 @@ func (q *Queries) CheckUserInTenant(ctx context.Context, arg CheckUserInTenantPa
 	return exists, err
 }
 
+const countLiveScimTokens = `-- name: CountLiveScimTokens :one
+SELECT count(*) FROM tenant.scim_tokens
+WHERE tenant_id = $1 AND revoked_at IS NULL AND replaced_by IS NULL
+  AND (expires_at IS NULL OR expires_at > NOW())
+`
+
+// CountLiveScimTokens counts the organisation's tokens that work and haven't
+// been rotated: the ones the cap on creating tokens counts.
+func (q *Queries) CountLiveScimTokens(ctx context.Context, tenantID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countLiveScimTokens, tenantID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countProvisionedUsers = `-- name: CountProvisionedUsers :one
 SELECT count(*) FROM "user".users
 WHERE tenant_id = $1 AND provisioned_via = 'scim' AND deleted_at IS NULL
@@ -85,18 +100,6 @@ type DeleteScimGroupParams struct {
 
 func (q *Queries) DeleteScimGroup(ctx context.Context, arg DeleteScimGroupParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteScimGroup, arg.ID, arg.TenantID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const deleteScimToken = `-- name: DeleteScimToken :execrows
-DELETE FROM tenant.scim_tokens WHERE tenant_id = $1
-`
-
-func (q *Queries) DeleteScimToken(ctx context.Context, tenantID uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteScimToken, tenantID)
 	if err != nil {
 		return 0, err
 	}
@@ -177,47 +180,6 @@ func (q *Queries) GetScimGroup(ctx context.Context, arg GetScimGroupParams) (Get
 	return i, err
 }
 
-const getScimTokenConfig = `-- name: GetScimTokenConfig :one
-
-
-SELECT token_prefix, created_at, last_used_at
-FROM tenant.scim_tokens WHERE tenant_id = $1
-`
-
-type GetScimTokenConfigRow struct {
-	TokenPrefix string
-	CreatedAt   time.Time
-	LastUsedAt  pgtype.Timestamptz
-}
-
-// Queries for the SCIM domain.
-// DYNAMIC queries kept hand-written:
-//
-//	listProvisioned  — conditional WHERE + dynamic parameter positions for LIMIT/OFFSET
-//	listGroups       — same conditional pattern with optional name filter
-//	touchGroupTx     — CASE WHEN bool flag controls external_id update
-//
-// ==========================================================================
-// Token management
-// ==========================================================================
-func (q *Queries) GetScimTokenConfig(ctx context.Context, tenantID uuid.UUID) (GetScimTokenConfigRow, error) {
-	row := q.db.QueryRow(ctx, getScimTokenConfig, tenantID)
-	var i GetScimTokenConfigRow
-	err := row.Scan(&i.TokenPrefix, &i.CreatedAt, &i.LastUsedAt)
-	return i, err
-}
-
-const getScimTokenTenant = `-- name: GetScimTokenTenant :one
-SELECT tenant_id FROM tenant.scim_tokens WHERE token_hash = $1
-`
-
-func (q *Queries) GetScimTokenTenant(ctx context.Context, tokenHash string) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getScimTokenTenant, tokenHash)
-	var tenant_id uuid.UUID
-	err := row.Scan(&tenant_id)
-	return tenant_id, err
-}
-
 const homeUserByEmail = `-- name: HomeUserByEmail :one
 SELECT id FROM "user".users
 WHERE tenant_id = $1::uuid AND LOWER(email) = LOWER($2) AND deleted_at IS NULL
@@ -270,6 +232,53 @@ func (q *Queries) InsertScimGroup(ctx context.Context, arg InsertScimGroupParams
 	return i, err
 }
 
+const insertScimToken = `-- name: InsertScimToken :one
+INSERT INTO tenant.scim_tokens (tenant_id, name, token_hash, token_prefix, expires_at)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, name, token_prefix, created_at, expires_at, last_used_at, revoked_at, replaced_by
+`
+
+type InsertScimTokenParams struct {
+	TenantID    uuid.UUID
+	Name        string
+	TokenHash   string
+	TokenPrefix string
+	ExpiresAt   pgtype.Timestamptz
+}
+
+type InsertScimTokenRow struct {
+	ID          uuid.UUID
+	Name        string
+	TokenPrefix string
+	CreatedAt   time.Time
+	ExpiresAt   pgtype.Timestamptz
+	LastUsedAt  pgtype.Timestamptz
+	RevokedAt   pgtype.Timestamptz
+	ReplacedBy  pgtype.UUID
+}
+
+func (q *Queries) InsertScimToken(ctx context.Context, arg InsertScimTokenParams) (InsertScimTokenRow, error) {
+	row := q.db.QueryRow(ctx, insertScimToken,
+		arg.TenantID,
+		arg.Name,
+		arg.TokenHash,
+		arg.TokenPrefix,
+		arg.ExpiresAt,
+	)
+	var i InsertScimTokenRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.TokenPrefix,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ReplacedBy,
+	)
+	return i, err
+}
+
 const listGroupMembers = `-- name: ListGroupMembers :many
 SELECT gm.user_id, u.email, u.display_name
 FROM tenant.group_members gm
@@ -307,6 +316,107 @@ func (q *Queries) ListGroupMembers(ctx context.Context, arg ListGroupMembersPara
 		return nil, err
 	}
 	return items, nil
+}
+
+const listScimTokens = `-- name: ListScimTokens :many
+
+
+SELECT id, name, token_prefix, created_at, expires_at, last_used_at, revoked_at, replaced_by
+FROM tenant.scim_tokens
+WHERE tenant_id = $1
+ORDER BY created_at DESC, id DESC
+`
+
+type ListScimTokensRow struct {
+	ID          uuid.UUID
+	Name        string
+	TokenPrefix string
+	CreatedAt   time.Time
+	ExpiresAt   pgtype.Timestamptz
+	LastUsedAt  pgtype.Timestamptz
+	RevokedAt   pgtype.Timestamptz
+	ReplacedBy  pgtype.UUID
+}
+
+// Queries for the SCIM domain.
+// DYNAMIC queries kept hand-written:
+//
+//	listProvisioned  — conditional WHERE + dynamic parameter positions for LIMIT/OFFSET
+//	listGroups       — same conditional pattern with optional name filter
+//	touchGroupTx     — CASE WHEN bool flag controls external_id update
+//
+// ==========================================================================
+// Token management
+// ==========================================================================
+// ListScimTokens is every token of the organisation, newest first.
+func (q *Queries) ListScimTokens(ctx context.Context, tenantID uuid.UUID) ([]ListScimTokensRow, error) {
+	rows, err := q.db.Query(ctx, listScimTokens, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListScimTokensRow{}
+	for rows.Next() {
+		var i ListScimTokensRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.TokenPrefix,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.LastUsedAt,
+			&i.RevokedAt,
+			&i.ReplacedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockScimToken = `-- name: LockScimToken :one
+SELECT id, name, token_prefix, created_at, expires_at, last_used_at, revoked_at, replaced_by
+FROM tenant.scim_tokens
+WHERE id = $1 AND tenant_id = $2
+FOR UPDATE
+`
+
+type LockScimTokenParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+type LockScimTokenRow struct {
+	ID          uuid.UUID
+	Name        string
+	TokenPrefix string
+	CreatedAt   time.Time
+	ExpiresAt   pgtype.Timestamptz
+	LastUsedAt  pgtype.Timestamptz
+	RevokedAt   pgtype.Timestamptz
+	ReplacedBy  pgtype.UUID
+}
+
+// LockScimToken reads one of the organisation's tokens and locks it for a
+// rotation.
+func (q *Queries) LockScimToken(ctx context.Context, arg LockScimTokenParams) (LockScimTokenRow, error) {
+	row := q.db.QueryRow(ctx, lockScimToken, arg.ID, arg.TenantID)
+	var i LockScimTokenRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.TokenPrefix,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ReplacedBy,
+	)
+	return i, err
 }
 
 const provisionedUserState = `-- name: ProvisionedUserState :one
@@ -363,6 +473,143 @@ func (q *Queries) RemoveGroupMember(ctx context.Context, arg RemoveGroupMemberPa
 	return err
 }
 
+const replaceScimToken = `-- name: ReplaceScimToken :one
+UPDATE tenant.scim_tokens
+SET replaced_by = $1,
+    expires_at  = LEAST(expires_at, NOW() + make_interval(hours => $2::int)),
+    revoked_at  = CASE WHEN $2::int = 0 THEN NOW() END
+WHERE id = $3 AND tenant_id = $4 AND revoked_at IS NULL AND replaced_by IS NULL
+RETURNING id, name, token_prefix, created_at, expires_at, last_used_at, revoked_at, replaced_by
+`
+
+type ReplaceScimTokenParams struct {
+	ReplacedBy   pgtype.UUID
+	OverlapHours int32
+	ID           uuid.UUID
+	TenantID     uuid.UUID
+}
+
+type ReplaceScimTokenRow struct {
+	ID          uuid.UUID
+	Name        string
+	TokenPrefix string
+	CreatedAt   time.Time
+	ExpiresAt   pgtype.Timestamptz
+	LastUsedAt  pgtype.Timestamptz
+	RevokedAt   pgtype.Timestamptz
+	ReplacedBy  pgtype.UUID
+}
+
+// ReplaceScimToken records a token's rotation: it names its replacement and
+// works until the overlap ends, or stops now when there is none.
+func (q *Queries) ReplaceScimToken(ctx context.Context, arg ReplaceScimTokenParams) (ReplaceScimTokenRow, error) {
+	row := q.db.QueryRow(ctx, replaceScimToken,
+		arg.ReplacedBy,
+		arg.OverlapHours,
+		arg.ID,
+		arg.TenantID,
+	)
+	var i ReplaceScimTokenRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.TokenPrefix,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ReplacedBy,
+	)
+	return i, err
+}
+
+const resolveScimToken = `-- name: ResolveScimToken :one
+SELECT t.id, t.tenant_id, t.last_used_at
+FROM tenant.scim_tokens t
+JOIN tenant.tenants o ON o.id = t.tenant_id
+WHERE t.token_hash = $1
+  AND t.revoked_at IS NULL
+  AND (t.expires_at IS NULL OR t.expires_at > NOW())
+  AND o.status = 'active' AND o.deleted_at IS NULL AND o.deletion_due_at IS NULL
+`
+
+type ResolveScimTokenRow struct {
+	ID         uuid.UUID
+	TenantID   uuid.UUID
+	LastUsedAt pgtype.Timestamptz
+}
+
+// ResolveScimToken finds the token an identity provider presented, if it
+// works: not revoked or expired, of an organisation that is active and not
+// due for deletion.
+func (q *Queries) ResolveScimToken(ctx context.Context, tokenHash string) (ResolveScimTokenRow, error) {
+	row := q.db.QueryRow(ctx, resolveScimToken, tokenHash)
+	var i ResolveScimTokenRow
+	err := row.Scan(&i.ID, &i.TenantID, &i.LastUsedAt)
+	return i, err
+}
+
+const revokeLiveScimTokens = `-- name: RevokeLiveScimTokens :execrows
+UPDATE tenant.scim_tokens
+SET revoked_at = NOW(), replaced_by = COALESCE(replaced_by, $1::uuid)
+WHERE tenant_id = $2 AND revoked_at IS NULL
+  AND (expires_at IS NULL OR expires_at > NOW())
+  AND id IS DISTINCT FROM $1::uuid
+`
+
+type RevokeLiveScimTokensParams struct {
+	Replacement pgtype.UUID
+	TenantID    uuid.UUID
+}
+
+// RevokeLiveScimTokens stops every token of the organisation that still
+// works, except the replacement when one is given, which it then names.
+func (q *Queries) RevokeLiveScimTokens(ctx context.Context, arg RevokeLiveScimTokensParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeLiveScimTokens, arg.Replacement, arg.TenantID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const revokeScimToken = `-- name: RevokeScimToken :one
+UPDATE tenant.scim_tokens SET revoked_at = NOW()
+WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL
+RETURNING id, name, token_prefix, created_at, expires_at, last_used_at, revoked_at, replaced_by
+`
+
+type RevokeScimTokenParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+type RevokeScimTokenRow struct {
+	ID          uuid.UUID
+	Name        string
+	TokenPrefix string
+	CreatedAt   time.Time
+	ExpiresAt   pgtype.Timestamptz
+	LastUsedAt  pgtype.Timestamptz
+	RevokedAt   pgtype.Timestamptz
+	ReplacedBy  pgtype.UUID
+}
+
+func (q *Queries) RevokeScimToken(ctx context.Context, arg RevokeScimTokenParams) (RevokeScimTokenRow, error) {
+	row := q.db.QueryRow(ctx, revokeScimToken, arg.ID, arg.TenantID)
+	var i RevokeScimTokenRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.TokenPrefix,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ReplacedBy,
+	)
+	return i, err
+}
+
 const tagProvisionedUser = `-- name: TagProvisionedUser :exec
 UPDATE "user".users
     SET external_id    = $1,
@@ -382,31 +629,18 @@ func (q *Queries) TagProvisionedUser(ctx context.Context, arg TagProvisionedUser
 }
 
 const touchScimTokenUsed = `-- name: TouchScimTokenUsed :exec
-UPDATE tenant.scim_tokens SET last_used_at = NOW() WHERE tenant_id = $1
+UPDATE tenant.scim_tokens SET last_used_at = NOW()
+WHERE id = $1 AND tenant_id = $2
+  AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '1 minute')
 `
 
-func (q *Queries) TouchScimTokenUsed(ctx context.Context, tenantID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, touchScimTokenUsed, tenantID)
-	return err
+type TouchScimTokenUsedParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
 }
 
-const upsertScimToken = `-- name: UpsertScimToken :exec
-INSERT INTO tenant.scim_tokens (tenant_id, token_hash, token_prefix, created_at, last_used_at)
-VALUES ($1, $2, $3, NOW(), NULL)
-ON CONFLICT (tenant_id) DO UPDATE
-    SET token_hash   = EXCLUDED.token_hash,
-        token_prefix = EXCLUDED.token_prefix,
-        created_at   = NOW(),
-        last_used_at = NULL
-`
-
-type UpsertScimTokenParams struct {
-	TenantID    uuid.UUID
-	TokenHash   string
-	TokenPrefix string
-}
-
-func (q *Queries) UpsertScimToken(ctx context.Context, arg UpsertScimTokenParams) error {
-	_, err := q.db.Exec(ctx, upsertScimToken, arg.TenantID, arg.TokenHash, arg.TokenPrefix)
+// TouchScimTokenUsed records a token's use, at most once a minute.
+func (q *Queries) TouchScimTokenUsed(ctx context.Context, arg TouchScimTokenUsedParams) error {
+	_, err := q.db.Exec(ctx, touchScimTokenUsed, arg.ID, arg.TenantID)
 	return err
 }

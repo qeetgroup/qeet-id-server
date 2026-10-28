@@ -8,31 +8,78 @@
 -- Token management
 -- ==========================================================================
 
--- name: GetScimTokenConfig :one
-SELECT token_prefix, created_at, last_used_at
-FROM tenant.scim_tokens WHERE tenant_id = @tenant_id;
+-- ListScimTokens is every token of the organisation, newest first.
+-- name: ListScimTokens :many
+SELECT id, name, token_prefix, created_at, expires_at, last_used_at, revoked_at, replaced_by
+FROM tenant.scim_tokens
+WHERE tenant_id = @tenant_id
+ORDER BY created_at DESC, id DESC;
 
 -- name: CountProvisionedUsers :one
 SELECT count(*) FROM "user".users
 WHERE tenant_id = @tenant_id AND provisioned_via = 'scim' AND deleted_at IS NULL;
 
--- name: UpsertScimToken :exec
-INSERT INTO tenant.scim_tokens (tenant_id, token_hash, token_prefix, created_at, last_used_at)
-VALUES (@tenant_id, @token_hash, @token_prefix, NOW(), NULL)
-ON CONFLICT (tenant_id) DO UPDATE
-    SET token_hash   = EXCLUDED.token_hash,
-        token_prefix = EXCLUDED.token_prefix,
-        created_at   = NOW(),
-        last_used_at = NULL;
+-- CountLiveScimTokens counts the organisation's tokens that work and haven't
+-- been rotated: the ones the cap on creating tokens counts.
+-- name: CountLiveScimTokens :one
+SELECT count(*) FROM tenant.scim_tokens
+WHERE tenant_id = @tenant_id AND revoked_at IS NULL AND replaced_by IS NULL
+  AND (expires_at IS NULL OR expires_at > NOW());
 
--- name: DeleteScimToken :execrows
-DELETE FROM tenant.scim_tokens WHERE tenant_id = @tenant_id;
+-- name: InsertScimToken :one
+INSERT INTO tenant.scim_tokens (tenant_id, name, token_hash, token_prefix, expires_at)
+VALUES (@tenant_id, @name, @token_hash, @token_prefix, sqlc.narg('expires_at'))
+RETURNING id, name, token_prefix, created_at, expires_at, last_used_at, revoked_at, replaced_by;
 
--- name: GetScimTokenTenant :one
-SELECT tenant_id FROM tenant.scim_tokens WHERE token_hash = @token_hash;
+-- LockScimToken reads one of the organisation's tokens and locks it for a
+-- rotation.
+-- name: LockScimToken :one
+SELECT id, name, token_prefix, created_at, expires_at, last_used_at, revoked_at, replaced_by
+FROM tenant.scim_tokens
+WHERE id = @id AND tenant_id = @tenant_id
+FOR UPDATE;
 
+-- ReplaceScimToken records a token's rotation: it names its replacement and
+-- works until the overlap ends, or stops now when there is none.
+-- name: ReplaceScimToken :one
+UPDATE tenant.scim_tokens
+SET replaced_by = @replaced_by,
+    expires_at  = LEAST(expires_at, NOW() + make_interval(hours => sqlc.arg('overlap_hours')::int)),
+    revoked_at  = CASE WHEN sqlc.arg('overlap_hours')::int = 0 THEN NOW() END
+WHERE id = @id AND tenant_id = @tenant_id AND revoked_at IS NULL AND replaced_by IS NULL
+RETURNING id, name, token_prefix, created_at, expires_at, last_used_at, revoked_at, replaced_by;
+
+-- name: RevokeScimToken :one
+UPDATE tenant.scim_tokens SET revoked_at = NOW()
+WHERE id = @id AND tenant_id = @tenant_id AND revoked_at IS NULL
+RETURNING id, name, token_prefix, created_at, expires_at, last_used_at, revoked_at, replaced_by;
+
+-- RevokeLiveScimTokens stops every token of the organisation that still
+-- works, except the replacement when one is given, which it then names.
+-- name: RevokeLiveScimTokens :execrows
+UPDATE tenant.scim_tokens
+SET revoked_at = NOW(), replaced_by = COALESCE(replaced_by, sqlc.narg('replacement')::uuid)
+WHERE tenant_id = @tenant_id AND revoked_at IS NULL
+  AND (expires_at IS NULL OR expires_at > NOW())
+  AND id IS DISTINCT FROM sqlc.narg('replacement')::uuid;
+
+-- ResolveScimToken finds the token an identity provider presented, if it
+-- works: not revoked or expired, of an organisation that is active and not
+-- due for deletion.
+-- name: ResolveScimToken :one
+SELECT t.id, t.tenant_id, t.last_used_at
+FROM tenant.scim_tokens t
+JOIN tenant.tenants o ON o.id = t.tenant_id
+WHERE t.token_hash = @token_hash
+  AND t.revoked_at IS NULL
+  AND (t.expires_at IS NULL OR t.expires_at > NOW())
+  AND o.status = 'active' AND o.deleted_at IS NULL AND o.deletion_due_at IS NULL;
+
+-- TouchScimTokenUsed records a token's use, at most once a minute.
 -- name: TouchScimTokenUsed :exec
-UPDATE tenant.scim_tokens SET last_used_at = NOW() WHERE tenant_id = @tenant_id;
+UPDATE tenant.scim_tokens SET last_used_at = NOW()
+WHERE id = @id AND tenant_id = @tenant_id
+  AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '1 minute');
 
 -- ==========================================================================
 -- Users (provisioned read + tag)

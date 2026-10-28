@@ -153,7 +153,6 @@ internal/federation/saml/queries.sql#MarkSamlLoginCodeUsed  secret-lookup: by lo
 internal/federation/saml/queries.sql#TouchSamlLastLogin  parent-scoped: connection row read for this sign-in
 internal/federation/saml/queries.sql#TouchSamlSPLastLogin  parent-scoped: service provider row read for this sign-in
 internal/federation/saml/saml.go#Service.AllowsIdPInitiated  parent-scoped: connection ID from a read that checked it
-internal/federation/scim/queries.sql#GetScimTokenTenant  secret-lookup: tenant named by the SCIM token hash
 internal/federation/scim/queries.sql#TagProvisionedUser  parent-scoped: account created for the tenant in the same transaction
 internal/federation/social/platform.go#Service.findOrCreatePlatformUser  pre-tenant: platform sign-in finds or creates the account
 internal/federation/social/providers.go#Service.DeleteProvider  parent-scoped: provider ID from the tenant-scoped read above
