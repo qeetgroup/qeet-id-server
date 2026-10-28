@@ -100,3 +100,7 @@ func statusForCode(code string) int {
 	}
 	return http.StatusBadRequest
 }
+
+// StatusForCode is the HTTP status WriteError answers an error code with, for
+// a handler that shows the error on a page of its own.
+func StatusForCode(code string) int { return statusForCode(code) }

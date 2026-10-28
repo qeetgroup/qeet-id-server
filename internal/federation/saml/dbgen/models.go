@@ -24,4 +24,5 @@ type TenantSamlServiceProvider struct {
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 	LastLoginAt     pgtype.Timestamptz
+	Attributes      []byte
 }

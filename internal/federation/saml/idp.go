@@ -149,19 +149,21 @@ func GenerateIdPKeyPEM(commonName string) (keyPEM, certPEM string, err error) {
 // =====================================================================
 
 // ServiceProvider is a downstream app that consumes Qeet ID as its IdP.
+// Attributes are what its assertions carry beside the NameID.
 type ServiceProvider struct {
-	ID              uuid.UUID  `json:"id"`
-	TenantID        uuid.UUID  `json:"tenant_id"`
-	Name            string     `json:"name"`
-	EntityID        string     `json:"entity_id"`
-	ACSURL          string     `json:"acs_url"`
-	NameIDFormat    string     `json:"name_id_format"`
-	NameIDAttribute string     `json:"name_id_attribute"`
-	Certificate     string     `json:"certificate"`
-	Status          string     `json:"status"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
-	LastLoginAt     *time.Time `json:"last_login_at"`
+	ID              uuid.UUID          `json:"id"`
+	TenantID        uuid.UUID          `json:"tenant_id"`
+	Name            string             `json:"name"`
+	EntityID        string             `json:"entity_id"`
+	ACSURL          string             `json:"acs_url"`
+	NameIDFormat    string             `json:"name_id_format"`
+	NameIDAttribute string             `json:"name_id_attribute"`
+	Certificate     string             `json:"certificate"`
+	Status          string             `json:"status"`
+	Attributes      []AttributeMapping `json:"attributes"`
+	CreatedAt       time.Time          `json:"created_at"`
+	UpdatedAt       time.Time          `json:"updated_at"`
+	LastLoginAt     *time.Time         `json:"last_login_at"`
 }
 
 // SessionResolver resolves the hosted-login SSO cookie to a user id. Satisfied
@@ -226,25 +228,29 @@ func toSP(r dbgen.TenantSamlServiceProvider) *ServiceProvider {
 		NameIDAttribute: r.NameIDAttribute,
 		Certificate:     r.Certificate,
 		Status:          r.Status,
+		Attributes:      decodeAttributes(r.Attributes),
 		CreatedAt:       r.CreatedAt,
 		UpdatedAt:       r.UpdatedAt,
 		LastLoginAt:     lastLogin,
 	}
 }
 
-// CreateSPInput is what CreateSP takes.
+// CreateSPInput is what CreateSP takes. Attributes nil sends the default
+// attributes; an empty list sends none.
 type CreateSPInput struct {
-	Name            string `json:"name"`
-	EntityID        string `json:"entity_id"`
-	ACSURL          string `json:"acs_url"`
-	NameIDFormat    string `json:"name_id_format"`
-	NameIDAttribute string `json:"name_id_attribute"`
-	Certificate     string `json:"certificate"`
-	Status          string `json:"status"`
+	Name            string              `json:"name"`
+	EntityID        string              `json:"entity_id"`
+	ACSURL          string              `json:"acs_url"`
+	NameIDFormat    string              `json:"name_id_format"`
+	NameIDAttribute string              `json:"name_id_attribute"`
+	Certificate     string              `json:"certificate"`
+	Status          string              `json:"status"`
+	Attributes      *[]AttributeMapping `json:"attributes"`
 }
 
-// check requires the ACS URL to pass validACSURL and a certificate, if given,
-// to parse.
+// check requires the ACS URL to pass validACSURL, a certificate, if given, to
+// parse, and the NameID settings and attributes to pass checkNameID and
+// checkAttributes.
 func (in *CreateSPInput) check() error {
 	if in.Status != "" && !validStatus(in.Status) {
 		return errs.ErrSAMLStatusInvalid
@@ -257,6 +263,13 @@ func (in *CreateSPInput) check() error {
 		if _, err := parseCertificate(in.Certificate); err != nil {
 			return errs.ErrSAMLCertificateInvalid
 		}
+	}
+	in.NameIDFormat, in.NameIDAttribute = strings.TrimSpace(in.NameIDFormat), strings.TrimSpace(in.NameIDAttribute)
+	if err := checkNameID(&in.NameIDFormat, &in.NameIDAttribute); err != nil {
+		return err
+	}
+	if in.Attributes != nil {
+		return checkAttributes(*in.Attributes)
 	}
 	return nil
 }
@@ -305,23 +318,20 @@ func (i *IdP) CreateSP(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in Cr
 	if status == "" {
 		status = "draft"
 	}
-	nidFmt := in.NameIDFormat
-	if nidFmt == "" {
-		nidFmt = nameIDEmail
-	}
-	nidAttr := in.NameIDAttribute
-	if nidAttr == "" {
-		nidAttr = "email"
+	attributes, err := encodeAttributes(in.Attributes)
+	if err != nil {
+		return nil, err
 	}
 	r, err := i.q.WithTx(tx).InsertSamlSP(ctx, dbgen.InsertSamlSPParams{
 		TenantID:        tenantID,
 		Name:            in.Name,
 		EntityID:        in.EntityID,
 		AcsUrl:          in.ACSURL,
-		NameIDFormat:    nidFmt,
-		NameIDAttribute: nidAttr,
+		NameIDFormat:    in.NameIDFormat,
+		NameIDAttribute: in.NameIDAttribute,
 		Certificate:     in.Certificate,
 		Status:          status,
+		Attributes:      attributes,
 	})
 	if pgxerr.IsUnique(err) {
 		return nil, errs.ErrSAMLSPEntityIDTaken
@@ -357,18 +367,20 @@ func (i *IdP) GetSP(ctx context.Context, id, tenantID uuid.UUID) (*ServiceProvid
 	return toSP(r), nil
 }
 
-// UpdateSPInput is what UpdateSP takes.
+// UpdateSPInput is what UpdateSP takes. Attributes replaces the whole list.
 type UpdateSPInput struct {
-	Name            *string `json:"name"`
-	EntityID        *string `json:"entity_id"`
-	ACSURL          *string `json:"acs_url"`
-	NameIDFormat    *string `json:"name_id_format"`
-	NameIDAttribute *string `json:"name_id_attribute"`
-	Certificate     *string `json:"certificate"`
-	Status          *string `json:"status"`
+	Name            *string             `json:"name"`
+	EntityID        *string             `json:"entity_id"`
+	ACSURL          *string             `json:"acs_url"`
+	NameIDFormat    *string             `json:"name_id_format"`
+	NameIDAttribute *string             `json:"name_id_attribute"`
+	Certificate     *string             `json:"certificate"`
+	Status          *string             `json:"status"`
+	Attributes      *[]AttributeMapping `json:"attributes"`
 }
 
-// check applies CreateSPInput's checks to the fields being changed.
+// check applies CreateSPInput's checks to the fields being changed; UpdateSP
+// checks the NameID settings against the ones they change.
 func (in *UpdateSPInput) check() error {
 	if in.ACSURL != nil {
 		acs := strings.TrimSpace(*in.ACSURL)
@@ -382,16 +394,55 @@ func (in *UpdateSPInput) check() error {
 			return errs.ErrSAMLCertificateInvalid
 		}
 	}
+	if in.NameIDFormat != nil {
+		f := strings.TrimSpace(*in.NameIDFormat)
+		if f != "" && !knownNameIDFormat(f) {
+			return errs.ErrSAMLNameIDFormatInvalid
+		}
+		in.NameIDFormat = &f
+	}
+	if in.NameIDAttribute != nil {
+		a := strings.TrimSpace(*in.NameIDAttribute)
+		if a != "" && !validNameIDAttribute(a) {
+			return errs.ErrSAMLNameIDAttributeInvalid
+		}
+		in.NameIDAttribute = &a
+	}
+	if in.Attributes != nil {
+		return checkAttributes(*in.Attributes)
+	}
 	return nil
 }
 
 // UpdateSP changes the given fields of a service provider in tenantID within
-// tx, refusing input that fails check.
+// tx, refusing input that fails check or NameID settings mergeNameID refuses.
 func (i *IdP) UpdateSP(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, in UpdateSPInput) (*ServiceProvider, error) {
 	if err := in.check(); err != nil {
 		return nil, err
 	}
-	r, err := i.q.WithTx(tx).UpdateSamlSP(ctx, dbgen.UpdateSamlSPParams{
+	q := i.q.WithTx(tx)
+	if in.NameIDFormat != nil || in.NameIDAttribute != nil {
+		cur, err := q.GetSamlSPForUpdate(ctx, dbgen.GetSamlSPForUpdateParams{ID: id, TenantID: tenantID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errs.ErrNotFound
+		}
+		if err != nil {
+			return nil, err
+		}
+		format, attribute, err := mergeNameID(cur.NameIDFormat, cur.NameIDAttribute, in.NameIDFormat, in.NameIDAttribute)
+		if err != nil {
+			return nil, err
+		}
+		in.NameIDFormat, in.NameIDAttribute = &format, &attribute
+	}
+	var attributes []byte
+	if in.Attributes != nil {
+		var err error
+		if attributes, err = encodeAttributes(in.Attributes); err != nil {
+			return nil, err
+		}
+	}
+	r, err := q.UpdateSamlSP(ctx, dbgen.UpdateSamlSPParams{
 		ID:              id,
 		TenantID:        tenantID,
 		Name:            in.Name,
@@ -401,6 +452,7 @@ func (i *IdP) UpdateSP(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, i
 		NameIDAttribute: in.NameIDAttribute,
 		Certificate:     in.Certificate,
 		Status:          in.Status,
+		Attributes:      attributes,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
@@ -450,27 +502,28 @@ func (i *IdP) lookupSP(ctx context.Context, tenantID uuid.UUID, key string) (*Se
 	return i.lookupSPByEntityID(ctx, tenantID, key)
 }
 
-// loadUser returns what an assertion about userID says and the account's home
-// tenant, or ErrAuthAccountInactive for an account that isn't active.
-func (i *IdP) loadUser(ctx context.Context, userID uuid.UUID) (email, name string, tenantID uuid.UUID, err error) {
+// loadUser returns the account an assertion about userID describes, with its
+// home tenant, or ErrAuthAccountInactive for an account that isn't active.
+func (i *IdP) loadUser(ctx context.Context, userID uuid.UUID) (*person, error) {
 	row, err := i.q.GetUserForIdP(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", uuid.Nil, errs.ErrAuthAccountInactive
+		return nil, errs.ErrAuthAccountInactive
 	}
 	if err != nil {
-		return "", "", uuid.Nil, err
+		return nil, err
 	}
 	// A suspended account gets no assertion, whatever its open sign-in session.
 	if row.Status != "active" {
-		return "", "", uuid.Nil, errs.ErrAuthAccountInactive
+		return nil, errs.ErrAuthAccountInactive
 	}
+	p := &person{id: userID, email: row.Email, metadata: decodeMetadata(row.Metadata)}
 	if row.DisplayName != nil {
-		name = *row.DisplayName
+		p.displayName = *row.DisplayName
 	}
 	if row.TenantID.Valid {
-		tenantID = uuid.UUID(row.TenantID.Bytes)
+		p.tenantID = uuid.UUID(row.TenantID.Bytes)
 	}
-	return row.Email, name, tenantID, nil
+	return p, nil
 }
 
 func (i *IdP) recordIssued(ctx context.Context, r *http.Request, sp *ServiceProvider, userID uuid.UUID) error {
@@ -500,19 +553,44 @@ func (i *IdP) recordIssued(ctx context.Context, r *http.Request, sp *ServiceProv
 	return tx.Commit(ctx)
 }
 
+// recordRefused audits that the IdP refused userID an assertion for sp, and why.
+func (i *IdP) recordRefused(ctx context.Context, r *http.Request, sp *ServiceProvider, userID uuid.UUID, reason string) error {
+	tx, err := i.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tid, rid, uid := sp.TenantID, sp.ID, userID
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tid,
+		ActorUserID:  &uid,
+		ActorType:    "user",
+		Action:       "saml.idp_assertion_refused",
+		ResourceType: "saml_service_provider",
+		ResourceID:   &rid,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"sp_entity_id": sp.EntityID, "reason": reason},
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // =====================================================================
 // Assertion construction + signing
 // =====================================================================
 
-// buildSignedResponse constructs a SAML Response wrapping a signed Assertion.
-// inResponseTo is empty for IdP-initiated SSO.
-func (i *IdP) buildSignedResponse(idpEntity string, sp *ServiceProvider, acs, email, name, inResponseTo string) ([]byte, error) {
+// buildSignedResponse constructs a SAML Response wrapping a signed Assertion
+// about s. inResponseTo is empty for IdP-initiated SSO.
+func (i *IdP) buildSignedResponse(idpEntity string, sp *ServiceProvider, acs string, s assertionSubject, inResponseTo string) ([]byte, error) {
 	now := time.Now().UTC()
 	respID := "_" + uuid.NewString()
 	assertID := "_" + uuid.NewString()
 	notBefore := now.Add(-clockSkew).Format(time.RFC3339)
 	notAfter := now.Add(assertionTTL).Format(time.RFC3339)
-	nidFormat := sp.NameIDFormat
+	nidFormat := s.nameIDFormat
 	if nidFormat == "" {
 		nidFormat = nameIDEmail
 	}
@@ -528,7 +606,7 @@ func (i *IdP) buildSignedResponse(idpEntity string, sp *ServiceProvider, acs, em
 	subject := assertion.CreateElement("saml:Subject")
 	nid := subject.CreateElement("saml:NameID")
 	nid.CreateAttr("Format", nidFormat)
-	nid.SetText(email)
+	nid.SetText(s.nameID)
 	sc := subject.CreateElement("saml:SubjectConfirmation")
 	sc.CreateAttr("Method", confirmationBearer)
 	scd := sc.CreateElement("saml:SubjectConfirmationData")
@@ -548,18 +626,20 @@ func (i *IdP) buildSignedResponse(idpEntity string, sp *ServiceProvider, acs, em
 	authn.CreateAttr("SessionIndex", assertID)
 	authn.CreateElement("saml:AuthnContext").CreateElement("saml:AuthnContextClassRef").SetText(authnCtxPassword)
 
-	attrStmt := assertion.CreateElement("saml:AttributeStatement")
-	addAttr := func(attrName, v string) {
-		if v == "" {
-			return
-		}
-		a := attrStmt.CreateElement("saml:Attribute")
-		a.CreateAttr("Name", attrName)
-		a.CreateAttr("NameFormat", attrNameFormatBasic)
-		a.CreateElement("saml:AttributeValue").SetText(v)
+	// The schema wants an AttributeStatement to hold an attribute, so one with
+	// none is left out.
+	var attrStmt *etree.Element
+	if len(s.attributes) > 0 {
+		attrStmt = assertion.CreateElement("saml:AttributeStatement")
 	}
-	addAttr("email", email)
-	addAttr("name", name)
+	for _, attr := range s.attributes {
+		a := attrStmt.CreateElement("saml:Attribute")
+		a.CreateAttr("Name", attr.name)
+		a.CreateAttr("NameFormat", attr.nameFormat)
+		for _, v := range attr.values {
+			a.CreateElement("saml:AttributeValue").SetText(v)
+		}
+	}
 
 	// --- Response wrapping the assertion ---
 	resp := etree.NewElement("samlp:Response")
@@ -755,6 +835,41 @@ func writePostForm(w http.ResponseWriter, acs, samlResponse, relayState string) 
 	_, _ = w.Write([]byte(b.String()))
 }
 
+// errorPageCSP lets the SSO error page show its text and nothing else.
+const errorPageCSP = "default-src 'none'; frame-ancestors 'none'"
+
+// writeSSOError answers the SSO endpoint's browser, which asks for HTML, with a
+// page saying why it can't sign in and the error's code; anything else, or an
+// error outside the catalogue, gets the JSON error.
+func writeSSOError(w http.ResponseWriter, r *http.Request, err error) {
+	e := errs.As(err)
+	if e == nil || !strings.Contains(r.Header.Get("Accept"), "text/html") {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", errorPageCSP)
+	w.WriteHeader(httpx.StatusForCode(e.Code))
+	var b strings.Builder
+	b.WriteString(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Can't sign you in</title></head><body>`)
+	b.WriteString(`<h1>Can't sign you in</h1><p>` + html.EscapeString(e.Message) + `</p>`)
+	b.WriteString(`<p>Error code: <code>` + html.EscapeString(e.Code) + `</code>`)
+	if id := httpx.RequestID(r); id != "" {
+		b.WriteString(` · Request ID: <code>` + html.EscapeString(id) + `</code>`)
+	}
+	b.WriteString(`</p></body></html>`)
+	_, _ = w.Write([]byte(b.String())) // #nosec G705 -- every value on the page is HTML-escaped
+}
+
+// refuse answers a signed-in person sp won't sign in with err, and audits the
+// refusal with reason.
+func (h *Handler) refuse(w http.ResponseWriter, r *http.Request, sp *ServiceProvider, userID uuid.UUID, err error, reason string) {
+	if auditErr := h.IdP.recordRefused(r.Context(), r, sp, userID, reason); auditErr != nil {
+		slog.Warn("saml idp sso: record refused assertion", "err", auditErr, "sp", sp.ID)
+	}
+	writeSSOError(w, r, err)
+}
+
 // =====================================================================
 // IdP HTTP handlers (methods on the shared saml.Handler)
 // =====================================================================
@@ -810,11 +925,13 @@ func (h *Handler) idpMetadata(w http.ResponseWriter, r *http.Request) {
       <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#"><X509Data><X509Certificate>%s</X509Certificate></X509Data></KeyInfo>
     </KeyDescriptor>
     <NameIDFormat>%s</NameIDFormat>
+    <NameIDFormat>%s</NameIDFormat>
+    <NameIDFormat>%s</NameIDFormat>
     <SingleSignOnService Binding="%s" Location="%s"/>
     <SingleSignOnService Binding="%s" Location="%s"/>
   </IDPSSODescriptor>
 </EntityDescriptor>`,
-		html.EscapeString(entity), h.IdP.signer.certB64, nameIDEmail,
+		html.EscapeString(entity), h.IdP.signer.certB64, nameIDEmail, nameIDPersistent, nameIDUnspecified,
 		bindingRedirect, html.EscapeString(sso), bindingPOST, html.EscapeString(sso))
 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
 	w.Header().Set("Content-Disposition", `attachment; filename="qeet-idp-metadata.xml"`)
@@ -827,16 +944,16 @@ func (h *Handler) idpMetadata(w http.ResponseWriter, r *http.Request) {
 // SSO cookie, the browser is bounced to the hosted login and returns here.
 func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 	if h.IdP == nil {
-		httpx.WriteError(w, r, errs.ErrSAMLIdPNotConfigured)
+		writeSSOError(w, r, errs.ErrSAMLIdPNotConfigured)
 		return
 	}
 	tenantID, err := h.idpTenant(r)
 	if err != nil {
-		httpx.WriteError(w, r, err)
+		writeSSOError(w, r, err)
 		return
 	}
 	if err := httpx.ParseForm(r, httpx.MaxSAMLBodyBytes); err != nil {
-		httpx.WriteError(w, r, err)
+		writeSSOError(w, r, err)
 		return
 	}
 	relayState := r.FormValue("RelayState")
@@ -850,7 +967,7 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 	if samlReq := r.FormValue("SAMLRequest"); samlReq != "" {
 		ar, err := decodeAuthnRequest(samlReq, r.Method)
 		if err != nil {
-			httpx.WriteError(w, r, errs.ErrSAMLAuthnRequestInvalid)
+			writeSSOError(w, r, errs.ErrSAMLAuthnRequestInvalid)
 			return
 		}
 		inResponseTo = ar.ID
@@ -859,7 +976,7 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 	} else if spKey := strings.TrimSpace(r.FormValue("sp")); spKey != "" {
 		sp, lookupErr = h.IdP.lookupSP(r.Context(), tenantID, spKey)
 	} else {
-		httpx.WriteError(w, r, errs.ErrSAMLRequestParamMissing)
+		writeSSOError(w, r, errs.ErrSAMLRequestParamMissing)
 		return
 	}
 	if lookupErr != nil || sp == nil {
@@ -868,17 +985,17 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			err = errs.ErrNotFound
 		}
-		httpx.WriteError(w, r, err)
+		writeSSOError(w, r, err)
 		return
 	}
 	if sp.Status == "disabled" {
-		httpx.WriteError(w, r, errs.ErrSAMLServiceProviderDisabled)
+		writeSSOError(w, r, errs.ErrSAMLServiceProviderDisabled)
 		return
 	}
 	// A supplied ACS URL must match the registered one (prevents redirecting a
 	// signed assertion to an attacker-chosen endpoint).
 	if acsOverride != "" && acsOverride != sp.ACSURL {
-		httpx.WriteError(w, r, errs.ErrSAMLACSMismatch)
+		writeSSOError(w, r, errs.ErrSAMLACSMismatch)
 		return
 	}
 
@@ -887,32 +1004,43 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		ret, err := ssoReturnURL(base, r)
 		if err != nil {
-			httpx.WriteError(w, r, errs.ErrSAMLAuthnRequestInvalid)
+			writeSSOError(w, r, errs.ErrSAMLAuthnRequestInvalid)
 			return
 		}
 		http.Redirect(w, r, h.IdP.loginBaseURL+"/sign-in?return_to="+url.QueryEscape(ret), http.StatusFound)
 		return
 	}
 
-	email, name, userTenant, err := h.IdP.loadUser(r.Context(), userID)
+	ctx := r.Context()
+	who, err := h.IdP.loadUser(ctx, userID)
 	if errors.Is(err, errs.ErrAuthAccountInactive) {
-		httpx.WriteError(w, r, err)
+		writeSSOError(w, r, err)
 		return
 	}
 	if err != nil {
 		slog.Error("saml idp sso: user lookup", "err", err, "user", userID)
-		httpx.WriteError(w, r, errs.ErrInternalServer)
+		writeSSOError(w, r, errs.ErrInternalServer)
 		return
 	}
-	if userTenant != sp.TenantID {
-		httpx.WriteError(w, r, errs.ErrSAMLUserTenantMismatch)
+	if who.tenantID != sp.TenantID {
+		writeSSOError(w, r, errs.ErrSAMLUserTenantMismatch)
+		return
+	}
+	subj, err := h.IdP.subjectFor(ctx, sp, who)
+	if errors.Is(err, errs.ErrSAMLNameIDUnavailable) {
+		h.refuse(w, r, sp, userID, err, "name_id_unavailable")
+		return
+	}
+	if err != nil {
+		slog.Error("saml idp sso: assertion subject", "err", err, "sp", sp.ID)
+		writeSSOError(w, r, errs.ErrInternalServer)
 		return
 	}
 
-	respXML, err := h.IdP.buildSignedResponse(idpEntityID(base, tenantID), sp, sp.ACSURL, email, name, inResponseTo)
+	respXML, err := h.IdP.buildSignedResponse(idpEntityID(base, tenantID), sp, sp.ACSURL, subj, inResponseTo)
 	if err != nil {
 		slog.Error("saml idp sso: build assertion", "err", err, "sp", sp.ID)
-		httpx.WriteError(w, r, errs.ErrInternalServer)
+		writeSSOError(w, r, errs.ErrInternalServer)
 		return
 	}
 	if err := h.IdP.recordIssued(r.Context(), r, sp, userID); err != nil {
@@ -978,7 +1106,10 @@ func (h *Handler) createSP(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordSPAudit(ctx, tx, r, tenantID, sp.ID, "saml.sp_created", map[string]any{"name": sp.Name, "entity_id": sp.EntityID}); err != nil {
+	if err := h.recordSPAudit(ctx, tx, r, tenantID, sp.ID, "saml.sp_created", map[string]any{
+		"name": sp.Name, "entity_id": sp.EntityID, "name_id_format": sp.NameIDFormat, "name_id_attribute": sp.NameIDAttribute,
+		"attributes": sp.Attributes,
+	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1044,7 +1175,7 @@ func (h *Handler) updateSP(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordSPAudit(ctx, tx, r, tenantID, sp.ID, "saml.sp_updated", map[string]any{"status": sp.Status}); err != nil {
+	if err := h.recordSPAudit(ctx, tx, r, tenantID, sp.ID, "saml.sp_updated", spUpdateAudit(in, sp)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1086,6 +1217,38 @@ func (h *Handler) delSP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// spUpdateAudit is what the audit records of a change to a service provider:
+// the fields it named, and the new values of those deciding where assertions
+// go and what they say.
+func spUpdateAudit(in UpdateSPInput, sp *ServiceProvider) map[string]any {
+	meta := map[string]any{"status": sp.Status}
+	changed := []string{}
+	for _, f := range []struct {
+		name  string
+		set   bool
+		value any
+	}{
+		{"name", in.Name != nil, nil},
+		{"entity_id", in.EntityID != nil, sp.EntityID},
+		{"acs_url", in.ACSURL != nil, sp.ACSURL},
+		{"name_id_format", in.NameIDFormat != nil || in.NameIDAttribute != nil, sp.NameIDFormat},
+		{"name_id_attribute", in.NameIDFormat != nil || in.NameIDAttribute != nil, sp.NameIDAttribute},
+		{"certificate", in.Certificate != nil, nil},
+		{"status", in.Status != nil, nil},
+		{"attributes", in.Attributes != nil, sp.Attributes},
+	} {
+		if !f.set {
+			continue
+		}
+		changed = append(changed, f.name)
+		if f.value != nil {
+			meta[f.name] = f.value
+		}
+	}
+	meta["changed"] = changed
+	return meta
 }
 
 func (h *Handler) recordSPAudit(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID, resourceID uuid.UUID, action string, meta map[string]any) error {

@@ -37,7 +37,8 @@ func testIdP(t *testing.T) *IdP {
 
 // TestIdPAssertionRoundTrip proves our issued Response is accepted by an
 // independent SAML SP implementation (gosaml2): the signature validates, the
-// audience/clock conditions pass, and the NameID + attributes survive.
+// audience/clock conditions pass, and the NameID + attributes survive. An SP
+// with the default settings is told the email and name, as before mappings.
 func TestIdPAssertionRoundTrip(t *testing.T) {
 	idp := testIdP(t)
 	const (
@@ -45,9 +46,13 @@ func TestIdPAssertionRoundTrip(t *testing.T) {
 		spEntity  = "https://sp.example.com/saml/metadata"
 		acs       = "https://sp.example.com/saml/acs"
 	)
-	sp := &ServiceProvider{EntityID: spEntity, ACSURL: acs, NameIDFormat: nameIDEmail}
+	sp := &ServiceProvider{EntityID: spEntity, ACSURL: acs, NameIDFormat: nameIDEmail, NameIDAttribute: sourceEmail, Attributes: defaultAttributes()}
+	subj, err := idp.subjectFor(context.Background(), sp, &person{id: uuid.New(), email: "alice@example.com", displayName: "Alice Example"})
+	if err != nil {
+		t.Fatalf("subjectFor: %v", err)
+	}
 
-	respXML, err := idp.buildSignedResponse(idpEntity, sp, acs, "alice@example.com", "Alice Example", "")
+	respXML, err := idp.buildSignedResponse(idpEntity, sp, acs, subj, "")
 	if err != nil {
 		t.Fatalf("buildSignedResponse: %v", err)
 	}
@@ -83,6 +88,9 @@ func TestIdPAssertionRoundTrip(t *testing.T) {
 	if got := info.Values.Get("name"); got != "Alice Example" {
 		t.Errorf("name attribute = %q", got)
 	}
+	if len(info.Values) != 2 || info.Assertions[0].Subject.NameID.Format != nameIDEmail {
+		t.Errorf("attributes %v, NameID format %q; want only email and name, and an emailAddress NameID", info.Values, info.Assertions[0].Subject.NameID.Format)
+	}
 }
 
 // TestIdPResponseStructure checks SP-initiated specifics: the signature sits
@@ -92,7 +100,7 @@ func TestIdPResponseStructure(t *testing.T) {
 	idp := testIdP(t)
 	sp := &ServiceProvider{EntityID: "https://sp.example.com", ACSURL: "https://sp.example.com/acs"}
 
-	respXML, err := idp.buildSignedResponse("https://id.qeet.example/saml/idp", sp, sp.ACSURL, "bob@example.com", "", "_req-12345")
+	respXML, err := idp.buildSignedResponse("https://id.qeet.example/saml/idp", sp, sp.ACSURL, assertionSubject{nameID: "bob@example.com"}, "_req-12345")
 	if err != nil {
 		t.Fatalf("buildSignedResponse: %v", err)
 	}

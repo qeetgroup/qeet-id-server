@@ -100,6 +100,40 @@ func (q *Queries) GetExternalIdentityUser(ctx context.Context, arg GetExternalId
 	return user_id, err
 }
 
+const getIdPNameParts = `-- name: GetIdPNameParts :one
+
+SELECT COALESCE((SELECT p.profile->>'first_name' FROM tenant.directory_profiles p
+                 WHERE p.tenant_id = $1 AND p.user_id = $2
+                   AND jsonb_typeof(p.profile->'first_name') = 'string'
+                 ORDER BY p.updated_at DESC LIMIT 1), '')::text AS given_name,
+       COALESCE((SELECT p.profile->>'last_name' FROM tenant.directory_profiles p
+                 WHERE p.tenant_id = $1 AND p.user_id = $2
+                   AND jsonb_typeof(p.profile->'last_name') = 'string'
+                 ORDER BY p.updated_at DESC LIMIT 1), '')::text AS family_name
+`
+
+type GetIdPNamePartsParams struct {
+	TenantID uuid.UUID
+	UserID   uuid.UUID
+}
+
+type GetIdPNamePartsRow struct {
+	GivenName  string
+	FamilyName string
+}
+
+// ==========================================================================
+// IdP-side: what an assertion says about a person (idp_attributes.go)
+// ==========================================================================
+// GetIdPNameParts is a person's given and family name from their
+// organisation's directory profiles, the most recently updated one naming each.
+func (q *Queries) GetIdPNameParts(ctx context.Context, arg GetIdPNamePartsParams) (GetIdPNamePartsRow, error) {
+	row := q.db.QueryRow(ctx, getIdPNameParts, arg.TenantID, arg.UserID)
+	var i GetIdPNamePartsRow
+	err := row.Scan(&i.GivenName, &i.FamilyName)
+	return i, err
+}
+
 const getSamlConnection = `-- name: GetSamlConnection :one
 SELECT id, tenant_id, name, idp_entity_id, idp_sso_url, idp_certificate,
        email_attribute, name_attribute, status, created_at, updated_at, last_login_at
@@ -206,9 +240,28 @@ func (q *Queries) GetSamlGroupsAttribute(ctx context.Context, arg GetSamlGroupsA
 	return groups_attribute, err
 }
 
+const getSamlPersistentID = `-- name: GetSamlPersistentID :one
+SELECT name_id FROM tenant.saml_idp_persistent_ids
+WHERE tenant_id = $1 AND sp_id = $2 AND user_id = $3
+`
+
+type GetSamlPersistentIDParams struct {
+	TenantID uuid.UUID
+	SpID     uuid.UUID
+	UserID   uuid.UUID
+}
+
+func (q *Queries) GetSamlPersistentID(ctx context.Context, arg GetSamlPersistentIDParams) (string, error) {
+	row := q.db.QueryRow(ctx, getSamlPersistentID, arg.TenantID, arg.SpID, arg.UserID)
+	var name_id string
+	err := row.Scan(&name_id)
+	return name_id, err
+}
+
 const getSamlSP = `-- name: GetSamlSP :one
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
-       name_id_attribute, certificate, status, created_at, updated_at, last_login_at
+       name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
+       attributes
 FROM tenant.saml_service_providers WHERE id = $1 AND tenant_id = $2
 `
 
@@ -233,13 +286,15 @@ func (q *Queries) GetSamlSP(ctx context.Context, arg GetSamlSPParams) (TenantSam
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LastLoginAt,
+		&i.Attributes,
 	)
 	return i, err
 }
 
 const getSamlSPByEntityID = `-- name: GetSamlSPByEntityID :one
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
-       name_id_attribute, certificate, status, created_at, updated_at, last_login_at
+       name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
+       attributes
 FROM tenant.saml_service_providers
 WHERE tenant_id = $1 AND entity_id = $2 AND status <> 'disabled'
 `
@@ -265,6 +320,43 @@ func (q *Queries) GetSamlSPByEntityID(ctx context.Context, arg GetSamlSPByEntity
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LastLoginAt,
+		&i.Attributes,
+	)
+	return i, err
+}
+
+const getSamlSPForUpdate = `-- name: GetSamlSPForUpdate :one
+SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
+       name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
+       attributes
+FROM tenant.saml_service_providers WHERE id = $1 AND tenant_id = $2
+FOR UPDATE
+`
+
+type GetSamlSPForUpdateParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+// GetSamlSPForUpdate reads a service provider and holds it until the
+// transaction ends, so a change is checked against what it changes.
+func (q *Queries) GetSamlSPForUpdate(ctx context.Context, arg GetSamlSPForUpdateParams) (TenantSamlServiceProvider, error) {
+	row := q.db.QueryRow(ctx, getSamlSPForUpdate, arg.ID, arg.TenantID)
+	var i TenantSamlServiceProvider
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Name,
+		&i.EntityID,
+		&i.AcsUrl,
+		&i.NameIDFormat,
+		&i.NameIDAttribute,
+		&i.Certificate,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LastLoginAt,
+		&i.Attributes,
 	)
 	return i, err
 }
@@ -281,7 +373,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (uuid.UUID, 
 }
 
 const getUserForIdP = `-- name: GetUserForIdP :one
-SELECT email, display_name, tenant_id, status FROM "user".users WHERE id = $1 AND deleted_at IS NULL
+SELECT email, display_name, tenant_id, status, metadata FROM "user".users WHERE id = $1 AND deleted_at IS NULL
 `
 
 type GetUserForIdPRow struct {
@@ -289,6 +381,7 @@ type GetUserForIdPRow struct {
 	DisplayName *string
 	TenantID    pgtype.UUID
 	Status      string
+	Metadata    []byte
 }
 
 func (q *Queries) GetUserForIdP(ctx context.Context, id uuid.UUID) (GetUserForIdPRow, error) {
@@ -299,6 +392,7 @@ func (q *Queries) GetUserForIdP(ctx context.Context, id uuid.UUID) (GetUserForId
 		&i.DisplayName,
 		&i.TenantID,
 		&i.Status,
+		&i.Metadata,
 	)
 	return i, err
 }
@@ -400,13 +494,42 @@ func (q *Queries) InsertSamlLoginCode(ctx context.Context, arg InsertSamlLoginCo
 	return err
 }
 
+const insertSamlPersistentID = `-- name: InsertSamlPersistentID :one
+INSERT INTO tenant.saml_idp_persistent_ids (tenant_id, sp_id, user_id, name_id)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (tenant_id, sp_id, user_id) DO UPDATE SET name_id = saml_idp_persistent_ids.name_id
+RETURNING name_id
+`
+
+type InsertSamlPersistentIDParams struct {
+	TenantID uuid.UUID
+	SpID     uuid.UUID
+	UserID   uuid.UUID
+	NameID   string
+}
+
+// InsertSamlPersistentID keeps name_id as the person's persistent NameID at
+// the service provider, or returns the one another sign-in kept first.
+func (q *Queries) InsertSamlPersistentID(ctx context.Context, arg InsertSamlPersistentIDParams) (string, error) {
+	row := q.db.QueryRow(ctx, insertSamlPersistentID,
+		arg.TenantID,
+		arg.SpID,
+		arg.UserID,
+		arg.NameID,
+	)
+	var name_id string
+	err := row.Scan(&name_id)
+	return name_id, err
+}
+
 const insertSamlSP = `-- name: InsertSamlSP :one
 
 INSERT INTO tenant.saml_service_providers
-    (tenant_id, name, entity_id, acs_url, name_id_format, name_id_attribute, certificate, status)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    (tenant_id, name, entity_id, acs_url, name_id_format, name_id_attribute, certificate, status, attributes)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING id, tenant_id, name, entity_id, acs_url, name_id_format,
-          name_id_attribute, certificate, status, created_at, updated_at, last_login_at
+          name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
+          attributes
 `
 
 type InsertSamlSPParams struct {
@@ -418,6 +541,7 @@ type InsertSamlSPParams struct {
 	NameIDAttribute string
 	Certificate     string
 	Status          string
+	Attributes      []byte
 }
 
 // ==========================================================================
@@ -433,6 +557,7 @@ func (q *Queries) InsertSamlSP(ctx context.Context, arg InsertSamlSPParams) (Ten
 		arg.NameIDAttribute,
 		arg.Certificate,
 		arg.Status,
+		arg.Attributes,
 	)
 	var i TenantSamlServiceProvider
 	err := row.Scan(
@@ -448,6 +573,7 @@ func (q *Queries) InsertSamlSP(ctx context.Context, arg InsertSamlSPParams) (Ten
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LastLoginAt,
+		&i.Attributes,
 	)
 	return i, err
 }
@@ -509,6 +635,80 @@ func (q *Queries) LinkExternalIdentity(ctx context.Context, arg LinkExternalIden
 		arg.Email,
 	)
 	return err
+}
+
+const listIdPUserGroupNames = `-- name: ListIdPUserGroupNames :many
+SELECT g.name
+FROM tenant.group_members gm
+JOIN tenant.groups g ON g.id = gm.group_id AND g.tenant_id = gm.tenant_id
+WHERE gm.tenant_id = $1 AND gm.user_id = $2
+ORDER BY g.name
+`
+
+type ListIdPUserGroupNamesParams struct {
+	TenantID uuid.UUID
+	UserID   uuid.UUID
+}
+
+func (q *Queries) ListIdPUserGroupNames(ctx context.Context, arg ListIdPUserGroupNamesParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listIdPUserGroupNames, arg.TenantID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listIdPUserRoleNames = `-- name: ListIdPUserRoleNames :many
+SELECT DISTINCT ro.name
+FROM rbac.roles ro
+WHERE ro.tenant_id = $1 AND ro.id IN (
+    SELECT ur.role_id FROM rbac.user_roles ur
+    WHERE ur.tenant_id = $1 AND ur.user_id = $2
+    UNION
+    SELECT gr.role_id FROM tenant.group_members gm
+    JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+    WHERE gm.tenant_id = $1 AND gm.user_id = $2
+)
+ORDER BY ro.name
+`
+
+type ListIdPUserRoleNamesParams struct {
+	TenantID uuid.UUID
+	UserID   uuid.UUID
+}
+
+// ListIdPUserRoleNames is the names of the roles a person holds in the
+// organisation, directly or through a group.
+func (q *Queries) ListIdPUserRoleNames(ctx context.Context, arg ListIdPUserRoleNamesParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listIdPUserRoleNames, arg.TenantID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listSamlConnections = `-- name: ListSamlConnections :many
@@ -596,7 +796,8 @@ func (q *Queries) ListSamlGroupsAttributes(ctx context.Context, tenantID uuid.UU
 
 const listSamlSPs = `-- name: ListSamlSPs :many
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
-       name_id_attribute, certificate, status, created_at, updated_at, last_login_at
+       name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
+       attributes
 FROM tenant.saml_service_providers WHERE tenant_id = $1 ORDER BY created_at DESC
 `
 
@@ -622,6 +823,7 @@ func (q *Queries) ListSamlSPs(ctx context.Context, tenantID uuid.UUID) ([]Tenant
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.LastLoginAt,
+			&i.Attributes,
 		); err != nil {
 			return nil, err
 		}
@@ -750,17 +952,19 @@ func (q *Queries) UpdateSamlConnection(ctx context.Context, arg UpdateSamlConnec
 
 const updateSamlSP = `-- name: UpdateSamlSP :one
 UPDATE tenant.saml_service_providers SET
-    name              = COALESCE($1, name),
-    entity_id         = COALESCE($2, entity_id),
-    acs_url           = COALESCE($3, acs_url),
-    name_id_format    = COALESCE($4, name_id_format),
-    name_id_attribute = COALESCE($5, name_id_attribute),
-    certificate       = COALESCE($6, certificate),
-    status            = COALESCE($7, status),
-    updated_at        = NOW()
-WHERE id = $8 AND tenant_id = $9
+    name                = COALESCE($1, name),
+    entity_id           = COALESCE($2, entity_id),
+    acs_url             = COALESCE($3, acs_url),
+    name_id_format      = COALESCE($4, name_id_format),
+    name_id_attribute   = COALESCE($5, name_id_attribute),
+    certificate         = COALESCE($6, certificate),
+    status              = COALESCE($7, status),
+    attributes          = COALESCE($8, attributes),
+    updated_at          = NOW()
+WHERE id = $9 AND tenant_id = $10
 RETURNING id, tenant_id, name, entity_id, acs_url, name_id_format,
-          name_id_attribute, certificate, status, created_at, updated_at, last_login_at
+          name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
+          attributes
 `
 
 type UpdateSamlSPParams struct {
@@ -771,6 +975,7 @@ type UpdateSamlSPParams struct {
 	NameIDAttribute *string
 	Certificate     *string
 	Status          *string
+	Attributes      []byte
 	ID              uuid.UUID
 	TenantID        uuid.UUID
 }
@@ -784,6 +989,7 @@ func (q *Queries) UpdateSamlSP(ctx context.Context, arg UpdateSamlSPParams) (Ten
 		arg.NameIDAttribute,
 		arg.Certificate,
 		arg.Status,
+		arg.Attributes,
 		arg.ID,
 		arg.TenantID,
 	)
@@ -801,6 +1007,7 @@ func (q *Queries) UpdateSamlSP(ctx context.Context, arg UpdateSamlSPParams) (Ten
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LastLoginAt,
+		&i.Attributes,
 	)
 	return i, err
 }

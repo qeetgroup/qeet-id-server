@@ -2317,7 +2317,7 @@ paths:
   /saml/idp/{tenantID}/metadata:
     get:
       operationId: get_saml_idp_ByTenantID_metadata
-      description: 'Returns the tenant''s SAML Identity Provider metadata XML, including the tenant''s IdP entity id (/saml/idp/{tenantID}), the signing certificate and the redirect- and POST-binding SingleSignOnService endpoints (/saml/idp/{tenantID}/sso), for downstream Service Providers to configure Qeet as their IdP. Mounted at the root, not under /v1, and unauthenticated. An unknown or inactive tenant returns 404. Register each downstream SP with the SAML SP (IdP side) endpoints before it can obtain assertions at the tenant''s IdP SSO endpoint.'
+      description: 'Returns the tenant''s SAML Identity Provider metadata XML, including the tenant''s IdP entity id (/saml/idp/{tenantID}), the signing certificate and the redirect- and POST-binding SingleSignOnService endpoints (/saml/idp/{tenantID}/sso), for downstream Service Providers to configure Qeet as their IdP, and the NameID formats it issues (emailAddress, persistent and unspecified). Mounted at the root, not under /v1, and unauthenticated. An unknown or inactive tenant returns 404. Register each downstream SP with the SAML SP (IdP side) endpoints before it can obtain assertions at the tenant''s IdP SSO endpoint.'
       summary: "[idp] IdP metadata"
       tags:
         - SAML
@@ -2341,7 +2341,7 @@ paths:
   /saml/idp/{tenantID}/sso:
     get:
       operationId: get_saml_idp_ByTenantID_sso
-      description: 'The tenant''s SAML SingleSignOnService over the HTTP-Redirect binding, with Qeet acting as the Identity Provider. It handles SP-initiated SSO from the AuthnRequest of a Service Provider registered in that tenant and IdP-initiated SSO by SP reference; only SPs of the tenant in the path are matched. The user is authenticated by the hosted-login SSO cookie, and the browser is bounced to the hosted login when no session exists. On success it returns an auto-submitting HTML form that POSTs a signed SAMLResponse to the SP''s registered ACS URL. An unknown or inactive tenant, or an unknown SP, returns 404. The POST-binding variant is POST /saml/idp/{tenantID}/sso.'
+      description: 'The tenant''s SAML SingleSignOnService over the HTTP-Redirect binding, with Qeet acting as the Identity Provider. It handles SP-initiated SSO from the AuthnRequest of a Service Provider registered in that tenant and IdP-initiated SSO by SP reference; only SPs of the tenant in the path are matched. The user is authenticated by the hosted-login SSO cookie, and the browser is bounced to the hosted login when no session exists. On success it returns an auto-submitting HTML form that POSTs a signed SAMLResponse to the SP''s registered ACS URL. Only people whose home is the tenant are signed in (403 saml.user_tenant_mismatch otherwise). The assertion''s NameID follows the SP''s name_id_format and name_id_attribute (an emailAddress NameID is the email; a persistent one an opaque value made for this person at this SP the first time they sign in to it, which never changes, or their user id when name_id_attribute is user_id); a NameID from a metadata key the person has no single value for is refused with 403 saml.name_id_unavailable, audited as saml.idp_assertion_refused. The assertion carries the attributes the SP maps, each the person has a value for. A browser asking for HTML gets every error as a page showing its message and code; anything else gets the JSON error. An unknown or inactive tenant, or an unknown SP, returns 404. The POST-binding variant is POST /saml/idp/{tenantID}/sso.'
       summary: "[idp] IdP SSO (redirect binding)"
       tags:
         - SAML
@@ -2372,11 +2372,13 @@ paths:
           description: Redirect to hosted login when no SSO session
         '400':
           $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
     post:
       operationId: post_saml_idp_ByTenantID_sso
-      description: 'The tenant''s SAML SingleSignOnService over the HTTP-POST binding, with Qeet acting as the Identity Provider; equivalent to GET /saml/idp/{tenantID}/sso for Service Providers that send the AuthnRequest via POST. Only SPs of the tenant in the path are matched. The user is authenticated by the hosted-login SSO cookie, with a redirect to the hosted login when no session exists; that sign-in returns to GET /saml/idp/{tenantID}/sso carrying the request and RelayState, so the flow resumes. A posted request over 256 KiB is refused with saml.authn_request_invalid. Any supplied AssertionConsumerServiceURL must match the SP''s registered ACS. On success it returns an auto-submitting form that POSTs a signed SAMLResponse to that ACS. An unknown or inactive tenant, or an unknown SP, returns 404.'
+      description: 'The tenant''s SAML SingleSignOnService over the HTTP-POST binding, with Qeet acting as the Identity Provider; equivalent to GET /saml/idp/{tenantID}/sso for Service Providers that send the AuthnRequest via POST. Only SPs of the tenant in the path are matched. The user is authenticated by the hosted-login SSO cookie, with a redirect to the hosted login when no session exists; that sign-in returns to GET /saml/idp/{tenantID}/sso carrying the request and RelayState, so the flow resumes. A posted request over 256 KiB is refused with saml.authn_request_invalid. Any supplied AssertionConsumerServiceURL must match the SP''s registered ACS. On success it returns an auto-submitting form that POSTs a signed SAMLResponse to that ACS. Who is signed in, and what the assertion says, is as for GET /saml/idp/{tenantID}/sso. An unknown or inactive tenant, or an unknown SP, returns 404.'
       summary: "[idp] IdP SSO (POST binding)"
       tags:
         - SAML
@@ -2410,6 +2412,8 @@ paths:
           description: Redirect to hosted login when no SSO session
         '400':
           $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
   /saml/login/{id}:
@@ -2556,7 +2560,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_saml_providers
-      description: 'Registers a downstream Service Provider in the tenant, including its entity id, ACS URL and NameID format, so it can obtain signed assertions from Qeet acting as the Identity Provider. Registered SPs are matched by AuthnRequest issuer or SP reference at the tenant''s IdP SSO endpoint, /saml/idp/{tenantID}/sso; the entity id need be unique only within the tenant. Give the SP administrator the tenant''s IdP metadata from /saml/idp/{tenantID}/metadata to complete the trust. The ACS URL, where signed assertions are posted, must be an absolute https URL without user information (plain http only to localhost), or the answer is 422 saml.acs_url_invalid. A status, when given, must be draft, active or disabled (422 saml.status_invalid), and an entity id already registered in the tenant is refused with 409 saml.sp_entity_id_taken.'
+      description: 'Registers a downstream Service Provider in the tenant, including its entity id, ACS URL and NameID format, so it can obtain signed assertions from Qeet acting as the Identity Provider. Registered SPs are matched by AuthnRequest issuer or SP reference at the tenant''s IdP SSO endpoint, /saml/idp/{tenantID}/sso; the entity id need be unique only within the tenant. Give the SP administrator the tenant''s IdP metadata from /saml/idp/{tenantID}/metadata to complete the trust. The ACS URL, where signed assertions are posted, must be an absolute https URL without user information (plain http only to localhost), or the answer is 422 saml.acs_url_invalid. A status, when given, must be draft, active or disabled (422 saml.status_invalid), and an entity id already registered in the tenant is refused with 409 saml.sp_entity_id_taken. The NameID format is emailAddress (the default), persistent or unspecified (422 saml.name_id_format_invalid otherwise), and name_id_attribute names where its value comes from: email, user_id, persistent_id (an opaque value made for each person at this SP, which never changes) or metadata.<key>. An emailAddress NameID is always the email and a persistent one persistent_id (its default) or user_id; another combination is refused with 422 saml.name_id_attribute_invalid. attributes, when given, replaces the default email and name attributes; an empty list sends none, and an invalid one is refused with 422 saml.attributes_invalid naming each field at fault. The registration is audited as saml.sp_created with these settings.'
       summary: Register SAML SP (IdP side)
       tags:
         - SAML
@@ -2657,7 +2661,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_tenants_ByTenantID_saml_providers_ById
-      description: 'Updates a registered downstream Service Provider''s configuration in the tenant, such as its entity id, ACS URL, NameID settings or status, on the IdP side where Qeet acts as the Identity Provider. Changes are confined to the tenant in the path and are audited. A new ACS URL is checked as on registration (422 saml.acs_url_invalid).'
+      description: 'Updates a registered downstream Service Provider''s configuration in the tenant, such as its entity id, ACS URL, NameID settings or status, on the IdP side where Qeet acts as the Identity Provider. Changes are confined to the tenant in the path and are audited as saml.sp_updated, naming the fields changed and the new entity id, ACS URL, NameID and attribute settings. A new ACS URL is checked as on registration (422 saml.acs_url_invalid), and so are the NameID settings and attributes. A new NameID format without a name_id_attribute moves the attribute to the format''s default when the current one doesn''t fit it (persistent_id for persistent, email for emailAddress); a name_id_attribute given must fit the format (422 saml.name_id_attribute_invalid). attributes replaces the whole list.'
       summary: Update SAML SP
       tags:
         - SAML
@@ -6530,12 +6534,19 @@ components:
           format: uri
         name_id_format:
           type: string
+          description: urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress, urn:oasis:names:tc:SAML:2.0:nameid-format:persistent or urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified
         name_id_attribute:
           type: string
+          description: Where the NameID comes from — email, user_id, persistent_id or metadata.<key>
         certificate:
           type: string
         status:
           type: string
+        attributes:
+          type: array
+          description: The attributes each assertion carries beside the NameID, in this order; one the person has no value for is left out
+          items:
+            $ref: '#/components/schemas/SAMLAttributeMapping'
         created_at:
           type: string
           format: date-time
@@ -6562,10 +6573,42 @@ components:
           format: uri
         name_id_format:
           type: string
+          description: urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress (the default), urn:oasis:names:tc:SAML:2.0:nameid-format:persistent or urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified
         name_id_attribute:
           type: string
+          description: Where the NameID comes from — email, user_id, persistent_id or metadata.<key>; by default persistent_id for a persistent NameID and email otherwise
         certificate:
           type: string
+        attributes:
+          type: array
+          maxItems: 50
+          description: The attributes to send; absent sends the default email (from email) and name (from display_name), an empty list none
+          items:
+            $ref: '#/components/schemas/SAMLAttributeMapping'
+    SAMLAttributeMapping:
+      type: object
+      required:
+        - name
+        - source
+      properties:
+        name:
+          type: string
+          maxLength: 256
+          description: The attribute's SAML Name, unique within the SP
+        source:
+          type: string
+          description: >-
+            email; user_id (the account ID, the same at every app); persistent_id (an opaque value made
+            for this person at this SP, which never changes); display_name; given_name and family_name
+            (the user-metadata key of that name, else the person's directory profile first_name or
+            last_name); groups (the names of their groups in the organisation, one value each);
+            roles (the names of their roles there, directly or through a group, one value each); or
+            metadata.<key> (that user-metadata key: a string, number or boolean, or an array of them
+            as one value each)
+        name_format:
+          type: string
+          enum: [basic, uri, unspecified]
+          description: The attribute's NameFormat; basic when absent
     AdminPortalLink:
       type: object
       properties:
