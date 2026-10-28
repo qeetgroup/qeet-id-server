@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
@@ -270,5 +271,30 @@ func TestDeviceDenialIsAudited(t *testing.T) {
 		WHERE e.tenant_id = $1 AND e.action = 'oauth.device_denied' AND e.actor_user_id = $2 AND d.status = 'denied'
 		AND e.metadata->>'client_id' = $3 AND host(e.ip) = $4`, tenant, person.ID, device.ClientID, deviceIP); n != 1 {
 		t.Errorf("%d denial records, want 1", n)
+	}
+}
+
+// TestSigningKeysAreDated checks that the signing-key list dates a key the
+// registry holds, and leaves a key it doesn't hold undated.
+func TestSigningKeysAreDated(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := NewService(pool, dbtest.Issuer(t))
+	keys, err := svc.SigningKeys(ctx)
+	if err != nil || len(keys) == 0 {
+		t.Fatalf("signing keys: %v, %v", keys, err)
+	}
+	if keys[0].CreatedAt != nil {
+		t.Errorf("a key the registry doesn't hold is dated %v", keys[0].CreatedAt)
+	}
+	activated := time.Now().Add(-time.Hour).UTC().Truncate(time.Microsecond)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO platform.jwt_signing_keys (kid, algorithm, state, public_key_pem, activated_at, retire_at)
+		VALUES ($1, 'ES256', 'retired', 'pem', $2, NOW() + INTERVAL '1 day')`, keys[0].Kid, activated); err != nil {
+		t.Fatal(err)
+	}
+	keys, err = svc.SigningKeys(ctx)
+	if err != nil || keys[0].CreatedAt == nil || keys[0].ActivatedAt == nil || !keys[0].ActivatedAt.Equal(activated) {
+		t.Errorf("signing key %+v (%v), want it dated from the registry", keys[0], err)
 	}
 }

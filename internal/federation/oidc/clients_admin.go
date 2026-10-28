@@ -14,6 +14,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -505,11 +506,54 @@ func (h *Handler) rotateClientSecret(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// SigningKey is a signing key's metadata with when the registry created and
+// activated it; both nil for a key it doesn't hold (one from configuration).
+type SigningKey struct {
+	tokens.KeyMeta
+	CreatedAt   *time.Time `json:"created_at"`
+	ActivatedAt *time.Time `json:"activated_at"`
+}
+
+// SigningKeys returns the issuer's signing-key metadata (see Issuer.KeyInfo),
+// dated from the key registry.
+func (s *Service) SigningKeys(ctx context.Context) ([]SigningKey, error) {
+	keys := s.issuer.KeyInfo()
+	dates := make(map[string][2]*time.Time, len(keys))
+	rows, err := s.pool.Query(ctx, `SELECT kid, created_at, activated_at FROM platform.jwt_signing_keys`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kid string
+		var created time.Time
+		var activated *time.Time
+		if err := rows.Scan(&kid, &created, &activated); err != nil {
+			return nil, err
+		}
+		dates[kid] = [2]*time.Time{&created, activated}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]SigningKey, len(keys))
+	for i, k := range keys {
+		d := dates[k.Kid]
+		out[i] = SigningKey{KeyMeta: k, CreatedAt: d[0], ActivatedAt: d[1]}
+	}
+	return out, nil
+}
+
 // signingKeys reports the issuer's signing-key metadata (candidate, active, and retired). The
 // signing key is global/issuer-level, not per-tenant, so this endpoint is not
 // tenant-scoped; it exposes no key material (see Issuer.KeyInfo).
 func (h *Handler) signingKeys(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"keys": h.Service.issuer.KeyInfo()})
+	keys, err := h.Service.SigningKeys(r.Context())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"keys": keys})
 }
 
 func (h *Handler) shadowAI(w http.ResponseWriter, r *http.Request) {
