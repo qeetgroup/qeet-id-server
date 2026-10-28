@@ -199,7 +199,7 @@ integration: `identity_modules_test.go`, `flows_test.go`
 **Purpose** — *"implements Qeet's OpenID Connect provider role: the OAuth2/OIDC grants
 (authorization_code+PKCE, refresh, client_credentials, token-exchange, device, CIBA) plus discovery,
 JWKS, and userinfo endpoints."*
-**Path** `internal/federation/{oidc,saml,scim,ldap,social,adminportal}/`
+**Path** `internal/federation/{oidc,saml,scim,ldap,social,adminportal,oidcsso,ssosync,identitylink}/`
 **Key dependencies** `platform/http/{errs,codes,httpx}` · `platform/crypto/tokens` ·
 **`access/authentication`**, **`identity/users`**, **`operations/audit`**
 **Security** **Critical** — parses untrusted external input (SAML XML, SCIM, LDAP)
@@ -215,7 +215,11 @@ oidc/device.go          RFC 8628 device grant
 oidc/ciba.go            CIBA (poll mode)
 oidc/clients_admin.go   OAuth client administration
 saml/saml.go            SP role — consume a customer IdP
+saml/certificates.go · metadata.go · encryption.go   IdP certificate rollover, metadata import/refresh, encrypted assertions
 saml/idp.go             IdP role — serve a customer SP
+saml/idp_attributes.go · idp_assignment.go   NameID and attributes per app, assigned people and groups
+oidcsso/                an organisation's own OpenID Connect provider as a sign-in connection
+ssosync/                SSO sign-in keeps name, address and groups in step; IdP group mappings
 scim/scim.go · scim/groups.go
 ldap/ldap.go
 social/social.go · apple.go · github.go · platform.go · oauthclient.go
@@ -283,8 +287,10 @@ audit/verifier.go     /verify chain-integrity walk
 audit/http.go
 audit/anomaly/anomaly.go   behavioural baselines
 billing/{billing,payments,tax}.go
-gdpr/{gdpr,evidence}.go    erasure, export, SOC2/ISO evidence
-retention/retention.go · siem/siem.go · analytics/analytics.go
+gdpr/{gdpr,evidence}.go    requests, SOC2/ISO evidence
+gdpr/erasure.go · gdpr/export.go   what erasure removes, what an export holds
+retention/retention.go · retention/sweeps.go   purge window, sweeps of every growing table
+siem/siem.go · analytics/analytics.go
 activity/{domain,http,hub}.go   SSE feed
 qeetai/{qeetai,orchestrator,sse,tools,providercfg,http}.go
 entitlements/ · ratelimits/ · search/ · notifications/ · sales/ · email/
@@ -320,7 +326,8 @@ http/errs/                ~50 files, one per domain
 http/httpx/error_status_*.go   ~40 files, 1:1 mirror of errs/
 crypto/tokens/jwt.go      ES256, RFC 7638 kid, rotation
 crypto/password/          Argon2id hashing, strength rules, machine secrets' SHA-256
-crypto/envelope/          AES-256-GCM encryption under the data key
+crypto/envelope/          AES-256-GCM encryption under the data key, key ids for rotation
+crypto/envelope/reseal/   moves stored values to the current key (secrets-reencrypt job)
 crypto/totp/              TOTP codes
 crypto/hibp/              breached-password k-anonymity
 config/config.go          81 env vars + Config.Validate() boot gate
