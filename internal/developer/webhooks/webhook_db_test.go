@@ -267,6 +267,24 @@ func TestOutboxEventsReachWebhooksOnce(t *testing.T) {
 	`, refused.ID); n != 1 {
 		t.Error("a delivery the endpoint refused with 410 was not dead-lettered after one attempt")
 	}
+
+	// A delivery that used up its attempts gets a fresh budget when retried.
+	var gaveUp uuid.UUID
+	if err := dbtest.Pool(t).QueryRow(ctx, `
+		UPDATE tenant.webhook_deliveries SET attempt = $2 WHERE event_id = $1 RETURNING id
+	`, refused.ID, maxDeliveryAttempts).Scan(&gaveUp); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RetryDelivery(ctx, gaveUp, tenant); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	ep.answer(http.StatusServiceUnavailable)
+	dispatch(t, svc)
+	if n := dbtest.Count(t, `
+		SELECT count(*) FROM tenant.webhook_deliveries WHERE id = $1 AND dead_at IS NULL AND attempt = 1 AND next_attempt_at > NOW()
+	`, gaveUp); n != 1 {
+		t.Error("a retried delivery that had used its attempts gave up again at once, want it retrying from its first attempt")
+	}
 }
 
 // alerts records the in-app alerts sent.

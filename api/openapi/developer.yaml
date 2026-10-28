@@ -1208,7 +1208,7 @@ paths:
   /v1/webhooks/{id}/deliveries/{deliveryID}/retry:
     post:
       operationId: post_v1_webhooks_ById_deliveries_ByDeliveryID_retry
-      description: 'Re-attempts a specific previously-failed webhook delivery.'
+      description: 'Sends one of the organisation''s webhook deliveries again now. A delivery that had finished, delivered or given up after its 60 attempts, starts a fresh set of attempts; one still retrying keeps its count.'
       summary: Retry delivery
       tags:
         - Webhooks

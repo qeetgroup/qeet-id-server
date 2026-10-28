@@ -376,14 +376,17 @@ func (s *Service) ListDeliveries(ctx context.Context, subscriptionID, tenantID u
 }
 
 // RetryDelivery re-queues one of the tenant's deliveries for immediate
-// redelivery, clearing delivered_at, dead_at and error. It fails with
-// ErrWebhookDeliveryNotFound when the delivery isn't the tenant's or a
-// dispatcher currently holds its lease.
+// redelivery, clearing delivered_at, dead_at and error. A delivery that had
+// finished, delivered or given up, starts a fresh budget of attempts; one still
+// retrying keeps its count. It fails with ErrWebhookDeliveryNotFound when the
+// delivery isn't the tenant's or a dispatcher currently holds its lease.
 func (s *Service) RetryDelivery(ctx context.Context, deliveryID, tenantID uuid.UUID) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE tenant.webhook_deliveries AS delivery
 		SET delivered_at = NULL, dead_at = NULL, error = NULL, next_attempt_at = NOW(),
-		    lease_owner = NULL, lease_until = NULL
+		    lease_owner = NULL, lease_until = NULL,
+		    attempt = CASE WHEN delivery.dead_at IS NOT NULL OR delivery.delivered_at IS NOT NULL
+		                   THEN 0 ELSE delivery.attempt END
 		FROM tenant.webhook_subscriptions AS subscription
 		WHERE delivery.id = $1 AND delivery.subscription_id = subscription.id
 		  AND subscription.tenant_id = $2
