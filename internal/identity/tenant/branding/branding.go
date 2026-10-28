@@ -57,6 +57,16 @@ type PlanGate interface {
 // SetPlanGate sets the plan-feature gate (nil allows all features).
 func (r *Repository) SetPlanGate(g PlanGate) { r.gate = g }
 
+// brandingAllowed reports whether the tenant's plan includes custom branding;
+// a gate that can't answer counts as no, so the default look is shown.
+func (r *Repository) brandingAllowed(ctx context.Context, tenantID uuid.UUID) bool {
+	if r.gate == nil {
+		return true
+	}
+	ok, err := r.gate.FeatureAllowed(ctx, tenantID, "custom_branding")
+	return err == nil && ok
+}
+
 // Pool returns the connection pool, for handlers that run their own transaction.
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
@@ -86,9 +96,14 @@ func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Branding, er
 }
 
 // LoginBranding returns the tenant's hosted-login logo and colors as plain
-// strings, empty when unset or on error. It satisfies oidc.BrandingLister,
-// which takes primitives so federation doesn't depend on this package.
+// strings, empty when unset, on error, or when its plan lacks custom branding
+// (the stored values are kept for an upgrade). It satisfies
+// oidc.BrandingLister, which takes primitives so federation doesn't depend on
+// this package.
 func (r *Repository) LoginBranding(ctx context.Context, tenantID uuid.UUID) (logoURL, primaryColor, secondaryColor, backgroundColor string) {
+	if !r.brandingAllowed(ctx, tenantID) {
+		return "", "", "", ""
+	}
 	b, err := r.Get(ctx, tenantID)
 	if err != nil || b == nil {
 		return "", "", "", ""
