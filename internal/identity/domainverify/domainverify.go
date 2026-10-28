@@ -1,6 +1,7 @@
 // Package domainverify lets a tenant prove it owns an email domain with a DNS
 // TXT record, checked only when an admin asks, and reports the provisioning
-// state of its custom login hostname.
+// state of its custom login hostname. A verified domain with SSO on sends
+// everyone on it to the tenant's identity provider (see capture.go).
 package domainverify
 
 import (
@@ -31,15 +32,19 @@ import (
 // never clobbers a tenant's apex TXT records (SPF, etc.).
 const dnsHostPrefix = "_qeet-verification."
 
-// Service manages the domains. web checks a custom login hostname over HTTPS.
+// Service manages the domains. web checks a custom login hostname over HTTPS;
+// owners decides who may name break-glass members.
 type Service struct {
 	pool     *pgxpool.Pool
 	q        *dbgen.Queries
 	resolver interface {
 		LookupTXT(ctx context.Context, name string) ([]string, error)
 	}
-	web  *http.Client
-	gate PlanGate
+	web    *http.Client
+	gate   PlanGate
+	owners OwnerChecker
+	// adminPermissions make a member an administrator for domain capture.
+	adminPermissions []string
 }
 
 // NewService returns the domain verification service. Its checks of a custom
@@ -415,6 +420,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/tenants/{tenantID}/login-domain/check", h.checkLoginDomain)
 	r.Patch("/tenants/{tenantID}/domains/{id}", h.updateSettings)
 	r.Delete("/tenants/{tenantID}/domains/{id}", h.remove)
+	r.Get("/tenants/{tenantID}/break-glass-members", h.listBreakGlass)
+	r.Put("/tenants/{tenantID}/break-glass-members/{userID}", h.addBreakGlass)
+	r.Delete("/tenants/{tenantID}/break-glass-members/{userID}", h.removeBreakGlass)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {

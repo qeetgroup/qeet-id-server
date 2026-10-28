@@ -52,6 +52,7 @@ type Service struct {
 	loginBaseURL    string
 	rules           PasswordRules
 	magicLinks      MagicLinkPolicy
+	capture         auth.DomainCapture
 	magicPerAddress Limiter
 	magicPerCaller  Limiter
 	resetPerAddress Limiter
@@ -73,6 +74,19 @@ type PasswordRules interface {
 // live. Satisfied by *authpolicy.Service.
 type MagicLinkPolicy interface {
 	MagicLinkPolicy(ctx context.Context, tenantID uuid.UUID) (enabled bool, ttl time.Duration, err error)
+}
+
+// SetDomainCapture sets the check that refuses resets and magic links to an
+// address whose organisation requires single sign-on (nil: none is refused).
+func (s *Service) SetDomainCapture(c auth.DomainCapture) { s.capture = c }
+
+// refuseCaptured returns errs.ErrAuthSSORequired when email's domain is
+// captured.
+func (s *Service) refuseCaptured(ctx context.Context, email string) error {
+	if s.capture == nil {
+		return nil
+	}
+	return s.capture.RefuseCaptured(ctx, email)
 }
 
 // SetSessionSignals sets how ended sessions are announced.
@@ -159,12 +173,17 @@ func (s *Service) SetResetLimit(perAddress Limiter) { s.resetPerAddress = perAdd
 // after it returns (see afterAnswer), and returns the raw token for dev-mode
 // handlers, empty when no account matched. The link goes to the address as
 // stored, and ends the account's earlier ones. Past the per-address bound it
-// returns ErrTooManyRequests, whether or not an account matched.
+// returns ErrTooManyRequests, whether or not an account matched; an address
+// whose organisation requires single sign-on is then refused before any
+// account is looked up.
 func (s *Service) StartPasswordReset(ctx context.Context, email string, from ResetOrigin) (string, error) {
 	if s.resetPerAddress != nil {
 		if ok, _ := s.resetPerAddress.Take(ctx, "password-reset:address:"+strings.ToLower(strings.TrimSpace(email))); !ok {
 			return "", errs.ErrTooManyRequests
 		}
+	}
+	if err := s.refuseCaptured(ctx, email); err != nil {
+		return "", err
 	}
 	var userID uuid.UUID
 	var tenantID *uuid.UUID
@@ -287,8 +306,9 @@ func (s *Service) recordRequest(ctx context.Context, action string, userID uuid.
 
 // ConfirmPasswordReset sets a new password with a reset link, checked against
 // the rules of the account's organisation once the link is known to be good. A
-// refused password leaves the credential and link untouched. On success the
-// address counts as verified and every sign-in ends (see auth.EndSignIns).
+// refused password, or an address that must now sign in with single sign-on,
+// leaves the credential and link untouched. On success the address counts as
+// verified and every sign-in ends (see auth.EndSignIns).
 func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPassword string, ac AuditCtx) error {
 	if s.rules == nil {
 		return errs.ErrNotImplemented
@@ -303,6 +323,9 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 	}
 	account, err := s.q.GetResetAccount(ctx, row.UserID)
 	if err != nil {
+		return err
+	}
+	if err := s.refuseCaptured(ctx, account.Email); err != nil {
 		return err
 	}
 	var tenantID uuid.UUID // uuid.Nil: the account belongs to no organisation

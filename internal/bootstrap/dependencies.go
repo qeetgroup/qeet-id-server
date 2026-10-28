@@ -37,6 +37,7 @@ import (
 	webhook "github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/adminportal"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/directory"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcsso"
@@ -399,6 +400,14 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	// custom domain — extracted from its inline handler so the gate can be wired.
 	domainVerifyService := domainverify.NewService(pool, outboundPolicy)
 	domainVerifyService.SetPlanGate(entitlementSvc)
+	domainVerifyService.SetOwners(rbacRepo) // only owners name break-glass members
+	// Domain capture: an address on a verified domain with SSO on, in an
+	// organisation with an active SAML or LDAP connection, signs in only there,
+	// except break-glass members and the administrators SSO never adopts.
+	domainVerifyService.SetAdminPermissions(identitylink.AdminPermissions())
+	authService.SetDomainCapture(domainVerifyService)     // password sign-in, sign-up, hosted registration
+	recoveryService.SetDomainCapture(domainVerifyService) // password reset, magic links
+	passkeyService.SetDomainCapture(domainVerifyService)  // passkey sign-in and sign-up
 
 	limits := newRateLimits(rootCtx, cfg, pool)
 	recoveryService.SetMagicLinkLimits(limits.magicAddress, limits.magicCaller)

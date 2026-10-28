@@ -505,7 +505,19 @@ paths:
         - Domains
       description: >-
         Toggles SSO routing, just-in-time provisioning, and which domain is the
-        tenant default. Setting a new default clears the previous one.
+        tenant default. Setting a new default clears the previous one. Each
+        switch applies to the addresses the domain manages once it is verified:
+        the domain itself and those below it that no closer verified domain
+        takes. With sso_enabled on, while the organisation has an active SAML or
+        LDAP connection, those addresses sign in only through it: password
+        sign-in, magic links, passkey sign-in, password resets and self sign-up
+        answer 403 auth.sso_required (with the connections to use), except for
+        the organisation's break-glass members (see the break-glass-members
+        calls) and its administrators single sign-on can't sign in. With
+        jit_enabled on, a SAML or LDAP sign-in creates an account for an
+        address that has none; with it off, only existing members are adopted
+        (saml.jit_not_allowed / ldap.jit_not_allowed otherwise). Both are off
+        for a new domain.
       parameters:
         - name: tenantID
           in: path
@@ -576,6 +588,101 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/break-glass-members:
+    get:
+      operationId: get_v1_tenants_ByTenantID_break_glass_members
+      summary: List break-glass members
+      tags:
+        - Domains
+      description: 'Lists the members who keep their own sign-in methods (password, magic links, passkeys, password resets) on a domain where the organisation requires single sign-on, so an outage of its identity provider can''t lock everyone out. Requires connection.read.'
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The organisation's break-glass members
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BreakGlassMember'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/break-glass-members/{userID}:
+    put:
+      operationId: put_v1_tenants_ByTenantID_break_glass_members_ByUserID
+      summary: Make a member break-glass
+      tags:
+        - Domains
+      description: 'Lets a member keep their own sign-in methods on a domain where the organisation requires single sign-on. The member must belong to the organisation (it is their home, or they hold one of its roles), else 404 domainverify.not_member. Only an owner, in person, may (403 rbac.owner_only for anyone else, including an API key or other credential), with a recent step-up (403 step_up_required). Recorded in the audit trail as domain.break_glass_added in the same transaction; making a break-glass member break-glass again changes and records nothing.'
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: userID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: The member is break-glass
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_break_glass_members_ByUserID
+      summary: Remove a break-glass member
+      tags:
+        - Domains
+      description: 'Makes a break-glass member an ordinary one again: on a domain where the organisation requires single sign-on they sign in only through it. Owner-only with a recent step-up, as for adding one. Recorded in the audit trail as domain.break_glass_removed in the same transaction; removing someone who isn''t break-glass changes and records nothing.'
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: userID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: The person is no longer break-glass
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/users/suspended:
     get:
       operationId: get_v1_users_suspended
@@ -3786,6 +3893,7 @@ components:
           type: boolean
         jit_enabled:
           type: boolean
+          description: Single sign-on creates an account at sign-in for an address on the domain that has none.
         last_checked_at:
           type: string
           format: date-time
@@ -3793,11 +3901,30 @@ components:
           type: string
         sso_enabled:
           type: boolean
+          description: Addresses on the domain sign in only through the organisation's active SAML or LDAP connection (break-glass members and administrators single sign-on can't sign in excepted).
         status:
           type: string
         verification_token:
           type: string
         verified_at:
+          type: string
+          format: date-time
+    BreakGlassMember:
+      type: object
+      required: [user_id, email, created_at]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        display_name:
+          type: string
+        created_by:
+          type: string
+          format: uuid
+          description: The owner who named them, while that account exists.
+        created_at:
           type: string
           format: date-time
     Group:

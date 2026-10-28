@@ -51,7 +51,9 @@ type Credential struct {
 // Service runs passkey ceremonies and manages stored passkeys. policy says
 // whether an organization permits passkeys (nil: no restriction); invitations
 // lets an invited person found an account on a passkey (nil: that path is off);
-// sender emails the account holder when one is added or removed (nil: no one).
+// sender emails the account holder when one is added or removed (nil: no one);
+// capture refuses passkey sign-in and sign-up to an address whose organisation
+// requires single sign-on (nil: none is refused).
 type Service struct {
 	pool        *pgxpool.Pool
 	q           *dbgen.Queries
@@ -60,6 +62,7 @@ type Service struct {
 	policy      MethodPolicy
 	invitations InvitationAcceptor
 	sender      notifier.Sender
+	capture     auth.DomainCapture
 }
 
 // NewService returns the passkey service.
@@ -79,6 +82,18 @@ type MethodPolicy interface {
 
 // SetMethodPolicy wires the tenant's passkey on/off setting.
 func (s *Service) SetMethodPolicy(p MethodPolicy) { s.policy = p }
+
+// SetDomainCapture wires domain capture into passkey sign-in and sign-up.
+func (s *Service) SetDomainCapture(c auth.DomainCapture) { s.capture = c }
+
+// refuseCaptured returns errs.ErrAuthSSORequired when email's domain is
+// captured.
+func (s *Service) refuseCaptured(ctx context.Context, email string) error {
+	if s.capture == nil {
+		return nil
+	}
+	return s.capture.RefuseCaptured(ctx, email)
+}
 
 // passkeysAllowed returns ErrPasskeyDisabled if tenantID's policy switches
 // passkeys off. uuid.Nil (a user without an organization) is not restricted.
@@ -630,6 +645,13 @@ func (s *Service) beginSignupFor(ctx context.Context, tenantID, inviteID uuid.UU
 	if email == "" {
 		return uuid.Nil, nil, errs.ErrAuthEmailRequired
 	}
+	// An address whose organisation requires single sign-on gets its account
+	// from the identity provider; an invitation is accepted as before.
+	if inviteID == uuid.Nil {
+		if err := s.refuseCaptured(ctx, email); err != nil {
+			return uuid.Nil, nil, err
+		}
+	}
 	// Refuse an email a user holds or a live signup ceremony is claiming: no user
 	// row exists until a ceremony finishes, so a rival signup could otherwise race
 	// it. Expired ceremonies don't count, so an abandoned one can't lock the email
@@ -835,10 +857,15 @@ func (s *Service) createUserFromSignup(ctx context.Context, sess *signupSession,
 
 // BeginLogin starts a login ceremony. Every ceremony is discoverable, so the
 // answer is the same whether or not email has an account or a passkey; with an
-// email, only a passkey of that account can finish it.
+// email, only a passkey of that account can finish it. An email whose
+// organisation requires single sign-on is refused before it is looked up; a
+// passkey of such an account is refused when it finishes (verifyLogin).
 func (s *Service) BeginLogin(ctx context.Context, email string) (uuid.UUID, *protocol.CredentialAssertion, error) {
 	kind, owner := "login_discoverable", (*uuid.UUID)(nil)
 	if email != "" {
+		if err := s.refuseCaptured(ctx, email); err != nil {
+			return uuid.Nil, nil, err
+		}
 		// A "login" ceremony with no owner is for an address with no account:
 		// no passkey can finish it.
 		kind = "login"
@@ -938,6 +965,9 @@ func (s *Service) verifyLogin(ctx context.Context, sessionID uuid.UUID, credenti
 		}
 		resolved, resolvedTenant = u, tid
 		if refused = s.passkeysAllowed(ctx, tid); refused != nil {
+			return nil, refused
+		}
+		if refused = s.refuseCaptured(ctx, u.name); refused != nil {
 			return nil, refused
 		}
 		return u, nil

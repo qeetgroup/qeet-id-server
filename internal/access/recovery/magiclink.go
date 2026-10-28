@@ -74,8 +74,9 @@ func (s *Service) magicLinkAllowed(ctx context.Context, req MagicLinkRequest) bo
 
 // RequestMagicLink emails a sign-in link to the account holding req.Email, if
 // any, storing and sending it after it returns (see afterAnswer), so it answers
-// alike either way. It returns ErrTooManyRequests past the bounds, and
-// ErrAuthMethodDisabled when the asking organisation has magic links off.
+// alike either way. It returns ErrTooManyRequests past the bounds,
+// ErrAuthMethodDisabled when the asking organisation has magic links off, and
+// ErrAuthSSORequired for an address whose organisation requires single sign-on.
 func (s *Service) RequestMagicLink(ctx context.Context, req MagicLinkRequest) error {
 	req.Email = strings.TrimSpace(req.Email)
 	if req.Email == "" {
@@ -92,6 +93,11 @@ func (s *Service) RequestMagicLink(ctx context.Context, req MagicLinkRequest) er
 	}
 	if !s.magicLinkAllowed(ctx, req) {
 		return errs.ErrTooManyRequests
+	}
+	// Counted first, so asking about addresses on a captured domain is bounded
+	// like any request; decided before the account is looked up.
+	if err := s.refuseCaptured(ctx, req.Email); err != nil {
+		return err
 	}
 	account, err := s.q.GetMagicLinkAccount(ctx, req.Email)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -259,6 +265,11 @@ func (s *Service) consumeMagicLink(ctx context.Context, rawToken, app string, ac
 		policyTenant = uuid.UUID(account.TenantID.Bytes)
 	}
 	if _, err := s.magicLinkTTL(ctx, policyTenant); err != nil {
+		return nil, err
+	}
+	// So does a link to an address whose organisation now requires single
+	// sign-on.
+	if err := s.refuseCaptured(ctx, ml.Email); err != nil {
 		return nil, err
 	}
 	tx, err := s.pool.Begin(ctx)

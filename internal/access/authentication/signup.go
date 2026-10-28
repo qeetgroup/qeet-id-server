@@ -36,6 +36,11 @@ type TenantBrief struct {
 
 // Signup creates a tenant-less identity (user + password + session) and logs them in; no tenant or role is created.
 func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user.User, *TenantBrief, error) {
+	// An address whose organisation requires single sign-on gets its account
+	// from the identity provider.
+	if err := s.refuseCaptured(ctx, in.Email); err != nil {
+		return nil, nil, nil, err
+	}
 	// The account belongs to no organisation, so the platform baseline applies.
 	if err := s.checkNewPassword(ctx, uuid.Nil, in.Email, in.Password); err != nil {
 		return nil, nil, nil, err
@@ -129,12 +134,15 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 }
 
 // RegisterInTenant creates a user in tenantID from the hosted sign-up flow and
-// signs them in. It honours the tenant's self-registration, password sign-in and
-// password rules, and returns the SSO cookie value or, when the organisation
-// requires MFA, an enrolment challenge.
+// signs them in. It honours domain capture and the tenant's self-registration,
+// password sign-in and password rules, and returns the SSO cookie value or,
+// when the organisation requires MFA, an enrolment challenge.
 func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, email, plain, displayName, ip, ua string) (*user.User, *LoginSessionResult, error) {
 	if s.regPolicy == nil {
 		return nil, nil, errs.ErrNotImplemented
+	}
+	if err := s.refuseCaptured(ctx, email); err != nil {
+		return nil, nil, err
 	}
 	enabled, err := s.regPolicy.SelfRegistrationEnabled(ctx, tenantID)
 	if err != nil {

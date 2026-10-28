@@ -115,6 +115,8 @@ func StepUpRoutes() map[string]mfa.StepUpRule {
 		"POST /v1/tenants/{tenantID}/domains",
 		"PATCH /v1/tenants/{tenantID}/domains/{id}",
 		"DELETE /v1/tenants/{tenantID}/domains/{id}",
+		"PUT /v1/tenants/{tenantID}/break-glass-members/{userID}",
+		"DELETE /v1/tenants/{tenantID}/break-glass-members/{userID}",
 		"POST /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings",
 		"PUT /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings/{mappingID}",
 		"DELETE /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings/{mappingID}",

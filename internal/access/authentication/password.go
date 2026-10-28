@@ -169,6 +169,12 @@ func (s *Service) CheckPassword(ctx context.Context, in SignInAttempt) (*user.Us
 	if err != nil {
 		return nil, nil, err
 	}
+	// An address whose organisation requires single sign-on is sent there
+	// before any account is looked up, so the answer is the same for every
+	// address on the domain, and nothing is counted against the lockout.
+	if err := s.refuseCaptured(ctx, in.Email); err != nil {
+		return nil, nil, err
+	}
 	if err := s.passwordAllowed(ctx, signInTenant); err != nil {
 		return nil, nil, err
 	}

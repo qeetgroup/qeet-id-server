@@ -19,19 +19,37 @@ import (
 // ok is false when none has. Other organisations don't create accounts there,
 // and only the manager's single sign-on links them.
 func ManagerOf(ctx context.Context, db dbgen.DBTX, email string) (tenantID uuid.UUID, ok bool, err error) {
+	m, ok, err := ManagingDomain(ctx, db, email)
+	return m.TenantID, ok, err
+}
+
+// ManagedDomain is the verified domain that decides for an address: its
+// organisation and its switches.
+type ManagedDomain struct {
+	TenantID uuid.UUID
+	SSO      bool // everyone on it signs in through the organisation's identity provider
+	JIT      bool // single sign-on creates accounts on it
+}
+
+// ManagingDomain returns the domain ManagerOf takes the organisation from, with
+// its switches; ok is false when no organisation manages email's domain.
+func ManagingDomain(ctx context.Context, db dbgen.DBTX, email string) (m ManagedDomain, ok bool, err error) {
 	at := strings.LastIndexByte(email, '@')
 	if at < 0 {
-		return uuid.Nil, false, nil
+		return m, false, nil
 	}
 	domain := strings.ToLower(strings.TrimSpace(email[at+1:]))
 	if domain == "" {
-		return uuid.Nil, false, nil
+		return m, false, nil
 	}
-	tenantID, err = dbgen.New(db).EmailDomainManager(ctx, domain)
+	row, err := dbgen.New(db).EmailDomainManager(ctx, domain)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, false, nil
+		return m, false, nil
 	}
-	return tenantID, err == nil, err
+	if err != nil {
+		return m, false, err
+	}
+	return ManagedDomain{TenantID: row.TenantID, SSO: row.SsoEnabled, JIT: row.JitEnabled}, true, nil
 }
 
 // CheckNewAccount refuses, with ErrUserDomainManaged, creating an account of

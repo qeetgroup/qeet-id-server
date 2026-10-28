@@ -37,6 +37,9 @@ type Service struct {
 	regPolicy RegistrationPolicy
 	// methods decides which sign-in methods an organisation allows (nil = all).
 	methods MethodPolicy
+	// capture sends an address on a captured domain to its organisation's
+	// identity provider (nil = none is). See capture.go.
+	capture DomainCapture
 	// anomaly receives security signals (nil = recording off). Set via
 	// SetAnomalyRecorder; an interface so auth doesn't import the threat package.
 	anomaly AnomalyRecorder

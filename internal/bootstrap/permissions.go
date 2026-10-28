@@ -313,6 +313,11 @@ func userPermissionMap() map[string]string {
 		"PATCH /v1/tenants/{tenantID}/domains/{id}":       "connection.write",
 		"GET /v1/tenants/{tenantID}/login-domain":         "connection.read",
 		"POST /v1/tenants/{tenantID}/login-domain/check":  "connection.read",
+		// Members who keep their own sign-in methods on a domain that requires
+		// single sign-on; changing them is also owner-only (domainverify).
+		"GET /v1/tenants/{tenantID}/break-glass-members":             "connection.read",
+		"PUT /v1/tenants/{tenantID}/break-glass-members/{userID}":    "connection.write",
+		"DELETE /v1/tenants/{tenantID}/break-glass-members/{userID}": "connection.write",
 
 		// GDPR.
 		"POST /v1/gdpr/purge":                                         "gdpr.write",
