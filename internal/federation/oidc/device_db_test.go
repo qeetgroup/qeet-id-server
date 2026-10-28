@@ -236,8 +236,39 @@ func TestDeviceAndBackchannelJudgeMembershipLikeSignIn(t *testing.T) {
 		if err := svc.DecideDevice(ctx, tc.account.ID, userCode, true, deviceIP); (err == nil) != tc.member {
 			t.Errorf("%s approving a device: %v, want admitted %t", tc.name, err, tc.member)
 		}
+		want := 0
+		if tc.member {
+			want = 1
+		}
+		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'oauth.device_approved'
+			AND actor_user_id = $2 AND resource_type = 'oidc_device_code' AND host(ip) = $3 AND metadata->>'client_id' = $4`,
+			tenant, tc.account.ID, deviceIP, device.ClientID); n != want {
+			t.Errorf("%s: %d approval records, want %d", tc.name, n, want)
+		}
 		if _, err := svc.BackchannelAuthorize(ctx, ciba.ClientID, cibaSecret, tc.account.Email, "openid", ""); (err == nil) != tc.member {
 			t.Errorf("%s as a backchannel login_hint: %v, want admitted %t", tc.name, err, tc.member)
 		}
+	}
+}
+
+// TestDeviceDenialIsAudited checks that denying a device code is recorded in
+// the code's organisation, naming the person, the code and the client.
+func TestDeviceDenialIsAudited(t *testing.T) {
+	ctx := dbtest.Context(t)
+	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	tenant := dbtest.Tenant(t)
+	device, _ := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, Type: "public", GrantTypes: []string{grantTypeDeviceCode}})
+	person := dbtest.User(t, tenant, tenant)
+	_, userCode, _, err := svc.DeviceAuthorize(ctx, device.ClientID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DecideDevice(ctx, person.ID, userCode, false, deviceIP); err != nil {
+		t.Fatalf("deny: %v", err)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events e JOIN auth.oidc_device_codes d ON d.id = e.resource_id
+		WHERE e.tenant_id = $1 AND e.action = 'oauth.device_denied' AND e.actor_user_id = $2 AND d.status = 'denied'
+		AND e.metadata->>'client_id' = $3 AND host(e.ip) = $4`, tenant, person.ID, device.ClientID, deviceIP); n != 1 {
+		t.Errorf("%d denial records, want 1", n)
 	}
 }

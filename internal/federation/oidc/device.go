@@ -193,7 +193,8 @@ func (s *Service) LookupDeviceByUserCode(ctx context.Context, userCode string) (
 // DecideDevice records the user's approve/deny decision against a pending device
 // row identified by user_code. On approval it binds the user (who must belong to
 // the row's tenant, and approve from an address its rules allow: ip) and marks
-// it authorized; on denial it marks it denied.
+// it authorized; on denial it marks it denied. Either is audited in the row's
+// organisation as oauth.device_approved or oauth.device_denied.
 func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode string, approve bool, ip string) error {
 	userCode = normalizeUserCode(userCode)
 	tx, err := s.pool.Begin(ctx)
@@ -219,6 +220,9 @@ func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode s
 
 	if !approve {
 		if err := q.DenyDevice(ctx, row.ID); err != nil {
+			return err
+		}
+		if err := recordDeviceDecision(ctx, tx, row, userID, "oauth.device_denied", ip); err != nil {
 			return err
 		}
 		return tx.Commit(ctx)
@@ -257,7 +261,21 @@ func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode s
 	}); err != nil {
 		return err
 	}
+	if err := recordDeviceDecision(ctx, tx, row, userID, "oauth.device_approved", ip); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
+}
+
+// recordDeviceDecision audits userID's decision on device code row, made from
+// ip, in the organisation the code was issued for.
+func recordDeviceDecision(ctx context.Context, tx pgx.Tx, row dbgen.LockDeviceByUserCodeRow, userID uuid.UUID, action, ip string) error {
+	tenantID, codeID := row.TenantID, row.ID
+	return audit.Record(ctx, tx, audit.Event{
+		TenantID: &tenantID, ActorUserID: &userID, ActorType: "user",
+		Action: action, ResourceType: "oidc_device_code", ResourceID: &codeID, IP: ip,
+		Metadata: map[string]any{"client_id": row.ClientID, "scopes": row.Scopes},
+	})
 }
 
 // DeviceToken implements the RFC 8628 §3.5 polling exchange: it enforces the
