@@ -1541,6 +1541,99 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/log-sinks/test:
+    post:
+      operationId: post_v1_tenants_ByTenantID_log_sinks_test
+      summary: Send a test event to an unsaved log stream
+      description: >-
+        Sends one test audit event (action siem.test, metadata.test true; no
+        organisation data) to the destination in the body, which takes the
+        fields and checks of creating one and isn't saved, and reports how it
+        answered. Audited as siem.sink_tested. Needs audit.write and a recent
+        step-up, as creating one does.
+      tags:
+        - Log Sinks
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, endpoint]
+              properties:
+                type: {type: string, enum: [splunk_hec, datadog, http]}
+                endpoint: {type: string, format: uri}
+                token: {type: string, writeOnly: true}
+      responses:
+        '200':
+          description: How the destination answered
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [delivered, duration_ms]
+                properties:
+                  delivered: {type: boolean, description: Whether the destination accepted the event (a 2xx answer).}
+                  status: {type: integer, description: The destination's HTTP status; absent when it gave no answer.}
+                  error: {type: string, description: Why it wasn't delivered.}
+                  duration_ms: {type: integer}
+        '400':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/log-sinks/{id}/test:
+    post:
+      operationId: post_v1_tenants_ByTenantID_log_sinks_ById_test
+      summary: Send a test event to a log stream
+      description: >-
+        Sends one test audit event (action siem.test, metadata.test true; no
+        organisation data) to one of the organisation's saved destinations and
+        reports how it answered. It changes nothing on the destination: its
+        cursor, last_error and back-off are untouched. Audited as
+        siem.sink_tested. Needs audit.write and a recent step-up.
+      tags:
+        - Log Sinks
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: How the destination answered
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [delivered, duration_ms]
+                properties:
+                  delivered: {type: boolean, description: Whether the destination accepted the event (a 2xx answer).}
+                  status: {type: integer, description: The destination's HTTP status; absent when it gave no answer.}
+                  error: {type: string, description: Why it wasn't delivered.}
+                  duration_ms: {type: integer}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/tenants/{tenantID}/log-sinks/{id}:
     patch:
       operationId: patch_v1_tenants_ByTenantID_log_sinks_ById

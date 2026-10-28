@@ -467,23 +467,113 @@ func (s *Service) fetchEvents(ctx context.Context, tenantID uuid.UUID, afterAt t
 }
 
 func (s *Service) post(ctx context.Context, endpoint string, headers map[string]string, body []byte) error {
+	_, err := s.send(ctx, endpoint, headers, body)
+	return err
+}
+
+// send posts body to endpoint and returns the collector's status, 0 when it
+// gave no answer, and an error unless it accepted the body.
+func (s *Service) send(ctx context.Context, endpoint string, headers map[string]string, body []byte) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("sink returned %d", resp.StatusCode)
+		return resp.StatusCode, fmt.Errorf("sink returned %d", resp.StatusCode)
 	}
-	return nil
+	return resp.StatusCode, nil
+}
+
+// TestResult is how a destination answered one test event.
+type TestResult struct {
+	Delivered  bool   `json:"delivered"`
+	Status     int    `json:"status,omitempty"` // the collector's HTTP status; absent when it gave none
+	Error      string `json:"error,omitempty"`
+	DurationMS int64  `json:"duration_ms"`
+}
+
+// Test sends one test event to a destination that isn't saved, after the
+// checks Create makes, and reports how it answered.
+func (s *Service) Test(ctx context.Context, tenantID uuid.UUID, typ, endpoint, token string, actor audit.Actor) (*TestResult, error) {
+	if !validType(typ) {
+		return nil, errs.ErrSIEMSinkTypeInvalid
+	}
+	if _, err := s.egress.ValidateHTTPURL(endpoint); err != nil {
+		return nil, errs.ErrSIEMEndpointInvalid
+	}
+	return s.test(ctx, tenantID, nil, typ, endpoint, token, actor)
+}
+
+// TestSaved sends one test event to one of the tenant's destinations and
+// reports how it answered. It changes nothing on the destination.
+func (s *Service) TestSaved(ctx context.Context, tenantID, id uuid.UUID, actor audit.Actor) (*TestResult, error) {
+	var r storedSink
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, tenant_id, type, endpoint, token, token_ct, token_nonce
+		FROM tenant.log_sinks WHERE id = $1 AND tenant_id = $2
+	`, id, tenantID).Scan(&r.id, &r.tenantID, &r.typ, &r.endpoint, &r.legacyToken, &r.tokenCT, &r.tokenNonce)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	token := r.legacyToken
+	if len(r.tokenCT) > 0 {
+		if s.box == nil {
+			return nil, errs.ErrInternalServer.WithDetail("SIEM token encryption is unavailable")
+		}
+		plain, err := s.box.Open(r.tenantID, "siem-token", r.id.String(), r.tokenCT, r.tokenNonce)
+		if err != nil {
+			return nil, err
+		}
+		token = string(plain)
+	}
+	return s.test(ctx, tenantID, &id, r.typ, r.endpoint, token, actor)
+}
+
+// test sends the test event and audits that it was sent, and how it went.
+func (s *Service) test(ctx context.Context, tenantID uuid.UUID, sinkID *uuid.UUID, typ, endpoint, token string, actor audit.Actor) (*TestResult, error) {
+	event := AuditEvent{
+		ID: uuid.NewString(), TenantID: tenantID.String(), ActorType: "system", Action: "siem.test",
+		ResourceType: "log_sink", CreatedAt: time.Now().UTC(),
+		Metadata: json.RawMessage(`{"test":true,"message":"A test event from Qeet ID; nothing happened."}`),
+	}
+	body, headers, err := buildRequest(typ, token, []AuditEvent{event})
+	if err != nil {
+		return nil, err
+	}
+	start := time.Now()
+	status, sendErr := s.send(ctx, endpoint, headers, body)
+	res := &TestResult{Delivered: sendErr == nil, Status: status, DurationMS: time.Since(start).Milliseconds()}
+	if sendErr != nil {
+		res.Error = sendErr.Error()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	ev := actor.Event(tenantID, "siem.sink_tested", "log_sink", uuid.Nil, map[string]any{
+		"type": typ, "delivered": res.Delivered, "status": status, "saved": sinkID != nil,
+	})
+	ev.ResourceID = sinkID
+	if err := audit.Record(ctx, tx, ev); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 func (s *Service) recordError(ctx context.Context, id uuid.UUID, msg string) {
@@ -566,6 +656,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/tenants/{tenantID}/log-sinks", h.create)
 	r.Patch("/tenants/{tenantID}/log-sinks/{id}", h.patch)
 	r.Delete("/tenants/{tenantID}/log-sinks/{id}", h.del)
+	r.Post("/tenants/{tenantID}/log-sinks/test", h.testUnsaved)
+	r.Post("/tenants/{tenantID}/log-sinks/{id}/test", h.testSaved)
 }
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
@@ -607,6 +699,52 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, sk)
+}
+
+// testUnsaved serves POST /tenants/{tenantID}/log-sinks/test: one test event
+// to the destination in the body, which isn't saved.
+func (h *Handler) testUnsaved(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var in struct {
+		Type     string `json:"type"`
+		Endpoint string `json:"endpoint"`
+		Token    string `json:"token"`
+	}
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	res, err := h.Service.Test(r.Context(), tenantID, in.Type, in.Endpoint, in.Token, audit.ActorOf(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// testSaved serves POST /tenants/{tenantID}/log-sinks/{id}/test: one test
+// event to a saved destination.
+func (h *Handler) testSaved(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrSIEMIDInvalid)
+		return
+	}
+	res, err := h.Service.TestSaved(r.Context(), tenantID, id, audit.ActorOf(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
 func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {

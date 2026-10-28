@@ -120,6 +120,8 @@ func StepUpRoutes() map[string]mfa.StepUpRule {
 		"POST /v1/tenants/{tenantID}/log-sinks",
 		"PATCH /v1/tenants/{tenantID}/log-sinks/{id}",
 		"DELETE /v1/tenants/{tenantID}/log-sinks/{id}",
+		"POST /v1/tenants/{tenantID}/log-sinks/test",
+		"POST /v1/tenants/{tenantID}/log-sinks/{id}/test",
 
 		// Handing out authority: what a role can do, who holds it, who is invited
 		// to hold it, and the relationship and attribute rules that decide access.

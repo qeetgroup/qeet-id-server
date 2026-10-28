@@ -340,10 +340,12 @@ func userPermissionMap() map[string]string {
 		"DELETE /v1/tenants/{tenantID}/email/suppressions/{id}": "user.write",
 
 		// SIEM/log streaming contains tenant audit data.
-		"GET /v1/tenants/{tenantID}/log-sinks":         "audit.read",
-		"POST /v1/tenants/{tenantID}/log-sinks":        "audit.write",
-		"PATCH /v1/tenants/{tenantID}/log-sinks/{id}":  "audit.write",
-		"DELETE /v1/tenants/{tenantID}/log-sinks/{id}": "audit.write",
+		"GET /v1/tenants/{tenantID}/log-sinks":            "audit.read",
+		"POST /v1/tenants/{tenantID}/log-sinks":           "audit.write",
+		"PATCH /v1/tenants/{tenantID}/log-sinks/{id}":     "audit.write",
+		"DELETE /v1/tenants/{tenantID}/log-sinks/{id}":    "audit.write",
+		"POST /v1/tenants/{tenantID}/log-sinks/test":      "audit.write",
+		"POST /v1/tenants/{tenantID}/log-sinks/{id}/test": "audit.write",
 	}
 }
 
