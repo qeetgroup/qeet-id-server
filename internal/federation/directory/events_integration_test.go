@@ -4,6 +4,7 @@ package directory
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
@@ -368,5 +370,58 @@ func TestRefusedSignInIsNotASyncError(test *testing.T) {
 	errorsPage, err = service.Errors(ctx, tenantID, errorFilter{eventFilter: since})
 	if err != nil || errorsPage.Total != 1 || errorsPage.Summary.Critical != 1 || notifications() != 1 {
 		test.Fatalf("the service account refused: %+v, %d alerts (%v); want one critical error and an alert", errorsPage.Summary, notifications(), err)
+	}
+}
+
+// recordingTester checks a connection as the LDAP service does: it records the
+// check as an operation, within two seconds, carrying the retried error.
+type recordingTester struct{ service *Service }
+
+func (r *recordingTester) TestConnection(ctx context.Context, tenantID, connectionID uuid.UUID) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	return r.service.RecordOperation(ctx, tenantID, connectionID.String(), "test", "connection", "", http.StatusOK, time.Now(), time.Second)
+}
+
+func (*recordingTester) List(context.Context, uuid.UUID) ([]ldap.Connection, error) { return nil, nil }
+
+// TestRetryRecordsItsOwnCheck checks that retrying a failed connection check
+// records the new check, pointing back at the error, and marks the error
+// retried: the error's row isn't held while the check runs.
+func TestRetryRecordsItsOwnCheck(test *testing.T) {
+	pool := dbtest.Pool(test)
+	ctx := dbtest.Context(test)
+	tenantID, userID, connection := uuid.New(), uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant.tenants(id,slug,name) VALUES($1,$2,'Directory test')`, tenantID, tenantID.String()); err != nil {
+		test.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO "user".users(id,tenant_id,email,status) VALUES($1,$2,$3,'active')`, userID, tenantID, userID.String()+"@example.test"); err != nil {
+		test.Fatal(err)
+	}
+	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{})
+	service.SetEventStore(pool)
+	service.ldap = &recordingTester{service: service}
+	if err := service.RecordOperation(ctx, tenantID, connection.String(), "test", "connection", "", http.StatusBadGateway, time.Now(), time.Second); err != nil {
+		test.Fatal(err)
+	}
+	var failed uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM tenant.directory_events WHERE tenant_id=$1 AND status='failed'`, tenantID).Scan(&failed); err != nil {
+		test.Fatal(err)
+	}
+
+	router := chi.NewRouter()
+	(&Handler{Service: service}).Mount(router)
+	request := httptest.NewRequest(http.MethodPost, "/tenants/"+tenantID.String()+"/directory/errors/"+failed.String()+"/retry", nil)
+	request = request.WithContext(httpx.WithPrincipal(ctx, &httpx.Principal{ActorType: "user", UserID: &userID, TenantID: &tenantID}))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"succeeded":true`) {
+		test.Fatalf("retry: %d %s, want the check to succeed", response.Code, response.Body.String())
+	}
+	if n := dbtest.Count(test, `SELECT count(*) FROM tenant.directory_events WHERE tenant_id=$1 AND retry_of=$2 AND status='success'`, tenantID, failed); n != 1 {
+		test.Errorf("%d checks recorded for the retry, want 1", n)
+	}
+	if n := dbtest.Count(test, `SELECT count(*) FROM tenant.directory_events WHERE tenant_id=$1 AND id=$2 AND resolution='retried'`, tenantID, failed); n != 1 {
+		test.Error("the failure was not marked retried")
 	}
 }
