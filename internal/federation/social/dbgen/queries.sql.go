@@ -147,6 +147,7 @@ const getExternalIdentityUser = `-- name: GetExternalIdentityUser :one
 
 SELECT user_id FROM "user".external_identities
 WHERE tenant_id = $1 AND provider = $2 AND subject = $3
+  AND connection_id IS NULL
 `
 
 type GetExternalIdentityUserParams struct {
@@ -158,6 +159,8 @@ type GetExternalIdentityUserParams struct {
 // ==========================================================================
 // findOrCreateUser — same cross-schema "user" pattern as ldap/saml
 // ==========================================================================
+// A social identity names no connection; a single sign-on connection's links,
+// whose provider a social one could be named after, are not looked at.
 func (q *Queries) GetExternalIdentityUser(ctx context.Context, arg GetExternalIdentityUserParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, getExternalIdentityUser, arg.TenantID, arg.Provider, arg.Subject)
 	var user_id uuid.UUID

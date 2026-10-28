@@ -100,3 +100,26 @@ func TestSocialSignInAdoptsADirectoryProvisionedAccount(t *testing.T) {
 		t.Errorf("an unproved account registered otherwise: %v, want %v", err, errs.ErrSocialAccountUnverified)
 	}
 }
+
+// TestSocialSignInIgnoresConnectionLinks checks that a social provider named
+// like a single sign-on kind (saml, ldap, oidc) doesn't find a person linked
+// through one of the organisation's connections by that subject, so whoever
+// controls such a provider can't sign in as them.
+func TestSocialSignInIgnoresConnectionLinks(t *testing.T) {
+	ctx := dbtest.Context(t)
+	svc := NewService(dbtest.Pool(t), nil, "https://api.id.qeet.in")
+	tenant := dbtest.Tenant(t)
+	linked := dbtest.User(t, tenant, tenant)
+	for _, provider := range []string{"saml", "ldap", "oidc"} {
+		subject := provider + "-subject-" + uuid.NewString()
+		if _, err := dbtest.Pool(t).Exec(ctx, `
+			INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email, connection_id)
+			VALUES ($1, $2, $3, $4, $5, $6)`, linked.ID, tenant, provider, subject, linked.Email, uuid.New()); err != nil {
+			t.Fatal(err)
+		}
+		got, err := svc.findOrCreateUser(ctx, tenant, provider, userInfo{Subject: subject})
+		if got == linked.ID || !errors.Is(err, errs.ErrSocialEmailMissing) {
+			t.Errorf("a social %q sign-in with a connection's subject = %s, %v; want no link found", provider, got, err)
+		}
+	}
+}

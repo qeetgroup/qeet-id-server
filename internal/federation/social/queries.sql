@@ -87,8 +87,11 @@ UPDATE auth.social_login_codes SET used_at = NOW() WHERE code_hash = @code_hash;
 -- ==========================================================================
 
 -- name: GetExternalIdentityUser :one
+-- A social identity names no connection; a single sign-on connection's links,
+-- whose provider a social one could be named after, are not looked at.
 SELECT user_id FROM "user".external_identities
-WHERE tenant_id = @tenant_id AND provider = @provider AND subject = @subject;
+WHERE tenant_id = @tenant_id AND provider = @provider AND subject = @subject
+  AND connection_id IS NULL;
 
 -- name: GetUserByEmail :one
 SELECT id FROM "user".users WHERE LOWER(email) = LOWER(@email) AND deleted_at IS NULL;
