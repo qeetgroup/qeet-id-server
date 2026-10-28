@@ -6,6 +6,7 @@ package ratelimits
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -39,6 +40,21 @@ type Defaults struct {
 	APIKeyCapacity int
 }
 
+// Bucket is a token bucket: Rate requests a second, bursts of Capacity.
+type Bucket struct {
+	Rate     float64 `json:"rate"`
+	Capacity int     `json:"capacity"`
+}
+
+// BuiltInLimit is one of the platform's fixed limits, the same for every
+// organisation: Per says whose requests share a bucket (ip, user or address).
+type BuiltInLimit struct {
+	Name    string `json:"name"`
+	Per     string `json:"per"`
+	Applies string `json:"applies"`
+	Bucket
+}
+
 // Handler serves the rate-limit override HTTP API.
 type Handler struct {
 	Pool      *pgxpool.Pool
@@ -46,6 +62,7 @@ type Handler struct {
 	UserLim   Limiter
 	APIKeyLim Limiter
 	Defaults  Defaults
+	BuiltIn   []BuiltInLimit // reported, read-only
 }
 
 // Mount registers the rate-limit override routes on r.
@@ -101,6 +118,48 @@ type TenantLimits struct {
 	APIKey LimitConfig `json:"api_key"`
 }
 
+// limitsView is a tenant's effective limits with what bounds them: the
+// platform defaults, which are also the ceiling an override may reach, the
+// lowest rate an override may set, and the built-in limits.
+type limitsView struct {
+	TenantLimits
+	Defaults bucketsView    `json:"defaults"`
+	Ceiling  bucketsView    `json:"ceiling"`
+	MinRate  float64        `json:"min_rate"`
+	BuiltIn  []BuiltInLimit `json:"built_in"`
+}
+
+// limitsInput is a PUT body: the overrides, and the read-only bounds a body
+// read back from GET carries, which are ignored.
+type limitsInput struct {
+	TenantLimits
+	Defaults json.RawMessage `json:"defaults"`
+	Ceiling  json.RawMessage `json:"ceiling"`
+	MinRate  json.RawMessage `json:"min_rate"`
+	BuiltIn  json.RawMessage `json:"built_in"`
+}
+
+// bucketsView is a value per organisation, person and API-key bucket.
+type bucketsView struct {
+	Tenant Bucket `json:"tenant"`
+	User   Bucket `json:"user"`
+	APIKey Bucket `json:"api_key"`
+}
+
+// view adds the bounds to limits.
+func (h *Handler) view(limits TenantLimits) limitsView {
+	d := bucketsView{
+		Tenant: Bucket{Rate: h.Defaults.TenantRate, Capacity: h.Defaults.TenantCapacity},
+		User:   Bucket{Rate: h.Defaults.UserRate, Capacity: h.Defaults.UserCapacity},
+		APIKey: Bucket{Rate: h.Defaults.APIKeyRate, Capacity: h.Defaults.APIKeyCapacity},
+	}
+	builtIn := h.BuiltIn
+	if builtIn == nil {
+		builtIn = []BuiltInLimit{}
+	}
+	return limitsView{TenantLimits: limits, Defaults: d, Ceiling: d, MinRate: MinRate, BuiltIn: builtIn}
+}
+
 func (h *Handler) effectiveLimits(ctx context.Context, tenantID uuid.UUID) (TenantLimits, error) {
 	// Create a lightweight Queries instance bound to the pool. This avoids
 	// adding a stored field to Handler (whose struct literal is built in the
@@ -141,7 +200,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, limits)
+	httpx.WriteJSON(w, http.StatusOK, h.view(limits))
 }
 
 func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
@@ -150,11 +209,12 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	var in TenantLimits
-	if err := httpx.DecodeJSON(r, &in); err != nil {
+	var body limitsInput
+	if err := httpx.DecodeJSON(r, &body); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	in := body.TenantLimits
 	d := h.Defaults
 	for _, err := range []error{
 		in.Tenant.check("tenant", d.TenantRate, d.TenantCapacity),
@@ -227,7 +287,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, limits)
+	httpx.WriteJSON(w, http.StatusOK, h.view(limits))
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {

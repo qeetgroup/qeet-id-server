@@ -14,6 +14,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/ratelimits"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
@@ -93,14 +94,14 @@ func newRateLimits(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Po
 	}
 
 	// Build tenant-aware limiters that allow per-tenant rate overrides stored in DB.
-	newTenantLim := func(defRate float64, defCap int, key string) *ratelimit.TenantLimiter {
+	newTenantLim := func(def ratelimits.Bucket, key string) *ratelimit.TenantLimiter {
 		var store ratelimit.Store
 		if rlStore != nil {
 			store = rlStore
 		} else {
 			store = ratelimit.NewMemStore()
 		}
-		lim := ratelimit.NewTenantLimiter(store, defRate, defCap, pool, key)
+		lim := ratelimit.NewTenantLimiter(store, def.Rate, def.Capacity, pool, key)
 		lim.LoadOverrides(rootCtx)
 		return lim
 	}
@@ -113,12 +114,12 @@ func newRateLimits(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Po
 	}
 	return rateLimits{
 		store:        rlStore,
-		tenant:       newTenantLim(100, 500, "tenant"),
-		user:         newTenantLim(30, 100, "user"),
-		apiKey:       newTenantLim(50, 200, "api_key"),
-		magicAddress: ratelimit.NewWithStore(magicStore, 1.0/300, 3),
-		magicCaller:  ratelimit.NewWithStore(magicStore, 1.0/60, 10),
-		resetAddress: ratelimit.NewWithStore(magicStore, 1.0/300, 3),
+		tenant:       newTenantLim(tenantLimitDefault, "tenant"),
+		user:         newTenantLim(userLimitDefault, "user"),
+		apiKey:       newTenantLim(apiKeyLimitDefault, "api_key"),
+		magicAddress: ratelimit.NewWithStore(magicStore, magicAddressLimit.Rate, magicAddressLimit.Capacity),
+		magicCaller:  ratelimit.NewWithStore(magicStore, magicCallerLimit.Rate, magicCallerLimit.Capacity),
+		resetAddress: ratelimit.NewWithStore(magicStore, resetAddressLimit.Rate, resetAddressLimit.Capacity),
 	}
 }
 

@@ -201,25 +201,25 @@ func NewRouter(d Deps) http.Handler {
 	// newLimiter builds an in-process limiter, or a Redis-backed one when a
 	// shared store is configured (so limits hold across replicas). A shared
 	// store keys buckets by scope, so each limiter names its own.
-	newLimiter := func(rate float64, capacity int) *ratelimit.Limiter {
+	newLimiter := func(l ratelimits.BuiltInLimit) *ratelimit.Limiter {
 		if d.RateLimitStore != nil {
-			return ratelimit.NewWithStore(d.RateLimitStore, rate, capacity)
+			return ratelimit.NewWithStore(d.RateLimitStore, l.Rate, l.Capacity)
 		}
-		return ratelimit.New(rate, capacity)
+		return ratelimit.New(l.Rate, l.Capacity)
 	}
 	// Per-IP throttle on auth-burning endpoints.
-	loginLimiter := newLimiter(5, 20)
+	loginLimiter := newLimiter(loginLimit)
 	// The token endpoints serve an application's code exchanges and refreshes
 	// for all its users from one address, and every credential they take is
 	// long and random, so they get a machine-traffic bucket.
-	tokenLimiter := newLimiter(50, 200)
+	tokenLimiter := newLimiter(tokenLimit)
 
 	// Rate limits for root-mounted protocol routes. credentialLimiter matches the /v1
 	// login throttle (LDAP authenticate is a password-spray target, introspect a token
 	// oracle); protocolLimiter is generous, since SCIM and SAML are legitimate machine
 	// traffic.
-	credentialLimiter := newLimiter(5, 20)
-	protocolLimiter := newLimiter(50, 200)
+	credentialLimiter := newLimiter(credentialLimit)
+	protocolLimiter := newLimiter(protocolLimit)
 
 	mountRootPublicRoutes(r, d, credentialLimiter, protocolLimiter)
 
@@ -227,12 +227,12 @@ func NewRouter(d Deps) http.Handler {
 	// caller-supplied address or guess a credential (~6/min sustained, burst 5):
 	// blunts SMS toll-fraud, email-bombing, and online password guessing that the
 	// generous 30 rps/user bucket wouldn't. Applied per-route inside the handlers.
-	sensitiveThrottle := newLimiter(0.1, 5).MiddlewareBy("sensitive", ratelimit.PerUser)
+	sensitiveThrottle := newLimiter(sensitiveLimit).MiddlewareBy("sensitive", ratelimit.PerUser)
 	d.Auth.Throttle = sensitiveThrottle
 	d.Verification.Throttle = sensitiveThrottle
 	// A phone linking with a pairing code: a wrong code is a guess, so the same
 	// pace per address (the code itself is 50 bits and lives five minutes).
-	d.MFA.PairingThrottle = newLimiter(0.1, 5).MiddlewareBy("pairing", ratelimit.PerIP)
+	d.MFA.PairingThrottle = newLimiter(pairingLimit).MiddlewareBy("pairing", ratelimit.PerIP)
 
 	r.Route("/v1", func(r chi.Router) {
 		// Public (no JWT required).

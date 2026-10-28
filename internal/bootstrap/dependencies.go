@@ -415,7 +415,10 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		TenantLim: tenantTenantLim,
 		UserLim:   tenantUserLim,
 		APIKeyLim: tenantAPIKeyLim,
-		Defaults:  ratelimits.Defaults{TenantRate: 100, TenantCapacity: 500, UserRate: 30, UserCapacity: 100, APIKeyRate: 50, APIKeyCapacity: 200},
+		Defaults: ratelimits.Defaults{TenantRate: tenantLimitDefault.Rate, TenantCapacity: tenantLimitDefault.Capacity,
+			UserRate: userLimitDefault.Rate, UserCapacity: userLimitDefault.Capacity,
+			APIKeyRate: apiKeyLimitDefault.Rate, APIKeyCapacity: apiKeyLimitDefault.Capacity},
+		BuiltIn: builtInLimits,
 	}
 
 	v := newValidator()
