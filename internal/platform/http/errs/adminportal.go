@@ -8,6 +8,9 @@ const (
 	CodeAdminPortalCapabilityUnknown    = "adminportal.capability_unknown"
 	CodeAdminPortalCapabilityNotGranted = "adminportal.capability_not_granted"
 
+	// Link lifetime.
+	CodeAdminPortalTTLOutOfRange = "adminportal.ttl_out_of_range"
+
 	// Link lifecycle.
 	CodeAdminPortalLinkNotFound   = "adminportal.link_not_found"
 	CodeAdminPortalTokenMissing   = "adminportal.token_missing"
@@ -36,6 +39,9 @@ var (
 	ErrAdminPortalCapabilitiesRequired = New(CodeAdminPortalCapabilitiesRequired, `Choose at least one capability ("saml", "scim" or "domain_verification").`)
 	ErrAdminPortalCapabilityUnknown    = New(CodeAdminPortalCapabilityUnknown, `Unknown capability (must be "saml", "scim" or "domain_verification").`)
 	ErrAdminPortalCapabilityNotGranted = New(CodeAdminPortalCapabilityNotGranted, "This admin portal link doesn't include that access.")
+
+	// Link lifetime.
+	ErrAdminPortalTTLOutOfRange = New(CodeAdminPortalTTLOutOfRange, "A setup link lasts between 15 minutes and 24 hours.")
 
 	// Link lifecycle.
 	ErrAdminPortalLinkNotFound   = New(CodeAdminPortalLinkNotFound, "We couldn't find that admin portal link.")

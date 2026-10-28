@@ -95,7 +95,7 @@ func TestPortalLinkConfiguresOnlyWhatItGrants(t *testing.T) {
 
 	generate := func(capabilities ...string) (uuid.UUID, string) {
 		t.Helper()
-		rec := dbtest.Do(t, asAdmin, http.MethodPost, links, map[string]any{"capabilities": capabilities, "ttl_seconds": 60})
+		rec := dbtest.Do(t, asAdmin, http.MethodPost, links, map[string]any{"capabilities": capabilities, "ttl_seconds": 900})
 		var out struct {
 			Link  Link   `json:"link"`
 			Token string `json:"token"`
@@ -126,6 +126,9 @@ func TestPortalLinkConfiguresOnlyWhatItGrants(t *testing.T) {
 	}
 	if rec := dbtest.Do(t, asAdmin, http.MethodPost, links, map[string]any{"capabilities": []string{"billing"}}); rec.Code/100 != 4 {
 		t.Errorf("a link for an unknown capability: %d, want refused", rec.Code)
+	}
+	if rec := dbtest.Do(t, asAdmin, http.MethodPost, links, map[string]any{"capabilities": []string{"saml"}, "ttl_seconds": 60}); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "adminportal.ttl_out_of_range") {
+		t.Errorf("a link lasting a minute: %d %s, want 422 ttl_out_of_range", rec.Code, rec.Body.String())
 	}
 
 	linkID, token := generate("saml", "SAML")

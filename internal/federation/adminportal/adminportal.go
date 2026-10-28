@@ -122,17 +122,19 @@ func normalizeCapabilities(in []string) ([]string, error) {
 	return out, nil
 }
 
-func clampTTL(d time.Duration) time.Duration {
-	if d <= 0 {
-		return defaultTTL
+// linkTTL returns how long a new link lasts: d, or defaultTTL when d is zero
+// (none was asked for). A lifetime outside minTTL..maxTTL is refused, with the
+// bounds, rather than quietly changed.
+func linkTTL(d time.Duration) (time.Duration, error) {
+	if d == 0 {
+		return defaultTTL, nil
 	}
-	if d < minTTL {
-		return minTTL
+	if d < minTTL || d > maxTTL {
+		return 0, errs.ErrAdminPortalTTLOutOfRange.WithMetadata(map[string]any{
+			"min_seconds": int(minTTL.Seconds()), "max_seconds": int(maxTTL.Seconds()),
+		})
 	}
-	if d > maxTTL {
-		return maxTTL
-	}
-	return d
+	return d, nil
 }
 
 // Generate mints a new admin portal link. The raw token is returned exactly
@@ -142,11 +144,15 @@ func (s *Service) Generate(ctx context.Context, tx pgx.Tx, tenantID, createdBy u
 	if err != nil {
 		return nil, "", err
 	}
+	ttl, err = linkTTL(ttl)
+	if err != nil {
+		return nil, "", err
+	}
 	raw, hash, err := codes.URLToken()
 	if err != nil {
 		return nil, "", err
 	}
-	expires := time.Now().UTC().Add(clampTTL(ttl))
+	expires := time.Now().UTC().Add(ttl)
 	row, err := s.q.WithTx(tx).InsertAdminPortalLink(ctx, dbgen.InsertAdminPortalLinkParams{
 		TenantID:     tenantID,
 		TokenHash:    hash,

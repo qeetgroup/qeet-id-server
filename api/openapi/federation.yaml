@@ -4392,7 +4392,7 @@ paths:
       operationId: post_v1_tenants_ByTenantID_admin_portal_links
       summary: Generate an admin portal link
       description: >-
-        Mints a one-time link an external IT admin (no Qeet ID account) can exchange for a short-lived portal session, scoped to the given capabilities and expiring after ttl_seconds (clamped 15m-24h, default 1h). The raw token/url is returned exactly once; the URL opens the hosted enterprise-setup page ({LOGIN_BASE_URL}/enterprise-setup) and carries the token only in its fragment.
+        Mints a one-time link an external IT admin (no Qeet ID account) can exchange for a short-lived portal session, scoped to the given capabilities and expiring after ttl_seconds (900 to 86400, default 3600 when omitted; a value out of range is refused with 422 adminportal.ttl_out_of_range, whose metadata carries min_seconds and max_seconds). The raw token/url is returned exactly once; the URL opens the hosted enterprise-setup page ({LOGIN_BASE_URL}/enterprise-setup) and carries the token only in its fragment.
       tags:
         - Admin Portal
       parameters:
@@ -4420,6 +4420,8 @@ paths:
                     enum: [saml, scim, domain_verification]
                 ttl_seconds:
                   type: integer
+                  maximum: 86400
+                  description: How long the link lasts, in seconds, from 900 to 86400. Omitted or 0 means an hour.
       responses:
         '201':
           description: Link generated
