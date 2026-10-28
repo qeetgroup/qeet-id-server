@@ -37,6 +37,7 @@ const (
 	CodeSAMLEmailDomainUnverified    = "saml.email_domain_unverified"
 	CodeSAMLAccountAdministers       = "saml.account_administers"
 	CodeSAMLTestSignInNotFound       = "saml.test_sign_in_not_found"
+	CodeSAMLJITNotAllowed            = "saml.jit_not_allowed"
 )
 
 // SAML errors. Message is the end-user-facing text; edit wording here. Handlers
@@ -80,4 +81,6 @@ var (
 	ErrSAMLAccountAdministers = New(CodeSAMLAccountAdministers,
 		"This account administers the organization, so single sign-on can't take it over by its email address. Sign in with the account's own password or passkey.")
 	ErrSAMLTestSignInNotFound = New(CodeSAMLTestSignInNotFound, "We couldn't find that test sign-in. Start a new one.")
+	ErrSAMLJITNotAllowed      = New(CodeSAMLJITNotAllowed,
+		"There's no account for this address, and your organisation doesn't create one at sign-in for it. Ask your administrator to invite you.")
 )

@@ -369,3 +369,59 @@ func TestLoginSyncsGroupsAndName(t *testing.T) {
 		t.Error("the sign-in didn't refresh the display name from the directory")
 	}
 }
+
+// TestLoginProvisionsOnlyWithJIT checks that a directory sign-in creates an
+// account only while the organisation's domain has just-in-time provisioning
+// on, and adopts an existing member's account either way.
+func TestLoginProvisionsOnlyWithJIT(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	tenant := dbtest.Tenant(t)
+	domain := dbtest.Domain(t, tenant)
+	setJIT := func(on bool) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `UPDATE tenant.domains SET jit_enabled = $2 WHERE tenant_id = $1`, tenant, on); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setJIT(false)
+	member := dbtest.UserAt(t, dbtest.Unique("alice")+"@"+domain, tenant, tenant)
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, member.ID); err != nil {
+		t.Fatal(err)
+	}
+	newcomer := dbtest.Unique("bob") + "@" + domain
+	const service, aliceDN, bobDN = "cn=service,dc=example,dc=test", "uid=alice,dc=example,dc=test", "uid=bob,dc=example,dc=test"
+	dir := &directory{
+		binds: map[string]string{service: "service-secret", aliceDN: "alice-secret", bobDN: "bob-secret"},
+		entries: map[string]dirEntry{
+			"alice": {dn: aliceDN, attrs: map[string]string{"mail": member.Email, "cn": "Alice"}},
+			"bob":   {dn: bobDN, attrs: map[string]string{"mail": newcomer, "cn": "Bob"}},
+		},
+	}
+	var connID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO tenant.ldap_connections (tenant_id, name, server_url, bind_dn, bind_password, base_dn, status)
+		VALUES ($1, 'Directory', $2, $3, 'service-secret', 'dc=example,dc=test', 'active')
+		RETURNING id
+	`, tenant, dir.start(t), service).Scan(&connID); err != nil {
+		t.Fatal(err)
+	}
+	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
+	authSvc.SetMFA(noFactors{})
+	svc := NewService(pool, authSvc, egress.DevelopmentPolicy())
+
+	if res, err := svc.Login(ctx, connID, "alice", "alice-secret", "192.0.2.23", "test"); err != nil || res.Pair == nil || res.Pair.UserID != member.ID {
+		t.Fatalf("adopt a member while the domain has JIT off: %+v, %v", res, err)
+	}
+	if _, err := svc.Login(ctx, connID, "bob", "bob-secret", "192.0.2.23", "test"); !errors.Is(err, errs.ErrLDAPJITNotAllowed) {
+		t.Errorf("a newcomer while the domain has JIT off: %v, want %v", err, errs.ErrLDAPJITNotAllowed)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, newcomer); n != 0 {
+		t.Fatal("a newcomer was provisioned while the domain has JIT off")
+	}
+	setJIT(true)
+	res, err := svc.Login(ctx, connID, "bob", "bob-secret", "192.0.2.23", "test")
+	if err != nil || res.Pair == nil || dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND tenant_id = $2 AND email = $3`, res.Pair.UserID, tenant, newcomer) != 1 {
+		t.Errorf("a newcomer while the domain has JIT on: %+v, %v; want an account in the organisation", res, err)
+	}
+}

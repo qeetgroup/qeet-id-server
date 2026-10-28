@@ -649,7 +649,8 @@ type assertion struct {
 // findOrCreateUser returns the user the connection linked to the NameID
 // subject, else the user with the asserted email, else a new user, and links
 // the subject to the connection. An address is adopted or given an account
-// only on a domain the organisation manages, and an adopted account must have
+// only on a domain the organisation manages, a new account only where that
+// domain has just-in-time provisioning on, and an adopted account must have
 // tenantID as its home, a verified address, and not administer the
 // organisation. The account's profile and groups are then brought in step
 // with the assertion (ssosync.Apply), recorded as actor's. One transaction,
@@ -657,10 +658,11 @@ type assertion struct {
 func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UUID, a assertion, actor audit.Actor) (uuid.UUID, error) {
 	subject, email, name := a.subject, a.email, a.name
 	// Read before the transaction: it reads every organisation's domains.
-	manager, managed, err := domainverify.ManagerOf(postgres.AcrossTenants(ctx), s.pool, email)
+	domain, managed, err := domainverify.ManagingDomain(postgres.AcrossTenants(ctx), s.pool, email)
 	if err != nil {
 		return uuid.Nil, err
 	}
+	manager := domain.TenantID
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return uuid.Nil, err
@@ -708,6 +710,9 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 
 	userID, err = q.GetUserByEmail(ctx, email)
 	if errors.Is(err, pgx.ErrNoRows) {
+		if !domain.JIT {
+			return uuid.Nil, errs.ErrSAMLJITNotAllowed
+		}
 		var displayName *string
 		if name != "" {
 			displayName = &name

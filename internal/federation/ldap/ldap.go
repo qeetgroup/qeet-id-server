@@ -568,15 +568,17 @@ func (s *Service) authenticate(ctx context.Context, c *connFull, username, passw
 // the DN to the connection, brings the account's profile and groups in step
 // with the directory (ssosync.Apply, recorded as actor's) and stores the
 // mapped profile, in one transaction. An address is adopted or given an
-// account only on a domain the organisation manages, and an adopted account
-// must have tenantID as its home, a verified address, and not administer the
+// account only on a domain the organisation manages, a new account only where
+// that domain has just-in-time provisioning on, and an adopted account must
+// have tenantID as its home, a verified address, and not administer the
 // organisation.
 func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UUID, u *ldapUser, actor audit.Actor) (uuid.UUID, error) {
 	// Read before the transaction: it reads every organisation's domains.
-	manager, managed, err := domainverify.ManagerOf(postgres.AcrossTenants(ctx), s.pool, u.Email)
+	domain, managed, err := domainverify.ManagingDomain(postgres.AcrossTenants(ctx), s.pool, u.Email)
 	if err != nil {
 		return uuid.Nil, err
 	}
+	manager := domain.TenantID
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return uuid.Nil, err
@@ -627,6 +629,9 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 
 	userID, err = q.GetUserByEmail(ctx, u.Email)
 	if errors.Is(err, pgx.ErrNoRows) {
+		if !domain.JIT {
+			return uuid.Nil, errs.ErrLDAPJITNotAllowed
+		}
 		var displayName *string
 		if u.Name != "" {
 			displayName = &u.Name

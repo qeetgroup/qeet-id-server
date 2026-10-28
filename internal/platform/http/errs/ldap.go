@@ -18,6 +18,7 @@ const (
 	CodeLDAPTLSVerifyRequired        = "ldap.tls_verify_required"
 	CodeLDAPEmailDomainUnverified    = "ldap.email_domain_unverified"
 	CodeLDAPAccountAdministers       = "ldap.account_administers"
+	CodeLDAPJITNotAllowed            = "ldap.jit_not_allowed"
 )
 
 // LDAP errors. The Message is what the end user (or admin configuring a
@@ -44,4 +45,6 @@ var (
 		"Your directory account's email address isn't on a domain this organization has verified. Ask your administrator to verify it.")
 	ErrLDAPAccountAdministers = New(CodeLDAPAccountAdministers,
 		"This account administers the organization, so a directory sign-in can't take it over by its email address. Sign in with the account's own password or passkey.")
+	ErrLDAPJITNotAllowed = New(CodeLDAPJITNotAllowed,
+		"There's no account for this address, and your organisation doesn't create one at sign-in for it. Ask your administrator to invite you.")
 )

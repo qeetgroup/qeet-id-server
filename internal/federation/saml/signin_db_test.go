@@ -317,13 +317,22 @@ func sessionTenant(t *testing.T, sessionID uuid.UUID) uuid.UUID {
 // TestSAMLSignIn checks that the IdP's signed answer to this connection's
 // AuthnRequest buys a session in the organisation through a one-time code,
 // that the answer and the code are each accepted once, that the subject stays
-// linked to its person, and that a newcomer is provisioned into the organisation.
+// linked to its person, and that a newcomer is provisioned into the
+// organisation only while its domain has just-in-time provisioning on, which an
+// existing member's adoption doesn't need.
 func TestSAMLSignIn(t *testing.T) {
 	sp := newSPSide(t)
 	idp := newUpstreamIdP(t)
 	tenant := dbtest.Tenant(t)
 	conn := sp.connect(t, tenant, idp)
 	domain := dbtest.Domain(t, tenant)
+	setJIT := func(on bool) {
+		t.Helper()
+		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE tenant.domains SET jit_enabled = $2 WHERE tenant_id = $1`, tenant, on); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setJIT(false)
 	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, tenant, tenant)
 	verify(t, member.ID)
 
@@ -372,6 +381,14 @@ func TestSAMLSignIn(t *testing.T) {
 	}
 
 	newcomer := dbtest.Unique("newcomer") + "@" + domain
+	rec = sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: sp.begin(t, conn.ID), nameID: "okta|newcomer", email: newcomer}))
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLJITNotAllowed) {
+		t.Errorf("a newcomer while the domain has JIT off: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeSAMLJITNotAllowed)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, newcomer); n != 0 {
+		t.Fatal("a newcomer was provisioned while the domain has JIT off")
+	}
+	setJIT(true)
 	joined := sp.signIn(t, idp, conn.ID, answer{nameID: "okta|newcomer", email: newcomer})
 	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND tenant_id = $2 AND email = $3 AND email_verified_at IS NOT NULL AND display_name = 'Asha Rao'`, joined.UserID, tenant, newcomer); n != 1 {
 		t.Errorf("the newcomer was not provisioned into the organisation, verified and named")

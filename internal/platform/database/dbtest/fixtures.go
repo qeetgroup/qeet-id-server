@@ -42,12 +42,14 @@ func Tenant(t testing.TB) uuid.UUID {
 }
 
 // Domain verifies a new domain for tenant and returns it, for addresses only
-// that tenant manages.
+// that tenant manages. Its single sign-on creates accounts there (jit_enabled);
+// SSO isn't required of it (sso_enabled is off).
 func Domain(t testing.TB, tenant uuid.UUID) string {
 	t.Helper()
 	domain := Unique("org") + ".example.test"
 	if _, err := Pool(t).Exec(context.Background(), `
-		INSERT INTO tenant.domains (tenant_id, domain, verification_token, verified_at) VALUES ($1, $2, 'test', NOW())
+		INSERT INTO tenant.domains (tenant_id, domain, verification_token, verified_at, jit_enabled)
+		VALUES ($1, $2, 'test', NOW(), TRUE)
 	`, tenant, domain); err != nil {
 		t.Fatalf("dbtest: verify domain: %v", err)
 	}

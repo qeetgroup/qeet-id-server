@@ -44,5 +44,6 @@ func init() {
 		errs.CodeSAMLAccountAdministers:       http.StatusForbidden,
 		errs.CodeSAMLSPEntityIDTaken:          http.StatusConflict,
 		errs.CodeSAMLTestSignInNotFound:       http.StatusNotFound,
+		errs.CodeSAMLJITNotAllowed:            http.StatusForbidden,
 	})
 }
