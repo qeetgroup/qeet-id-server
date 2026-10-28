@@ -26,13 +26,15 @@ import (
 
 // Branding is a tenant's theming, custom domain and email sender.
 type Branding struct {
-	TenantID         uuid.UUID      `json:"tenant_id"`
-	LogoURL          *string        `json:"logo_url"`
-	PrimaryColor     *string        `json:"primary_color"`
-	SecondaryColor   *string        `json:"secondary_color"`
-	CustomDomain     *string        `json:"custom_domain"`
-	EmailFromName    *string        `json:"email_from_name"`
-	EmailFromAddress *string        `json:"email_from_address"`
+	TenantID       uuid.UUID `json:"tenant_id"`
+	LogoURL        *string   `json:"logo_url"`
+	PrimaryColor   *string   `json:"primary_color"`
+	SecondaryColor *string   `json:"secondary_color"`
+	CustomDomain   *string   `json:"custom_domain"`
+	EmailFromName  *string   `json:"email_from_name"`
+	// Deprecated: accepted and ignored, never returned. Email goes out from
+	// the platform's address; settings.email_reply_to takes replies.
+	EmailFromAddress *string        `json:"email_from_address,omitempty"`
 	Settings         map[string]any `json:"settings"`
 }
 
@@ -73,14 +75,13 @@ func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
 func toDomain(tenantID uuid.UUID, row dbgen.GetBrandingRow) *Branding {
 	return &Branding{
-		TenantID:         row.TenantID,
-		LogoURL:          row.LogoUrl,
-		PrimaryColor:     row.PrimaryColor,
-		SecondaryColor:   row.SecondaryColor,
-		CustomDomain:     row.CustomDomain,
-		EmailFromName:    row.EmailFromName,
-		EmailFromAddress: row.EmailFromAddress,
-		Settings:         dbutil.Metadata(row.Settings),
+		TenantID:       row.TenantID,
+		LogoURL:        row.LogoUrl,
+		PrimaryColor:   row.PrimaryColor,
+		SecondaryColor: row.SecondaryColor,
+		CustomDomain:   row.CustomDomain,
+		EmailFromName:  row.EmailFromName,
+		Settings:       dbutil.Metadata(row.Settings),
 	}
 }
 
@@ -222,7 +223,7 @@ func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, b Branding) error {
 			settings = EXCLUDED.settings,
 			updated_at = NOW()
 	`, b.TenantID, b.LogoURL, b.PrimaryColor, b.SecondaryColor, b.CustomDomain,
-		b.EmailFromName, b.EmailFromAddress, settings)
+		b.EmailFromName, nil, settings) // email_from_address is no longer kept
 	return err
 }
 

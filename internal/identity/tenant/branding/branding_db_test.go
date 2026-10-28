@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -120,5 +121,35 @@ func TestUploadedLogoIsServedForEmailsAndHostedPages(t *testing.T) {
 	gate.on = false
 	if rec := get(tenant); rec.Code != http.StatusNotFound {
 		t.Errorf("without custom_branding: %d, want 404", rec.Code)
+	}
+}
+
+// TestFromAddressIsNotKept checks that a sender address sent with the branding
+// is ignored and never returned, while the accent colour reaches the hosted
+// pages.
+func TestFromAddressIsNotKept(t *testing.T) {
+	ctx := dbtest.Context(t)
+	tenant := dbtest.Tenant(t)
+	repo := NewRepository(dbtest.Pool(t))
+	from, accent := "noreply@acme.example", "#abcdef"
+	tx, err := dbtest.Pool(t).Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Upsert(ctx, tx, Branding{TenantID: tenant, EmailFromAddress: &from, SecondaryColor: &accent}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	b, err := repo.Get(ctx, tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := json.Marshal(b); b.EmailFromAddress != nil || strings.Contains(string(raw), "email_from_address") {
+		t.Errorf("branding %s; want no sender address kept or returned", raw)
+	}
+	if _, _, secondary, _ := repo.LoginBranding(ctx, tenant); secondary != accent {
+		t.Errorf("the hosted pages get accent %q, want %q", secondary, accent)
 	}
 }

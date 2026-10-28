@@ -3202,7 +3202,9 @@ components:
         email_from_address:
           type: string
           nullable: true
-          description: Requested sender mailbox; provider approval is separate.
+          deprecated: true
+          writeOnly: true
+          description: Accepted and ignored, and never returned. Email is sent from the platform's own address (an organisation's domain would need verifying with the email provider); replies go to settings.email_reply_to.
         settings:
           type: object
           additionalProperties: true

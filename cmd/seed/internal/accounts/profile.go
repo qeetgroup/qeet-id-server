@@ -30,17 +30,17 @@ func monogram(name string, b world.Brand) string {
 	return "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(svg))
 }
 
-// sender is the name and addresses an organisation's email goes out with.
-type sender struct{ name, from, replyTo string }
+// sender is the name an organisation's email goes out with, and where replies go.
+type sender struct{ name, replyTo string }
 
 var senders = map[string]sender{
-	"qeet":      {"Qeet Group", "accounts@qeet.in", "support@qeet.in"},
-	"northwind": {"Northwind Capital IT", "it-noreply@northwindcapital.in", "itservicedesk@northwindcapital.in"},
-	"meridian":  {"Meridian Health IT Service Desk", "noreply@meridianhealth.us", "servicedesk@meridianhealth.us"},
-	"lumen":     {"Lumen Labs", "hello@lumenlabshq.dev", "support@lumenlabshq.dev"},
-	"aster":     {"Aster Retail", "team@asterretail.in", "care@asterretail.in"},
-	"vertex":    {"Vertex Freight IT", "it@vertexfreightco.us", ""},
-	"kestrel":   {"Kestrel Insurance Brokers", "admin@kestrelinsurance.in", "operations@kestrelinsurance.in"},
+	"qeet":      {"Qeet Group", "support@qeet.in"},
+	"northwind": {"Northwind Capital IT", "itservicedesk@northwindcapital.in"},
+	"meridian":  {"Meridian Health IT Service Desk", "servicedesk@meridianhealth.us"},
+	"lumen":     {"Lumen Labs", "support@lumenlabshq.dev"},
+	"aster":     {"Aster Retail", "care@asterretail.in"},
+	"vertex":    {"Vertex Freight IT", ""},
+	"kestrel":   {"Kestrel Insurance Brokers", "operations@kestrelinsurance.in"},
 }
 
 // loginHosts are the custom hosted-login hostnames enterprise organisations
@@ -75,12 +75,11 @@ func (s *seeder) profile(o *world.Org) {
 		settings["email_reply_to"] = snd.replyTo
 	}
 	body := map[string]any{
-		"logo_url":           logo,
-		"primary_color":      o.Spec.Brand.Primary,
-		"secondary_color":    o.Spec.Brand.Secondary,
-		"email_from_name":    snd.name,
-		"email_from_address": snd.from,
-		"settings":           settings,
+		"logo_url":        logo,
+		"primary_color":   o.Spec.Brand.Primary,
+		"secondary_color": o.Spec.Brand.Secondary,
+		"email_from_name": snd.name,
+		"settings":        settings,
 	}
 	actor := by(o, at, world.RoleITAdmin)
 	w.At(at, func() { s.api.do(o, actor, "", "PUT", "/tenants/"+o.ID.String()+"/branding", body) })
