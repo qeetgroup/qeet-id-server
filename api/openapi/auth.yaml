@@ -3719,6 +3719,9 @@ paths:
         challenge, a passkey or a remembered device) or the session holds a step-up
         still inside its window, false otherwise, and left out, so unknown, for an
         application's token, whose session the platform doesn't hold.
+        With a draft, the unsaved policy is evaluated among the stored ones, new or
+        in place of the stored policy it replaces, and nothing is saved; an invalid
+        draft is refused with 422 as a save would be.
       tags:
         - ABAC
       parameters:
@@ -3754,6 +3757,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/Unprocessable'
   /v1/tenants/{tenantID}/relation-tuples:
@@ -5790,7 +5795,8 @@ components:
           description: Higher priority policies are evaluated first.
         enabled:
           type: boolean
-          default: true
+          default: false
+          description: Whether the policy is evaluated; left out, it is saved disabled.
     ABACEvaluateRequest:
       type: object
       required:
@@ -5826,6 +5832,20 @@ components:
           type: object
           description: Request-context attributes, e.g. {"ip":"1.2.3.4","hour":14}.
           additionalProperties: true
+        draft:
+          description: >-
+            An unsaved policy to evaluate with the stored ones, writing nothing. It is checked as a save is
+            (name may be left out); with replaces, it stands in for that stored policy. It applies only when
+            enabled and its resource type and action match the request, so a disabled draft only takes the
+            replaced policy out.
+          allOf:
+            - $ref: '#/components/schemas/ABACPolicyCreate'
+            - type: object
+              properties:
+                replaces:
+                  type: [string, 'null']
+                  format: uuid
+                  description: The stored policy the draft stands in for; one the organisation doesn't have is 404.
     ABACDecision:
       type: object
       description: Result of an ABAC evaluation.
@@ -5860,6 +5880,9 @@ components:
           description: Grant-path trace (present only when ?explain=true).
           items:
             type: string
+        matched_draft:
+          type: boolean
+          description: Present, true, when the request's draft policy determined the outcome. A new draft has no matched_policy_id; one standing in for a stored policy has that policy's.
     AuthenticatorSelection:
       type: object
       properties:

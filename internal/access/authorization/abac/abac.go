@@ -110,6 +110,8 @@ type Decision struct {
 	ReasonCode      string         `json:"reason_code,omitempty"`
 	ReasonParams    map[string]any `json:"reason_params,omitempty"`
 	Trace           []string       `json:"trace,omitempty"`
+	// MatchedDraft is set when an evaluation's draft policy decided.
+	MatchedDraft bool `json:"matched_draft,omitempty"`
 }
 
 // Decision.ReasonCode values.
@@ -843,6 +845,31 @@ func toPolicy(row dbgen.AuthAbacPolicy) *Policy {
 	return p
 }
 
+// checkPolicy refuses a policy missing its name, resource type or action, with
+// an unknown effect, or with an invalid condition, and returns the condition
+// to store: {} when there is none.
+func checkPolicy(name, effect, resourceType, action string, cond json.RawMessage) (json.RawMessage, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, errs.ErrABACNameRequired
+	}
+	if effect != "allow" && effect != "deny" {
+		return nil, errs.ErrABACEffectInvalid
+	}
+	if strings.TrimSpace(resourceType) == "" {
+		return nil, errs.ErrABACResourceTypeRequired
+	}
+	if strings.TrimSpace(action) == "" {
+		return nil, errs.ErrABACActionRequired
+	}
+	if len(cond) == 0 {
+		cond = json.RawMessage(`{}`)
+	}
+	if err := validateCondition(cond); err != nil {
+		return nil, errs.ErrABACConditionInvalid
+	}
+	return cond, nil
+}
+
 // Create inserts a new ABAC policy. The audit row and outbox event are
 // committed atomically in the same transaction.
 func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput, actor audit.Actor) (*Policy, error) {
@@ -856,24 +883,9 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput
 			return nil, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "abac"})
 		}
 	}
-	if strings.TrimSpace(in.Name) == "" {
-		return nil, errs.ErrABACNameRequired
-	}
-	if in.Effect != "allow" && in.Effect != "deny" {
-		return nil, errs.ErrABACEffectInvalid
-	}
-	if strings.TrimSpace(in.ResourceType) == "" {
-		return nil, errs.ErrABACResourceTypeRequired
-	}
-	if strings.TrimSpace(in.Action) == "" {
-		return nil, errs.ErrABACActionRequired
-	}
-	cond := in.Condition
-	if len(cond) == 0 {
-		cond = json.RawMessage(`{}`)
-	}
-	if err := validateCondition(cond); err != nil {
-		return nil, errs.ErrABACConditionInvalid
+	cond, err := checkPolicy(in.Name, in.Effect, in.ResourceType, in.Action, in.Condition)
+	if err != nil {
+		return nil, err
 	}
 	if locked, err := s.locksOutAuthor(ctx, tenantID, in.Effect, in.ResourceType, in.Action, in.Enabled, cond, actor); err != nil {
 		return nil, err
@@ -953,24 +965,9 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Policy, error
 // Update replaces all mutable fields of a policy. The audit row and outbox
 // event are committed atomically in the same transaction.
 func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateInput, actor audit.Actor) (*Policy, error) {
-	if strings.TrimSpace(in.Name) == "" {
-		return nil, errs.ErrABACNameRequired
-	}
-	if in.Effect != "allow" && in.Effect != "deny" {
-		return nil, errs.ErrABACEffectInvalid
-	}
-	if strings.TrimSpace(in.ResourceType) == "" {
-		return nil, errs.ErrABACResourceTypeRequired
-	}
-	if strings.TrimSpace(in.Action) == "" {
-		return nil, errs.ErrABACActionRequired
-	}
-	cond := in.Condition
-	if len(cond) == 0 {
-		cond = json.RawMessage(`{}`)
-	}
-	if err := validateCondition(cond); err != nil {
-		return nil, errs.ErrABACConditionInvalid
+	cond, err := checkPolicy(in.Name, in.Effect, in.ResourceType, in.Action, in.Condition)
+	if err != nil {
+		return nil, err
 	}
 	if locked, err := s.locksOutAuthor(ctx, tenantID, in.Effect, in.ResourceType, in.Action, in.Enabled, cond, actor); err != nil {
 		return nil, err
@@ -1070,10 +1067,19 @@ type candidate struct {
 // that fails to evaluate refuses, else a matching allow permits, else deny. A
 // condition comparing an absent attribute matches a deny and never an allow.
 func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in EvaluationInput) (*Decision, error) {
+	policies, err := s.candidates(ctx, tenantID, in)
+	if err != nil {
+		return nil, err
+	}
+	return combine(policies, attributeBag(in)), nil
+}
+
+// candidates returns tenantID's enabled policies for in's resource type and
+// action, highest priority first.
+func (s *Service) candidates(ctx context.Context, tenantID uuid.UUID, in EvaluationInput) ([]candidate, error) {
 	if strings.TrimSpace(in.Action) == "" {
 		return nil, errs.ErrABACActionRequired
 	}
-
 	rows, err := s.q.ListEvaluationCandidates(ctx, dbgen.ListEvaluationCandidatesParams{
 		TenantID:     tenantID,
 		ResourceType: in.Resource.Type,
@@ -1082,8 +1088,7 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in Evaluatio
 	if err != nil {
 		return nil, err
 	}
-
-	var policies []candidate
+	policies := make([]candidate, 0, len(rows)+1)
 	for _, row := range rows {
 		policies = append(policies, candidate{
 			id:        row.ID,
@@ -1093,7 +1098,69 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in Evaluatio
 			priority:  int(row.Priority),
 		})
 	}
-	return combine(policies, attributeBag(in)), nil
+	return policies, nil
+}
+
+// Draft is an unsaved policy to evaluate with the stored ones: a new one, or,
+// with Replaces, one standing in for a stored policy. It applies as it would
+// once saved, so a disabled draft only takes the policy it replaces out. A
+// draft without a name is called "draft".
+type Draft struct {
+	CreateInput
+	Replaces *uuid.UUID `json:"replaces"`
+}
+
+// EvaluateDraft is Evaluate with draft among tenantID's policies, writing
+// nothing. The decision's MatchedDraft is set when the draft decided it; a new
+// draft has no MatchedPolicyID.
+func (s *Service) EvaluateDraft(ctx context.Context, tenantID uuid.UUID, in EvaluationInput, draft Draft) (*Decision, error) {
+	if strings.TrimSpace(draft.Name) == "" {
+		draft.Name = "draft"
+	}
+	cond, err := checkPolicy(draft.Name, draft.Effect, draft.ResourceType, draft.Action, draft.Condition)
+	if err != nil {
+		return nil, err
+	}
+	draftID := uuid.Nil
+	if draft.Replaces != nil {
+		if _, err := s.Get(ctx, *draft.Replaces, tenantID); err != nil {
+			return nil, err
+		}
+		draftID = *draft.Replaces
+	}
+	stored, err := s.candidates(ctx, tenantID, in)
+	if err != nil {
+		return nil, err
+	}
+	policies := stored[:0:0]
+	for _, p := range stored {
+		if p.id != draftID {
+			policies = append(policies, p)
+		}
+	}
+	applies := draft.Enabled &&
+		(draft.ResourceType == in.Resource.Type || draft.ResourceType == "*") &&
+		(draft.Action == in.Action || draft.Action == "*")
+	if applies {
+		d := candidate{id: draftID, name: draft.Name, effect: draft.Effect, condition: cond, priority: draft.Priority}
+		at := len(policies)
+		for i, p := range policies {
+			if p.priority < d.priority {
+				at = i
+				break
+			}
+		}
+		policies = slices.Insert(policies, at, d)
+	}
+	decision := combine(policies, attributeBag(in))
+	if applies && decision.MatchedPolicyID != nil && *decision.MatchedPolicyID == draftID {
+		decision.MatchedDraft = true
+		if draftID == uuid.Nil {
+			decision.MatchedPolicyID = nil
+			delete(decision.ReasonParams, "policy_id")
+		}
+	}
+	return decision, nil
 }
 
 // attributeBag builds the bag policies see for in, with the resource's type,
@@ -1347,12 +1414,20 @@ func (h *Handler) evalHandler(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	var in EvaluationInput
+	var in struct {
+		EvaluationInput
+		Draft *Draft `json:"draft"`
+	}
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	decision, err := h.Service.Evaluate(r.Context(), tenantID, in)
+	var decision *Decision
+	if in.Draft != nil {
+		decision, err = h.Service.EvaluateDraft(r.Context(), tenantID, in.EvaluationInput, *in.Draft)
+	} else {
+		decision, err = h.Service.Evaluate(r.Context(), tenantID, in.EvaluationInput)
+	}
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

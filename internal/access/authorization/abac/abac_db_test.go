@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -226,5 +227,91 @@ func TestTemplatesThroughTheAPI(t *testing.T) {
 		case tc.by != "" && (dec.MatchedPolicyID == nil || *dec.MatchedPolicyID != ids[tc.by]):
 			t.Errorf("%s: decided by %v, want %s (%s)", tc.name, dec.MatchedPolicyID, tc.by, dec.Reason)
 		}
+	}
+}
+
+// TestEvaluateADraft checks that the evaluate endpoint decides with a draft
+// policy among the stored ones without saving it: a new draft can decide, one
+// standing in for a stored policy takes its place, a disabled one only takes
+// it out, and a draft for another resource is passed over. An invalid draft
+// is refused, and one replacing another organisation's policy is not found.
+func TestEvaluateADraft(t *testing.T) {
+	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	svc := NewService(dbtest.Pool(t))
+	api := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
+	base := "/tenants/" + tenant.String() + "/abac"
+	rec := dbtest.Do(t, api, http.MethodPost, base+"/policies", map[string]any{
+		"name": "approvers_approve", "effect": "allow", "resource_type": "payment", "action": "approve",
+		"condition": json.RawMessage(approversApprove), "priority": 10, "enabled": true,
+	})
+	var stored Policy
+	dbtest.Decode(t, rec, &stored)
+	elsewhere, err := svc.Create(dbtest.Context(t), other, CreateInput{
+		Name: "theirs", Effect: "allow", ResourceType: "payment", Action: "approve", Enabled: true,
+	}, audit.Actor{})
+	if err != nil {
+		t.Fatalf("a policy in another organisation: %v", err)
+	}
+
+	draft := func(effect, condition string, priority int, enabled bool, replaces *uuid.UUID) map[string]any {
+		return map[string]any{
+			"name": "trial", "effect": effect, "resource_type": "payment", "action": "approve",
+			"condition": json.RawMessage(condition), "priority": priority, "enabled": enabled, "replaces": replaces,
+		}
+	}
+	evaluate := func(d map[string]any) (*httptest.ResponseRecorder, Decision) {
+		t.Helper()
+		body := map[string]any{
+			"subject":  map[string]any{"id": "u2", "role": "approver"},
+			"resource": map[string]any{"type": "payment", "id": "p1", "attrs": map[string]any{"amount": 5000}},
+			"action":   "approve",
+		}
+		if d != nil {
+			body["draft"] = d
+		}
+		rec := dbtest.Do(t, api, http.MethodPost, base+"/evaluate", body)
+		var dec Decision
+		if rec.Code == http.StatusOK {
+			dbtest.Decode(t, rec, &dec)
+		}
+		return rec, dec
+	}
+
+	overLimit := `{"attr":"resource.amount","op":"gt","value":1000}`
+	treasurers := `{"attr":"subject.role","op":"eq","value":"treasurer"}`
+	for _, tc := range []struct {
+		name           string
+		draft          map[string]any
+		allow, byDraft bool
+		by             *uuid.UUID
+	}{
+		{"no draft", nil, true, false, &stored.ID},
+		{"a new deny over a limit", draft("deny", overLimit, 50, true, nil), false, true, nil},
+		{"a new allow beside the stored one", draft("allow", overLimit, 50, true, nil), true, true, nil},
+		{"the stored allow narrowed to treasurers", draft("allow", treasurers, 10, true, &stored.ID), false, false, nil},
+		{"the stored allow disabled", draft("allow", approversApprove, 10, false, &stored.ID), false, false, nil},
+		{"the stored allow as it is", draft("allow", approversApprove, 10, true, &stored.ID), true, true, &stored.ID},
+		{"a deny for another resource", map[string]any{"effect": "deny", "resource_type": "invoice", "action": "approve", "enabled": true}, true, false, &stored.ID},
+	} {
+		rec, dec := evaluate(tc.draft)
+		if rec.Code != http.StatusOK || dec.Allow != tc.allow || dec.MatchedDraft != tc.byDraft {
+			t.Errorf("%s: %d allow %v draft %v, want allow %v draft %v (%s)", tc.name, rec.Code, dec.Allow, dec.MatchedDraft, tc.allow, tc.byDraft, rec.Body.String())
+			continue
+		}
+		if (tc.by == nil) != (dec.MatchedPolicyID == nil) || (tc.by != nil && *dec.MatchedPolicyID != *tc.by) {
+			t.Errorf("%s: decided by %v, want %v", tc.name, dec.MatchedPolicyID, tc.by)
+		}
+	}
+
+	if rec, _ := evaluate(draft("allow", `{"attr":"subject.role","op":"near","value":"x"}`, 0, true, nil)); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), errs.CodeABACConditionInvalid) {
+		t.Errorf("an invalid draft: %d %s, want 422 %s", rec.Code, rec.Body.String(), errs.CodeABACConditionInvalid)
+	}
+	if rec, _ := evaluate(draft("allow", approversApprove, 0, true, &elsewhere.ID)); rec.Code != http.StatusNotFound {
+		t.Errorf("a draft replacing another organisation's policy: %d %s, want 404", rec.Code, rec.Body.String())
+	}
+	policies, err := svc.List(dbtest.Context(t), tenant)
+	if err != nil || len(policies) != 1 {
+		t.Errorf("policies after evaluating drafts: %d %v, want only the stored one", len(policies), err)
 	}
 }
