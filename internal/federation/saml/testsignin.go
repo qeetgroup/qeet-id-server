@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -232,7 +233,12 @@ func (s *Service) checkTestAnswer(ctx context.Context, base string, conn *Connec
 	if len(certs) == 0 {
 		return fail(errs.ErrSAMLCertificateInvalid, nil)
 	}
-	response, info, err := s.validateResponse(base, conn, certs, encoded, time.Now())
+	// An unencrypted answer doesn't need the key; an encrypted one then fails.
+	key, err := s.decryptionKey(ctx, conn)
+	if err != nil {
+		slog.Error("saml test sign-in: SP encryption key unusable", "err", err, "connection", conn.ID)
+	}
+	response, info, err := s.validateResponse(base, conn, certs, key, encoded, time.Now())
 	if e := errs.As(err); e != nil {
 		return fail(e, e.Unwrap())
 	}

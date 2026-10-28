@@ -6,6 +6,7 @@ package saml
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
@@ -34,6 +35,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ssosync"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -78,7 +80,8 @@ type Connection struct {
 // Service manages a tenant's IdP connections and runs SP-initiated sign-in.
 // nextRequestSweep and nextReplaySweep throttle deleting expired AuthnRequest and
 // replay rows, separately so a busy login or ACS path can't starve the other.
-// IdP metadata is fetched with metadataHTTP, within the egress policy.
+// IdP metadata is fetched with metadataHTTP, within the egress policy; box
+// seals the connections' SP keys.
 type Service struct {
 	pool             *pgxpool.Pool
 	q                *dbgen.Queries
@@ -88,6 +91,7 @@ type Service struct {
 	nextReplaySweep  atomic.Int64
 	egress           *egress.Policy
 	metadataHTTP     *http.Client
+	box              *envelope.Cipher
 }
 
 // replaySweepInterval is how often any one replica collects expired SAML
@@ -629,8 +633,9 @@ const assertionClockSkew = 3 * time.Minute
 //
 // gosaml2 checks the expiry times on a clock assertionClockSkew behind now, and
 // withinValidity the whole window either way; the signature, issuer, audience,
-// recipient and destination checks are unchanged.
-func (s *Service) validateResponse(base string, conn *Connection, certs []*x509.Certificate, encoded string, now time.Time) (*samltypes.Response, *saml2.AssertionInfo, error) {
+// recipient and destination checks are unchanged. key, when not nil, decrypts
+// an EncryptedAssertion, which must still be signed.
+func (s *Service) validateResponse(base string, conn *Connection, certs []*x509.Certificate, key *tls.Certificate, encoded string, now time.Time) (*samltypes.Response, *saml2.AssertionInfo, error) {
 	var failures []error
 	for _, cert := range certs {
 		if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
@@ -639,6 +644,9 @@ func (s *Service) validateResponse(base string, conn *Connection, certs []*x509.
 		}
 		sp := s.buildSP(base, conn, []*x509.Certificate{cert})
 		sp.Clock = dsig.NewFakeClockAt(now.Add(-assertionClockSkew))
+		if key != nil {
+			sp.SPKeyStore = dsig.TLSCertKeyStore(*key)
+		}
 		response, err := sp.ValidateEncodedResponse(encoded)
 		if err != nil {
 			failures = append(failures, err)
@@ -1255,18 +1263,28 @@ func (h *Handler) metadata(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
 		return
 	}
-	if _, err := h.Service.getByID(r.Context(), id); err != nil {
+	conn, err := h.Service.getByID(r.Context(), id)
+	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
+	}
+	encryption, err := h.Service.encryptionCertificate(r.Context(), conn)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	keyDescriptor := ""
+	if encryption != "" {
+		keyDescriptor = fmt.Sprintf(spEncryptionKeyDescriptor, encryption)
 	}
 	base := h.publicBase(r)
 	xml := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="%s">
-  <SPSSODescriptor AuthnRequestsSigned="false" WantAssertionsSigned="true" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+  <SPSSODescriptor AuthnRequestsSigned="false" WantAssertionsSigned="true" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">%s
     <NameIDFormat>urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress</NameIDFormat>
     <AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="%s" index="1" isDefault="true"/>
   </SPSSODescriptor>
-</EntityDescriptor>`, spEntityID(base, id), acsURL(base, id))
+</EntityDescriptor>`, spEntityID(base, id), keyDescriptor, acsURL(base, id))
 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
 	w.Header().Set("Content-Disposition", `attachment; filename="sp-metadata.xml"`)
 	_, _ = w.Write([]byte(xml)) // #nosec G705 -- XML download, not rendered as HTML
@@ -1368,7 +1386,12 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSAMLConnectionMisconfigured)
 		return
 	}
-	response, info, err := h.Service.validateResponse(h.publicBase(r), conn, certs, encoded, time.Now())
+	key, err := h.Service.decryptionKey(r.Context(), conn)
+	if err != nil {
+		// An unencrypted assertion doesn't need the key; an encrypted one fails.
+		slog.Error("saml acs: SP encryption key unusable", "err", err, "connection", conn.ID)
+	}
+	response, info, err := h.Service.validateResponse(h.publicBase(r), conn, certs, key, encoded, time.Now())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

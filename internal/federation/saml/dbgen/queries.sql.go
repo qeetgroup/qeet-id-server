@@ -290,6 +290,33 @@ func (q *Queries) GetSamlConnectionByID(ctx context.Context, id uuid.UUID) (GetS
 	return i, err
 }
 
+const getSamlConnectionKey = `-- name: GetSamlConnectionKey :one
+
+SELECT certificate, key_ct, key_nonce FROM tenant.saml_connection_keys
+WHERE connection_id = $1 AND tenant_id = $2
+`
+
+type GetSamlConnectionKeyParams struct {
+	ConnectionID uuid.UUID
+	TenantID     uuid.UUID
+}
+
+type GetSamlConnectionKeyRow struct {
+	Certificate string
+	KeyCt       []byte
+	KeyNonce    []byte
+}
+
+// ==========================================================================
+// SP-side: the key pair a connection's IdP encrypts assertions to (encryption.go)
+// ==========================================================================
+func (q *Queries) GetSamlConnectionKey(ctx context.Context, arg GetSamlConnectionKeyParams) (GetSamlConnectionKeyRow, error) {
+	row := q.db.QueryRow(ctx, getSamlConnectionKey, arg.ConnectionID, arg.TenantID)
+	var i GetSamlConnectionKeyRow
+	err := row.Scan(&i.Certificate, &i.KeyCt, &i.KeyNonce)
+	return i, err
+}
+
 const getSamlGroupsAttribute = `-- name: GetSamlGroupsAttribute :one
 
 SELECT groups_attribute FROM tenant.saml_connections WHERE id = $1 AND tenant_id = $2
@@ -597,6 +624,31 @@ func (q *Queries) InsertSamlConnection(ctx context.Context, arg InsertSamlConnec
 		&i.LastLoginAt,
 	)
 	return i, err
+}
+
+const insertSamlConnectionKey = `-- name: InsertSamlConnectionKey :exec
+INSERT INTO tenant.saml_connection_keys (connection_id, tenant_id, certificate, key_ct, key_nonce)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (connection_id) DO NOTHING
+`
+
+type InsertSamlConnectionKeyParams struct {
+	ConnectionID uuid.UUID
+	TenantID     uuid.UUID
+	Certificate  string
+	KeyCt        []byte
+	KeyNonce     []byte
+}
+
+func (q *Queries) InsertSamlConnectionKey(ctx context.Context, arg InsertSamlConnectionKeyParams) error {
+	_, err := q.db.Exec(ctx, insertSamlConnectionKey,
+		arg.ConnectionID,
+		arg.TenantID,
+		arg.Certificate,
+		arg.KeyCt,
+		arg.KeyNonce,
+	)
+	return err
 }
 
 const insertSamlLoginCode = `-- name: InsertSamlLoginCode :exec

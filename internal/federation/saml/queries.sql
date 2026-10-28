@@ -144,6 +144,19 @@ ORDER BY metadata_checked_at NULLS FIRST, id
 LIMIT @max_rows;
 
 -- ==========================================================================
+-- SP-side: the key pair a connection's IdP encrypts assertions to (encryption.go)
+-- ==========================================================================
+
+-- name: GetSamlConnectionKey :one
+SELECT certificate, key_ct, key_nonce FROM tenant.saml_connection_keys
+WHERE connection_id = @connection_id AND tenant_id = @tenant_id;
+
+-- name: InsertSamlConnectionKey :exec
+INSERT INTO tenant.saml_connection_keys (connection_id, tenant_id, certificate, key_ct, key_nonce)
+VALUES (@connection_id, @tenant_id, @certificate, @key_ct, @key_nonce)
+ON CONFLICT (connection_id) DO NOTHING;
+
+-- ==========================================================================
 -- SAML login codes (ExchangeLogin + ACS handler)
 -- ==========================================================================
 

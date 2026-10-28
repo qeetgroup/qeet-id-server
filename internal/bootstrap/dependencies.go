@@ -352,6 +352,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	oidcSSOService := oidcsso.NewService(pool, authService, cfg.AppBaseURL, outboundPolicy)
 	oidcSSOService.SetCipher(sharedCipher)
 	samlService.SetEgressPolicy(outboundPolicy) // IdP metadata URLs
+	samlService.SetCipher(sharedCipher)         // the connections' SP encryption keys
 
 	samlIdPKeyPEM, samlIdPCertPEM := samlIdPIdentity(cfg)
 	samlIdP, err := saml.NewIdP(pool, samlIdPKeyPEM, samlIdPCertPEM, cfg.LoginBaseURL, authService)

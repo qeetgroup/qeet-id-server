@@ -163,6 +163,8 @@ func EncryptedColumns() []reseal.Column {
 		byID("tenant.ldap_connections", "bind_password_ct", "bind_password_nonce", "ldap-bind"),
 		byID("tenant.log_sinks", "token_ct", "token_nonce", "siem-token"),
 		byID("tenant.oidc_connections", "client_secret_ct", "client_secret_nonce", "oidc-connection"),
+		{Table: "tenant.saml_connection_keys", Key: []string{"connection_id"}, Ciphertext: "key_ct", Nonce: "key_nonce",
+			Tenant: "tenant_id", Purpose: "saml-sp-key", Resource: "connection_id"},
 		{Table: "qeetai.provider_settings", Key: []string{"tenant_id"}, Ciphertext: "key_ciphertext", Nonce: "key_nonce",
 			Tenant: "tenant_id", Purpose: "qeetai-provider", Resource: "'api-key'"},
 		totp("secret_ct", "secret_nonce"),
