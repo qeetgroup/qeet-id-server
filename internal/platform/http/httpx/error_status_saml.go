@@ -48,5 +48,9 @@ func init() {
 		errs.CodeSAMLCertificateExists:        http.StatusConflict,
 		errs.CodeSAMLCertificateLimit:         http.StatusUnprocessableEntity,
 		errs.CodeSAMLCertificateLast:          http.StatusConflict,
+		errs.CodeSAMLMetadataRequired:         http.StatusUnprocessableEntity,
+		errs.CodeSAMLMetadataInvalid:          http.StatusUnprocessableEntity,
+		errs.CodeSAMLMetadataURLInvalid:       http.StatusUnprocessableEntity,
+		errs.CodeSAMLMetadataUnreachable:      http.StatusUnprocessableEntity,
 	})
 }

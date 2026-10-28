@@ -80,7 +80,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	jobs := bootstrap.MaintenanceJobs(pool, sessionSignals, box)
+	jobs := bootstrap.MaintenanceJobs(pool, sessionSignals, box, bootstrap.OutboundPolicy(cfg))
 	for _, j := range jobs {
 		slog.Info("job registered", "name", j.Name, "interval", j.Interval)
 	}

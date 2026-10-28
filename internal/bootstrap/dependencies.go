@@ -351,6 +351,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	samlService := saml.NewService(pool, authService, cfg.AppBaseURL)
 	oidcSSOService := oidcsso.NewService(pool, authService, cfg.AppBaseURL, outboundPolicy)
 	oidcSSOService.SetCipher(sharedCipher)
+	samlService.SetEgressPolicy(outboundPolicy) // IdP metadata URLs
 
 	samlIdPKeyPEM, samlIdPCertPEM := samlIdPIdentity(cfg)
 	samlIdP, err := saml.NewIdP(pool, samlIdPKeyPEM, samlIdPCertPEM, cfg.LoginBaseURL, authService)
@@ -529,7 +530,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		// Audit-chain verification and the cleanups, once per interval across
 		// instances.
 		{name: "scheduler", run: func(ctx context.Context) {
-			worker.RunScheduled(ctx, pool, MaintenanceJobs(pool, sessionSignals, sharedCipher), worker.SchedulerTick)
+			worker.RunScheduled(ctx, pool, MaintenanceJobs(pool, sessionSignals, sharedCipher, outboundPolicy), worker.SchedulerTick)
 		}},
 	}
 	RegisterMaintenanceMetrics(pool, sharedCipher)

@@ -152,6 +152,7 @@ internal/federation/saml/queries.sql#ConsumeSamlLoginCode  secret-lookup: by log
 internal/federation/saml/queries.sql#GetSamlConnectionByID  pre-tenant: public SSO endpoints; the connection in the path names the tenant
 internal/federation/saml/queries.sql#GetUserByEmail  pre-tenant: federated sign-in finds the account by email
 internal/federation/saml/queries.sql#GetUserForIdP  session-scoped: the IdP session's user; its tenant is compared to the SP's
+internal/federation/saml/queries.sql#ListSamlMetadataDue  background-sweep: the metadata refresh job finds every organisation's due connections
 internal/federation/saml/queries.sql#MarkSamlLoginCodeUsed  secret-lookup: by login code hash
 internal/federation/saml/queries.sql#TouchSamlLastLogin  parent-scoped: connection row read for this sign-in
 internal/federation/saml/queries.sql#TouchSamlSPLastLogin  parent-scoped: service provider row read for this sign-in

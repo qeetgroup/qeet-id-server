@@ -22,6 +22,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/idempotency"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/worker"
 )
 
@@ -31,10 +32,24 @@ const AuditVerifyInterval = 6 * time.Hour
 // MaintenanceJobs returns the scheduled housekeeping jobs. Each runs once per
 // interval across all instances. Expired sessions the cleanup removes are
 // announced through signals as session.revoked (reason expired); stored values
-// are re-sealed with box's current key.
-func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller, box *envelope.Cipher) []worker.Scheduled {
+// are re-sealed with box's current key. outbound, public addresses only if not
+// given, bounds the jobs that fetch from the web.
+func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller, box *envelope.Cipher, outbound ...*egress.Policy) []worker.Scheduled {
 	verifier := audit.NewVerifier(pool)
 	return []worker.Scheduled{
+		{
+			// A connection backed by its IdP's metadata URL picks up the IdP's
+			// new signing certificates.
+			Name:     "saml-metadata-refresh",
+			Interval: saml.MetadataRefreshInterval,
+			Run: func(ctx context.Context) error {
+				run, err := saml.RefreshMetadata(ctx, pool, egress.PublicPolicy(outbound...))
+				if run.Refreshed+run.Failed > 0 {
+					slog.Info("saml metadata refreshed", "refreshed", run.Refreshed, "failed", run.Failed)
+				}
+				return err
+			},
+		},
 		{
 			Name:     "audit-chain-verify",
 			Interval: AuditVerifyInterval,

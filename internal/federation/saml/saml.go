@@ -38,6 +38,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 const (
@@ -52,7 +53,7 @@ const (
 // queries, so they are read separately. GroupsAttribute names the attribute
 // carrying a person's groups; "" reads the common ones (assertedGroups).
 // Certificates are every signing certificate it trusts; IdpCertificate is the
-// oldest of them.
+// oldest of them. MetadataURL is where it refreshes its IdP settings from.
 type Connection struct {
 	ID                uuid.UUID     `json:"id"`
 	TenantID          uuid.UUID     `json:"tenant_id"`
@@ -61,6 +62,9 @@ type Connection struct {
 	IdpSSOURL         string        `json:"idp_sso_url"`
 	IdpCertificate    string        `json:"idp_certificate"`
 	Certificates      []Certificate `json:"certificates"`
+	MetadataURL       *string       `json:"metadata_url"`
+	RefreshedAt       *time.Time    `json:"metadata_refreshed_at"`
+	MetadataError     *string       `json:"metadata_error"`
 	EmailAttribute    string        `json:"email_attribute"`
 	NameAttribute     string        `json:"name_attribute"`
 	GroupsAttribute   string        `json:"groups_attribute"`
@@ -74,6 +78,7 @@ type Connection struct {
 // Service manages a tenant's IdP connections and runs SP-initiated sign-in.
 // nextRequestSweep and nextReplaySweep throttle deleting expired AuthnRequest and
 // replay rows, separately so a busy login or ACS path can't starve the other.
+// IdP metadata is fetched with metadataHTTP, within the egress policy.
 type Service struct {
 	pool             *pgxpool.Pool
 	q                *dbgen.Queries
@@ -81,6 +86,8 @@ type Service struct {
 	appBaseURL       string
 	nextRequestSweep atomic.Int64
 	nextReplaySweep  atomic.Int64
+	egress           *egress.Policy
+	metadataHTTP     *http.Client
 }
 
 // replaySweepInterval is how often any one replica collects expired SAML
@@ -98,12 +105,14 @@ func sweepDue(next *atomic.Int64) bool {
 
 // NewService returns the SAML service.
 func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string) *Service {
-	return &Service{
+	s := &Service{
 		pool:       pool,
 		q:          dbgen.New(pool),
 		auth:       authSvc,
 		appBaseURL: strings.TrimRight(appBaseURL, "/"),
 	}
+	s.SetEgressPolicy(egress.PublicPolicy())
+	return s
 }
 
 // Pool returns the connection pool, for handlers that run their own transaction.
@@ -267,6 +276,9 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, e
 			out[i].Certificates = c
 		}
 	}
+	if err := s.withMetadataSources(ctx, tenantID, out); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -311,6 +323,9 @@ func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Connection,
 		return nil, err
 	}
 	if out.Certificates, err = listCertificates(ctx, s.q, id, tenantID); err != nil {
+		return nil, err
+	}
+	if err := withMetadataSource(ctx, s.q, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -433,6 +448,9 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 		return nil, err
 	}
 	if out.Certificates, err = listCertificates(ctx, q, id, tenantID); err != nil {
+		return nil, err
+	}
+	if err := withMetadataSource(ctx, q, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -988,6 +1006,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Patch("/tenants/{tenantID}/saml/{id}", h.update)
 	r.Post("/tenants/{tenantID}/saml/{id}/test", h.test)
 	r.Delete("/tenants/{tenantID}/saml/{id}", h.del)
+	r.Post("/tenants/{tenantID}/saml/import", h.importConnection)
+	r.Post("/tenants/{tenantID}/saml/{id}/metadata", h.applyMetadata)
 	r.Post("/tenants/{tenantID}/saml/{id}/certificates", h.addCertificate)
 	r.Delete("/tenants/{tenantID}/saml/{id}/certificates/{certificateID}", h.removeCertificate)
 

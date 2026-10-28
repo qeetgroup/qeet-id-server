@@ -309,6 +309,33 @@ func (q *Queries) GetSamlGroupsAttribute(ctx context.Context, arg GetSamlGroupsA
 	return groups_attribute, err
 }
 
+const getSamlMetadataSource = `-- name: GetSamlMetadataSource :one
+
+SELECT metadata_url, metadata_refreshed_at, metadata_error
+FROM tenant.saml_connections WHERE id = $1 AND tenant_id = $2
+`
+
+type GetSamlMetadataSourceParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+type GetSamlMetadataSourceRow struct {
+	MetadataUrl         *string
+	MetadataRefreshedAt pgtype.Timestamptz
+	MetadataError       *string
+}
+
+// ==========================================================================
+// SP-side: a connection's IdP metadata (metadata.go)
+// ==========================================================================
+func (q *Queries) GetSamlMetadataSource(ctx context.Context, arg GetSamlMetadataSourceParams) (GetSamlMetadataSourceRow, error) {
+	row := q.db.QueryRow(ctx, getSamlMetadataSource, arg.ID, arg.TenantID)
+	var i GetSamlMetadataSourceRow
+	err := row.Scan(&i.MetadataUrl, &i.MetadataRefreshedAt, &i.MetadataError)
+	return i, err
+}
+
 const getSamlPersistentID = `-- name: GetSamlPersistentID :one
 SELECT name_id FROM tenant.saml_idp_persistent_ids
 WHERE tenant_id = $1 AND sp_id = $2 AND user_id = $3
@@ -1096,6 +1123,81 @@ func (q *Queries) ListSamlGroupsAttributes(ctx context.Context, tenantID uuid.UU
 	return items, nil
 }
 
+const listSamlMetadataDue = `-- name: ListSamlMetadataDue :many
+SELECT id, tenant_id, metadata_url::text AS metadata_url FROM tenant.saml_connections
+WHERE metadata_url IS NOT NULL AND (metadata_checked_at IS NULL OR metadata_checked_at < $1)
+ORDER BY metadata_checked_at NULLS FIRST, id
+LIMIT $2
+`
+
+type ListSamlMetadataDueParams struct {
+	CheckedBefore pgtype.Timestamptz
+	MaxRows       int32
+}
+
+type ListSamlMetadataDueRow struct {
+	ID          uuid.UUID
+	TenantID    uuid.UUID
+	MetadataUrl string
+}
+
+func (q *Queries) ListSamlMetadataDue(ctx context.Context, arg ListSamlMetadataDueParams) ([]ListSamlMetadataDueRow, error) {
+	rows, err := q.db.Query(ctx, listSamlMetadataDue, arg.CheckedBefore, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSamlMetadataDueRow{}
+	for rows.Next() {
+		var i ListSamlMetadataDueRow
+		if err := rows.Scan(&i.ID, &i.TenantID, &i.MetadataUrl); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSamlMetadataSources = `-- name: ListSamlMetadataSources :many
+SELECT id, metadata_url, metadata_refreshed_at, metadata_error
+FROM tenant.saml_connections WHERE tenant_id = $1
+`
+
+type ListSamlMetadataSourcesRow struct {
+	ID                  uuid.UUID
+	MetadataUrl         *string
+	MetadataRefreshedAt pgtype.Timestamptz
+	MetadataError       *string
+}
+
+func (q *Queries) ListSamlMetadataSources(ctx context.Context, tenantID uuid.UUID) ([]ListSamlMetadataSourcesRow, error) {
+	rows, err := q.db.Query(ctx, listSamlMetadataSources, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSamlMetadataSourcesRow{}
+	for rows.Next() {
+		var i ListSamlMetadataSourcesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.MetadataUrl,
+			&i.MetadataRefreshedAt,
+			&i.MetadataError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSamlSPGroupAssignments = `-- name: ListSamlSPGroupAssignments :many
 SELECT a.group_id, g.name, a.assigned_at, a.assigned_by
 FROM tenant.saml_sp_group_assignments a
@@ -1250,12 +1352,51 @@ func (q *Queries) LockSamlConnection(ctx context.Context, arg LockSamlConnection
 	return id, err
 }
 
+const lockSamlMetadataSource = `-- name: LockSamlMetadataSource :one
+SELECT idp_entity_id, idp_sso_url, metadata_url FROM tenant.saml_connections
+WHERE id = $1 AND tenant_id = $2 FOR UPDATE
+`
+
+type LockSamlMetadataSourceParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+type LockSamlMetadataSourceRow struct {
+	IdpEntityID string
+	IdpSsoUrl   string
+	MetadataUrl *string
+}
+
+func (q *Queries) LockSamlMetadataSource(ctx context.Context, arg LockSamlMetadataSourceParams) (LockSamlMetadataSourceRow, error) {
+	row := q.db.QueryRow(ctx, lockSamlMetadataSource, arg.ID, arg.TenantID)
+	var i LockSamlMetadataSourceRow
+	err := row.Scan(&i.IdpEntityID, &i.IdpSsoUrl, &i.MetadataUrl)
+	return i, err
+}
+
 const markSamlLoginCodeUsed = `-- name: MarkSamlLoginCodeUsed :exec
 UPDATE auth.saml_login_codes SET used_at = NOW() WHERE code_hash = $1
 `
 
 func (q *Queries) MarkSamlLoginCodeUsed(ctx context.Context, codeHash string) error {
 	_, err := q.db.Exec(ctx, markSamlLoginCodeUsed, codeHash)
+	return err
+}
+
+const setSamlCertificateSource = `-- name: SetSamlCertificateSource :exec
+UPDATE tenant.saml_connection_certificates SET source = $1
+WHERE id = $2 AND tenant_id = $3
+`
+
+type SetSamlCertificateSourceParams struct {
+	Source   string
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+func (q *Queries) SetSamlCertificateSource(ctx context.Context, arg SetSamlCertificateSourceParams) error {
+	_, err := q.db.Exec(ctx, setSamlCertificateSource, arg.Source, arg.ID, arg.TenantID)
 	return err
 }
 
@@ -1272,6 +1413,50 @@ type SetSamlGroupsAttributeParams struct {
 
 func (q *Queries) SetSamlGroupsAttribute(ctx context.Context, arg SetSamlGroupsAttributeParams) error {
 	_, err := q.db.Exec(ctx, setSamlGroupsAttribute, arg.GroupsAttribute, arg.ID, arg.TenantID)
+	return err
+}
+
+const setSamlIdPFromMetadata = `-- name: SetSamlIdPFromMetadata :exec
+UPDATE tenant.saml_connections SET
+    idp_sso_url           = $1,
+    metadata_url          = $2,
+    metadata_checked_at   = NOW(),
+    metadata_refreshed_at = NOW(),
+    metadata_error        = NULL,
+    updated_at            = CASE WHEN idp_sso_url <> $1 THEN NOW() ELSE updated_at END
+WHERE id = $3 AND tenant_id = $4
+`
+
+type SetSamlIdPFromMetadataParams struct {
+	IdpSsoUrl   string
+	MetadataUrl *string
+	ID          uuid.UUID
+	TenantID    uuid.UUID
+}
+
+func (q *Queries) SetSamlIdPFromMetadata(ctx context.Context, arg SetSamlIdPFromMetadataParams) error {
+	_, err := q.db.Exec(ctx, setSamlIdPFromMetadata,
+		arg.IdpSsoUrl,
+		arg.MetadataUrl,
+		arg.ID,
+		arg.TenantID,
+	)
+	return err
+}
+
+const setSamlMetadataError = `-- name: SetSamlMetadataError :exec
+UPDATE tenant.saml_connections SET metadata_checked_at = NOW(), metadata_error = $1
+WHERE id = $2 AND tenant_id = $3
+`
+
+type SetSamlMetadataErrorParams struct {
+	MetadataError *string
+	ID            uuid.UUID
+	TenantID      uuid.UUID
+}
+
+func (q *Queries) SetSamlMetadataError(ctx context.Context, arg SetSamlMetadataErrorParams) error {
+	_, err := q.db.Exec(ctx, setSamlMetadataError, arg.MetadataError, arg.ID, arg.TenantID)
 	return err
 }
 

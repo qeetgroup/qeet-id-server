@@ -2702,6 +2702,95 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/saml/import:
+    post:
+      operationId: post_v1_tenants_ByTenantID_saml_import
+      summary: Create connection from IdP metadata
+      description: >-
+        Creates an inbound SAML connection from the external IdP's SAML 2.0 metadata, given either as the XML (metadata_xml) or as a URL to fetch it from (metadata_url). The connection takes the IdP's entity id, its https HTTP-Redirect SingleSignOnService and its signing certificates from the metadata. A connection given a URL refreshes from it every few hours, adding the IdP's new signing certificates and dropping those the metadata no longer lists (certificates an administrator added are kept); metadata that can't be fetched or no longer describes the same IdP changes nothing and is reported in metadata_error. The URL is fetched only from public https addresses, with a 10-second timeout and a 1 MiB limit. Metadata describing several identity providers needs idp_entity_id to pick one. Neither or both sources answer 422 saml.metadata_required; unusable metadata 422 saml.metadata_invalid, with the reason in detail; a URL that isn't allowed 422 saml.metadata_url_invalid; one that can't be fetched 422 saml.metadata_unreachable. Scoped to the tenant in the path and audited.
+      tags:
+        - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SAMLConnectionImport'
+      responses:
+        '201':
+          description: Connection created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SAMLConnection'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/saml/{id}/metadata:
+    post:
+      operationId: post_v1_tenants_ByTenantID_saml_ById_metadata
+      summary: Apply IdP metadata
+      description: >-
+        Gives the connection its IdP's SSO URL and signing certificates from the IdP's metadata, as on import: from metadata_url, which the connection then refreshes from; from metadata_xml, which stops any refreshing; or, with an empty object, from the URL the connection already refreshes from. The metadata must describe the connection's own IdP (its idp_entity_id), so it can't repoint the connection at another; otherwise 422 saml.metadata_invalid. With no source and no stored URL, 422 saml.metadata_required. Audited; another organisation's connection answers 404.
+      tags:
+        - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                metadata_url:
+                  type: string
+                  format: uri
+                metadata_xml:
+                  type: string
+      responses:
+        '200':
+          description: Connection updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SAMLConnection'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
   /v1/tenants/{tenantID}/saml/{id}/certificates:
     post:
       operationId: post_v1_tenants_ByTenantID_saml_ById_certificates
@@ -6568,6 +6657,20 @@ components:
             Every IdP signing certificate the connection trusts, oldest first. An assertion signed with any of them is accepted, so an IdP can roll its key over without a sign-in outage.
           items:
             $ref: '#/components/schemas/SAMLCertificate'
+        metadata_url:
+          type: string
+          format: uri
+          nullable: true
+          description: The IdP metadata URL the connection refreshes its SSO URL and certificates from; null when it doesn't refresh.
+        metadata_refreshed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the connection last took its settings from the IdP's metadata.
+        metadata_error:
+          type: string
+          nullable: true
+          description: Why the last refresh from metadata_url failed; null once one succeeds.
         email_attribute:
           type: string
         name_attribute:
@@ -6635,6 +6738,29 @@ components:
           type: string
           maxLength: 256
           description: The attribute carrying the person's groups; empty reads the common ones (see SAMLConnection). Over 256 characters is refused with 422 validation_failed.
+        status:
+          type: string
+    SAMLConnectionImport:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        metadata_url:
+          type: string
+          format: uri
+          description: Where to fetch the IdP's metadata from, and refresh it from later. Give this or metadata_xml.
+        metadata_xml:
+          type: string
+          description: The IdP's SAML 2.0 metadata document. Give this or metadata_url.
+        idp_entity_id:
+          type: string
+          description: The entity id of the IdP to use, when the metadata describes several.
+        email_attribute:
+          type: string
+        name_attribute:
+          type: string
         status:
           type: string
     SAMLCertificate:

@@ -42,6 +42,10 @@ func newOutboundPolicy(cfg *config.Config) *egress.Policy {
 	return outboundPolicy
 }
 
+// OutboundPolicy is the outbound policy the API uses, for the standalone
+// scheduler's jobs.
+func OutboundPolicy(cfg *config.Config) *egress.Policy { return newOutboundPolicy(cfg) }
+
 // connectActivityNATS connects the Live Activity hub's subscriber to NATS_URL,
 // returning nil when it is unset; the hub then serves history alone. It exits
 // when the connection fails.

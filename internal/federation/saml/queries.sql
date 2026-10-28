@@ -93,6 +93,10 @@ WHERE id = @id AND connection_id = @connection_id AND tenant_id = @tenant_id;
 DELETE FROM tenant.saml_connection_certificates
 WHERE connection_id = @connection_id AND tenant_id = @tenant_id;
 
+-- name: SetSamlCertificateSource :exec
+UPDATE tenant.saml_connection_certificates SET source = @source
+WHERE id = @id AND tenant_id = @tenant_id;
+
 -- name: SyncSamlPrimaryCertificate :exec
 UPDATE tenant.saml_connections c SET
     idp_certificate = (
@@ -102,6 +106,42 @@ UPDATE tenant.saml_connections c SET
     ),
     updated_at = NOW()
 WHERE c.id = @id AND c.tenant_id = @tenant_id;
+
+-- ==========================================================================
+-- SP-side: a connection's IdP metadata (metadata.go)
+-- ==========================================================================
+
+-- name: GetSamlMetadataSource :one
+SELECT metadata_url, metadata_refreshed_at, metadata_error
+FROM tenant.saml_connections WHERE id = @id AND tenant_id = @tenant_id;
+
+-- name: ListSamlMetadataSources :many
+SELECT id, metadata_url, metadata_refreshed_at, metadata_error
+FROM tenant.saml_connections WHERE tenant_id = @tenant_id;
+
+-- name: LockSamlMetadataSource :one
+SELECT idp_entity_id, idp_sso_url, metadata_url FROM tenant.saml_connections
+WHERE id = @id AND tenant_id = @tenant_id FOR UPDATE;
+
+-- name: SetSamlIdPFromMetadata :exec
+UPDATE tenant.saml_connections SET
+    idp_sso_url           = @idp_sso_url,
+    metadata_url          = sqlc.narg('metadata_url'),
+    metadata_checked_at   = NOW(),
+    metadata_refreshed_at = NOW(),
+    metadata_error        = NULL,
+    updated_at            = CASE WHEN idp_sso_url <> @idp_sso_url THEN NOW() ELSE updated_at END
+WHERE id = @id AND tenant_id = @tenant_id;
+
+-- name: SetSamlMetadataError :exec
+UPDATE tenant.saml_connections SET metadata_checked_at = NOW(), metadata_error = @metadata_error
+WHERE id = @id AND tenant_id = @tenant_id;
+
+-- name: ListSamlMetadataDue :many
+SELECT id, tenant_id, metadata_url::text AS metadata_url FROM tenant.saml_connections
+WHERE metadata_url IS NOT NULL AND (metadata_checked_at IS NULL OR metadata_checked_at < @checked_before)
+ORDER BY metadata_checked_at NULLS FIRST, id
+LIMIT @max_rows;
 
 -- ==========================================================================
 -- SAML login codes (ExchangeLogin + ACS handler)
