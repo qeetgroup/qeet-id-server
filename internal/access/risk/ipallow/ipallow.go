@@ -211,19 +211,20 @@ func (s *Service) AddRule(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, ci
 	return &r, nil
 }
 
-// DeleteRule removes one of the tenant's address rules.
-func (s *Service) DeleteRule(ctx context.Context, tx pgx.Tx, tenantID, ruleID uuid.UUID) error {
-	n, err := s.q.WithTx(tx).DeleteIPRule(ctx, dbgen.DeleteIPRuleParams{
+// DeleteRule removes one of the tenant's address rules and returns it.
+func (s *Service) DeleteRule(ctx context.Context, tx pgx.Tx, tenantID, ruleID uuid.UUID) (*Rule, error) {
+	m, err := s.q.WithTx(tx).DeleteIPRule(ctx, dbgen.DeleteIPRuleParams{
 		ID:       ruleID,
 		TenantID: tenantID,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if n == 0 {
-		return errs.ErrNotFound
-	}
-	return nil
+	r := ruleFromModel(m)
+	return &r, nil
 }
 
 // Check evaluates an address against the tenant's rules, honouring the enabled
@@ -369,7 +370,12 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/tenants/{tenantID}/ip-rules/check", h.check)
 }
 
-func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID uuid.UUID, action string, meta map[string]any) error {
+// ruleMetadata is what an audit event says of the rule it changed.
+func ruleMetadata(rule *Rule) map[string]any {
+	return map[string]any{"cidr": rule.CIDR, "action": rule.Action, "label": rule.Label}
+}
+
+func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID uuid.UUID, ruleID *uuid.UUID, action string, meta map[string]any) error {
 	var actorID *uuid.UUID
 	actorType := "system"
 	if p := httpx.PrincipalFromCtx(ctx); p != nil {
@@ -385,6 +391,7 @@ func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, t
 		ActorType:    actorType,
 		Action:       action,
 		ResourceType: "ip_rule",
+		ResourceID:   ruleID,
 		IP:           httpx.ClientIP(r),
 		UserAgent:    r.UserAgent(),
 		RequestID:    httpx.RequestID(r),
@@ -468,7 +475,7 @@ func (h *Handler) setConfig(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordAudit(ctx, tx, r, tenantID, "ip_rules.enforcement_changed", map[string]any{"enabled": in.Enabled}); err != nil {
+	if err := h.recordAudit(ctx, tx, r, tenantID, nil, "ip_rules.enforcement_changed", map[string]any{"enabled": in.Enabled}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -510,7 +517,7 @@ func (h *Handler) add(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordAudit(ctx, tx, r, tenantID, "ip_rules.rule_added", map[string]any{"cidr": rule.CIDR, "action": rule.Action}); err != nil {
+	if err := h.recordAudit(ctx, tx, r, tenantID, &rule.ID, "ip_rules.rule_added", ruleMetadata(rule)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -539,7 +546,8 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	if err := h.Service.DeleteRule(ctx, tx, tenantID, ruleID); err != nil {
+	rule, err := h.Service.DeleteRule(ctx, tx, tenantID, ruleID)
+	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -547,7 +555,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.recordAudit(ctx, tx, r, tenantID, "ip_rules.rule_removed", nil); err != nil {
+	if err := h.recordAudit(ctx, tx, r, tenantID, &rule.ID, "ip_rules.rule_removed", ruleMetadata(rule)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

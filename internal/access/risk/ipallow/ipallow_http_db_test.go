@@ -164,6 +164,16 @@ func TestRulesAreManagedOverHTTP(t *testing.T) {
 			t.Errorf("%d %s records, want %d", n, action, want)
 		}
 	}
+	// Each rule change names the rule, and what it was.
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'ip_rules.rule_removed'
+		AND resource_type = 'ip_rule' AND resource_id = $2 AND metadata->>'cidr' = '192.0.2.200' AND metadata->>'action' = 'deny'`,
+		tenant, host.ID); n != 1 {
+		t.Errorf("%d removal records naming the deny rule, want 1", n)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'ip_rules.rule_added'
+		AND resource_id IS NOT NULL AND metadata ? 'cidr'`, tenant); n != 4 {
+		t.Errorf("%d additions naming their rule, want 4", n)
+	}
 }
 
 // TestSignInIsJudgedByEnforcedRules checks that a sign-in is refused only by
