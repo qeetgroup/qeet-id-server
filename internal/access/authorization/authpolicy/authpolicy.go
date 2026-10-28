@@ -290,12 +290,21 @@ func (s *Service) SignInLockout(ctx context.Context, tenantID uuid.UUID) (Lockou
 // Update stores a tenant's whole policy. Invalid settings are refused, each
 // named in the validation error, before anything is written; the password
 // length (8–128) and magic-link lifetime (5–1440 minutes) are clamped instead.
+// Every first-factor method may be off only while the tenant has an active
+// SAML or LDAP connection to sign in through.
 func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p Policy) (*Policy, error) {
 	if p.RememberDeviceDays == 0 {
 		p.RememberDeviceDays = defaultRememberDeviceDays
 	}
+	sso := false
+	if !p.PasswordEnabled && !p.PasskeyEnabled && !p.MagicLinkEnabled {
+		var err error
+		if sso, err = s.q.WithTx(tx).HasActiveSSOConnection(ctx, tenantID); err != nil {
+			return nil, err
+		}
+	}
 	fields := s.lockout.CheckLockout(p)
-	fields = append(fields, checkSignInMethods(p)...)
+	fields = append(fields, checkSignInMethods(p, sso)...)
 	if p.RememberDeviceDays < 1 || p.RememberDeviceDays > 90 {
 		fields = append(fields, errs.FieldError{Field: "remember_device_days", Code: "out_of_range",
 			Message: "Remember a device for between 1 and 90 days."})
@@ -343,14 +352,15 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 }
 
 // checkSignInMethods refuses a policy that leaves no first-factor sign-in
-// method (password, passkey or magic link) on, and one that switches on an
-// email or SMS one-time-code sign-in — no such sign-in exists, so saving it
-// would claim a method the organisation does not have.
-func checkSignInMethods(p Policy) []errs.FieldError {
+// method (password, passkey or magic link) on unless the organisation signs in
+// through single sign-on (sso), and one that switches on an email or SMS
+// one-time-code sign-in — no such sign-in exists, so saving it would claim a
+// method the organisation does not have.
+func checkSignInMethods(p Policy, sso bool) []errs.FieldError {
 	var out []errs.FieldError
-	if !p.PasswordEnabled && !p.PasskeyEnabled && !p.MagicLinkEnabled {
+	if !p.PasswordEnabled && !p.PasskeyEnabled && !p.MagicLinkEnabled && !sso {
 		out = append(out, errs.FieldError{Field: "password_enabled", Code: "no_sign_in_method",
-			Message: "Keep at least one of password, passkey or magic-link sign-in on."})
+			Message: "Keep at least one of password, passkey or magic-link sign-in on, or activate a SAML or LDAP connection first."})
 	}
 	if p.OTPEmailEnabled {
 		out = append(out, errs.FieldError{Field: "otp_email_enabled", Code: "not_available",

@@ -74,3 +74,10 @@ LEFT JOIN "user".external_identities ei ON ei.tenant_id = sp.tenant_id AND ei.pr
 WHERE sp.tenant_id = @tenant_id
 GROUP BY sp.provider
 ORDER BY sp.provider;
+
+-- name: HasActiveSSOConnection :one
+-- Whether the tenant has an active SAML or LDAP connection to sign in through.
+SELECT (
+    EXISTS (SELECT 1 FROM tenant.saml_connections s WHERE s.tenant_id = sqlc.arg(tenant_id)::uuid AND s.status = 'active')
+    OR EXISTS (SELECT 1 FROM tenant.ldap_connections l WHERE l.tenant_id = sqlc.arg(tenant_id)::uuid AND l.status = 'active')
+)::boolean;

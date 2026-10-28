@@ -45,6 +45,21 @@ func (q *Queries) GetAuthPolicy(ctx context.Context, tenantID uuid.UUID) (Tenant
 	return i, err
 }
 
+const hasActiveSSOConnection = `-- name: HasActiveSSOConnection :one
+SELECT (
+    EXISTS (SELECT 1 FROM tenant.saml_connections s WHERE s.tenant_id = $1::uuid AND s.status = 'active')
+    OR EXISTS (SELECT 1 FROM tenant.ldap_connections l WHERE l.tenant_id = $1::uuid AND l.status = 'active')
+)::boolean
+`
+
+// Whether the tenant has an active SAML or LDAP connection to sign in through.
+func (q *Queries) HasActiveSSOConnection(ctx context.Context, tenantID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, hasActiveSSOConnection, tenantID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const signInMethodUsage = `-- name: SignInMethodUsage :one
 WITH people AS (
     SELECT EXISTS (SELECT 1 FROM auth.password_credentials pc WHERE pc.user_id = u.id) AS password,

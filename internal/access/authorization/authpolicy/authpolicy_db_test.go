@@ -264,3 +264,53 @@ func TestUsageCountsHowPeopleSignIn(t *testing.T) {
 		t.Errorf("social %+v, magic link %v; want google with 2 linked, 1 only, and magic links on", got.Social, got.MagicLinkEnabled)
 	}
 }
+
+// TestEveryMethodOffNeedsSingleSignOn checks that an organisation may switch
+// every first-factor method off only while it has an active SAML or LDAP
+// connection of its own: a draft or disabled one, or another organisation's
+// active one, doesn't count.
+func TestEveryMethodOffNeedsSingleSignOn(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := NewService(pool)
+	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
+	path := "/tenants/" + tenant.String() + "/auth-policy"
+	ssoOnly := map[string]any{"password_enabled": false, "passkey_enabled": false, "magic_link_enabled": false}
+	refused := func(when string) {
+		t.Helper()
+		if rec := dbtest.Do(t, h, http.MethodPut, path, ssoOnly); rec.Code != http.StatusUnprocessableEntity ||
+			!strings.Contains(rec.Body.String(), `"code":"no_sign_in_method"`) {
+			t.Errorf("every method off %s: %d %s, want 422 no_sign_in_method", when, rec.Code, rec.Body.String())
+		}
+	}
+	saml := func(tenant uuid.UUID, status string) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO tenant.saml_connections (tenant_id, name, idp_entity_id, idp_sso_url, idp_certificate, status)
+			VALUES ($1, 'Okta', 'https://idp.example.test', 'https://idp.example.test/sso', 'cert', $2)
+		`, tenant, status); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	refused("with no connection")
+	saml(tenant, "draft")
+	saml(tenant, "disabled")
+	saml(other, "active")
+	refused("with a draft and a disabled connection, and another organisation's active one")
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO tenant.ldap_connections (tenant_id, name, server_url, bind_dn, bind_password, base_dn, status)
+		VALUES ($1, 'Directory', 'ldaps://ldap.example.test', 'cn=service', 'secret', 'dc=example', 'active')
+	`, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if rec := dbtest.Do(t, h, http.MethodPut, path, ssoOnly); rec.Code != http.StatusOK {
+		t.Fatalf("every method off with an active LDAP connection: %d %s", rec.Code, rec.Body.String())
+	}
+	if m, err := svc.SignInMethodsFor(ctx, tenant); err != nil || m != (SignInMethods{}) {
+		t.Errorf("sign-in methods of a single-sign-on-only organisation: %+v, %v; want none", m, err)
+	}
+}
