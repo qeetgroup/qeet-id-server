@@ -158,13 +158,105 @@ func strRef(s string) *string { return &s }
 // its chain's tip is later. A test sets it to stand for another instance.
 var clock = time.Now
 
+// labelQueries read the name of a role, group or ABAC policy by its id in
+// the event's tenant.
+var labelQueries = map[string]string{
+	"role":        `SELECT name FROM rbac.roles WHERE id = $1 AND tenant_id = $2`,
+	"group":       `SELECT name FROM tenant.groups WHERE id = $1 AND tenant_id = $2`,
+	"abac_policy": `SELECT name FROM auth.abac_policies WHERE id = $1 AND tenant_id = $2`,
+}
+
+// labelled is e's metadata with the names of what the event is about, as they
+// are now: target_name for its resource, and role_name, user_name or
+// group_name for a role_id, user_id or group_id the metadata gives. A target
+// already gone keeps the name the caller gave, as metadata "name".
+func labelled(ctx context.Context, tx pgx.Tx, e Event) (map[string]any, error) {
+	meta := make(map[string]any, len(e.Metadata)+2)
+	for k, v := range e.Metadata {
+		meta[k] = v
+	}
+	if _, ok := meta["target_name"]; !ok && e.ResourceID != nil {
+		name, err := label(ctx, tx, e.ResourceType, *e.ResourceID, e.TenantID)
+		if err != nil {
+			return nil, err
+		}
+		if given, ok := meta["name"].(string); ok && name == "" {
+			name = given
+		}
+		if name != "" {
+			meta["target_name"] = name
+		}
+	}
+	for _, kind := range []string{"role", "user", "group"} {
+		id, ok := idOf(meta[kind+"_id"])
+		if _, named := meta[kind+"_name"]; !ok || named {
+			continue
+		}
+		name, err := label(ctx, tx, kind, id, e.TenantID)
+		if err != nil {
+			return nil, err
+		}
+		if name != "" {
+			meta[kind+"_name"] = name
+		}
+	}
+	return meta, nil
+}
+
+// label is the name of the kind of thing id is, or "" for a kind without one
+// or an id not found.
+func label(ctx context.Context, tx pgx.Tx, kind string, id uuid.UUID, tenantID *uuid.UUID) (string, error) {
+	var row pgx.Row
+	if kind == "user" {
+		row = personLabel(ctx, tx, id)
+	} else if q, ok := labelQueries[kind]; ok {
+		row = tx.QueryRow(ctx, q, id, pgUUIDNullable(tenantID))
+	} else {
+		return "", nil
+	}
+	var name string
+	err := row.Scan(&name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return name, err
+}
+
+// personLabel reads a person's display name, or else email. An account
+// belongs to no one organisation, so it is read by id alone.
+func personLabel(ctx context.Context, tx pgx.Tx, id uuid.UUID) pgx.Row {
+	return tx.QueryRow(ctx, `SELECT COALESCE(NULLIF(display_name, ''), email) FROM "user".users WHERE id = $1`, id)
+}
+
+// idOf reads an id from metadata, as a UUID or its string.
+func idOf(v any) (uuid.UUID, bool) {
+	switch id := v.(type) {
+	case uuid.UUID:
+		return id, id != uuid.Nil
+	case *uuid.UUID:
+		if id != nil {
+			return *id, *id != uuid.Nil
+		}
+	case string:
+		if parsed, err := uuid.Parse(id); err == nil {
+			return parsed, true
+		}
+	}
+	return uuid.Nil, false
+}
+
 // Record writes one audit row in tx, as the next link of its tenant's hash
-// chain. A per-tenant advisory lock serialises concurrent writers until tx
-// ends.
+// chain, with the names of what it is about (see labelled). A per-tenant
+// advisory lock serialises concurrent writers until tx ends.
 func Record(ctx context.Context, tx pgx.Tx, e Event) error {
 	if e.ActorType == "" {
 		e.ActorType = "user"
 	}
+	labels, err := labelled(ctx, tx, e)
+	if err != nil {
+		return err
+	}
+	e.Metadata = labels
 	meta, err := json.Marshal(e.Metadata)
 	if err != nil {
 		return err

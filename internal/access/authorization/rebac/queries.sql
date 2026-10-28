@@ -10,8 +10,10 @@ ON CONFLICT (tenant_id, object_type, object_id, relation, subject_type, subject_
 DO UPDATE SET tenant_id = EXCLUDED.tenant_id
 RETURNING id;
 
--- name: DeleteRelationTuple :execrows
-DELETE FROM auth.relation_tuples WHERE id = @id AND tenant_id = @tenant_id;
+-- name: DeleteRelationTuple :one
+-- Returns the tuple removed, for its audit entry.
+DELETE FROM auth.relation_tuples WHERE id = @id AND tenant_id = @tenant_id
+RETURNING object_type, object_id, relation, subject_type, subject_id, subject_relation;
 
 -- name: ListRelationTuplesByObject :many
 -- At most paging.MaxListItems+1 rows: the API truncates the rest.

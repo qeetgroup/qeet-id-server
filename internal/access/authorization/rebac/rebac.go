@@ -6,12 +6,14 @@ package rebac
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decide"
@@ -214,14 +216,19 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audi
 		return err
 	}
 	defer tx.Rollback(ctx)
-	n, err := s.q.WithTx(tx).DeleteRelationTuple(ctx, dbgen.DeleteRelationTupleParams{ID: id, TenantID: tenantID})
+	row, err := s.q.WithTx(tx).DeleteRelationTuple(ctx, dbgen.DeleteRelationTupleParams{ID: id, TenantID: tenantID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errs.ErrNotFound
+	}
 	if err != nil {
 		return err
 	}
-	if n == 0 {
-		return errs.ErrNotFound
+	metadata := map[string]any{
+		"object":   row.ObjectType + ":" + row.ObjectID,
+		"relation": row.Relation,
+		"subject":  subjectString(row.SubjectType, row.SubjectID, row.SubjectRelation),
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "rebac.tuple_deleted", "relation_tuple", id, nil)); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "rebac.tuple_deleted", "relation_tuple", id, metadata)); err != nil {
 		return err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "authorization.events", EventType: "rebac.tuple_deleted", Payload: map[string]any{"tuple_id": id, "tenant_id": tenantID}}); err != nil {

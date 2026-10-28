@@ -194,3 +194,92 @@ func TestChainSurvivesAnInstanceWhoseClockIsAhead(t *testing.T) {
 		t.Errorf("verify: %+v, %v; want both rows valid", res, err)
 	}
 }
+
+// TestEventsNameWhatTheyAreAbout checks that an audit row names its resource
+// and the role, person or group its metadata gives an id for, as they are
+// when it is written; that a target already gone keeps the name the caller
+// gave; that another organisation's role is not named; that a name the caller
+// gave is kept; and that the chain still verifies.
+func TestEventsNameWhatTheyAreAbout(t *testing.T) {
+	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
+	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	person := dbtest.User(t, tenant, tenant)
+	unnamed := dbtest.User(t, tenant, tenant)
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET display_name = 'Asha Rao' WHERE id = $1`, person.ID); err != nil {
+		t.Fatal(err)
+	}
+	var role, otherRole, group, policy uuid.UUID
+	for _, q := range []struct {
+		dst  *uuid.UUID
+		sql  string
+		args []any
+	}{
+		{&role, `INSERT INTO rbac.roles (tenant_id, name) VALUES ($1, 'auditor') RETURNING id`, []any{tenant}},
+		{&otherRole, `INSERT INTO rbac.roles (tenant_id, name) VALUES ($1, 'theirs') RETURNING id`, []any{other}},
+		{&group, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Finance') RETURNING id`, []any{tenant}},
+		{&policy, `INSERT INTO auth.abac_policies (tenant_id, name, effect, resource_type, action) VALUES ($1, 'office_hours', 'deny', '*', '*') RETURNING id`, []any{tenant}},
+	} {
+		if err := pool.QueryRow(ctx, q.sql, q.args...).Scan(q.dst); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	actor := Actor{Type: "system"}
+	gone := uuid.New()
+	events := []struct {
+		event Event
+		want  map[string]any
+	}{
+		{actor.Event(tenant, "role.assigned", "user", person.ID, map[string]any{"role_id": role}),
+			map[string]any{"target_name": "Asha Rao", "role_name": "auditor"}},
+		{actor.Event(tenant, "group.member_added", "group", group, map[string]any{"user_id": unnamed.ID.String()}),
+			map[string]any{"target_name": "Finance", "user_name": unnamed.Email}},
+		{actor.Event(tenant, "abac_policy.updated", "abac_policy", policy, nil),
+			map[string]any{"target_name": "office_hours"}},
+		{actor.Event(tenant, "group.deleted", "group", gone, map[string]any{"name": "Old team"}),
+			map[string]any{"target_name": "Old team"}},
+		{actor.Event(tenant, "role.group_assigned", "group", group, map[string]any{"role_id": otherRole}),
+			map[string]any{"target_name": "Finance", "role_name": nil}},
+		{actor.Event(tenant, "role.assigned", "user", person.ID, map[string]any{"target_name": "as given"}),
+			map[string]any{"target_name": "as given"}},
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	for _, e := range events {
+		if err := Record(ctx, tx, e.event); err != nil {
+			t.Fatalf("record %s: %v", e.event.Action, err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := pool.Query(ctx, `SELECT metadata FROM audit.events WHERE tenant_id = $1 ORDER BY created_at`, tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []map[string]any
+	for rows.Next() {
+		var m map[string]any
+		if err := rows.Scan(&m); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, m)
+	}
+	if rows.Close(); len(got) != len(events) {
+		t.Fatalf("%d rows, want %d", len(got), len(events))
+	}
+	for i, e := range events {
+		for k, want := range e.want {
+			if v, ok := got[i][k]; (want == nil && ok) || (want != nil && v != want) {
+				t.Errorf("%s: metadata %s = %v, want %v (%v)", e.event.Action, k, v, want, got[i])
+			}
+		}
+	}
+	if res, err := NewVerifier(pool).Verify(ctx, &tenant); err != nil || !res.OK {
+		t.Errorf("verify the labelled chain: %+v, %v", res, err)
+	}
+}

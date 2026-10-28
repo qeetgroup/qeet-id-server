@@ -11,8 +11,9 @@ import (
 	"github.com/google/uuid"
 )
 
-const deleteRelationTuple = `-- name: DeleteRelationTuple :execrows
+const deleteRelationTuple = `-- name: DeleteRelationTuple :one
 DELETE FROM auth.relation_tuples WHERE id = $1 AND tenant_id = $2
+RETURNING object_type, object_id, relation, subject_type, subject_id, subject_relation
 `
 
 type DeleteRelationTupleParams struct {
@@ -20,12 +21,28 @@ type DeleteRelationTupleParams struct {
 	TenantID uuid.UUID
 }
 
-func (q *Queries) DeleteRelationTuple(ctx context.Context, arg DeleteRelationTupleParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteRelationTuple, arg.ID, arg.TenantID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+type DeleteRelationTupleRow struct {
+	ObjectType      string
+	ObjectID        string
+	Relation        string
+	SubjectType     string
+	SubjectID       string
+	SubjectRelation string
+}
+
+// Returns the tuple removed, for its audit entry.
+func (q *Queries) DeleteRelationTuple(ctx context.Context, arg DeleteRelationTupleParams) (DeleteRelationTupleRow, error) {
+	row := q.db.QueryRow(ctx, deleteRelationTuple, arg.ID, arg.TenantID)
+	var i DeleteRelationTupleRow
+	err := row.Scan(
+		&i.ObjectType,
+		&i.ObjectID,
+		&i.Relation,
+		&i.SubjectType,
+		&i.SubjectID,
+		&i.SubjectRelation,
+	)
+	return i, err
 }
 
 const fetchSubjects = `-- name: FetchSubjects :many

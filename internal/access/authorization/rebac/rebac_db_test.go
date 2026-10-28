@@ -193,6 +193,13 @@ func TestTuplesGrantRelations(t *testing.T) {
 	if audited("rebac.tuple_deleted", direct.ID) != 1 || announced("rebac.tuple_deleted", direct.ID) != 1 {
 		t.Error("the delete was not audited and announced as the administrator's")
 	}
+	var removed map[string]any
+	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `SELECT metadata FROM audit.events WHERE tenant_id = $1 AND action = 'rebac.tuple_deleted' AND resource_id = $2`, tenant, direct.ID).Scan(&removed); err != nil {
+		t.Fatal(err)
+	}
+	if removed["object"] != direct.Object || removed["relation"] != direct.Relation || removed["subject"] != direct.Subject {
+		t.Errorf("the deletion's audit metadata: %v, want the tuple %s#%s@%s", removed, direct.Object, direct.Relation, direct.Subject)
+	}
 	if rec := dbtest.Do(t, h, http.MethodDelete, base+"/"+direct.ID.String(), nil); rec.Code != http.StatusNotFound {
 		t.Errorf("deleting the tuple again: %d, want 404", rec.Code)
 	}

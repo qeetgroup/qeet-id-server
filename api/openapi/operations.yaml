@@ -3495,7 +3495,12 @@ components:
         metadata:
           type: object
           additionalProperties: true
-          description: Domain-specific supplementary fields (non-normative).
+          description: >-
+            Domain-specific supplementary fields (non-normative). An event about a person, role, group or
+            ABAC policy carries target_name, its name when the event was recorded (a person's display name,
+            else email), and role_name, user_name or group_name beside a role_id, user_id or group_id, so a
+            target deleted since can still be named. rebac.tuple_deleted carries the removed tuple's object,
+            relation and subject.
     ActivityResponse:
       type: object
       description: Paginated activity history response.
