@@ -425,3 +425,48 @@ func TestRetryRecordsItsOwnCheck(test *testing.T) {
 		test.Error("the failure was not marked retried")
 	}
 }
+
+// TestSuccessResolvesTheConnectionsFailures checks that a successful operation
+// resolves its connection's open connection and permission failures, by the
+// system and audited, and leaves other kinds and other connections open.
+func TestSuccessResolvesTheConnectionsFailures(test *testing.T) {
+	pool := dbtest.Pool(test)
+	ctx := dbtest.Context(test)
+	tenantID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant.tenants(id,slug,name) VALUES($1,$2,'Directory test')`, tenantID, tenantID.String()); err != nil {
+		test.Fatal(err)
+	}
+	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{})
+	service.SetEventStore(pool)
+	connection, other := uuid.New().String(), uuid.New().String()
+	record := func(conn, operation string, status int) {
+		if err := service.RecordOperation(ctx, tenantID, conn, operation, "connection", "", status, time.Now(), time.Second); err != nil {
+			test.Fatal(err)
+		}
+	}
+	record(connection, "test", http.StatusBadGateway)
+	record(connection, "test", http.StatusForbidden)
+	record(connection, "sync", http.StatusUnprocessableEntity)
+	record(other, "test", http.StatusBadGateway)
+	open := func(conn string) int {
+		return dbtest.Count(test, `SELECT count(*) FROM tenant.directory_events WHERE tenant_id=$1 AND connection_id=$2 AND status='failed' AND resolution='open'`, tenantID, conn)
+	}
+
+	record(connection, "test", http.StatusOK)
+	if n := open(connection); n != 1 {
+		test.Errorf("%d open failures left on the connection, want only the validation one", n)
+	}
+	if n := dbtest.Count(test, `SELECT count(*) FROM tenant.directory_events WHERE tenant_id=$1 AND connection_id=$2 AND resolution='resolved' AND resolved_by IS NULL`, tenantID, connection); n != 2 {
+		test.Errorf("%d failures resolved by the system, want 2", n)
+	}
+	if n := open(other); n != 1 {
+		test.Errorf("another connection's failure was resolved: %d open, want 1", n)
+	}
+	if n := dbtest.Count(test, `SELECT count(*) FROM audit.events WHERE tenant_id=$1 AND action='directory.errors_resolved' AND actor_type='system' AND metadata->>'connection_id'=$2`, tenantID, connection); n != 1 {
+		test.Errorf("%d audit records of the resolution, want 1", n)
+	}
+	record(connection, "test", http.StatusOK)
+	if n := dbtest.Count(test, `SELECT count(*) FROM audit.events WHERE tenant_id=$1 AND action='directory.errors_resolved'`, tenantID); n != 1 {
+		test.Errorf("a success with nothing to resolve was audited: %d records, want 1", n)
+	}
+}

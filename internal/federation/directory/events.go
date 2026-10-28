@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -145,7 +146,57 @@ func (service *Service) RecordOperation(ctx context.Context, tenantID uuid.UUID,
 	if outcome == "failed" {
 		return service.notifyAlerts(ctx, tenantID, connectionID)
 	}
+	if outcome == "success" {
+		return service.resolveConnectionFailures(ctx, tenantID, connectionID)
+	}
 	return nil
+}
+
+// resolveConnectionFailures marks the connection's open failures of the kind a
+// success disproves, the directory unreachable or refusing the connection's
+// own credentials, resolved by the system, and audits it once. A failure being
+// retried is left for its retry to settle.
+func (service *Service) resolveConnectionFailures(ctx context.Context, tenantID uuid.UUID, connectionID string) error {
+	retrying, _ := ctx.Value(retryContextKey{}).(uuid.UUID)
+	const open = `tenant_id=$1 AND connection_id=$2 AND status='failed' AND resolution='open'
+		  AND category IN ('connection','permission') AND id <> $3`
+	// Most successes find nothing to resolve; only then is a transaction opened.
+	var found bool
+	if err := service.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM tenant.directory_events WHERE `+open+`)`,
+		tenantID, connectionID, retrying).Scan(&found); err != nil || !found {
+		return err
+	}
+	tx, err := service.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `UPDATE tenant.directory_events SET resolution='resolved', resolved_at=NOW(), resolved_by=NULL
+		WHERE `+open+` RETURNING id`, tenantID, connectionID, retrying)
+	if err != nil {
+		return err
+	}
+	var resolved []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		resolved = append(resolved, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(resolved) == 0 {
+		return nil
+	}
+	if err := audit.Record(ctx, tx, audit.Event{TenantID: &tenantID, ActorType: "system", Action: "directory.errors_resolved",
+		ResourceType: "directory_connection", Metadata: map[string]any{"connection_id": connectionID, "events": resolved, "reason": "a later operation succeeded"}}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func validConnectionID(tenantID uuid.UUID, connectionID string) bool {
