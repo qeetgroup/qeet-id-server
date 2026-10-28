@@ -615,11 +615,11 @@ func (r *Repository) ListDeleted(ctx context.Context, tenantID uuid.UUID, limit 
 	return out, nil
 }
 
-// Restore reverses a soft delete. Returns ErrNotFound if the user isn't
-// currently soft-deleted, and ErrAuthEmailExists if their address has since
-// been taken by another account.
-func (r *Repository) Restore(ctx context.Context, id uuid.UUID) error {
-	n, err := r.q.RestoreUser(ctx, id)
+// RestoreTx reverses a soft delete in tx. Returns ErrNotFound if the user
+// isn't currently soft-deleted, and ErrAuthEmailExists if their address has
+// since been taken by another account.
+func (r *Repository) RestoreTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
+	n, err := r.q.WithTx(tx).RestoreUser(ctx, id)
 	if pgxerr.IsUnique(err) {
 		return errs.ErrAuthEmailExists
 	}
@@ -632,10 +632,11 @@ func (r *Repository) Restore(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// Purge permanently removes a soft-deleted user (and, via ON DELETE CASCADE,
-// its sessions/credentials/identities). Only acts on already-soft-deleted rows.
-func (r *Repository) Purge(ctx context.Context, id uuid.UUID) error {
-	n, err := r.q.PurgeUser(ctx, id)
+// PurgeTx permanently removes a soft-deleted user in tx (and, via ON DELETE
+// CASCADE, its sessions/credentials/identities). Only acts on
+// already-soft-deleted rows.
+func (r *Repository) PurgeTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
+	n, err := r.q.WithTx(tx).PurgeUser(ctx, id)
 	if err != nil {
 		return err
 	}

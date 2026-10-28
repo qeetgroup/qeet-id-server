@@ -356,6 +356,64 @@ func TestPeopleEditOnlyTheirOwnProfile(t *testing.T) {
 	}
 }
 
+// TestAdminProfileEditsAreAudited checks that an administrator's edit of a
+// person's profile is recorded as user.updated naming the fields it changed,
+// never their values; that an edit changing nothing records nothing; and that
+// a suspension made in the same edit keeps its own record.
+func TestAdminProfileEditsAreAudited(t *testing.T) {
+	ctx := dbtest.Context(t)
+	tenant := dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	target := dbtest.User(t, tenant, tenant)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)
+	path := "/users/" + target.ID.String()
+	edits := func() [][]string {
+		t.Helper()
+		rows, err := dbtest.Pool(t).Query(ctx, `
+			SELECT metadata->'changed' FROM audit.events
+			WHERE tenant_id = $1 AND action = 'user.updated' AND resource_id = $2 AND actor_user_id = $3
+			ORDER BY created_at`, tenant, target.ID, admin.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out [][]string
+		for rows.Next() {
+			var changed []string
+			if err := rows.Scan(&changed); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, changed)
+		}
+		return out
+	}
+	patch := func(body map[string]any) {
+		t.Helper()
+		if rec := dbtest.Do(t, as, http.MethodPatch, path, body); rec.Code != http.StatusOK {
+			t.Fatalf("update %v: %d %s", body, rec.Code, rec.Body.String())
+		}
+	}
+
+	patch(map[string]any{"display_name": "Pat", "phone": "+14155550177", "metadata": map[string]any{"team": "red"}})
+	if got, want := edits(), [][]string{{"display_name", "phone", "metadata"}}; !slices.EqualFunc(got, want, slices.Equal) {
+		t.Fatalf("recorded %v, want %v", got, want)
+	}
+	patch(map[string]any{"display_name": "Pat", "phone": "+14155550177"})
+	if got := edits(); len(got) != 1 {
+		t.Errorf("an edit changing nothing was recorded: %v", got)
+	}
+	patch(map[string]any{"status": "suspended", "display_name": "Pat Lee"})
+	if got := edits(); len(got) != 2 || !slices.Equal(got[1], []string{"display_name"}) {
+		t.Errorf("recorded %v, want a second naming only the display name", got)
+	}
+	if n := audited(t, tenant, "user.suspended", target.ID); n != 1 {
+		t.Errorf("%d user.suspended records, want 1", n)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE resource_id = $1 AND strpos(metadata::text, '4155550177') > 0`, target.ID); n != 0 {
+		t.Errorf("%d audit records hold the phone number", n)
+	}
+}
+
 // TestAvatarCanBeCleared checks that an empty avatar_url removes the avatar, as
 // UpdateInput documents.
 func TestAvatarCanBeCleared(t *testing.T) {

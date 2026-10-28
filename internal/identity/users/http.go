@@ -350,48 +350,36 @@ func (h *Handler) listDeleted(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
-// auditUserAction records a best-effort audit row for a recycle-bin action.
-func (h *Handler) auditUserAction(r *http.Request, action string, target uuid.UUID) {
+// withAudit runs change and its audit row, action on target in tenantID as the
+// caller of r, in one transaction: neither commits without the other.
+func (h *Handler) withAudit(r *http.Request, tenantID, target uuid.UUID, action string, metadata map[string]any, change func(ctx context.Context, tx pgx.Tx) error) error {
 	ctx := r.Context()
 	tx, err := h.Repo.Pool().Begin(ctx)
 	if err != nil {
-		return
+		return err
 	}
 	defer tx.Rollback(ctx)
-	p := httpx.PrincipalFromCtx(ctx)
-	var actorID *uuid.UUID
-	var tenantID *uuid.UUID
-	if p != nil {
-		actorID = p.UserID
-		tenantID = p.TenantID
+	if err := change(ctx, tx); err != nil {
+		return err
 	}
-	id := target
-	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     tenantID,
-		ActorUserID:  actorID,
-		Action:       action,
-		ResourceType: "user",
-		ResourceID:   &id,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-	}); err != nil {
-		return
+	if err := audit.Record(ctx, tx, audit.ActorOf(r).Event(tenantID, action, "user", target, metadata)); err != nil {
+		return err
 	}
-	_ = tx.Commit(ctx)
+	return tx.Commit(ctx)
 }
 
 func (h *Handler) restore(w http.ResponseWriter, r *http.Request) {
-	id, _, err := h.actOnID(r)
+	id, tenantID, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Repo.Restore(r.Context(), id); err != nil {
+	if err := h.withAudit(r, tenantID, id, "user.restored", nil, func(ctx context.Context, tx pgx.Tx) error {
+		return h.Repo.RestoreTx(ctx, tx, id)
+	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.auditUserAction(r, "user.restored", id)
 	u, err := h.Repo.Get(r.Context(), id)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -401,16 +389,17 @@ func (h *Handler) restore(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) purge(w http.ResponseWriter, r *http.Request) {
-	id, _, err := h.actOnID(r)
+	id, tenantID, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Repo.Purge(r.Context(), id); err != nil {
+	if err := h.withAudit(r, tenantID, id, "user.purged", nil, func(ctx context.Context, tx pgx.Tx) error {
+		return h.Repo.PurgeTx(ctx, tx, id)
+	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.auditUserAction(r, "user.purged", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -622,12 +611,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	var u *User
-	if in.Status != nil {
-		u, err = h.updateStatusWithEvidence(r, tenantID, id, in)
-	} else {
-		u, err = h.Repo.Update(r.Context(), id, in)
-	}
+	u, err := h.updateWithEvidence(r, tenantID, id, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

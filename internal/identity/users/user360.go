@@ -287,10 +287,10 @@ func (r *Repository) AccessSummary(ctx context.Context, id, tenantID uuid.UUID) 
 	}, nil
 }
 
-// SetMfaRequired flips the users.mfa_required policy flag. ErrNotFound when the
-// user does not exist (or is soft-deleted).
-func (r *Repository) SetMfaRequired(ctx context.Context, id uuid.UUID, required bool) error {
-	n, err := r.q.SetUserMfaRequired(ctx, dbgen.SetUserMfaRequiredParams{ID: id, MfaRequired: required})
+// SetMfaRequiredTx sets the users.mfa_required policy flag in tx. ErrNotFound
+// when the user does not exist (or is soft-deleted).
+func (r *Repository) SetMfaRequiredTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, required bool) error {
+	n, err := r.q.WithTx(tx).SetUserMfaRequired(ctx, dbgen.SetUserMfaRequiredParams{ID: id, MfaRequired: required})
 	if err != nil {
 		return err
 	}
@@ -450,9 +450,9 @@ type setMfaRequiredInput struct {
 }
 
 // setMfaRequired handles PUT /v1/users/{id}/mfa-required: it sets the user's
-// MFA-required flag and audits the change.
+// MFA-required flag and audits it, with the value set, in one transaction.
 func (h *Handler) setMfaRequired(w http.ResponseWriter, r *http.Request) {
-	id, _, err := h.actOnID(r)
+	id, tenantID, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -466,10 +466,10 @@ func (h *Handler) setMfaRequired(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("required is required"))
 		return
 	}
-	if err := h.Repo.SetMfaRequired(r.Context(), id, *in.Required); err != nil {
+	if err := h.withAudit(r, tenantID, id, "user.mfa_required_set", map[string]any{"mfa_required": *in.Required},
+		func(ctx context.Context, tx pgx.Tx) error { return h.Repo.SetMfaRequiredTx(ctx, tx, id, *in.Required) }); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.auditUserAction(r, "user.mfa_required_set", id)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"mfa_required": *in.Required})
 }

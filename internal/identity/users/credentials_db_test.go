@@ -147,6 +147,21 @@ func TestAccountViewsDescribeTheCallersOrganisation(t *testing.T) {
 	if n := audited(t, home, "user.mfa_required_set", member.ID); n != 1 {
 		t.Errorf("%d user.mfa_required_set audit events, want 1", n)
 	}
+	if rec := dbtest.Do(t, as, http.MethodPut, path+"/mfa-required", map[string]any{"required": false}); rec.Code != http.StatusOK {
+		t.Fatalf("lift the MFA requirement: %d %s", rec.Code, rec.Body.String())
+	}
+	set := func(value string) int {
+		return dbtest.Count(t, `
+			SELECT count(*) FROM audit.events
+			WHERE tenant_id = $1 AND action = 'user.mfa_required_set' AND resource_id = $2 AND actor_user_id = $3
+			  AND metadata->>'mfa_required' = $4`, home, member.ID, admin.ID, value)
+	}
+	if set("true") != 1 || set("false") != 1 {
+		t.Errorf("records of the MFA requirement set to true %d, false %d times; want once each", set("true"), set("false"))
+	}
+	if rec := dbtest.Do(t, as, http.MethodPut, path+"/mfa-required", map[string]any{"required": true}); rec.Code != http.StatusOK {
+		t.Fatalf("require MFA again: %d %s", rec.Code, rec.Body.String())
+	}
 	var sum SecuritySummary
 	dbtest.Decode(t, dbtest.Do(t, as, http.MethodGet, path+"/security", nil), &sum)
 	if !sum.MFARequired || sum.MFAEnabled || !sum.PasswordSet || sum.PasswordChangedAt == nil || sum.Passkeys != 1 || sum.PasskeyLastUsedAt == nil {
