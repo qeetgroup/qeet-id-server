@@ -7,6 +7,7 @@ package rbac
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -85,6 +86,39 @@ type Role struct {
 	Description string    `json:"description"`
 	IsSystem    bool      `json:"is_system"`
 	CreatedAt   time.Time `json:"created_at"`
+	// Holders counts who holds the role, set by the roles list only.
+	Holders *RoleHolderCounts `json:"holders,omitempty"`
+}
+
+// RoleHolderCounts is how many hold a role: people directly, people only
+// through a group, and groups.
+type RoleHolderCounts struct {
+	PeopleDirect        int `json:"people_direct"`
+	PeopleThroughGroups int `json:"people_through_groups"`
+	Groups              int `json:"groups"`
+}
+
+// RoleHolders is one page of the people holding a role, and every group it
+// is granted to.
+type RoleHolders struct {
+	People     []RoleHolder `json:"people"`
+	Groups     []HolderRef  `json:"groups"`
+	NextCursor string       `json:"next_cursor,omitempty"`
+}
+
+// RoleHolder is a person holding a role: directly, and through which groups.
+type RoleHolder struct {
+	UserID      uuid.UUID   `json:"user_id"`
+	Email       string      `json:"email"`
+	DisplayName string      `json:"display_name"`
+	Direct      bool        `json:"direct"`
+	ViaGroups   []HolderRef `json:"via_groups"`
+}
+
+// HolderRef names a group.
+type HolderRef struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
 }
 
 // Repository reads and writes roles, permissions and role assignments.
@@ -183,6 +217,56 @@ func (r *Repository) ListRoles(ctx context.Context, tenantID uuid.UUID) ([]Role,
 	out := make([]Role, len(rows))
 	for i, row := range rows {
 		out[i] = toRole(row)
+	}
+	return out, nil
+}
+
+// WithHolderCounts sets how many hold each of the tenant's roles, in one query.
+func (r *Repository) WithHolderCounts(ctx context.Context, tenantID uuid.UUID, roles []Role) error {
+	rows, err := r.q.RoleHolderCounts(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	counts := make(map[uuid.UUID]RoleHolderCounts, len(rows))
+	for _, row := range rows {
+		counts[row.RoleID] = RoleHolderCounts{PeopleDirect: int(row.PeopleDirect), PeopleThroughGroups: int(row.PeopleThroughGroups), Groups: int(row.Groups)}
+	}
+	for i := range roles {
+		c := counts[roles[i].ID]
+		roles[i].Holders = &c
+	}
+	return nil
+}
+
+// Holders returns limit people holding roleID of tenantID from offset, by
+// email, and every group it is granted to.
+func (r *Repository) Holders(ctx context.Context, tenantID, roleID uuid.UUID, offset, limit int) (*RoleHolders, error) {
+	groups, err := r.q.ListRoleHolderGroups(ctx, dbgen.ListRoleHolderGroupsParams{TenantID: tenantID, RoleID: roleID})
+	if err != nil {
+		return nil, err
+	}
+	out := &RoleHolders{People: []RoleHolder{}, Groups: make([]HolderRef, len(groups))}
+	names := make(map[uuid.UUID]string, len(groups))
+	for i, g := range groups {
+		out.Groups[i] = HolderRef{ID: g.ID, Name: g.Name}
+		names[g.ID] = g.Name
+	}
+	people, err := r.q.ListRoleHolderPeople(ctx, dbgen.ListRoleHolderPeopleParams{
+		TenantID: tenantID, RoleID: roleID, RowOffset: int32(offset), RowLimit: int32(limit + 1), // #nosec G115 -- bounded by the handler
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(people) > limit {
+		people = people[:limit]
+		out.NextCursor = strconv.Itoa(offset + limit)
+	}
+	for _, p := range people {
+		via := make([]HolderRef, 0, len(p.ViaGroups))
+		for _, id := range p.ViaGroups {
+			via = append(via, HolderRef{ID: id, Name: names[id]})
+		}
+		out.People = append(out.People, RoleHolder{UserID: p.ID, Email: p.Email, DisplayName: p.DisplayName, Direct: p.Direct, ViaGroups: via})
 	}
 	return out, nil
 }

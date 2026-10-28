@@ -371,6 +371,111 @@ func (q *Queries) ListPermissions(ctx context.Context) ([]RbacPermission, error)
 	return items, nil
 }
 
+const listRoleHolderGroups = `-- name: ListRoleHolderGroups :many
+SELECT g.id, g.name
+FROM rbac.group_roles gr
+JOIN tenant.groups g ON g.id = gr.group_id AND g.tenant_id = gr.tenant_id
+WHERE gr.tenant_id = $1 AND gr.role_id = $2
+ORDER BY g.name, g.id
+`
+
+type ListRoleHolderGroupsParams struct {
+	TenantID uuid.UUID
+	RoleID   uuid.UUID
+}
+
+type ListRoleHolderGroupsRow struct {
+	ID   uuid.UUID
+	Name string
+}
+
+// The groups of the tenant granted a role, by name.
+func (q *Queries) ListRoleHolderGroups(ctx context.Context, arg ListRoleHolderGroupsParams) ([]ListRoleHolderGroupsRow, error) {
+	rows, err := q.db.Query(ctx, listRoleHolderGroups, arg.TenantID, arg.RoleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRoleHolderGroupsRow{}
+	for rows.Next() {
+		var i ListRoleHolderGroupsRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRoleHolderPeople = `-- name: ListRoleHolderPeople :many
+SELECT u.id, u.email, COALESCE(u.display_name, '')::text AS display_name,
+       EXISTS (SELECT 1 FROM rbac.user_roles ur
+                WHERE ur.user_id = u.id AND ur.tenant_id = $1 AND ur.role_id = $2) AS direct,
+       COALESCE((SELECT array_agg(gr.group_id ORDER BY gr.group_id) FROM rbac.group_roles gr
+                   JOIN tenant.group_members gm ON gm.group_id = gr.group_id AND gm.tenant_id = gr.tenant_id
+                  WHERE gr.tenant_id = $1 AND gr.role_id = $2 AND gm.user_id = u.id), '{}')::uuid[] AS via_groups
+FROM "user".users u
+WHERE u.deleted_at IS NULL
+  AND (EXISTS (SELECT 1 FROM rbac.user_roles ur
+                WHERE ur.user_id = u.id AND ur.tenant_id = $1 AND ur.role_id = $2)
+       OR EXISTS (SELECT 1 FROM rbac.group_roles gr
+                    JOIN tenant.group_members gm ON gm.group_id = gr.group_id AND gm.tenant_id = gr.tenant_id
+                   WHERE gr.tenant_id = $1 AND gr.role_id = $2 AND gm.user_id = u.id))
+ORDER BY u.email, u.id
+LIMIT $4 OFFSET $3
+`
+
+type ListRoleHolderPeopleParams struct {
+	TenantID  uuid.UUID
+	RoleID    uuid.UUID
+	RowOffset int32
+	RowLimit  int32
+}
+
+type ListRoleHolderPeopleRow struct {
+	ID          uuid.UUID
+	Email       string
+	DisplayName string
+	Direct      bool
+	ViaGroups   []uuid.UUID
+}
+
+// One page of the live people holding a role of the tenant, by email: whether
+// directly, and the groups they hold it through.
+func (q *Queries) ListRoleHolderPeople(ctx context.Context, arg ListRoleHolderPeopleParams) ([]ListRoleHolderPeopleRow, error) {
+	rows, err := q.db.Query(ctx, listRoleHolderPeople,
+		arg.TenantID,
+		arg.RoleID,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRoleHolderPeopleRow{}
+	for rows.Next() {
+		var i ListRoleHolderPeopleRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.DisplayName,
+			&i.Direct,
+			&i.ViaGroups,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRolePermissions = `-- name: ListRolePermissions :many
 SELECT p.id, p.key, p.description
 FROM rbac.permissions p
@@ -460,6 +565,56 @@ type RevokePermissionParams struct {
 func (q *Queries) RevokePermission(ctx context.Context, arg RevokePermissionParams) error {
 	_, err := q.db.Exec(ctx, revokePermission, arg.RoleID, arg.PermissionID)
 	return err
+}
+
+const roleHolderCounts = `-- name: RoleHolderCounts :many
+SELECT ro.id AS role_id,
+       (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
+          JOIN "user".users u ON u.id = ur.user_id AND u.deleted_at IS NULL
+         WHERE ur.tenant_id = ro.tenant_id AND ur.role_id = ro.id)::int AS people_direct,
+       (SELECT count(DISTINCT gm.user_id) FROM rbac.group_roles gr
+          JOIN tenant.group_members gm ON gm.group_id = gr.group_id AND gm.tenant_id = gr.tenant_id
+          JOIN "user".users u ON u.id = gm.user_id AND u.deleted_at IS NULL
+         WHERE gr.tenant_id = ro.tenant_id AND gr.role_id = ro.id
+           AND NOT EXISTS (SELECT 1 FROM rbac.user_roles ur
+                            WHERE ur.user_id = gm.user_id AND ur.tenant_id = ro.tenant_id AND ur.role_id = ro.id))::int AS people_through_groups,
+       (SELECT count(*) FROM rbac.group_roles gr WHERE gr.tenant_id = ro.tenant_id AND gr.role_id = ro.id)::int AS groups
+FROM rbac.roles ro
+WHERE ro.tenant_id = $1
+`
+
+type RoleHolderCountsRow struct {
+	RoleID              uuid.UUID
+	PeopleDirect        int32
+	PeopleThroughGroups int32
+	Groups              int32
+}
+
+// Per role of the tenant: the live people holding it directly, those holding
+// it only through a group, and the groups granted it.
+func (q *Queries) RoleHolderCounts(ctx context.Context, tenantID uuid.UUID) ([]RoleHolderCountsRow, error) {
+	rows, err := q.db.Query(ctx, roleHolderCounts, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RoleHolderCountsRow{}
+	for rows.Next() {
+		var i RoleHolderCountsRow
+		if err := rows.Scan(
+			&i.RoleID,
+			&i.PeopleDirect,
+			&i.PeopleThroughGroups,
+			&i.Groups,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const unassignUserRole = `-- name: UnassignUserRole :exec

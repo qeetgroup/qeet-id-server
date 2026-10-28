@@ -5,6 +5,7 @@ package rbac
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"testing"
@@ -179,5 +180,84 @@ func TestRoleLifecycle(t *testing.T) {
 	}
 	if want := []string{"token.claims_change:role_assigned", "token.claims_change:role_unassigned"}; !slices.Equal(announced, want) {
 		t.Errorf("announced %v; want %v", announced, want)
+	}
+}
+
+// TestRolesSayWhoHoldsThem checks that the roles list counts people holding a
+// role directly, only through a group, and the groups; that the holders list
+// says how each holds it and pages; and that another organisation's role is
+// not found.
+func TestRolesSayWhoHoldsThem(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	direct, both, viaGroup, gone := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var role, foreign, group uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name) VALUES ($1, 'Editor') RETURNING id`, tenant).Scan(&role); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name) VALUES ($1, 'Editor') RETURNING id`, other).Scan(&foreign); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Writers') RETURNING id`, tenant).Scan(&group); err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range []uuid.UUID{direct.ID, both.ID, gone.ID} {
+		exec(`INSERT INTO rbac.user_roles (user_id, tenant_id, role_id) VALUES ($1, $2, $3)`, u, tenant, role)
+	}
+	exec(`INSERT INTO rbac.group_roles (tenant_id, group_id, role_id) VALUES ($1, $2, $3)`, tenant, group, role)
+	for _, u := range []uuid.UUID{both.ID, viaGroup.ID} {
+		exec(`INSERT INTO tenant.group_members (group_id, user_id, tenant_id) VALUES ($1, $2, $3)`, group, u, tenant)
+	}
+	exec(`UPDATE "user".users SET deleted_at = NOW() WHERE id = $1`, gone.ID)
+
+	repo := NewRepository(pool)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Repo: repo, Service: NewService(repo), Validate: validator.New()}).Mount)
+	base := "/tenants/" + tenant.String() + "/roles"
+	var list struct {
+		Items []Role `json:"items"`
+	}
+	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, base, nil), &list)
+	var editor *Role
+	for i := range list.Items {
+		if list.Items[i].ID == role {
+			editor = &list.Items[i]
+		}
+	}
+	if editor == nil || editor.Holders == nil || *editor.Holders != (RoleHolderCounts{PeopleDirect: 2, PeopleThroughGroups: 1, Groups: 1}) {
+		t.Fatalf("Editor %+v; want 2 people directly, 1 only through a group, 1 group", editor)
+	}
+
+	var page RoleHolders
+	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, base+"/"+role.String()+"/holders", nil), &page)
+	how := map[uuid.UUID]string{}
+	for _, p := range page.People {
+		groups := ""
+		for _, g := range p.ViaGroups {
+			groups += g.Name
+		}
+		how[p.UserID] = fmt.Sprintf("%v/%s", p.Direct, groups)
+	}
+	if len(page.People) != 3 || how[direct.ID] != "true/" || how[both.ID] != "true/Writers" || how[viaGroup.ID] != "false/Writers" || len(page.Groups) != 1 {
+		t.Errorf("holders %v, groups %v; want three people held as granted and the one group", how, page.Groups)
+	}
+	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, base+"/"+role.String()+"/holders?limit=2", nil), &page)
+	if len(page.People) != 2 || page.NextCursor != "2" {
+		t.Errorf("first page of 2: %d people, cursor %q", len(page.People), page.NextCursor)
+	}
+	page = RoleHolders{}
+	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, base+"/"+role.String()+"/holders?limit=2&cursor=2", nil), &page)
+	if len(page.People) != 1 || page.NextCursor != "" {
+		t.Errorf("second page: %d people, cursor %q; want the last one", len(page.People), page.NextCursor)
+	}
+	if rec := dbtest.Do(t, h, http.MethodGet, base+"/"+foreign.String()+"/holders", nil); rec.Code != http.StatusNotFound {
+		t.Errorf("another organisation's role: %d, want 404", rec.Code)
 	}
 }

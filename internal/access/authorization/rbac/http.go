@@ -2,6 +2,7 @@ package rbac
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
@@ -27,6 +28,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/permissions", h.listPermissions)
 
 	r.Get("/tenants/{tenantID}/roles", h.listRoles)
+	r.Get("/tenants/{tenantID}/roles/{roleID}/holders", h.holders)
 	r.Post("/tenants/{tenantID}/roles", h.createRole)
 
 	r.Get("/roles/{roleID}/permissions", h.listRolePermissions)
@@ -75,6 +77,45 @@ func (h *Handler) listPermissions(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
+// holders serves GET /tenants/{tenantID}/roles/{roleID}/holders: a page of
+// the people holding the role (directly or through which groups) and every
+// group granted it. limit is 1–500 (default 100); cursor is the next page's.
+func (h *Handler) holders(w http.ResponseWriter, r *http.Request) {
+	tid, err := httpx.PathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	roleID, err := uuid.Parse(chi.URLParam(r, "roleID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid roleID"))
+		return
+	}
+	if owner, err := h.Repo.RoleTenant(r.Context(), roleID); err != nil || owner != tid {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	limit, offset := 100, 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if limit, err = strconv.Atoi(raw); err != nil || limit < 1 || limit > 500 {
+			httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("limit must be 1 to 500"))
+			return
+		}
+	}
+	if raw := r.URL.Query().Get("cursor"); raw != "" {
+		if offset, err = strconv.Atoi(raw); err != nil || offset < 0 || offset > 1_000_000 {
+			httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid cursor"))
+			return
+		}
+	}
+	out, err := h.Repo.Holders(r.Context(), tid, roleID, offset, limit)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
 func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request) {
 	tid, err := httpx.PathTenant(r)
 	if err != nil {
@@ -83,6 +124,10 @@ func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := h.Repo.ListRoles(r.Context(), tid)
 	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Repo.WithHolderCounts(r.Context(), tid, out); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

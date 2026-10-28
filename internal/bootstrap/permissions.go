@@ -61,6 +61,7 @@ func userPermissionMap() map[string]string {
 		// RBAC: roles, permissions, assignments, checks.
 		"GET /v1/permissions":                                         "role.read",
 		"GET /v1/tenants/{tenantID}/roles":                            "role.read",
+		"GET /v1/tenants/{tenantID}/roles/{roleID}/holders":           "role.read",
 		"POST /v1/tenants/{tenantID}/roles":                           "role.write",
 		"GET /v1/roles/{roleID}/permissions":                          "role.read",
 		"POST /v1/roles/{roleID}/permissions/{permID}":                "role.write",

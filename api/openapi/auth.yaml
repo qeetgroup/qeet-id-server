@@ -3282,6 +3282,59 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/roles/{roleID}/holders:
+    get:
+      operationId: get_v1_tenants_ByTenantID_roles_ByRoleID_holders
+      summary: Who holds a role
+      description: >-
+        One page of the people holding one of the organisation's roles, by
+        email, with whether they hold it directly and the groups they hold it
+        through, and every group granted the role. Needs role.read. 404 for a
+        role of another organisation.
+      tags:
+        - RBAC
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: roleID, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 500, default: 100}}
+        - {name: cursor, in: query, required: false, description: The next_cursor of the previous page., schema: {type: string}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The role's holders
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [people, groups]
+                properties:
+                  people:
+                    type: array
+                    items:
+                      type: object
+                      required: [user_id, email, display_name, direct, via_groups]
+                      properties:
+                        user_id: {type: string, format: uuid}
+                        email: {type: string}
+                        display_name: {type: string}
+                        direct: {type: boolean}
+                        via_groups:
+                          type: array
+                          items: {type: object, required: [id, name], properties: {id: {type: string, format: uuid}, name: {type: string}}}
+                  groups:
+                    type: array
+                    items: {type: object, required: [id, name], properties: {id: {type: string, format: uuid}, name: {type: string}}}
+                  next_cursor: {type: string}
+        '400':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/tenants/{tenantID}/roles:
     get:
       operationId: get_v1_tenants_ByTenantID_roles
@@ -5495,6 +5548,14 @@ components:
         created_at:
           type: string
           format: date-time
+        holders:
+          type: object
+          description: Who holds the role, in the roles list only.
+          required: [people_direct, people_through_groups, groups]
+          properties:
+            people_direct: {type: integer, description: People granted the role themselves.}
+            people_through_groups: {type: integer, description: People holding it only through a group.}
+            groups: {type: integer, description: Groups granted the role.}
     GroupRole:
       type: object
       description: A role granted to a group, with the role's name for display.

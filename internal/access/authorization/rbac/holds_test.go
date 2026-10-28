@@ -12,7 +12,9 @@ import (
 // grants is a Checker granting a fixed set of permissions.
 type grants map[string]bool
 
-func (g grants) Check(_ context.Context, _, _ uuid.UUID, perm string) (bool, error) { return g[perm], nil }
+func (g grants) Check(_ context.Context, _, _ uuid.UUID, perm string) (bool, error) {
+	return g[perm], nil
+}
 
 // TestHoldsFollowsTheRouteRules checks that Holds answers as a route gated on
 // the permission would: by role for a person, by scope too for an
