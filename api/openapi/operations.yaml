@@ -3668,7 +3668,10 @@ components:
           type: string
         criteria:
           type: string
-          description: Framework reference code (e.g. CC6.1 or A.9.4).
+          description: Framework reference code (e.g. CC6.1, or A.8.5 in ISO/IEC 27001:2022 Annex A).
+        criteria_2013:
+          type: string
+          description: An ISO control's ISO/IEC 27001:2013 Annex A reference (e.g. A.9.4), for audits still on that revision; absent for SOC 2.
         status:
           type: string
           enum: [pass, fail, na]

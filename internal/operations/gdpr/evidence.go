@@ -1,7 +1,7 @@
 package gdpr
 
 // Compliance evidence for SOC 2 and ISO 27001. Each control maps to a framework
-// criterion (CC6.1, A.9.4, …), checks the tenant's live state, and returns pass,
+// criterion (CC6.1, A.8.5, …), checks the tenant's live state, and returns pass,
 // fail or na with a readable explanation; each run is stored as a
 // compliance_evidence_runs row.
 
@@ -37,12 +37,15 @@ const (
 
 // ControlResult captures the outcome of one compliance control check.
 type ControlResult struct {
-	ID       string        `json:"id"`       // stable control ID
-	Name     string        `json:"name"`     // display name
-	Category string        `json:"category"` // control category
-	Criteria string        `json:"criteria"` // framework reference code, such as "CC6.1" or "A.9.4"
-	Status   ControlStatus `json:"status"`   // the check's result
-	Detail   string        `json:"detail"`   // what was found; never empty
+	ID       string `json:"id"`       // stable control ID
+	Name     string `json:"name"`     // display name
+	Category string `json:"category"` // control category
+	Criteria string `json:"criteria"` // framework reference code, such as "CC6.1" or "A.8.5"
+	// Criteria2013 is an ISO control's ISO/IEC 27001:2013 Annex A reference,
+	// for audits still on that revision; empty for SOC 2.
+	Criteria2013 string        `json:"criteria_2013,omitempty"`
+	Status       ControlStatus `json:"status"` // the check's result
+	Detail       string        `json:"detail"` // what was found; never empty
 }
 
 // EvidenceRun is one generated evidence snapshot for a tenant+framework pair.
@@ -62,11 +65,12 @@ type EvidenceRun struct {
 // control is a catalog entry: its metadata and a live check. check must return
 // ControlPass only when real system data confirms the condition.
 type control struct {
-	id       string
-	name     string
-	category string
-	criteria string
-	check    func(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) (ControlStatus, string)
+	id           string
+	name         string
+	category     string
+	criteria     string
+	criteria2013 string // ISO/IEC 27001:2013 Annex A, for an ISO control
+	check        func(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) (ControlStatus, string)
 }
 
 // EvidenceService generates compliance evidence by running live control checks
@@ -409,7 +413,7 @@ var soc2Controls = []control{
 	},
 	{
 		id: "CC6.5-RETAIN", name: "Data Retention and Disposal",
-		category: "Change Management", criteria: "CC6.5",
+		category: "Logical and Physical Access Controls", criteria: "CC6.5",
 		check: checkRetentionPolicy,
 	},
 	{
@@ -439,67 +443,68 @@ var soc2Controls = []control{
 	},
 }
 
-// iso27001Controls is the ISO/IEC 27001:2013 catalog: 12 controls mapped to
-// Annex A controls A.8–A.18.
+// iso27001Controls is the ISO/IEC 27001:2022 catalog: 12 controls mapped to
+// Annex A organizational (A.5) and technological (A.8) controls, each with its
+// 2013 reference. IDs keep their first names so stored runs still line up.
 var iso27001Controls = []control{
 	{
 		id: "A.9.4-MFA", name: "Multi-Factor Authentication",
-		category: "Access Control", criteria: "A.9.4",
+		category: "Technological controls", criteria: "A.8.5", criteria2013: "A.9.4",
 		check: checkMFAEnforcement,
 	},
 	{
 		id: "A.9.4.3-PWD-LEN", name: "Password Policy — Minimum Length",
-		category: "Access Control", criteria: "A.9.4.3",
+		category: "Organizational controls", criteria: "A.5.17", criteria2013: "A.9.4.3",
 		check: checkPasswordMinLength,
 	},
 	{
 		id: "A.9.4.3-PWD-CMPLX", name: "Password Policy — Complexity",
-		category: "Access Control", criteria: "A.9.4.3",
+		category: "Organizational controls", criteria: "A.5.17", criteria2013: "A.9.4.3",
 		check: checkPasswordComplexity,
 	},
 	{
 		id: "A.9.2-RBAC", name: "User Access Management",
-		category: "Access Control", criteria: "A.9.2",
+		category: "Organizational controls", criteria: "A.5.18", criteria2013: "A.9.2",
 		check: checkRBACRoles,
 	},
 	{
 		id: "A.9.4-SESSION", name: "Session Security Controls",
-		category: "Access Control", criteria: "A.9.4",
+		category: "Technological controls", criteria: "A.8.5", criteria2013: "A.9.4",
 		check: checkSessionTimeout,
 	},
 	{
 		id: "A.10.1-ENCRYPT", name: "Cryptographic Controls — Secrets Vault",
-		category: "Cryptography", criteria: "A.10.1",
+		category: "Technological controls", criteria: "A.8.24", criteria2013: "A.10.1",
 		check: checkSecretsEncryption,
 	},
 	{
 		id: "A.12.4.1-AUDIT", name: "Audit Log Coverage",
-		category: "Operations Security", criteria: "A.12.4.1",
+		category: "Technological controls", criteria: "A.8.15", criteria2013: "A.12.4.1",
 		check: checkAuditLogCoverage,
 	},
 	{
 		id: "A.12.4.2-CHAIN", name: "Audit Log Integrity",
-		category: "Operations Security", criteria: "A.12.4.2",
+		category: "Technological controls", criteria: "A.8.15", criteria2013: "A.12.4.2",
 		check: checkAuditLogChain,
 	},
 	{
 		id: "A.12.4.3-SIEM", name: "Log Forwarding and SIEM Integration",
-		category: "Operations Security", criteria: "A.12.4.3",
+		category: "Technological controls", criteria: "A.8.16", criteria2013: "A.12.4.3",
 		check: checkSIEMForwarding,
 	},
 	{
 		id: "A.13.1-IP", name: "Network Access Controls",
-		category: "Communications Security", criteria: "A.13.1",
+		category: "Technological controls", criteria: "A.8.20", criteria2013: "A.13.1",
 		check: checkIPAccessRules,
 	},
 	{
 		id: "A.18.1-GDPR", name: "Privacy and Data-Subject Processes",
-		category: "Compliance", criteria: "A.18.1",
+		category: "Organizational controls", criteria: "A.5.34", criteria2013: "A.18.1",
 		check: checkGDPRProcesses,
 	},
 	{
 		id: "A.8.3-RETAIN", name: "Data Retention and Disposal",
-		category: "Asset Management", criteria: "A.8.3",
+		category: "Technological controls", criteria: "A.8.10", criteria2013: "A.8.3",
 		check: checkRetentionPolicy,
 	},
 }
@@ -523,12 +528,13 @@ func (s *EvidenceService) Generate(ctx context.Context, tenantID uuid.UUID, fram
 	for _, c := range controls {
 		status, detail := c.check(ctx, s, tenantID)
 		results = append(results, ControlResult{
-			ID:       c.id,
-			Name:     c.name,
-			Category: c.category,
-			Criteria: c.criteria,
-			Status:   status,
-			Detail:   detail,
+			ID:           c.id,
+			Name:         c.name,
+			Category:     c.category,
+			Criteria:     c.criteria,
+			Criteria2013: c.criteria2013,
+			Status:       status,
+			Detail:       detail,
 		})
 	}
 	passCount, failCount, naCount := tallyResults(results)
