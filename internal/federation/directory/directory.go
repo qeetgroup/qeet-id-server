@@ -158,6 +158,7 @@ type Handler struct {
 // Mount registers the directory routes on r.
 func (handler *Handler) Mount(router chi.Router) {
 	router.Get("/tenants/{tenantID}/directory/connections", handler.list)
+	router.Get("/tenants/{tenantID}/directory/profiles/{userID}", handler.profiles)
 	router.Get("/tenants/{tenantID}/directory/activity", handler.events)
 	router.Post("/tenants/{tenantID}/directory/alerts", handler.createAlert)
 	router.Get("/tenants/{tenantID}/directory/alerts", handler.listAlerts)

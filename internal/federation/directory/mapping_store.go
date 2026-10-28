@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -294,4 +295,70 @@ func mappingAudit(ctx context.Context, tx pgx.Tx, request *http.Request, tenantI
 		actorType = principal.ActorType
 	}
 	return audit.Record(ctx, tx, audit.Event{TenantID: &tenantID, ActorUserID: actor, ActorType: actorType, Action: action, ResourceType: "directory_mapping", ResourceID: &mappingID, IP: httpx.ClientIP(request), RequestID: httpx.RequestID(request)})
+}
+
+// Profile is what one connection's mappings set on a person: email,
+// display_name, first_name, last_name, department, title, manager_id and
+// groups, as the directory last sent them.
+type Profile struct {
+	ConnectionID   string         `json:"connection_id"`
+	ConnectionName string         `json:"connection_name"`
+	Fields         map[string]any `json:"fields"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+}
+
+// profiles serves GET /tenants/{tenantID}/directory/profiles/{userID}: the
+// person's profile from each connection that set one, newest first. Another
+// organisation's person has none here.
+func (handler *Handler) profiles(response http.ResponseWriter, request *http.Request) {
+	tenantID, err := requireTenant(request)
+	if err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	userID, err := uuid.Parse(chi.URLParam(request, "userID"))
+	if err != nil {
+		httpx.WriteError(response, request, errs.ErrBadRequest)
+		return
+	}
+	ctx := request.Context()
+	rows, err := handler.Service.pool.Query(ctx, `SELECT connection_id, profile, updated_at FROM tenant.directory_profiles
+		WHERE tenant_id=$1 AND user_id=$2 ORDER BY updated_at DESC, connection_id`, tenantID, userID)
+	if err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	items := []Profile{}
+	for rows.Next() {
+		var p Profile
+		var raw []byte
+		if err := rows.Scan(&p.ConnectionID, &raw, &p.UpdatedAt); err != nil {
+			rows.Close()
+			httpx.WriteError(response, request, err)
+			return
+		}
+		p.Fields = map[string]any{}
+		_ = json.Unmarshal(raw, &p.Fields)
+		items = append(items, p)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		httpx.WriteError(response, request, err)
+		return
+	}
+	if len(items) > 0 {
+		connections, err := handler.Service.List(ctx, tenantID)
+		if err != nil {
+			httpx.WriteError(response, request, err)
+			return
+		}
+		names := map[string]string{}
+		for _, c := range connections {
+			names[c.ID] = c.Name
+		}
+		for i := range items {
+			items[i].ConnectionName = names[items[i].ConnectionID]
+		}
+	}
+	httpx.WriteJSON(response, http.StatusOK, map[string]any{"items": items})
 }

@@ -157,6 +157,7 @@ func userPermissionMap() map[string]string {
 		"DELETE /v1/tenants/{tenantID}/saml-providers/{id}":                                       "connection.write",
 		"GET /v1/tenants/{tenantID}/scim":                                                         "connection.read",
 		"GET /v1/tenants/{tenantID}/directory/connections":                                        "connection.read",
+		"GET /v1/tenants/{tenantID}/directory/profiles/{userID}":                                  "user.read",
 		"GET /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings":                "connection.read",
 		"POST /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings":               "connection.write",
 		"POST /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings/preview":       "connection.read",

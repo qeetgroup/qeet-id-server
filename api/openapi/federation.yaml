@@ -3565,6 +3565,45 @@ paths:
         '401': {description: Authentication required}
         '403': {description: Tenant mismatch or missing connection.write}
         '404': {description: No such alert in the organisation}
+  /v1/tenants/{tenantID}/directory/profiles/{userID}:
+    get:
+      operationId: get_v1_tenants_ByTenantID_directory_profiles_ByUserID
+      summary: A person's directory profile
+      description: >-
+        Requires user.read. The fields each directory connection's mappings set
+        on the person (email, display_name, first_name, last_name, department,
+        title, manager_id, groups), as the directory last sent them, one item
+        per connection, newest first, with the connection and when it updated
+        them. A person of another organisation has none here.
+      tags: [Directory]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: userID, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: The person's profiles
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [connection_id, connection_name, fields, updated_at]
+                      properties:
+                        connection_id: {type: string}
+                        connection_name: {type: string, description: 'The connection''s name; empty if it was removed.'}
+                        fields: {type: object, additionalProperties: true}
+                        updated_at: {type: string, format: date-time}
+        '400': {description: Invalid person}
+        '401': {description: Authentication required}
+        '403': {description: Tenant mismatch or missing user.read}
   /v1/tenants/{tenantID}/directory/connections:
     get:
       operationId: get_v1_tenants_ByTenantID_directory_connections

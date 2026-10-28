@@ -586,3 +586,36 @@ func TestConnectionsCountTheirPeopleAndGroups(test *testing.T) {
 		test.Errorf("counts %v; want Head office 2 people, Branch 0, SCIM 2 groups", got)
 	}
 }
+
+// TestPersonsDirectoryProfileIsReturned checks that a person's mapped profile
+// comes back per connection, named, and that another organisation's person
+// has none here.
+func TestPersonsDirectoryProfileIsReturned(test *testing.T) {
+	pool := dbtest.Pool(test)
+	ctx := dbtest.Context(test)
+	tenantID, other := dbtest.Tenant(test), dbtest.Tenant(test)
+	admin, person, elsewhere := dbtest.User(test, tenantID, tenantID), dbtest.User(test, tenantID, tenantID), dbtest.User(test, other, other)
+	connection := uuid.New()
+	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{records: []ldap.Connection{{ID: connection, TenantID: tenantID, Name: "Head office"}}})
+	service.SetEventStore(pool)
+	for _, row := range []struct {
+		tenant, user uuid.UUID
+	}{{tenantID, person.ID}, {other, elsewhere.ID}} {
+		if _, err := pool.Exec(ctx, `INSERT INTO tenant.directory_profiles (tenant_id, user_id, connection_id, profile) VALUES ($1, $2, $3, '{"title": "Engineer", "groups": ["eng"]}')`,
+			row.tenant, row.user, connection.String()); err != nil {
+			test.Fatal(err)
+		}
+	}
+	h := dbtest.Serve(dbtest.Principal(admin.ID, tenantID), (&Handler{Service: service}).Mount)
+	var got struct {
+		Items []Profile `json:"items"`
+	}
+	dbtest.Decode(test, dbtest.Do(test, h, http.MethodGet, "/tenants/"+tenantID.String()+"/directory/profiles/"+person.ID.String(), nil), &got)
+	if len(got.Items) != 1 || got.Items[0].ConnectionName != "Head office" || got.Items[0].Fields["title"] != "Engineer" {
+		test.Errorf("profile %+v; want one from Head office with the title", got.Items)
+	}
+	dbtest.Decode(test, dbtest.Do(test, h, http.MethodGet, "/tenants/"+tenantID.String()+"/directory/profiles/"+elsewhere.ID.String(), nil), &got)
+	if len(got.Items) != 0 {
+		test.Errorf("another organisation's person: %+v, want nothing", got.Items)
+	}
+}
