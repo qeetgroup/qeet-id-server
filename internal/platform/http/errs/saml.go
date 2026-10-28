@@ -28,6 +28,7 @@ const (
 	CodeSAMLAuthnRequestInvalid      = "saml.authn_request_invalid"
 	CodeSAMLRequestParamMissing      = "saml.request_param_missing"
 	CodeSAMLServiceProviderDisabled  = "saml.service_provider_disabled"
+	CodeSAMLServiceProviderDraft     = "saml.service_provider_draft"
 	CodeSAMLACSMismatch              = "saml.acs_url_mismatch"
 	CodeSAMLACSURLInvalid            = "saml.acs_url_invalid"
 	CodeSAMLSPFieldsRequired         = "saml.sp_fields_required"
@@ -76,6 +77,7 @@ var (
 	ErrSAMLAuthnRequestInvalid      = New(CodeSAMLAuthnRequestInvalid, "The SAMLRequest couldn't be read.")
 	ErrSAMLRequestParamMissing      = New(CodeSAMLRequestParamMissing, "A SAMLRequest or sp parameter is required.")
 	ErrSAMLServiceProviderDisabled  = New(CodeSAMLServiceProviderDisabled, "This service provider is disabled.")
+	ErrSAMLServiceProviderDraft     = New(CodeSAMLServiceProviderDraft, "This app is still being set up, so it can't sign anyone in yet.")
 	ErrSAMLACSMismatch              = New(CodeSAMLACSMismatch, "The assertion consumer service URL doesn't match the registered value.")
 	ErrSAMLACSURLInvalid            = New(CodeSAMLACSURLInvalid, "The ACS URL must be an absolute https:// URL without a user name or password (http only on localhost).")
 	ErrSAMLSPFieldsRequired         = New(CodeSAMLSPFieldsRequired, "Name, entity ID and ACS URL are all required.")

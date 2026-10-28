@@ -1006,6 +1006,16 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 		writeSSOError(w, r, errs.ErrSAMLServiceProviderDisabled)
 		return
 	}
+	// A draft app is still being set up: it signs no one in, and an attempt by
+	// someone signed in is audited.
+	if sp.Status == "draft" {
+		if userID, ok := h.idpSessionUser(r); ok {
+			h.refuse(w, r, sp, userID, errs.ErrSAMLServiceProviderDraft, "draft")
+		} else {
+			writeSSOError(w, r, errs.ErrSAMLServiceProviderDraft)
+		}
+		return
+	}
 	// The plan is checked at every sign-in, not only when the service provider
 	// was registered, so one set up on a plan that has since lapsed stops.
 	if err := h.IdP.requireSSO(r.Context(), sp.TenantID); err != nil {

@@ -199,6 +199,24 @@ func TestIdPIssuesAssertionsAsRegistered(t *testing.T) {
 		t.Errorf("a request from a disabled SP: %d %s, want 404", rec.Code, rec.Body.String())
 	}
 
+	// A draft app signs no one in, whichever way the sign-in starts, and an
+	// attempt by someone signed in is audited.
+	setSPStatus(t, ctx, s.idp, sp, "draft")
+	for _, c := range []struct{ name, query, cookie string }{
+		{"by ID, signed in", "sp=" + sp.ID.String(), cookie},
+		{"by ID, not signed in", "sp=" + sp.ID.String(), ""},
+		{"from the SP", authnRequestTo(sp.EntityID, "_req-5", ""), cookie},
+	} {
+		rec := idpGet(t, s.router, prefix+"/sso?"+c.query, c.cookie)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLServiceProviderDraft) || strings.Contains(rec.Body.String(), "SAMLResponse") {
+			t.Errorf("SSO to a draft SP %s: %d %s, want 403 %s", c.name, rec.Code, rec.Body.String(), errs.CodeSAMLServiceProviderDraft)
+		}
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'saml.idp_assertion_refused' AND resource_id = $2
+		AND metadata->>'reason' = 'draft'`, tenant, sp.ID); n != 2 {
+		t.Errorf("%d refused sign-ins to the draft SP recorded, want the 2 by a signed-in person", n)
+	}
+
 	bare := chi.NewRouter()
 	(&Handler{Service: &Service{}}).MountPublic(bare)
 	for _, path := range []string{prefix + "/metadata", prefix + "/sso?sp=" + sp.ID.String()} {

@@ -35,6 +35,7 @@ func init() {
 		errs.CodeSAMLAuthnRequestInvalid:      http.StatusBadRequest,
 		errs.CodeSAMLRequestParamMissing:      http.StatusBadRequest,
 		errs.CodeSAMLServiceProviderDisabled:  http.StatusForbidden,
+		errs.CodeSAMLServiceProviderDraft:     http.StatusForbidden,
 		errs.CodeSAMLACSMismatch:              http.StatusBadRequest,
 		errs.CodeSAMLACSURLInvalid:            http.StatusUnprocessableEntity,
 		errs.CodeSAMLSPFieldsRequired:         http.StatusUnprocessableEntity,
