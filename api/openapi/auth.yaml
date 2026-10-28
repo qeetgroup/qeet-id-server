@@ -228,6 +228,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/auth/mfa/send:
     post:
       operationId: post_v1_auth_mfa_send
@@ -407,6 +409,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/auth/logout:
     post:
       operationId: post_v1_auth_logout
@@ -710,6 +714,8 @@ paths:
           $ref: '#/components/responses/SSORequired'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/auth/session:
     delete:
       operationId: delete_v1_auth_session
@@ -854,6 +860,8 @@ paths:
           $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/auth/register:
     post:
       operationId: post_v1_auth_register
@@ -930,6 +938,8 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/auth/sign-in-methods:
     get:
       operationId: get_v1_auth_sign_in_methods
@@ -1035,6 +1045,8 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/auth/trusted-devices:
     get:
       operationId: get_v1_auth_trusted_devices
@@ -1427,6 +1439,8 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/auth/switch-tenant:
     post:
       operationId: post_v1_auth_switch_tenant
@@ -2277,6 +2291,8 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/mfa/step-up/status:
     get:
       operationId: get_v1_mfa_step_up_status
@@ -2522,6 +2538,8 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/mfa/totp/enroll/start:
     post:
       operationId: post_v1_mfa_totp_enroll_start
@@ -2610,6 +2628,8 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/mfa/webauthn/challenge:
     post:
       operationId: post_v1_mfa_webauthn_challenge
@@ -5042,6 +5062,17 @@ components:
       name: qe_ls
       description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session and consumed by the OAuth authorize/consent flow, and by the few signed-in routes the hosted login calls itself (listing, renaming and adding passkeys). State-changing calls made with it need the CSRF token.
   responses:
+    Overloaded:
+      description: The server is too busy to check or set a password or code now, so the request was refused and changed nothing (`server.overloaded`, retryable). Try again after the seconds Retry-After gives, also sent as `metadata.retry_after`.
+      headers:
+        Retry-After:
+          description: Seconds to wait before trying again (1 to 3).
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     BadRequest:
       description: Malformed request
       content:
@@ -5091,7 +5122,12 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     SignInUnavailable:
-      description: The sign-in lockout could not be evaluated (its counters could not be read or written), or the password could not be checked within a few seconds because the service is busy, so the attempt was refused and not counted (`auth.sign_in_unavailable`, retryable). The same answer whatever the password and whether the address has an account.
+      description: The attempt was refused and not counted, the same answer whatever the password and whether the address has an account. Either the sign-in lockout could not be evaluated, its counters could not be read or written (`auth.sign_in_unavailable`, retryable), or the server is too busy to check a password now (`server.overloaded`, retryable, with Retry-After).
+      headers:
+        Retry-After:
+          description: With `server.overloaded`, seconds to wait before trying again (1 to 3), also sent as `metadata.retry_after`.
+          schema:
+            type: integer
       content:
         application/json:
           schema:

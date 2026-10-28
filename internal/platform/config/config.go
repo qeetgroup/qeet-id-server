@@ -363,6 +363,14 @@ type Config struct {
 	LoginSprayWindow   time.Duration `envconfig:"LOGIN_SPRAY_WINDOW" default:"15m"`
 	LoginSprayBlock    time.Duration `envconfig:"LOGIN_SPRAY_BLOCK" default:"15m"`
 
+	// Password hashing, the server's costliest work, is bounded so an overload
+	// is turned away rather than slowing everyone: so many hashes at once (0:
+	// GOMAXPROCS), so many more waiting (0: twice that), each at most
+	// PasswordHashMaxWait. Beyond that a request is answered 503 server.overloaded.
+	PasswordHashConcurrency int           `envconfig:"PASSWORD_HASH_CONCURRENCY" default:"0"`
+	PasswordHashQueue       int           `envconfig:"PASSWORD_HASH_QUEUE" default:"0"`
+	PasswordHashMaxWait     time.Duration `envconfig:"PASSWORD_HASH_MAX_WAIT" default:"1s"`
+
 	// WebAuthn Relying Party config. Empty values default from AppBaseURL /
 	// ServiceName (see WebAuthnRP). RP_ID is the effective domain (no scheme/
 	// port); RP_ORIGINS is a comma-separated allow-list of full origins.
@@ -389,7 +397,8 @@ type Config struct {
 }
 
 // Load reads the Config from the environment and rejects an unknown SERVICE_ENV
-// or SERVICE_PROFILE and unsafe sign-in lockout or session lifetime settings.
+// or SERVICE_PROFILE and unsafe sign-in lockout, session lifetime or password
+// hashing settings.
 // Validate applies the production gates.
 func Load() (*Config, error) {
 	var c Config
@@ -405,7 +414,19 @@ func Load() (*Config, error) {
 	if err := c.checkSessionLifetime(); err != nil {
 		return nil, err
 	}
+	if err := c.checkPasswordHashing(); err != nil {
+		return nil, err
+	}
 	return &c, nil
+}
+
+// checkPasswordHashing rejects a negative hashing limit, and a longest wait
+// for a hashing slot that is not positive or above PasswordHashMaxWaitMax.
+func (c *Config) checkPasswordHashing() error {
+	if c.PasswordHashConcurrency < 0 || c.PasswordHashQueue < 0 || c.PasswordHashMaxWait <= 0 || c.PasswordHashMaxWait > PasswordHashMaxWaitMax {
+		return fmt.Errorf("invalid password hashing limits: PASSWORD_HASH_CONCURRENCY and PASSWORD_HASH_QUEUE must not be negative, and PASSWORD_HASH_MAX_WAIT must lie within (0, %v]", PasswordHashMaxWaitMax)
+	}
+	return nil
 }
 
 // Session lifetime limits, for the platform defaults here and for an
@@ -417,6 +438,10 @@ const (
 	SessionMaxAgeMax      = 365 * 24 * time.Hour
 	SessionIdleTimeoutMin = 15 * time.Minute
 )
+
+// PasswordHashMaxWaitMax bounds PASSWORD_HASH_MAX_WAIT: a longer wait for a
+// hashing slot is the queueing the limit is there to stop.
+const PasswordHashMaxWaitMax = 10 * time.Second
 
 // RefreshTokenReuseGraceMax bounds the refresh reuse grace: a token used again
 // later than this is treated as stolen.

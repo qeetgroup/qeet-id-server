@@ -393,7 +393,11 @@ func (s *Service) verifyCode(ctx context.Context, tx pgx.Tx, userID uuid.UUID, c
 	}
 	var matchedID *uuid.UUID
 	for _, rc := range rcRows {
-		if password.Verify(rc.CodeHash, code) {
+		ok, err := password.VerifyWithin(ctx, rc.CodeHash, code)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
 			matched := rc.ID
 			matchedID = &matched
 		}

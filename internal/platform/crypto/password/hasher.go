@@ -13,10 +13,15 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // Argon2id parameters: the OWASP "Password Storage" baseline (19 MiB, t=2,
@@ -29,60 +34,128 @@ const (
 	argonKeyLen  uint32 = 32
 )
 
-// ErrHasherBusy reports that every Argon2id slot stayed taken for argonWait, so
-// a VerifyWithin caller can answer "try again later".
-var ErrHasherBusy = errors.New("password hasher busy")
+// ErrHasherBusy is the answer when the hasher is full: every slot is taken and
+// as many callers wait as may, or no slot freed up in time. It is
+// errs.ErrServerOverloaded, which is answered 503 with Retry-After.
+var ErrHasherBusy = errs.ErrServerOverloaded
 
-// argonSlots bounds concurrent Argon2id computations, so hashing memory stays
-// near cap(argonSlots) × 19 MiB however many requests arrive at once.
-var argonSlots = make(chan struct{}, 2*runtime.GOMAXPROCS(0))
+// Limits bounds password hashing, the server's most expensive work: so many
+// hashes run at once (each holding 19 MiB), at most Queue more callers wait
+// for a slot, each for at most MaxWait, and any caller beyond is refused.
+type Limits struct {
+	Concurrency int           // hashes at once; 0: GOMAXPROCS
+	Queue       int           // callers waiting for a slot; 0: twice Concurrency
+	MaxWait     time.Duration // longest wait for a slot; 0: one second
+}
 
-const argonWaitLimit = 3 * time.Second // VerifyWithin's longest wait for a slot
+const defaultMaxWait = time.Second // Limits.MaxWait when unset
 
-// argonWait is argonWaitLimit; tests shorten it.
-var argonWait = argonWaitLimit
+var rejections = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "password_hasher_rejections_total",
+	Help: "Password hashes refused because the hasher was full (queue_full) or no slot freed up in time (timeout).",
+}, []string{"reason"})
+
+// limiter holds the slots of a Limits and counts the callers waiting for one.
+type limiter struct {
+	slots   chan struct{}
+	waiting atomic.Int64
+	queue   int64
+	wait    time.Duration
+}
+
+// hasher is the limiter in force; Configure replaces it.
+var hasher atomic.Pointer[limiter]
+
+func init() { Configure(Limits{}) }
+
+// Configure sets the hashing limits; call it before serving. A hash already
+// running or waiting keeps the limits it started under.
+func Configure(l Limits) {
+	if l.Concurrency <= 0 {
+		l.Concurrency = runtime.GOMAXPROCS(0)
+	}
+	if l.Queue <= 0 {
+		l.Queue = 2 * l.Concurrency
+	}
+	if l.MaxWait <= 0 {
+		l.MaxWait = defaultMaxWait
+	}
+	hasher.Store(&limiter{slots: make(chan struct{}, l.Concurrency), queue: int64(l.Queue), wait: l.MaxWait})
+}
+
+// run does work in a hasher slot. Bounded, it refuses with ErrHasherBusy when
+// the queue is full or no slot frees up within the longest wait, and with
+// ctx's error once ctx ends; otherwise it waits as long as it takes.
+func run(ctx context.Context, bounded bool, work func()) error {
+	l := hasher.Load()
+	select {
+	case l.slots <- struct{}{}:
+	default:
+		if err := l.await(ctx, bounded); err != nil {
+			return err
+		}
+	}
+	defer func() { <-l.slots }()
+	work()
+	return nil
+}
+
+// await waits for a slot of l as run describes.
+func (l *limiter) await(ctx context.Context, bounded bool) error {
+	if !bounded {
+		l.slots <- struct{}{}
+		return nil
+	}
+	if l.waiting.Add(1) > l.queue {
+		l.waiting.Add(-1)
+		rejections.WithLabelValues("queue_full").Inc()
+		return ErrHasherBusy
+	}
+	defer l.waiting.Add(-1)
+	timer := time.NewTimer(l.wait)
+	defer timer.Stop()
+	select {
+	case l.slots <- struct{}{}:
+		return nil
+	case <-timer.C:
+		rejections.WithLabelValues("timeout").Inc()
+		return ErrHasherBusy
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// FillForTest takes every slot and queue place of the hasher, so a bounded
+// hash is refused at once until the returned function frees them.
+func FillForTest() (release func()) {
+	l := hasher.Load()
+	for range cap(l.slots) {
+		l.slots <- struct{}{}
+	}
+	l.waiting.Add(l.queue)
+	return func() {
+		l.waiting.Add(-l.queue)
+		for range cap(l.slots) {
+			<-l.slots
+		}
+	}
+}
 
 // argon2IDKey computes the key; tests replace it to observe concurrency.
 var argon2IDKey = argon2.IDKey
 
-// keyFunc computes an Argon2id key, waiting for a slot as its caller allows.
-type keyFunc func(plain, salt []byte, passes, mem uint32, threads uint8, keyLen uint32) ([]byte, error)
-
-// idKey is argon2.IDKey run while holding one of argonSlots, waiting for one as
-// long as it takes.
-func idKey(plain, salt []byte, passes, mem uint32, threads uint8, keyLen uint32) ([]byte, error) {
-	argonSlots <- struct{}{}
-	defer func() { <-argonSlots }()
-	return argon2IDKey(plain, salt, passes, mem, threads, keyLen), nil
-}
-
-// idKeyWithin returns idKey that gives up waiting for a slot with
-// ErrHasherBusy after argonWait, or with ctx's error once it ends.
-func idKeyWithin(ctx context.Context) keyFunc {
-	return func(plain, salt []byte, passes, mem uint32, threads uint8, keyLen uint32) ([]byte, error) {
-		timer := time.NewTimer(argonWait)
-		defer timer.Stop()
-		select {
-		case argonSlots <- struct{}{}:
-		case <-timer.C:
-			return nil, ErrHasherBusy
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-		defer func() { <-argonSlots }()
-		return argon2IDKey(plain, salt, passes, mem, threads, keyLen), nil
-	}
-}
-
 // Hash returns an Argon2id PHC-encoded hash:
-// $argon2id$v=19$m=19456,t=2,p=1$<saltB64>$<hashB64>.
+// $argon2id$v=19$m=19456,t=2,p=1$<saltB64>$<hashB64>. When the hasher is full
+// it returns ErrHasherBusy.
 func Hash(plain string) (string, error) {
 	salt := make([]byte, argonSaltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-	key, err := idKey([]byte(plain), salt, argonTime, argonMemKiB, argonThreads, argonKeyLen)
-	if err != nil {
+	var key []byte
+	if err := run(context.Background(), true, func() {
+		key = argon2IDKey([]byte(plain), salt, argonTime, argonMemKiB, argonThreads, argonKeyLen)
+	}); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
@@ -93,25 +166,30 @@ func Hash(plain string) (string, error) {
 }
 
 // Verify reports whether plain matches the stored hash, transparently handling
-// both Argon2id and legacy bcrypt encodings.
+// both Argon2id and legacy bcrypt encodings. It waits for a hasher slot as
+// long as it takes; a request should use VerifyWithin.
 func Verify(hash, plain string) bool {
-	ok, _ := verify(hash, plain, idKey)
+	ok, _ := verify(context.Background(), hash, plain, false)
 	return ok
 }
 
-// VerifyWithin is Verify for a caller that would rather answer "try again"
-// than queue behind other verifications: it returns ErrHasherBusy if no
-// hashing slot frees up within argonWait, or ctx's error once ctx ends.
+// VerifyWithin is Verify for a request, which would rather answer "try again"
+// than queue behind other hashes: when the hasher is full it returns
+// ErrHasherBusy, and ctx's error once ctx ends.
 func VerifyWithin(ctx context.Context, hash, plain string) (bool, error) {
-	return verify(hash, plain, idKeyWithin(ctx))
+	return verify(ctx, hash, plain, true)
 }
 
-func verify(hash, plain string, key keyFunc) (bool, error) {
+func verify(ctx context.Context, hash, plain string, bounded bool) (bool, error) {
 	switch {
 	case strings.HasPrefix(hash, "$argon2id$"):
-		return verifyArgon2id(hash, plain, key)
+		return verifyArgon2id(ctx, hash, plain, bounded)
 	case strings.HasPrefix(hash, "$2"): // bcrypt: $2a$ / $2b$ / $2y$
-		return bcrypt.CompareHashAndPassword([]byte(hash), []byte(plain)) == nil, nil
+		var ok bool
+		err := run(ctx, bounded, func() {
+			ok = bcrypt.CompareHashAndPassword([]byte(hash), []byte(plain)) == nil
+		})
+		return ok, err
 	default:
 		return false, nil
 	}
@@ -132,13 +210,15 @@ func NeedsRehash(hash string) bool {
 	return mem < argonMemKiB || time < argonTime || threads != argonThreads
 }
 
-func verifyArgon2id(hash, plain string, key keyFunc) (bool, error) {
+func verifyArgon2id(ctx context.Context, hash, plain string, bounded bool) (bool, error) {
 	mem, time, threads, salt, want, err := decodeArgon2id(hash)
 	if err != nil {
 		return false, nil //nolint:nilerr // a malformed hash matches nothing
 	}
-	got, err := key([]byte(plain), salt, time, mem, threads, uint32(len(want))) // #nosec G115 -- stored key length, a few dozen bytes
-	if err != nil {
+	var got []byte
+	if err := run(ctx, bounded, func() {
+		got = argon2IDKey([]byte(plain), salt, time, mem, threads, uint32(len(want))) // #nosec G115 -- stored key length, a few dozen bytes
+	}); err != nil {
 		return false, err
 	}
 	return subtle.ConstantTimeCompare(got, want) == 1, nil

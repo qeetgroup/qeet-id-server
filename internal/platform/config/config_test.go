@@ -326,6 +326,33 @@ func TestLoad_BreachedPasswordCheckOnByDefault(t *testing.T) {
 	}
 }
 
+// TestLoad_PasswordHashLimits checks the hashing limits' defaults and that a
+// negative limit or a wait out of range is refused.
+func TestLoad_PasswordHashLimits(t *testing.T) {
+	setRequiredEnv(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("defaults should load: %v", err)
+	}
+	if c.PasswordHashConcurrency != 0 || c.PasswordHashQueue != 0 || c.PasswordHashMaxWait != time.Second {
+		t.Errorf("hashing defaults = %d / %d / %v, want 0 / 0 / 1s", c.PasswordHashConcurrency, c.PasswordHashQueue, c.PasswordHashMaxWait)
+	}
+	for _, env := range [][2]string{
+		{"PASSWORD_HASH_CONCURRENCY", "-1"},
+		{"PASSWORD_HASH_QUEUE", "-1"},
+		{"PASSWORD_HASH_MAX_WAIT", "0s"},
+		{"PASSWORD_HASH_MAX_WAIT", "11s"},
+	} {
+		t.Run(env[0]+"="+env[1], func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv(env[0], env[1])
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PASSWORD_HASH_") {
+				t.Errorf("want a hashing limits error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestLoad_RejectsUnsafeSignInLockout(t *testing.T) {
 	for name, env := range map[string][2]string{
 		"default above its maximum":   {"LOGIN_LOCKOUT_THRESHOLD", "50"},

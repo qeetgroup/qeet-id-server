@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -388,29 +388,37 @@ func (s *Service) clearFailedSignIns(ctx context.Context, a signInAttempt) error
 	return nil
 }
 
-// timingHash is a password hash with the current parameters, verified when an
+// timing holds a password hash with the current parameters, verified when an
 // address has no account (or no password) so that answer costs as long as a
 // wrong password on a real account.
-var timingHash = sync.OnceValue(func() string {
+var timing atomic.Pointer[string]
+
+// timingHash returns timing's hash, made on first use. A hasher too busy to
+// make it now returns ErrHasherBusy, and a later call tries again.
+func timingHash() (string, error) {
+	if h := timing.Load(); h != nil {
+		return *h, nil
+	}
 	h, err := password.Hash(uuid.NewString())
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return h
-})
+	timing.CompareAndSwap(nil, &h)
+	return *timing.Load(), nil
+}
 
 // verifyPassword checks plain against a stored hash. With no stored hash it
 // still spends a full verification, so the outcome's timing does not reveal
-// that the account has no password. When the hasher is too busy to answer in
-// time it returns ErrAuthSignInUnavailable, which is not a failed sign-in.
+// that the account has no password. When the hasher is too busy it returns
+// errs.ErrServerOverloaded, which is not a failed sign-in.
 func verifyPassword(ctx context.Context, hash, plain string) (bool, error) {
 	stored := hash
 	if stored == "" {
-		stored = timingHash()
+		var err error
+		if stored, err = timingHash(); err != nil {
+			return false, err
+		}
 	}
 	ok, err := password.VerifyWithin(ctx, stored, plain)
-	if errors.Is(err, password.ErrHasherBusy) {
-		return false, errs.ErrAuthSignInUnavailable
-	}
-	return ok && hash != "", err
+	return ok && hash != "" && err == nil, err
 }

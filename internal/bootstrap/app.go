@@ -14,6 +14,7 @@ import (
 	"github.com/mattn/go-isatty"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/migrations"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
@@ -86,6 +87,9 @@ func Run() {
 	httpx.SetTrustedProxyHops(cfg.TrustedProxyHops)
 	httpx.SetRelayKeys(cfg.RelayKeys()) // first-party relays may name the person's address
 	httpx.SetGeoCountryHeader(cfg.GeoCountryHeader)
+	password.Configure(password.Limits{
+		Concurrency: cfg.PasswordHashConcurrency, Queue: cfg.PasswordHashQueue, MaxWait: cfg.PasswordHashMaxWait,
+	})
 	if !cfg.IsDev() && cfg.TrustedProxyHops == 0 {
 		slog.Warn("TRUSTED_PROXY_HOPS is 0: X-Forwarded-For is ignored and every " +
 			"client IP will be the transport peer. Set it to the number of reverse " +

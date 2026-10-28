@@ -306,8 +306,14 @@ func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) er
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	if currentHash != "" && !password.Verify(currentHash, in.Current) {
-		return errs.ErrAuthInvalidCredentials
+	if currentHash != "" {
+		ok, err := password.VerifyWithin(ctx, currentHash, in.Current)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errs.ErrAuthInvalidCredentials
+		}
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO auth.password_credentials (user_id, password_hash)
@@ -376,5 +382,9 @@ func (s *Service) ReauthPassword(ctx context.Context, userID uuid.UUID, plain st
 	if hash == "" {
 		return false, false, nil
 	}
-	return true, plain != "" && password.Verify(hash, plain), nil
+	if plain == "" {
+		return true, false, nil
+	}
+	ok, err = password.VerifyWithin(ctx, hash, plain)
+	return true, ok, err
 }

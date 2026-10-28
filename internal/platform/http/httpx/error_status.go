@@ -25,6 +25,7 @@ var statusByCode = map[string]int{
 	errs.CodeUnsupportedMedia:    http.StatusUnsupportedMediaType,
 	errs.CodeInternal:            http.StatusInternalServerError,
 	errs.CodeNotImplemented:      http.StatusNotImplemented,
+	errs.CodeServerOverloaded:    http.StatusServiceUnavailable,
 
 	// MFA.
 	errs.CodeMFATOTPCodeInvalid:     http.StatusBadRequest,
