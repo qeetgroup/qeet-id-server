@@ -189,10 +189,26 @@ func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
 // Get returns the tenant's security policy, or the defaults when it has none.
 func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, error) {
+	return r.get(ctx, r.pool, tenantID)
+}
+
+// rowQuerier is a pool or a transaction.
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// lockForChange takes, on tx, the tenant's policy lock, so a change based on
+// the stored policy can't lose one made meanwhile.
+func lockForChange(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('security_policy:' || $1::text, 0))`, tenantID)
+	return err
+}
+
+func (r *Repository) get(ctx context.Context, q rowQuerier, tenantID uuid.UUID) (*Policy, error) {
 	var p Policy
 	var settings []byte
 	var sessionAge, sessionIdle, stepUpWindow int64
-	err := r.pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		SELECT tenant_id,
 		       EXTRACT(EPOCH FROM session_max_age)::bigint,
 		       EXTRACT(EPOCH FROM session_idle_timeout)::bigint,
@@ -299,6 +315,7 @@ type Handler struct {
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/policy", h.get)
 	r.Put("/tenants/{tenantID}/policy", h.put)
+	r.Patch("/tenants/{tenantID}/policy", h.patch)
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
@@ -326,6 +343,58 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	ctx := r.Context()
+	tx, err := h.Repo.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := lockForChange(ctx, tx, tid); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	h.save(w, r, tx, tid, body)
+}
+
+// patch serves PATCH /tenants/{tenantID}/policy: it changes only the fields
+// sent, over the stored policy, under the policy's lock, so saving one rule
+// keeps another saved meanwhile. A null clears a nullable field.
+func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
+	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		return
+	}
+	ctx := r.Context()
+	tx, err := h.Repo.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := lockForChange(ctx, tx, tid); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	current, err := h.Repo.get(ctx, tx, tid)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	// Decoding over the stored policy changes only the fields the body names.
+	body := policyUpdate{Policy: *current}
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	h.save(w, r, tx, tid, body)
+}
+
+// save validates body, stores it as the tenant's policy on tx, audits it,
+// commits and answers with it.
+func (h *Handler) save(w http.ResponseWriter, r *http.Request, tx pgx.Tx, tid uuid.UUID, body policyUpdate) {
+	ctx := r.Context()
 	if bad := body.retiredFields(); len(bad) > 0 {
 		httpx.WriteError(w, r, errs.ErrValidationFailed.WithFields(bad))
 		return
@@ -336,13 +405,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrValidationFailed.WithFields(bad))
 		return
 	}
-	ctx := r.Context()
-	tx, err := h.Repo.Pool().Begin(ctx)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	defer tx.Rollback(ctx)
+	var err error
 	if in.MFAEnforcedSince, err = h.Repo.Upsert(ctx, tx, in); err != nil {
 		httpx.WriteError(w, r, err)
 		return

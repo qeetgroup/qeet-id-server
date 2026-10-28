@@ -75,6 +75,7 @@ func StepUpRoutes() map[string]mfa.StepUpRule {
 
 		// Sign-in and security policy.
 		"PUT /v1/tenants/{tenantID}/policy",
+		"PATCH /v1/tenants/{tenantID}/policy",
 		"PUT /v1/tenants/{tenantID}/auth-policy",
 		"PUT /v1/tenants/{tenantID}/security/risk-settings",
 		"PUT /v1/tenants/{tenantID}/security/bots/settings",

@@ -255,6 +255,7 @@ func userPermissionMap() map[string]string {
 		// Security / auth policy, IP rules, retention.
 		"GET /v1/tenants/{tenantID}/policy":                           "policy.read",
 		"PUT /v1/tenants/{tenantID}/policy":                           "policy.write",
+		"PATCH /v1/tenants/{tenantID}/policy":                         "policy.write",
 		"GET /v1/tenants/{tenantID}/auth-policy":                      "policy.read",
 		"PUT /v1/tenants/{tenantID}/auth-policy":                      "policy.write",
 		"GET /v1/tenants/{tenantID}/ip-rules":                         "policy.read",

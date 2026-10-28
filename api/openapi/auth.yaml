@@ -4230,6 +4230,48 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_policy
+      summary: Change part of the policy
+      tags:
+        - Policy
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SecurityPolicy'
+        description: Only the fields to change; a null clears a nullable one, such as max_sessions.
+      description: >-
+        Changes only the fields sent, over the stored policy, and keeps the
+        rest; the read, the change and the write happen under the policy's
+        lock, so a rule saved meanwhile is kept (PUT takes the same lock).
+        Validation, auditing (security_policy.updated) and the step-up are as
+        for PUT.
+      responses:
+        '200':
+          description: The whole policy after the change
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecurityPolicy'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/tenants/{tenantID}/ip-rules:
     get:
       operationId: get_v1_tenants_ByTenantID_ip_rules
