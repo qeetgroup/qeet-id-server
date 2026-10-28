@@ -8,6 +8,8 @@ const (
 	CodeSecretValueRequired     = "secret.value_required"
 	CodeSecretDecryptFailed     = "secret.decrypt_failed"
 	CodeSecretScopeRequired     = "secret.scope_required"
+
+	CodeSecretRotationIntervalOutOfRange = "secret.rotation_interval_out_of_range"
 )
 
 // Secret vault errors. The Message is what the end user sees. Handlers just
@@ -20,4 +22,6 @@ var (
 	ErrSecretValueRequired     = New(CodeSecretValueRequired, "A secret value is required.")
 	ErrSecretDecryptFailed     = New(CodeSecretDecryptFailed, "We couldn't decrypt this secret.")
 	ErrSecretScopeRequired     = New(CodeSecretScopeRequired, "You don't have permission to access this secret.")
+
+	ErrSecretRotationIntervalOutOfRange = New(CodeSecretRotationIntervalOutOfRange, "A rotation interval is between 1 and 3650 days.")
 )

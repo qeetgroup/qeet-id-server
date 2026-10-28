@@ -6,6 +6,7 @@ package secret
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -14,6 +15,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secrets/dbgen"
@@ -32,7 +35,33 @@ type Secret struct {
 	Last4     string    `json:"last4"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// ValueChangedAt is when the value was last set; a scope change leaves it.
+	ValueChangedAt time.Time  `json:"value_changed_at"`
+	LastRevealedAt *time.Time `json:"last_revealed_at"`
+	// LastRevealedBy is the person who last revealed the secret; nil when no
+	// one has, or when a machine credential did (LastRevealedCredential).
+	LastRevealedBy         *Revealer `json:"last_revealed_by"`
+	LastRevealedCredential string    `json:"last_revealed_credential,omitempty"`
+	// RotationDueAt is RotationIntervalDays after the value last changed; nil
+	// without an interval. RotationOverdue is set once it has passed.
+	RotationIntervalDays *int32     `json:"rotation_interval_days"`
+	RotationDueAt        *time.Time `json:"rotation_due_at"`
+	RotationOverdue      bool       `json:"rotation_overdue"`
 }
+
+// Revealer is the person who last revealed a secret. Email is empty once the
+// person no longer exists.
+type Revealer struct {
+	ID          uuid.UUID `json:"id"`
+	Email       string    `json:"email"`
+	DisplayName string    `json:"display_name"`
+}
+
+// Rotation intervals a secret accepts, in days.
+const (
+	minRotationDays = 1
+	maxRotationDays = 3650
+)
 
 // Service stores each tenant's secrets, encrypted at rest.
 type Service struct {
@@ -80,14 +109,49 @@ func hint(value string) string {
 	return string(r[len(r)-4:])
 }
 
-// rowToSecret maps a sqlc result row (id, name, scope, last4, created_at, updated_at) to Secret.
-func rowToSecret(id uuid.UUID, name, scope, last4 string, createdAt, updatedAt time.Time) *Secret {
-	return &Secret{ID: id, Name: name, Scope: scope, Last4: last4, CreatedAt: createdAt, UpdatedAt: updatedAt}
+// toSecret maps a secret row to Secret, working out its rotation due date
+// against now.
+func toSecret(row dbgen.ListSecretsRow, now time.Time) *Secret {
+	sec := &Secret{
+		ID: row.ID, Name: row.Name, Scope: row.Scope, Last4: row.Last4,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, ValueChangedAt: row.ValueChangedAt,
+		RotationIntervalDays: row.RotationIntervalDays,
+	}
+	if row.LastRevealedAt.Valid {
+		at := row.LastRevealedAt.Time
+		sec.LastRevealedAt = &at
+	}
+	if row.LastRevealedBy.Valid {
+		sec.LastRevealedBy = &Revealer{ID: row.LastRevealedBy.Bytes}
+		if row.RevealedByEmail != nil {
+			sec.LastRevealedBy.Email = *row.RevealedByEmail
+		}
+		if row.RevealedByName != nil {
+			sec.LastRevealedBy.DisplayName = *row.RevealedByName
+		}
+	}
+	if row.LastRevealedCredential != nil {
+		sec.LastRevealedCredential = *row.LastRevealedCredential
+	}
+	if days := row.RotationIntervalDays; days != nil {
+		due := row.ValueChangedAt.AddDate(0, 0, int(*days))
+		sec.RotationDueAt = &due
+		sec.RotationOverdue = !now.Before(due)
+	}
+	return sec
 }
 
-// metaCols is the column list the hand-written Update queries return, in the
-// order scanSecret reads.
-const metaCols = `id, name, scope, last4, created_at, updated_at`
+// get returns one of the tenant's secrets.
+func (s *Service) get(ctx context.Context, tenantID, id uuid.UUID) (*Secret, error) {
+	row, err := s.q.GetSecret(ctx, dbgen.GetSecretParams{ID: id, TenantID: tenantID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrSecretNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return toSecret(dbgen.ListSecretsRow(row), time.Now()), nil
+}
 
 // List returns the tenant's secrets.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Secret, error) {
@@ -95,30 +159,47 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Secret, error
 	if err != nil {
 		return nil, err
 	}
+	now := time.Now()
 	out := []Secret{}
 	for _, row := range rows {
-		out = append(out, *rowToSecret(row.ID, row.Name, row.Scope, row.Last4, row.CreatedAt, row.UpdatedAt))
+		out = append(out, *toSecret(row, now))
 	}
 	return out, nil
 }
 
-// Create stores a secret for the tenant.
-func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name, scope, value string) (*Secret, error) {
+// checkRotationDays refuses a rotation interval outside the accepted range;
+// nil, no interval, is accepted.
+func checkRotationDays(days *int32) error {
+	if days != nil && (*days < minRotationDays || *days > maxRotationDays) {
+		return errs.ErrSecretRotationIntervalOutOfRange.WithMetadata(map[string]any{
+			"min_days": minRotationDays, "max_days": maxRotationDays,
+		})
+	}
+	return nil
+}
+
+// Create stores a secret for the tenant, with an optional rotation interval
+// in days.
+func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name, scope, value string, rotationDays *int32) (*Secret, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || value == "" {
 		return nil, errs.ErrSecretNameValueRequired
+	}
+	if err := checkRotationDays(rotationDays); err != nil {
+		return nil, err
 	}
 	ct, nonce, err := s.encrypt(tenantID, name, value)
 	if err != nil {
 		return nil, err
 	}
-	row, err := s.q.CreateSecret(ctx, dbgen.CreateSecretParams{
-		TenantID:   tenantID,
-		Name:       name,
-		Scope:      scope,
-		Ciphertext: ct,
-		Nonce:      nonce,
-		Last4:      hint(value),
+	id, err := s.q.CreateSecret(ctx, dbgen.CreateSecretParams{
+		TenantID:             tenantID,
+		Name:                 name,
+		Scope:                scope,
+		Ciphertext:           ct,
+		Nonce:                nonce,
+		Last4:                hint(value),
+		RotationIntervalDays: rotationDays,
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "secrets_tenant_id_name_key") || strings.Contains(err.Error(), "duplicate") {
@@ -126,19 +207,37 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name, scope, v
 		}
 		return nil, err
 	}
-	return rowToSecret(row.ID, row.Name, row.Scope, row.Last4, row.CreatedAt, row.UpdatedAt), nil
+	return s.get(ctx, tenantID, id)
 }
 
-// UpdateInput is what Update takes.
+// UpdateInput is what Update takes. RotationIntervalDays left out keeps the
+// interval; null removes it.
 type UpdateInput struct {
-	Scope *string `json:"scope"`
-	Value *string `json:"value"`
+	Scope                *string      `json:"scope"`
+	Value                *string      `json:"value"`
+	RotationIntervalDays OptionalDays `json:"rotation_interval_days"`
 }
 
-// Update changes a secret's value and/or scope; a nil field is kept. It is
-// hand-written because sqlc reads the NOT NULL scope column as a plain string,
-// so nil couldn't mean "no change".
+// OptionalDays is a JSON field that can be left out, null, or a number of
+// days. Set reports whether the request named it at all; Days is nil for null.
+type OptionalDays struct {
+	Set  bool
+	Days *int32
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (o *OptionalDays) UnmarshalJSON(b []byte) error {
+	o.Set = true
+	return json.Unmarshal(b, &o.Days)
+}
+
+// Update changes a secret's value, scope and/or rotation interval; a field
+// left out is kept. It is hand-written because sqlc reads the NOT NULL scope
+// column as a plain string, so nil couldn't mean "no change".
 func (s *Service) Update(ctx context.Context, tenantID, id uuid.UUID, in UpdateInput) (*Secret, error) {
+	if err := checkRotationDays(in.RotationIntervalDays.Days); err != nil {
+		return nil, err
+	}
 	// Rotate the encrypted value only when a new one is supplied.
 	if in.Value != nil {
 		if *in.Value == "" {
@@ -155,32 +254,46 @@ func (s *Service) Update(ctx context.Context, tenantID, id uuid.UUID, in UpdateI
 		if err != nil {
 			return nil, err
 		}
-		row := s.pool.QueryRow(ctx, `
+		tag, err := s.pool.Exec(ctx, `
 			UPDATE tenant.secrets
-			SET ciphertext = $3, nonce = $4, last4 = $5, scope = COALESCE($6, scope), updated_at = NOW()
-			WHERE id = $1 AND tenant_id = $2
-			RETURNING `+metaCols,
-			id, tenantID, ct, nonce, hint(*in.Value), in.Scope)
-		return scanSecret(row)
+			SET ciphertext = $3, nonce = $4, last4 = $5, scope = COALESCE($6, scope),
+			    rotation_interval_days = CASE WHEN $7 THEN $8 ELSE rotation_interval_days END,
+			    value_changed_at = NOW(), updated_at = NOW()
+			WHERE id = $1 AND tenant_id = $2`,
+			id, tenantID, ct, nonce, hint(*in.Value), in.Scope, in.RotationIntervalDays.Set, in.RotationIntervalDays.Days)
+		return s.updated(ctx, tenantID, id, tag, err)
 	}
-	row := s.pool.QueryRow(ctx, `
-		UPDATE tenant.secrets SET scope = COALESCE($3, scope), updated_at = NOW()
-		WHERE id = $1 AND tenant_id = $2
-		RETURNING `+metaCols,
-		id, tenantID, in.Scope)
-	return scanSecret(row)
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE tenant.secrets
+		SET scope = COALESCE($3, scope),
+		    rotation_interval_days = CASE WHEN $4 THEN $5 ELSE rotation_interval_days END,
+		    updated_at = NOW()
+		WHERE id = $1 AND tenant_id = $2`,
+		id, tenantID, in.Scope, in.RotationIntervalDays.Set, in.RotationIntervalDays.Days)
+	return s.updated(ctx, tenantID, id, tag, err)
 }
 
-// scanSecret scans a row of metaCols into a Secret; no row is ErrSecretNotFound.
-func scanSecret(row pgx.Row) (*Secret, error) {
-	var sec Secret
-	if err := row.Scan(&sec.ID, &sec.Name, &sec.Scope, &sec.Last4, &sec.CreatedAt, &sec.UpdatedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrSecretNotFound
-		}
+// updated returns the secret an UPDATE changed; no row is ErrSecretNotFound.
+func (s *Service) updated(ctx context.Context, tenantID, id uuid.UUID, tag pgconn.CommandTag, err error) (*Secret, error) {
+	if err != nil {
 		return nil, err
 	}
-	return &sec, nil
+	if tag.RowsAffected() == 0 {
+		return nil, errs.ErrSecretNotFound
+	}
+	return s.get(ctx, tenantID, id)
+}
+
+// MarkRevealed records on the secret who revealed it, in the transaction that
+// audits the reveal: a person, or a machine credential by its id.
+func (s *Service) MarkRevealed(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, userID *uuid.UUID, credential string) error {
+	arg := dbgen.MarkSecretRevealedParams{ID: id, TenantID: tenantID}
+	if credential != "" {
+		arg.Credential = &credential
+	} else if userID != nil {
+		arg.UserID = pgtype.UUID{Bytes: *userID, Valid: true}
+	}
+	return s.q.WithTx(tx).MarkSecretRevealed(ctx, arg)
 }
 
 // Reveal returns one of the tenant's secrets: its name and decrypted value.
@@ -293,16 +406,17 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Name  string `json:"name"`
-		Scope string `json:"scope"`
-		Value string `json:"value"`
+		Name                 string `json:"name"`
+		Scope                string `json:"scope"`
+		Value                string `json:"value"`
+		RotationIntervalDays *int32 `json:"rotation_interval_days"`
 	}
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	ctx := r.Context()
-	sec, err := h.Service.Create(ctx, tenantID, in.Name, in.Scope, in.Value)
+	sec, err := h.Service.Create(ctx, tenantID, in.Name, in.Scope, in.Value, in.RotationIntervalDays)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -370,11 +484,24 @@ func (h *Handler) reveal(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	// Revealing a secret is sensitive — always audit it.
+	// Revealing a secret is sensitive — always audit it, and note it on the
+	// secret.
 	tx, err := h.Service.Pool().Begin(ctx)
 	if err == nil {
 		defer tx.Rollback(ctx)
-		if aerr := h.recordAudit(ctx, tx, r, tenantID, id, "secret.revealed", map[string]any{"name": name}); aerr == nil {
+		var userID *uuid.UUID
+		credential := ""
+		if p := httpx.PrincipalFromCtx(ctx); p != nil {
+			userID = p.UserID
+			if p.ActorType != "" && p.ActorType != "user" {
+				credential = p.Subject
+			}
+		}
+		aerr := h.recordAudit(ctx, tx, r, tenantID, id, "secret.revealed", map[string]any{"name": name})
+		if aerr == nil {
+			aerr = h.Service.MarkRevealed(ctx, tx, tenantID, id, userID, credential)
+		}
+		if aerr == nil {
 			_ = tx.Commit(ctx)
 		}
 	}
