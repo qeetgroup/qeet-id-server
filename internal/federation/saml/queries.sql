@@ -48,6 +48,19 @@ DELETE FROM tenant.saml_connections WHERE id = @id AND tenant_id = @tenant_id;
 -- name: TouchSamlLastLogin :exec
 UPDATE tenant.saml_connections SET last_login_at = NOW() WHERE id = @id;
 
+-- The groups attribute isn't in the connection queries above, so it is read
+-- and written on its own.
+
+-- name: GetSamlGroupsAttribute :one
+SELECT groups_attribute FROM tenant.saml_connections WHERE id = @id AND tenant_id = @tenant_id;
+
+-- name: ListSamlGroupsAttributes :many
+SELECT id, groups_attribute FROM tenant.saml_connections WHERE tenant_id = @tenant_id;
+
+-- name: SetSamlGroupsAttribute :exec
+UPDATE tenant.saml_connections SET groups_attribute = @groups_attribute, updated_at = NOW()
+WHERE id = @id AND tenant_id = @tenant_id;
+
 -- ==========================================================================
 -- SAML login codes (ExchangeLogin + ACS handler)
 -- ==========================================================================

@@ -187,6 +187,25 @@ func (q *Queries) GetSamlConnectionByID(ctx context.Context, id uuid.UUID) (GetS
 	return i, err
 }
 
+const getSamlGroupsAttribute = `-- name: GetSamlGroupsAttribute :one
+
+SELECT groups_attribute FROM tenant.saml_connections WHERE id = $1 AND tenant_id = $2
+`
+
+type GetSamlGroupsAttributeParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+// The groups attribute isn't in the connection queries above, so it is read
+// and written on its own.
+func (q *Queries) GetSamlGroupsAttribute(ctx context.Context, arg GetSamlGroupsAttributeParams) (string, error) {
+	row := q.db.QueryRow(ctx, getSamlGroupsAttribute, arg.ID, arg.TenantID)
+	var groups_attribute string
+	err := row.Scan(&groups_attribute)
+	return groups_attribute, err
+}
+
 const getSamlSP = `-- name: GetSamlSP :one
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at
@@ -546,6 +565,35 @@ func (q *Queries) ListSamlConnections(ctx context.Context, tenantID uuid.UUID) (
 	return items, nil
 }
 
+const listSamlGroupsAttributes = `-- name: ListSamlGroupsAttributes :many
+SELECT id, groups_attribute FROM tenant.saml_connections WHERE tenant_id = $1
+`
+
+type ListSamlGroupsAttributesRow struct {
+	ID              uuid.UUID
+	GroupsAttribute string
+}
+
+func (q *Queries) ListSamlGroupsAttributes(ctx context.Context, tenantID uuid.UUID) ([]ListSamlGroupsAttributesRow, error) {
+	rows, err := q.db.Query(ctx, listSamlGroupsAttributes, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSamlGroupsAttributesRow{}
+	for rows.Next() {
+		var i ListSamlGroupsAttributesRow
+		if err := rows.Scan(&i.ID, &i.GroupsAttribute); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSamlSPs = `-- name: ListSamlSPs :many
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at
@@ -591,6 +639,22 @@ UPDATE auth.saml_login_codes SET used_at = NOW() WHERE code_hash = $1
 
 func (q *Queries) MarkSamlLoginCodeUsed(ctx context.Context, codeHash string) error {
 	_, err := q.db.Exec(ctx, markSamlLoginCodeUsed, codeHash)
+	return err
+}
+
+const setSamlGroupsAttribute = `-- name: SetSamlGroupsAttribute :exec
+UPDATE tenant.saml_connections SET groups_attribute = $1, updated_at = NOW()
+WHERE id = $2 AND tenant_id = $3
+`
+
+type SetSamlGroupsAttributeParams struct {
+	GroupsAttribute string
+	ID              uuid.UUID
+	TenantID        uuid.UUID
+}
+
+func (q *Queries) SetSamlGroupsAttribute(ctx context.Context, arg SetSamlGroupsAttributeParams) error {
+	_, err := q.db.Exec(ctx, setSamlGroupsAttribute, arg.GroupsAttribute, arg.ID, arg.TenantID)
 	return err
 }
 

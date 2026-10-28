@@ -14,9 +14,10 @@ import (
 )
 
 const addGroupMember = `-- name: AddGroupMember :exec
-INSERT INTO tenant.group_members (group_id, user_id, tenant_id)
+INSERT INTO tenant.group_members AS gm (group_id, user_id, tenant_id)
 VALUES ($1, $2, $3)
-ON CONFLICT DO NOTHING
+ON CONFLICT (group_id, user_id) DO UPDATE SET source_connection_id = NULL
+WHERE gm.tenant_id = EXCLUDED.tenant_id AND gm.source_connection_id IS NOT NULL
 `
 
 type AddGroupMemberParams struct {
@@ -25,6 +26,8 @@ type AddGroupMemberParams struct {
 	TenantID uuid.UUID
 }
 
+// AddGroupMember makes a membership a single sign-on made the directory's, so
+// the person's sign-ins no longer remove it.
 func (q *Queries) AddGroupMember(ctx context.Context, arg AddGroupMemberParams) error {
 	_, err := q.db.Exec(ctx, addGroupMember, arg.GroupID, arg.UserID, arg.TenantID)
 	return err

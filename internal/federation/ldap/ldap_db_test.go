@@ -33,6 +33,7 @@ type directory struct {
 type dirEntry struct {
 	dn    string
 	attrs map[string]string
+	multi map[string][]string // attributes with several values, such as memberOf
 }
 
 // start serves d on a loopback port until t ends and returns its ldap:// URL.
@@ -106,11 +107,20 @@ func ldapEntry(e dirEntry) *ber.Packet {
 	op := ber.Encode(ber.ClassApplication, ber.TypeConstructed, goldap.ApplicationSearchResultEntry, nil, "")
 	op.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, e.dn, ""))
 	attrs := ber.NewSequence("")
+	all := map[string][]string{}
 	for name, value := range e.attrs {
+		all[name] = []string{value}
+	}
+	for name, values := range e.multi {
+		all[name] = values
+	}
+	for name, vs := range all {
 		attr := ber.NewSequence("")
 		attr.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, name, ""))
 		values := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSet, nil, "")
-		values.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, value, ""))
+		for _, value := range vs {
+			values.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, value, ""))
+		}
 		attr.AppendChild(values)
 		attrs.AppendChild(attr)
 	}
@@ -291,5 +301,71 @@ func TestLoginAdoptsADirectoryProvisionedAccount(t *testing.T) {
 	res, err := NewService(pool, authSvc, egress.DevelopmentPolicy()).Login(ctx, connID, "alice", "alice-secret", "192.0.2.22", "test")
 	if err != nil || res.Pair == nil || res.Pair.UserID != a.ID {
 		t.Fatalf("sign in: %+v, %v; want the provisioned account", res, err)
+	}
+}
+
+// TestLoginSyncsGroupsAndName checks that each directory sign-in sets the
+// person's display name and puts them in the groups their memberOf DNs are
+// mapped to, comparing DNs ignoring case, and takes them out once the
+// directory no longer lists the group.
+func TestLoginSyncsGroupsAndName(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	tenant := dbtest.Tenant(t)
+	email := dbtest.Unique("alice") + "@" + dbtest.Domain(t, tenant)
+	const service, userDN = "cn=service,dc=example,dc=test", "uid=alice,dc=example,dc=test"
+	serve := func(entry dirEntry) string {
+		dir := &directory{binds: map[string]string{service: "service-secret", userDN: "alice-secret"}, entries: map[string]dirEntry{"alice": entry}}
+		return dir.start(t)
+	}
+	var connID, engineering uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO tenant.ldap_connections (tenant_id, name, server_url, bind_dn, bind_password, base_dn, status)
+		VALUES ($1, 'Directory', $2, $3, 'service-secret', 'dc=example,dc=test', 'active')
+		RETURNING id
+	`, tenant, serve(dirEntry{dn: userDN, attrs: map[string]string{"mail": email, "cn": "Alice"},
+		multi: map[string][]string{"memberOf": {"CN=Engineering,OU=Groups,DC=example,DC=test", "CN=Unmapped,OU=Groups,DC=example,DC=test"}}}),
+		service).Scan(&connID); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Engineering') RETURNING id`, tenant).Scan(&engineering); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant.sso_group_mappings (tenant_id, connection_id, idp_group, group_id) VALUES ($1, $2, 'cn=engineering,ou=groups,dc=example,dc=test', $3)`, tenant, connID, engineering); err != nil {
+		t.Fatal(err)
+	}
+	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
+	authSvc.SetMFA(noFactors{})
+	svc := NewService(pool, authSvc, egress.DevelopmentPolicy())
+
+	res, err := svc.Login(ctx, connID, "alice", "alice-secret", "192.0.2.23", "test")
+	if err != nil || res.Pair == nil {
+		t.Fatalf("sign in: %+v, %v", res, err)
+	}
+	alice := res.Pair.UserID
+	synced := func() int {
+		return dbtest.Count(t, `SELECT count(*) FROM tenant.group_members WHERE tenant_id = $1 AND group_id = $2 AND user_id = $3 AND source_connection_id = $4`,
+			tenant, engineering, alice, connID)
+	}
+	if synced() != 1 {
+		t.Fatal("the sign-in didn't put the person in the group their memberOf is mapped to")
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'group.member_added' AND resource_id = $2 AND actor_type = 'ldap'`, tenant, engineering); n != 1 {
+		t.Errorf("%d member_added events by the sign-in, want 1", n)
+	}
+
+	// The directory renames her and drops the group.
+	if _, err := pool.Exec(ctx, `UPDATE tenant.ldap_connections SET server_url = $2 WHERE id = $1`, connID,
+		serve(dirEntry{dn: userDN, attrs: map[string]string{"mail": email, "cn": "Alice Smith"}})); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := svc.Login(ctx, connID, "alice", "alice-secret", "192.0.2.23", "test"); err != nil || res.Pair == nil || res.Pair.UserID != alice {
+		t.Fatalf("sign in again: %+v, %v; want the same person", res, err)
+	}
+	if synced() != 0 {
+		t.Error("the person is still in the group the directory no longer lists")
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND display_name = 'Alice Smith'`, alice); n != 1 {
+		t.Error("the sign-in didn't refresh the display name from the directory")
 	}
 }

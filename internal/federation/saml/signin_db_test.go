@@ -64,6 +64,7 @@ type answer struct {
 	signer                                   *idpSigner // nil: the IdP's own key
 	unsigned, signResponse                   bool
 	edit                                     func(response *etree.Element) // after signing
+	attributes                               map[string][]string           // asserted besides email and name
 }
 
 // respond returns the base64 SAMLResponse the IdP posts to connID's ACS,
@@ -119,6 +120,13 @@ func (p *upstreamIdP) respond(t *testing.T, connID uuid.UUID, a answer) string {
 		el := attributes.CreateElement("saml:Attribute")
 		el.CreateAttr("Name", attr[0])
 		el.CreateElement("saml:AttributeValue").SetText(attr[1])
+	}
+	for name, values := range a.attributes {
+		el := attributes.CreateElement("saml:Attribute")
+		el.CreateAttr("Name", name)
+		for _, v := range values {
+			el.CreateElement("saml:AttributeValue").SetText(v)
+		}
 	}
 
 	signing, err := a.signer.signingContext()
@@ -862,5 +870,81 @@ func TestSAMLAdoptsADirectoryProvisionedAccount(t *testing.T) {
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND email_verified_at IS NOT NULL`, provisioned.ID); n != 1 {
 		t.Error("the adopted account's address was not marked verified")
+	}
+}
+
+// TestSAMLSignInSyncsGroupsAndName checks that the connection's groups
+// attribute is kept, that each sign-in sets the person's display name and puts
+// them in the groups their asserted groups are mapped to, takes them out once
+// the IdP stops asserting them, and leaves them be when Entra ID withholds the
+// groups.
+func TestSAMLSignInSyncsGroupsAndName(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	sp := newSPSide(t)
+	idp := newUpstreamIdP(t)
+	tenant := dbtest.Tenant(t)
+	admin := sp.asAdmin(t, tenant)
+	path := "/tenants/" + tenant.String() + "/saml"
+	rec := dbtest.Do(t, admin, http.MethodPost, path, map[string]any{
+		"name": "Entra ID", "idp_entity_id": idp.entityID, "idp_sso_url": upstreamSSO, "idp_certificate": idp.certPEM,
+		"email_attribute": "email", "name_attribute": "name", "groups_attribute": " roles ", "status": "active",
+	})
+	var conn Connection
+	dbtest.Decode(t, rec, &conn)
+	if rec.Code != http.StatusCreated || conn.GroupsAttribute != "roles" {
+		t.Fatalf("create: %d %s; want the groups attribute kept, trimmed", rec.Code, rec.Body.String())
+	}
+	if rec := dbtest.Do(t, admin, http.MethodPost, path, map[string]any{
+		"name": "Too long", "idp_entity_id": idp.entityID, "idp_sso_url": upstreamSSO, "idp_certificate": idp.certPEM,
+		"groups_attribute": strings.Repeat("g", 257),
+	}); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), errs.CodeValidation) {
+		t.Errorf("an over-long groups attribute: %d %s, want 422 %s", rec.Code, rec.Body.String(), errs.CodeValidation)
+	}
+	rec = dbtest.Do(t, admin, http.MethodPatch, path+"/"+conn.ID.String(), map[string]any{"groups_attribute": ""})
+	dbtest.Decode(t, rec, &conn)
+	if rec.Code != http.StatusOK || conn.GroupsAttribute != "" {
+		t.Fatalf("clear the groups attribute: %d %s", rec.Code, rec.Body.String())
+	}
+	var listed struct{ Items []Connection }
+	dbtest.Decode(t, dbtest.Do(t, admin, http.MethodGet, path, nil), &listed)
+	if len(listed.Items) != 1 || listed.Items[0].GroupsAttribute != "" {
+		t.Errorf("listed %+v, want the connection with no groups attribute", listed.Items)
+	}
+
+	var engineering uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Engineering') RETURNING id`, tenant).Scan(&engineering); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant.sso_group_mappings (tenant_id, connection_id, idp_group, group_id) VALUES ($1, $2, 'eng-team', $3)`, tenant, conn.ID, engineering); err != nil {
+		t.Fatal(err)
+	}
+	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	verify(t, member.ID)
+	synced := func() int {
+		return dbtest.Count(t, `SELECT count(*) FROM tenant.group_members WHERE tenant_id = $1 AND group_id = $2 AND user_id = $3 AND source_connection_id = $4`,
+			tenant, engineering, member.ID, conn.ID)
+	}
+
+	sp.signIn(t, idp, conn.ID, answer{nameID: "entra|asha", email: member.Email,
+		attributes: map[string][]string{"http://schemas.microsoft.com/ws/2008/06/identity/claims/groups": {"ENG-TEAM", "other"}}})
+	if synced() != 1 {
+		t.Fatal("the sign-in didn't put the person in the group their IdP group is mapped to")
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND display_name = 'Asha Rao'`, member.ID); n != 1 {
+		t.Error("the sign-in didn't set the asserted display name")
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'group.member_added' AND resource_id = $2 AND actor_type = 'saml'`, tenant, engineering); n != 1 {
+		t.Errorf("%d member_added events by the sign-in, want 1", n)
+	}
+
+	sp.signIn(t, idp, conn.ID, answer{nameID: "entra|asha", email: member.Email,
+		attributes: map[string][]string{groupsOverage: {"https://graph.microsoft.com/v1.0/users/asha/getMemberObjects"}}})
+	if synced() != 1 {
+		t.Error("withheld groups took the person out of the group")
+	}
+	sp.signIn(t, idp, conn.ID, answer{nameID: "entra|asha", email: member.Email})
+	if synced() != 0 {
+		t.Error("the person is still in the group after the IdP stopped asserting it")
 	}
 }

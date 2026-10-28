@@ -126,11 +126,12 @@ WITH allowed AS (
     ) AS ok
 ),
 ins AS (
-    INSERT INTO tenant.group_members (group_id, user_id, tenant_id)
+    INSERT INTO tenant.group_members AS gm (group_id, user_id, tenant_id)
     SELECT $3, $1, $2
     FROM allowed
     WHERE allowed.ok
-    ON CONFLICT DO NOTHING
+    ON CONFLICT (group_id, user_id) DO UPDATE SET source_connection_id = NULL
+    WHERE gm.tenant_id = EXCLUDED.tenant_id AND gm.source_connection_id IS NOT NULL
 )
 SELECT allowed.ok AS valid FROM allowed
 `
@@ -147,7 +148,9 @@ type InsertGroupMemberParams struct {
 // assignment uses: a user_roles row in the tenant whose role is the tenant's
 // own, or the tenant being the account's home (an admin-created account has no
 // membership row until its first role). valid is false for a missing, deleted
-// or foreign user alike, and true for someone already in the group.
+// or foreign user alike, and true for someone already in the group. Adding
+// someone a single sign-on put in the group makes the membership the
+// administrator's, so their sign-ins no longer remove it.
 func (q *Queries) InsertGroupMember(ctx context.Context, arg InsertGroupMemberParams) (bool, error) {
 	row := q.db.QueryRow(ctx, insertGroupMember, arg.UserID, arg.TenantID, arg.GroupID)
 	var valid bool

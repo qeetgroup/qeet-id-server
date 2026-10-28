@@ -5,6 +5,7 @@ package identitylink
 
 import (
 	"context"
+	"slices"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -54,6 +55,10 @@ func MarkAddressVerified(ctx context.Context, q Querier, userID uuid.UUID) error
 // adminPermissions change who signs in to an organisation, or with what
 // authority.
 var adminPermissions = []string{"user.write", "role.write", "group.write", "connection.write", "policy.write", "tenant.write"}
+
+// AdminPermissions returns the permissions that administer an organisation:
+// single sign-on neither adopts an account holding one nor gives one by group.
+func AdminPermissions() []string { return slices.Clone(adminPermissions) }
 
 // Administers reports whether userID owns tenantID or holds an admin
 // permission there, directly or through a group. Single sign-on doesn't adopt

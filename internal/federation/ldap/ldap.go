@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	goldap "github.com/go-ldap/ldap/v3"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -23,6 +24,7 @@ import (
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/ssosync"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
@@ -35,6 +37,7 @@ import (
 const (
 	provider    = "ldap"
 	dialTimeout = 6 * time.Second
+	groupsAttr  = "memberOf" // the groups read when no mapping targets groups
 )
 
 // Connection is the API-facing view — bind_password is deliberately omitted.
@@ -475,6 +478,7 @@ type ldapUser struct {
 	Name         string
 	ConnectionID string
 	Profile      map[string]any
+	Groups       []string // the connection's groups mapping's values, else memberOf's
 }
 
 // authenticate binds the service account, finds the user, then verifies the
@@ -494,7 +498,7 @@ func (s *Service) authenticate(ctx context.Context, c *connFull, username, passw
 	}
 
 	filter := strings.ReplaceAll(c.UserFilter, "%s", goldap.EscapeFilter(username))
-	attributes := []string{c.EmailAttribute, c.NameAttribute}
+	attributes := []string{c.EmailAttribute, c.NameAttribute, groupsAttr}
 	if s.mapper != nil {
 		mapped, err := s.mapper.SourceAttributes(ctx, c.TenantID, c.ID.String())
 		if err != nil {
@@ -529,6 +533,7 @@ func (s *Service) authenticate(ctx context.Context, c *connFull, username, passw
 
 	email := strings.ToLower(strings.TrimSpace(entry.GetAttributeValue(c.EmailAttribute)))
 	name := entry.GetAttributeValue(c.NameAttribute)
+	groups := entry.GetAttributeValues(groupsAttr)
 	var profile map[string]any
 	if s.mapper != nil {
 		source := map[string]any{}
@@ -548,20 +553,25 @@ func (s *Service) authenticate(ctx context.Context, c *connFull, username, passw
 		if mapped, ok := profile["display_name"].(string); ok {
 			name = mapped
 		}
+		if mapped, ok := profile["groups"].([]string); ok {
+			groups = mapped
+		}
 	}
 	if email == "" {
 		return nil, errs.ErrLDAPEmailAttributeMissing
 	}
-	return &ldapUser{DN: entry.DN, Email: email, Name: name, ConnectionID: c.ID.String(), Profile: profile}, nil
+	return &ldapUser{DN: entry.DN, Email: email, Name: name, ConnectionID: c.ID.String(), Profile: profile, Groups: groups}, nil
 }
 
 // findOrCreateUser returns the user the connection linked to the directory
 // DN, else the user with the directory's email, else a new user, then links
-// the DN to the connection and stores the mapped profile, in one transaction.
-// An address is adopted or given an account only on a domain the organisation
-// manages, and an adopted account must have tenantID as its home, a verified
-// address, and not administer the organisation.
-func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UUID, u *ldapUser) (uuid.UUID, error) {
+// the DN to the connection, brings the account's profile and groups in step
+// with the directory (ssosync.Apply, recorded as actor's) and stores the
+// mapped profile, in one transaction. An address is adopted or given an
+// account only on a domain the organisation manages, and an adopted account
+// must have tenantID as its home, a verified address, and not administer the
+// organisation.
+func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UUID, u *ldapUser, actor audit.Actor) (uuid.UUID, error) {
 	// Read before the transaction: it reads every organisation's domains.
 	manager, managed, err := domainverify.ManagerOf(postgres.AcrossTenants(ctx), s.pool, u.Email)
 	if err != nil {
@@ -573,6 +583,16 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 	}
 	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
+	sync := func(userID uuid.UUID) error {
+		if err := ssosync.Apply(ctx, tx, ssosync.SignIn{
+			TenantID: tenantID, UserID: userID, ConnectionID: connID, Provider: provider,
+			DisplayName: u.Name, Email: u.Email, EmailManaged: managed && manager == tenantID,
+			Groups: u.Groups, Actor: actor,
+		}); err != nil {
+			return err
+		}
+		return s.storeMappedProfile(ctx, tx, tenantID, userID, u)
+	}
 
 	userID, err := q.GetExternalIdentityUser(ctx, dbgen.GetExternalIdentityUserParams{
 		TenantID:     tenantID,
@@ -590,7 +610,7 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 		if !home {
 			return uuid.Nil, errs.ErrLDAPAccountNotInTenant
 		}
-		if err := s.storeMappedProfile(ctx, tx, tenantID, userID, u); err != nil {
+		if err := sync(userID); err != nil {
 			return uuid.Nil, err
 		}
 		return userID, tx.Commit(ctx)
@@ -662,7 +682,7 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 	}); err != nil {
 		return uuid.Nil, err
 	}
-	if err := s.storeMappedProfile(ctx, tx, tenantID, userID, u); err != nil {
+	if err := sync(userID); err != nil {
 		return uuid.Nil, err
 	}
 	return userID, tx.Commit(ctx)
@@ -702,7 +722,8 @@ func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, passwor
 		if err != nil {
 			return uuid.Nil, errors.Is(err, errs.ErrLDAPInvalidCredentials), err
 		}
-		userID, err := s.findOrCreateUser(ctx, c.TenantID, connID, du)
+		userID, err := s.findOrCreateUser(ctx, c.TenantID, connID, du,
+			audit.Actor{Type: provider, IP: ip, UserAgent: ua, RequestID: middleware.GetReqID(ctx)})
 		return userID, false, err
 	})
 	if err != nil {

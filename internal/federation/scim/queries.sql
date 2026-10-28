@@ -156,7 +156,10 @@ SELECT EXISTS(
     SELECT 1 FROM "user".users WHERE id = @id AND tenant_id = @tenant_id AND deleted_at IS NULL
 );
 
+-- AddGroupMember makes a membership a single sign-on made the directory's, so
+-- the person's sign-ins no longer remove it.
 -- name: AddGroupMember :exec
-INSERT INTO tenant.group_members (group_id, user_id, tenant_id)
+INSERT INTO tenant.group_members AS gm (group_id, user_id, tenant_id)
 VALUES (@group_id, @user_id, @tenant_id)
-ON CONFLICT DO NOTHING;
+ON CONFLICT (group_id, user_id) DO UPDATE SET source_connection_id = NULL
+WHERE gm.tenant_id = EXCLUDED.tenant_id AND gm.source_connection_id IS NOT NULL;

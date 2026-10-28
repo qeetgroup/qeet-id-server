@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -30,6 +31,7 @@ import (
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/ssosync"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
@@ -46,7 +48,9 @@ const (
 )
 
 // Connection is a tenant's connection to an external SAML IdP.
-// AllowIdPInitiated isn't in the generated queries, so it is read separately.
+// AllowIdPInitiated and GroupsAttribute aren't in the generated connection
+// queries, so they are read separately. GroupsAttribute names the attribute
+// carrying a person's groups; "" reads the common ones (assertedGroups).
 type Connection struct {
 	ID                uuid.UUID  `json:"id"`
 	TenantID          uuid.UUID  `json:"tenant_id"`
@@ -56,6 +60,7 @@ type Connection struct {
 	IdpCertificate    string     `json:"idp_certificate"`
 	EmailAttribute    string     `json:"email_attribute"`
 	NameAttribute     string     `json:"name_attribute"`
+	GroupsAttribute   string     `json:"groups_attribute"`
 	Status            string     `json:"status"`
 	AllowIdPInitiated bool       `json:"allow_idp_initiated"`
 	CreatedAt         time.Time  `json:"created_at"`
@@ -128,20 +133,36 @@ func toConnection(r dbgen.GetSamlConnectionRow) *Connection {
 
 // CreateInput is what Create takes.
 type CreateInput struct {
-	Name           string `json:"name"`
-	IdpEntityID    string `json:"idp_entity_id"`
-	IdpSSOURL      string `json:"idp_sso_url"`
-	IdpCertificate string `json:"idp_certificate"`
-	EmailAttribute string `json:"email_attribute"`
-	NameAttribute  string `json:"name_attribute"`
-	Status         string `json:"status"`
+	Name            string `json:"name"`
+	IdpEntityID     string `json:"idp_entity_id"`
+	IdpSSOURL       string `json:"idp_sso_url"`
+	IdpCertificate  string `json:"idp_certificate"`
+	EmailAttribute  string `json:"email_attribute"`
+	NameAttribute   string `json:"name_attribute"`
+	GroupsAttribute string `json:"groups_attribute"`
+	Status          string `json:"status"`
+}
+
+// errGroupsAttributeInvalid refuses a groups attribute over 256 characters.
+var errGroupsAttributeInvalid = errs.ErrValidationFailed.WithFields([]errs.FieldError{{
+	Field: "groups_attribute", Code: "too_long", Message: "Name the groups attribute in up to 256 characters.",
+}})
+
+// validGroupsAttribute trims attribute and reports whether it fits.
+func validGroupsAttribute(attribute *string) bool {
+	*attribute = strings.TrimSpace(*attribute)
+	return utf8.RuneCountInString(*attribute) <= 256
 }
 
 // check trims the IdP SSO URL, then requires it to pass validIdPSSOURL, the
-// certificate to parse and the status, if given, to be a known one.
+// certificate to parse, the status, if given, to be a known one and the groups
+// attribute to fit.
 func (in *CreateInput) check() error {
 	if in.Status != "" && !validStatus(in.Status) {
 		return errs.ErrSAMLStatusInvalid
+	}
+	if !validGroupsAttribute(&in.GroupsAttribute) {
+		return errGroupsAttributeInvalid
 	}
 	in.IdpSSOURL = strings.TrimSpace(in.IdpSSOURL)
 	if !validIdPSSOURL(in.IdpSSOURL) {
@@ -182,7 +203,16 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 	if err != nil {
 		return nil, err
 	}
-	return toConnection(dbgen.GetSamlConnectionRow(row)), nil
+	out := toConnection(dbgen.GetSamlConnectionRow(row))
+	if in.GroupsAttribute != "" {
+		if err := s.q.WithTx(tx).SetSamlGroupsAttribute(ctx, dbgen.SetSamlGroupsAttributeParams{
+			ID: out.ID, TenantID: tenantID, GroupsAttribute: in.GroupsAttribute,
+		}); err != nil {
+			return nil, err
+		}
+		out.GroupsAttribute = in.GroupsAttribute
+	}
+	return out, nil
 }
 
 // List returns the tenant's SAML connections.
@@ -199,8 +229,17 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, e
 	if err != nil {
 		return nil, err
 	}
+	attributes, err := s.q.ListSamlGroupsAttributes(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	groups := make(map[uuid.UUID]string, len(attributes))
+	for _, a := range attributes {
+		groups[a.ID] = a.GroupsAttribute
+	}
 	for i := range out {
 		out[i].AllowIdPInitiated = flags[out[i].ID]
+		out[i].GroupsAttribute = groups[out[i].ID]
 	}
 	return out, nil
 }
@@ -241,7 +280,16 @@ func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Connection,
 	if err != nil {
 		return nil, err
 	}
+	out.GroupsAttribute, err = s.groupsAttribute(ctx, out)
+	if err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+// groupsAttribute returns the attribute conn reads a person's groups from.
+func (s *Service) groupsAttribute(ctx context.Context, conn *Connection) (string, error) {
+	return s.q.GetSamlGroupsAttribute(ctx, dbgen.GetSamlGroupsAttributeParams{ID: conn.ID, TenantID: conn.TenantID})
 }
 
 // getByID loads a connection without tenant scoping, for the public SSO
@@ -266,6 +314,7 @@ type UpdateInput struct {
 	IdpCertificate    *string `json:"idp_certificate"`
 	EmailAttribute    *string `json:"email_attribute"`
 	NameAttribute     *string `json:"name_attribute"`
+	GroupsAttribute   *string `json:"groups_attribute"`
 	Status            *string `json:"status"`
 	AllowIdPInitiated *bool   `json:"allow_idp_initiated"`
 }
@@ -283,6 +332,9 @@ func (in *UpdateInput) check() error {
 		if _, err := parseCertificate(*in.IdpCertificate); err != nil {
 			return errs.ErrSAMLCertificateInvalid
 		}
+	}
+	if in.GroupsAttribute != nil && !validGroupsAttribute(in.GroupsAttribute) {
+		return errGroupsAttributeInvalid
 	}
 	return nil
 }
@@ -320,7 +372,19 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 			return nil, err
 		}
 	}
+	if in.GroupsAttribute != nil {
+		if err := s.q.WithTx(tx).SetSamlGroupsAttribute(ctx, dbgen.SetSamlGroupsAttributeParams{
+			ID: id, TenantID: tenantID, GroupsAttribute: *in.GroupsAttribute,
+		}); err != nil {
+			return nil, err
+		}
+	}
 	out := toConnection(dbgen.GetSamlConnectionRow(r))
+	if out.GroupsAttribute, err = s.q.WithTx(tx).GetSamlGroupsAttribute(ctx, dbgen.GetSamlGroupsAttributeParams{
+		ID: id, TenantID: tenantID,
+	}); err != nil {
+		return nil, err
+	}
 	if in.AllowIdPInitiated != nil {
 		out.AllowIdPInitiated = *in.AllowIdPInitiated
 	} else if err := tx.QueryRow(ctx, `
@@ -574,13 +638,24 @@ func signInStatus(status string) error {
 	return errs.ErrSAMLConnectionDisabled
 }
 
+// assertion is what a validated SAML assertion says about the person it signs
+// in: groupsWithheld means the IdP left their groups out (assertedGroups).
+type assertion struct {
+	subject, email, name string
+	groups               []string
+	groupsWithheld       bool
+}
+
 // findOrCreateUser returns the user the connection linked to the NameID
 // subject, else the user with the asserted email, else a new user, and links
 // the subject to the connection. An address is adopted or given an account
 // only on a domain the organisation manages, and an adopted account must have
 // tenantID as its home, a verified address, and not administer the
-// organisation. One transaction, so concurrent logins can't duplicate rows.
-func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UUID, subject, email, name string) (uuid.UUID, error) {
+// organisation. The account's profile and groups are then brought in step
+// with the assertion (ssosync.Apply), recorded as actor's. One transaction,
+// so concurrent logins can't duplicate rows.
+func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UUID, a assertion, actor audit.Actor) (uuid.UUID, error) {
+	subject, email, name := a.subject, a.email, a.name
 	// Read before the transaction: it reads every organisation's domains.
 	manager, managed, err := domainverify.ManagerOf(postgres.AcrossTenants(ctx), s.pool, email)
 	if err != nil {
@@ -592,6 +667,13 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 	}
 	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
+	sync := func(userID uuid.UUID) error {
+		return ssosync.Apply(ctx, tx, ssosync.SignIn{
+			TenantID: tenantID, UserID: userID, ConnectionID: connID, Provider: provider,
+			DisplayName: name, Email: email, EmailManaged: managed && manager == tenantID,
+			Groups: a.groups, GroupsWithheld: a.groupsWithheld, Actor: actor,
+		})
+	}
 
 	userID, err := q.GetExternalIdentityUser(ctx, dbgen.GetExternalIdentityUserParams{
 		TenantID:     tenantID,
@@ -608,6 +690,9 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 		}
 		if !home {
 			return uuid.Nil, errs.ErrSAMLUserTenantMismatch
+		}
+		if err := sync(userID); err != nil {
+			return uuid.Nil, err
 		}
 		return userID, tx.Commit(ctx)
 	}
@@ -675,6 +760,9 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 		Subject:      subject,
 		Email:        &email,
 	}); err != nil {
+		return uuid.Nil, err
+	}
+	if err := sync(userID); err != nil {
 		return uuid.Nil, err
 	}
 	return userID, tx.Commit(ctx)
@@ -1163,13 +1251,18 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		}
 		h.binding().Remove(w, r, requestID)
 	}
-	name := ""
-	if conn.NameAttribute != "" {
-		name = info.Values.Get(conn.NameAttribute)
-	}
-
 	ctx := r.Context()
-	userID, err := h.Service.findOrCreateUser(ctx, conn.TenantID, conn.ID, info.NameID, email, name)
+	groupsAttribute, err := h.Service.groupsAttribute(ctx, conn)
+	if err != nil {
+		slog.Error("saml acs: read the groups attribute", "err", err, "connection", conn.ID)
+		httpx.WriteError(w, r, errs.ErrInternalServer)
+		return
+	}
+	groups, withheld := assertedGroups(info.Values, groupsAttribute)
+	userID, err := h.Service.findOrCreateUser(ctx, conn.TenantID, conn.ID, assertion{
+		subject: info.NameID, email: email, name: assertedName(info.Values, conn.NameAttribute),
+		groups: groups, groupsWithheld: withheld,
+	}, audit.Actor{Type: provider, IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)})
 	if e := errs.As(err); e != nil && e.Code != errs.CodeInternal {
 		httpx.WriteError(w, r, err)
 		return
