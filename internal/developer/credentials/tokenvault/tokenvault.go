@@ -25,7 +25,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	secret "github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secrets"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/tokenvault/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
@@ -73,20 +72,11 @@ type Service struct {
 	egress *egress.Policy
 }
 
-// NewService builds the vault, unwrapping the data key from kp once — the
-// same KeyProvider interface (and typically the same provider instance) the
+// NewService builds the vault, sealing tokens with box — the same cipher the
 // secrets vault uses, so both are keyed off one KMS/static-key setup.
-func NewService(ctx context.Context, pool *pgxpool.Pool, kp secret.KeyProvider, policies ...*egress.Policy) (*Service, error) {
-	key, err := kp.DataKey(ctx)
-	if err != nil {
-		return nil, err
-	}
-	box, err := envelope.New(key)
-	if err != nil {
-		return nil, err
-	}
+func NewService(pool *pgxpool.Pool, box *envelope.Cipher, policies ...*egress.Policy) *Service {
 	policy := egress.PublicPolicy(policies...)
-	return &Service{pool: pool, q: dbgen.New(pool), box: box, http: policy.HTTPClient(10 * time.Second), egress: policy}, nil
+	return &Service{pool: pool, q: dbgen.New(pool), box: box, http: policy.HTTPClient(10 * time.Second), egress: policy}
 }
 
 // tsPtr converts a pgtype.Timestamptz to *time.Time (nil when not valid).

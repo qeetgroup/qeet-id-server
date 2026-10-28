@@ -22,10 +22,7 @@ func TestMain(m *testing.M) { dbtest.Main(m) }
 // own secret of that name.
 func TestSecretsStayInTheirTenant(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc, err := NewService(ctx, dbtest.Pool(t), StaticKeyProvider{Key: []byte("0123456789abcdef0123456789abcdef")})
-	if err != nil {
-		t.Fatalf("vault: %v", err)
-	}
+	svc := NewService(dbtest.Pool(t), testService(t, 7).box)
 	tenantA, tenantB := dbtest.Tenant(t), dbtest.Tenant(t)
 	adminB := dbtest.User(t, tenantB, tenantB)
 	secretA, err := svc.Create(ctx, tenantA, "stripe", "", "sk_live_tenant_a", nil)
@@ -76,10 +73,7 @@ func TestSecretsStayInTheirTenant(t *testing.T) {
 // answers holds gets the first paging.MaxListItems of them, marked truncated.
 func TestSecretListIsCapped(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc, err := NewService(ctx, dbtest.Pool(t), StaticKeyProvider{Key: []byte("0123456789abcdef0123456789abcdef")})
-	if err != nil {
-		t.Fatalf("vault: %v", err)
-	}
+	svc := NewService(dbtest.Pool(t), testService(t, 7).box)
 	tenant := dbtest.Tenant(t)
 	admin := dbtest.User(t, tenant, tenant)
 	if _, err := dbtest.Pool(t).Exec(ctx, `
@@ -109,10 +103,7 @@ func TestSecretListIsCapped(t *testing.T) {
 // due date, a new value moves it, and null removes the interval.
 func TestSecretRevealAndRotation(t *testing.T) {
 	ctx := dbtest.Context(t)
-	svc, err := NewService(ctx, dbtest.Pool(t), StaticKeyProvider{Key: []byte("0123456789abcdef0123456789abcdef")})
-	if err != nil {
-		t.Fatalf("vault: %v", err)
-	}
+	svc := NewService(dbtest.Pool(t), testService(t, 7).box)
 	tenant := dbtest.Tenant(t)
 	admin := dbtest.User(t, tenant, tenant)
 	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)

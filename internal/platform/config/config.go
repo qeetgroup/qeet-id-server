@@ -129,11 +129,28 @@ type Config struct {
 	SAMLIdPKey  string `envconfig:"SAML_IDP_KEY" default:""`
 	SAMLIdPCert string `envconfig:"SAML_IDP_CERT" default:""`
 
-	// SecretsKey is the base64-encoded AES key (16/24/32 bytes) for the
-	// per-tenant secrets vault — independent of JWT_SECRET. Required outside dev
+	// SecretsKey is the base64-encoded AES key (16/24/32 bytes) that encrypts
+	// every stored secret — independent of JWT_SECRET. Required outside dev
 	// when SECRETS_PROVIDER=static; in dev an ephemeral key is generated if
 	// unset. Generate with `openssl rand -base64 32`.
+	//
+	// Every stored value names the key that sealed it, so the key can be
+	// rotated without making anything unreadable:
+	//  1. With several instances, first add the new key to SECRETS_PREVIOUS_KEYS
+	//     on all of them, so each can read what the others will seal with it.
+	//  2. Make the new key SECRETS_KEY and move the old one to
+	//     SECRETS_PREVIOUS_KEYS. New values are sealed with the new key, and the
+	//     secrets-reencrypt job re-seals the stored ones in the background.
+	//  3. When envelope_rows_on_old_keys is 0 for every column, remove the old
+	//     key from SECRETS_PREVIOUS_KEYS.
+	//
+	// With aws-kms the steps are the same with SECRETS_WRAPPED_DEK and
+	// SECRETS_PREVIOUS_WRAPPED_DEKS; a key moved from static to aws-kms stays
+	// readable in SECRETS_PREVIOUS_KEYS.
 	SecretsKey string `envconfig:"SECRETS_KEY" default:""`
+	// SecretsPreviousKeysRaw lists earlier data keys, base64 and comma-separated:
+	// they decrypt what they sealed but never encrypt (see SecretsKey).
+	SecretsPreviousKeysRaw string `envconfig:"SECRETS_PREVIOUS_KEYS" default:""`
 
 	// SecretsProvider selects how the vault data-encryption key is sourced:
 	//   static  — from SECRETS_KEY (default)
@@ -144,6 +161,9 @@ type Config struct {
 	// SecretsWrappedDEK is the base64 KMS CiphertextBlob of the wrapped data key
 	// (output of `aws kms generate-data-key`), unwrapped at boot (aws-kms only).
 	SecretsWrappedDEK string `envconfig:"SECRETS_WRAPPED_DEK" default:""`
+	// SecretsPreviousWrappedDEKsRaw lists earlier SECRETS_WRAPPED_DEK values,
+	// comma-separated, unwrapped with KMS_KEY_ID to decrypt only (aws-kms only).
+	SecretsPreviousWrappedDEKsRaw string `envconfig:"SECRETS_PREVIOUS_WRAPPED_DEKS" default:""`
 
 	HTTPReadTimeout       time.Duration `envconfig:"HTTP_READ_TIMEOUT" default:"15s"`
 	HTTPWriteTimeout      time.Duration `envconfig:"HTTP_WRITE_TIMEOUT" default:"30s"`
@@ -690,6 +710,28 @@ func (c *Config) RelayKeys() []string {
 	for _, k := range strings.Split(c.RelayKeysRaw, ",") {
 		if k = strings.TrimSpace(k); k != "" {
 			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// SecretsPreviousKeys returns the SECRETS_PREVIOUS_KEYS entries, trimmed,
+// empty ones dropped.
+func (c *Config) SecretsPreviousKeys() []string { return commaList(c.SecretsPreviousKeysRaw) }
+
+// SecretsPreviousWrappedDEKs returns the SECRETS_PREVIOUS_WRAPPED_DEKS
+// entries, trimmed, empty ones dropped.
+func (c *Config) SecretsPreviousWrappedDEKs() []string {
+	return commaList(c.SecretsPreviousWrappedDEKsRaw)
+}
+
+// commaList splits a comma-separated variable into its trimmed, non-empty
+// entries.
+func commaList(raw string) []string {
+	var out []string
+	for _, v := range strings.Split(raw, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
 		}
 	}
 	return out

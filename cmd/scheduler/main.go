@@ -73,7 +73,14 @@ func main() {
 	// (session.revoked, reason expired) to the organisations' subscribers.
 	sessionSignals := sessionsignal.New(webhook.NewService(pool).EnqueueTx)
 
-	jobs := bootstrap.MaintenanceJobs(pool, sessionSignals)
+	// The re-encryption job needs the same data keys as the API.
+	box, err := bootstrap.SecretsCipher(rootCtx, cfg)
+	if err != nil {
+		slog.Error("init domain encryption", "err", err)
+		os.Exit(1)
+	}
+
+	jobs := bootstrap.MaintenanceJobs(pool, sessionSignals, box)
 	for _, j := range jobs {
 		slog.Info("job registered", "name", j.Name, "interval", j.Interval)
 	}

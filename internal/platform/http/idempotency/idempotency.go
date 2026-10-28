@@ -202,11 +202,22 @@ func scopeOf(r *http.Request) (string, uuid.UUID) {
 	if p == nil {
 		return "anonymous", platformScope
 	}
-	sealAs, tenant := platformScope, "-"
+	tenant := "-"
 	if p.TenantID != nil {
-		sealAs, tenant = *p.TenantID, p.TenantID.String()
+		tenant = p.TenantID.String()
 	}
-	return tenant + "|" + p.ActorType + ":" + p.Subject, sealAs
+	scope := tenant + "|" + p.ActorType + ":" + p.Subject
+	return scope, SealedAs(scope)
+}
+
+// SealedAs returns the tenant the answer stored for scope is sealed under: the
+// caller's organisation, or a fixed stand-in for a caller with none.
+func SealedAs(scope string) uuid.UUID {
+	tenant, _, _ := strings.Cut(scope, "|")
+	if id, err := uuid.Parse(tenant); err == nil {
+		return id
+	}
+	return platformScope
 }
 
 // Purge deletes keys older than Retention and returns how many.

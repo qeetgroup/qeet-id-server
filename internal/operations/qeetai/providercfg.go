@@ -30,12 +30,6 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
-// KeyProvider supplies the deployment data key that seals tenant provider keys.
-// It matches the secrets vault's KeyProvider, so one implementation serves both.
-type KeyProvider interface {
-	DataKey(ctx context.Context) ([]byte, error)
-}
-
 // ConfigSource identifies which provider config a tenant's qeetai resolves to.
 type ConfigSource string
 
@@ -106,17 +100,9 @@ func newStreamClient(policy *egress.Policy, headerTimeout time.Duration) *http.C
 	return client
 }
 
-// NewProviderConfig builds the service, deriving its envelope cipher from the
-// deployment data key (identical to the secrets vault).
-func NewProviderConfig(ctx context.Context, pool *pgxpool.Pool, kp KeyProvider, platform PlatformProvider, policies ...*egress.Policy) (*ProviderConfig, error) {
-	key, err := kp.DataKey(ctx)
-	if err != nil {
-		return nil, err
-	}
-	box, err := envelope.New(key)
-	if err != nil {
-		return nil, err
-	}
+// NewProviderConfig builds the service, sealing tenant keys with box, the
+// deployment's envelope cipher (the one the secrets vault uses).
+func NewProviderConfig(pool *pgxpool.Pool, box *envelope.Cipher, platform PlatformProvider, policies ...*egress.Policy) *ProviderConfig {
 	policy := egress.PublicPolicy(policies...)
 	return &ProviderConfig{
 		pool:         pool,
@@ -126,7 +112,7 @@ func NewProviderConfig(ctx context.Context, pool *pgxpool.Pool, kp KeyProvider, 
 		egress:       policy,
 		httpClient:   policy.HTTPClient(probeTimeout),
 		streamClient: newStreamClient(policy, streamHeaderTimeout),
-	}, nil
+	}
 }
 
 // PlatformConfigured reports whether a deployment-level fallback key is set.
@@ -160,8 +146,9 @@ func (c *ProviderConfig) decrypt(tenantID uuid.UUID, ciphertext, nonce []byte) (
 	return string(plaintext), nil
 }
 
-// reseal upgrades a legacy row to context-bound ciphertext. Best-effort: a
-// failure here must not break the inference path that just decrypted fine.
+// reseal seals a row again with the current key and scheme when it was sealed
+// otherwise. Best-effort: a failure here must not break the inference path
+// that just decrypted fine.
 func (c *ProviderConfig) reseal(ctx context.Context, tenantID uuid.UUID, plaintext string, existing []byte) {
 	if c.box == nil || c.box.IsCurrent(existing) {
 		return

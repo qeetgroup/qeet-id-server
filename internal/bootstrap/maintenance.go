@@ -15,6 +15,8 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope/reseal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
@@ -28,8 +30,9 @@ const AuditVerifyInterval = 6 * time.Hour
 
 // MaintenanceJobs returns the scheduled housekeeping jobs. Each runs once per
 // interval across all instances. Expired sessions the cleanup removes are
-// announced through signals as session.revoked (reason expired).
-func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller) []worker.Scheduled {
+// announced through signals as session.revoked (reason expired); stored values
+// are re-sealed with box's current key.
+func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller, box *envelope.Cipher) []worker.Scheduled {
 	verifier := audit.NewVerifier(pool)
 	return []worker.Scheduled{
 		{
@@ -177,17 +180,36 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller) []wor
 				return nil
 			},
 		},
+		{
+			// Values sealed with a previous data key, or before values named
+			// their key, are sealed again with the current one.
+			Name:     "secrets-reencrypt",
+			Interval: 15 * time.Minute,
+			Run: func(ctx context.Context) error {
+				run, err := reseal.Run(ctx, pool, box, EncryptedColumns(), ReencryptBatch, ReencryptBudget)
+				if err != nil {
+					return err
+				}
+				if run.Resealed > 0 || run.Unreadable > 0 || !run.Finished {
+					slog.Info("stored values re-encrypted", "resealed", run.Resealed, "unreadable", run.Unreadable,
+						"finished", run.Finished)
+				}
+				return nil
+			},
+		},
 	}
 }
 
 // RegisterMaintenanceMetrics exposes when each scheduled job, and the audit
 // verification, last succeeded (read from the database at scrape time, so it
-// holds whichever instance ran them), the outbox backlog and this instance's
-// connection pool. Registering twice is a no-op.
-func RegisterMaintenanceMetrics(pool *pgxpool.Pool) {
+// holds whichever instance ran them), the outbox backlog, the stored values
+// not yet on box's current key and this instance's connection pool.
+// Registering twice is a no-op.
+func RegisterMaintenanceMetrics(pool *pgxpool.Pool, box *envelope.Cipher) {
 	for _, c := range []prometheus.Collector{
 		worker.LastSuccessCollector(pool), audit.VerificationMetrics(pool),
 		outbox.LagCollector(pool), postgres.PoolCollector(pool),
+		reseal.Collector(pool, box, EncryptedColumns()),
 	} {
 		var dup prometheus.AlreadyRegisteredError
 		if err := prometheus.Register(c); err != nil && !errors.As(err, &dup) {

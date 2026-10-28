@@ -70,18 +70,10 @@ type Service struct {
 	box  *envelope.Cipher
 }
 
-// NewService builds the vault, unwrapping the data key from the provider once.
-// The key must be 16, 24, or 32 bytes (AES-128/192/256).
-func NewService(ctx context.Context, pool *pgxpool.Pool, kp KeyProvider) (*Service, error) {
-	key, err := kp.DataKey(ctx)
-	if err != nil {
-		return nil, err
-	}
-	box, err := envelope.New(key)
-	if err != nil {
-		return nil, err
-	}
-	return &Service{pool: pool, q: dbgen.New(pool), box: box}, nil
+// NewService builds the vault, sealing values with box, the deployment's cipher
+// over the data key from the KeyProvider.
+func NewService(pool *pgxpool.Pool, box *envelope.Cipher) *Service {
+	return &Service{pool: pool, q: dbgen.New(pool), box: box}
 }
 
 // Pool returns the connection pool, for handlers that run their own transaction.

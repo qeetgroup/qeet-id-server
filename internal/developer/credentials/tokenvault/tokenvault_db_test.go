@@ -15,7 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	secret "github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secrets"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -83,11 +83,17 @@ func (p *oauthProvider) exchanges() int {
 // vaultService returns the vault, allowed to call loopback providers.
 func vaultService(t *testing.T) *Service {
 	t.Helper()
-	svc, err := NewService(dbtest.Context(t), dbtest.Pool(t), secret.StaticKeyProvider{Key: []byte("0123456789abcdef0123456789abcdef")}, egress.DevelopmentPolicy())
+	return NewService(dbtest.Pool(t), testCipher(t), egress.DevelopmentPolicy())
+}
+
+// testCipher returns a cipher over a fixed data key.
+func testCipher(t *testing.T) *envelope.Cipher {
+	t.Helper()
+	box, err := envelope.New([]byte("0123456789abcdef0123456789abcdef"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return svc
+	return box
 }
 
 // signedIn is p as a person's own session holding scopes.
@@ -300,10 +306,7 @@ func TestProviderSecretIsEncryptedOnUse(t *testing.T) {
 		t.Errorf("read the encrypted secret: %v", err)
 	}
 
-	strict, err := NewService(ctx, pool, secret.StaticKeyProvider{Key: []byte("0123456789abcdef0123456789abcdef")})
-	if err != nil {
-		t.Fatal(err)
-	}
+	strict := NewService(pool, testCipher(t))
 	if _, err := strict.RegisterProvider(ctx, tenant, RegisterProviderInput{
 		Provider: "internal", ClientID: "c", ClientSecret: "s", AuthorizeURL: "http://127.0.0.1:9/authorize", TokenURL: "http://127.0.0.1:9/token",
 	}); err == nil {

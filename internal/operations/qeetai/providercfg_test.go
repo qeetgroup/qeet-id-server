@@ -1,7 +1,6 @@
 package qeetai
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,15 +13,11 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai/openai"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
-
-// staticKey is a KeyProvider with a fixed data key.
-type staticKey struct{}
-
-func (staticKey) DataKey(context.Context) ([]byte, error) { return make([]byte, 32), nil }
 
 // TestStreamClientOutlivesHeaderTimeout checks that a streamed reply may last
 // longer than the stream client's header timeout, which a whole-request timeout
@@ -71,10 +66,11 @@ func TestStreamClientOutlivesHeaderTimeout(t *testing.T) {
 // TestProviderConfigClients checks that model calls stream through a client
 // with no whole-request timeout and that Test probes stay bounded.
 func TestProviderConfigClients(t *testing.T) {
-	c, err := NewProviderConfig(context.Background(), nil, staticKey{}, PlatformProvider{}, egress.DevelopmentPolicy())
+	box, err := envelope.New(make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
+	c := NewProviderConfig(nil, box, PlatformProvider{}, egress.DevelopmentPolicy())
 	if c.httpClient.Timeout != probeTimeout {
 		t.Errorf("probe client timeout = %s, want %s", c.httpClient.Timeout, probeTimeout)
 	}

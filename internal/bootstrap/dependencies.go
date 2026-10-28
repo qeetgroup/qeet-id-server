@@ -100,7 +100,7 @@ func Services(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool) Deps 
 func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, outboxPub outbox.Publisher) (Deps, []namedWorker) {
 	outboundPolicy := newOutboundPolicy(cfg)
 	keys := loadKeys(rootCtx, cfg, pool)
-	keyProvider, sharedCipher, signingKeyRegistry, issuer := keys.provider, keys.cipher, keys.signingKeys, keys.issuer
+	sharedCipher, signingKeyRegistry, issuer := keys.cipher, keys.signingKeys, keys.issuer
 	verifier := &httpx.AuthVerifier{
 		Tokens:          issuer,
 		DevTrustHeaders: cfg.AuthDevTrustHeaders,
@@ -319,33 +319,21 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	groupService := group.NewService(pool)
 	scimService := scim.NewService(pool, userRepo)
 	scimService.SetSessionSignals(sessionSignals)
-	secretService, err := secret.NewService(rootCtx, pool, keyProvider)
-	if err != nil {
-		slog.Error("init secrets vault", "err", err)
-		os.Exit(1)
-	}
-	// Token Vault reuses the same key provider as the secrets vault above —
+	secretService := secret.NewService(pool, sharedCipher)
+	// Token Vault seals with the same cipher as the secrets vault above —
 	// one KMS/static-key setup backs both encrypted stores.
-	tokenVaultService, err := tokenvault.NewService(rootCtx, pool, keyProvider, outboundPolicy)
-	if err != nil {
-		slog.Error("init token vault", "err", err)
-		os.Exit(1)
-	}
+	tokenVaultService := tokenvault.NewService(pool, sharedCipher, outboundPolicy)
 
 	// Qeet AI provider config: per-tenant keys, encrypted with the vault data key,
 	// with QEETAI_* as the platform fallback. The orchestrator is always built,
 	// since a tenant can bring its own key.
-	qeetaiProviderCfg, err := qeetai.NewProviderConfig(rootCtx, pool, keyProvider, qeetai.PlatformProvider{
+	qeetaiProviderCfg := qeetai.NewProviderConfig(pool, sharedCipher, qeetai.PlatformProvider{
 		Provider:  cfg.QeetaiProvider,
 		APIKey:    cfg.QeetaiAPIKey,
 		Model:     cfg.QeetaiModel,
 		BaseURL:   cfg.QeetaiBaseURL,
 		MaxTokens: cfg.QeetaiMaxTokens,
 	}, outboundPolicy)
-	if err != nil {
-		slog.Error("init Qeet AI provider config", "err", err)
-		os.Exit(1)
-	}
 	if qeetaiProviderCfg.PlatformConfigured() {
 		slog.Info("Qeet AI: platform provider configured", "provider", cfg.QeetaiProvider, "model", cfg.QeetaiModel)
 	} else {
@@ -532,9 +520,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		// Audit-chain verification and the cleanups, once per interval across
 		// instances.
 		{name: "scheduler", run: func(ctx context.Context) {
-			worker.RunScheduled(ctx, pool, MaintenanceJobs(pool, sessionSignals), worker.SchedulerTick)
+			worker.RunScheduled(ctx, pool, MaintenanceJobs(pool, sessionSignals, sharedCipher), worker.SchedulerTick)
 		}},
 	}
-	RegisterMaintenanceMetrics(pool)
+	RegisterMaintenanceMetrics(pool, sharedCipher)
 	return deps, workers
 }
