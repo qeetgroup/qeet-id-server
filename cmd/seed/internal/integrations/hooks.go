@@ -70,7 +70,8 @@ func (d *dev) authHooks(o *world.Org) {
 			ct := d.when(o, c.days, by)
 			editor := person(o, ct, email(by.Email), both(dept("Security"), guardians), both(dept("Information Security"), guardians))
 			w.At(ct, func() {
-				w.Check(w.Deps.AuthHook.Service.Update(w.Ctx, h.ID, o.ID, c.enabled, c.failOpen, d.as(editor)), "change auth hook "+s.url)
+				_, _, err := w.Deps.AuthHook.Service.Update(w.Ctx, h.ID, o.ID, authhook.HookSettings{Enabled: &c.enabled, FailOpen: &c.failOpen}, d.as(editor))
+				w.Check(err, "change auth hook "+s.url)
 			})
 		}
 	}

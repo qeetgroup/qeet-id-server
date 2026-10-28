@@ -183,6 +183,20 @@ func TestHookDecidesSignIn(t *testing.T) {
 	if len(list.Items) != 1 || list.Items[0].Enabled {
 		t.Errorf("hooks %+v; want the one, disabled", list.Items)
 	}
+
+	// A PATCH changes only the fields it sends.
+	var got struct {
+		Enabled  bool `json:"enabled"`
+		FailOpen bool `json:"fail_open"`
+	}
+	dbtest.Decode(t, dbtest.Do(t, h, http.MethodPatch, base+"/"+hook.ID.String(), map[string]bool{"fail_open": true}), &got)
+	if got.Enabled || !got.FailOpen {
+		t.Errorf("after sending only fail_open: %+v, want still disabled and failing open", got)
+	}
+	dbtest.Decode(t, dbtest.Do(t, h, http.MethodPatch, base+"/"+hook.ID.String(), map[string]bool{"enabled": true}), &got)
+	if !got.Enabled || !got.FailOpen {
+		t.Errorf("after sending only enabled: %+v, want enabled and still failing open", got)
+	}
 	if rec := dbtest.Do(t, h, http.MethodDelete, base+"/"+hook.ID.String(), nil); rec.Code != http.StatusNoContent {
 		t.Errorf("delete: %d", rec.Code)
 	}
@@ -287,14 +301,16 @@ func TestEveryEnabledHookRuns(t *testing.T) {
 
 	first.answer(http.StatusOK, `{"decision":"allow"}`)
 	second.answer(http.StatusBadGateway, "")
-	if err := svc.Update(ctx, newer.ID, tenant, true, false, audit.Actor{Type: "user"}); err != nil {
+	on, closed := true, false
+	if _, _, err := svc.Update(ctx, newer.ID, tenant, HookSettings{Enabled: &on, FailOpen: &closed}, audit.Actor{Type: "user"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.Run(ctx, tenant, a.ID, a.Email); !errors.Is(err, errs.ErrAuthHookDenied) {
 		t.Errorf("the newer hook fails closed: %v, want refused", err)
 	}
 
-	if err := svc.Update(ctx, newer.ID, tenant, false, false, audit.Actor{Type: "user"}); err != nil {
+	off := false
+	if _, _, err := svc.Update(ctx, newer.ID, tenant, HookSettings{Enabled: &off}, audit.Actor{Type: "user"}); err != nil {
 		t.Fatal(err)
 	}
 	f, s = calls()

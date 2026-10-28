@@ -142,27 +142,36 @@ func (q *Queries) SealHookSecret(ctx context.Context, arg SealHookSecretParams) 
 	return err
 }
 
-const updateHook = `-- name: UpdateHook :execrows
-UPDATE tenant.auth_hooks SET enabled = $1, fail_open = $2
+const updateHook = `-- name: UpdateHook :one
+UPDATE tenant.auth_hooks
+SET enabled = COALESCE($1::boolean, enabled),
+    fail_open = COALESCE($2::boolean, fail_open)
 WHERE id = $3 AND tenant_id = $4
+RETURNING enabled, fail_open
 `
 
 type UpdateHookParams struct {
-	Enabled  bool
-	FailOpen bool
+	Enabled  *bool
+	FailOpen *bool
 	ID       uuid.UUID
 	TenantID uuid.UUID
 }
 
-func (q *Queries) UpdateHook(ctx context.Context, arg UpdateHookParams) (int64, error) {
-	result, err := q.db.Exec(ctx, updateHook,
+type UpdateHookRow struct {
+	Enabled  bool
+	FailOpen bool
+}
+
+// UpdateHook sets whichever of enabled and fail_open are given, keeping the
+// other, and returns both as stored.
+func (q *Queries) UpdateHook(ctx context.Context, arg UpdateHookParams) (UpdateHookRow, error) {
+	row := q.db.QueryRow(ctx, updateHook,
 		arg.Enabled,
 		arg.FailOpen,
 		arg.ID,
 		arg.TenantID,
 	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+	var i UpdateHookRow
+	err := row.Scan(&i.Enabled, &i.FailOpen)
+	return i, err
 }

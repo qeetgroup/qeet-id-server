@@ -842,7 +842,7 @@ paths:
   /v1/tenants/{tenantID}/auth-hooks/{id}:
     patch:
       operationId: patch_v1_tenants_ByTenantID_auth_hooks_ById
-      description: 'Updates an authentication hook''s configuration, such as its target URL or enabled state.'
+      description: 'Turns an authentication hook on or off and sets whether it fails open. Only the fields sent change; the answer is both settings as stored.'
       summary: Update auth hook
       tags:
         - Auth Hooks
@@ -874,7 +874,17 @@ paths:
                   description: 'What a sign-in does when the hook gives no answer: it can''t be read, its signing secret can''t be opened, the call fails or times out, or its answer can''t be read. True (the default on create) lets the sign-in proceed; false refuses it as temporarily unavailable. Where the hook can''t be read, the setting last read for the organisation is followed. Every such skip is recorded (audit auth_hook.skipped with the reason and outcome; metric auth_hook_skipped_total).'
       responses:
         '200':
-          description: Updated
+          description: The hook's settings as stored
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled, fail_open]
+                properties:
+                  enabled:
+                    type: boolean
+                  fail_open:
+                    type: boolean
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

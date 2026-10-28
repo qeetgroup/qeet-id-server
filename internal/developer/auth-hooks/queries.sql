@@ -5,9 +5,14 @@
 SELECT id, trigger, url, enabled, fail_open, created_at
 FROM tenant.auth_hooks WHERE tenant_id = $1 ORDER BY created_at DESC;
 
--- name: UpdateHook :execrows
-UPDATE tenant.auth_hooks SET enabled = @enabled, fail_open = @fail_open
-WHERE id = @id AND tenant_id = @tenant_id;
+-- UpdateHook sets whichever of enabled and fail_open are given, keeping the
+-- other, and returns both as stored.
+-- name: UpdateHook :one
+UPDATE tenant.auth_hooks
+SET enabled = COALESCE(sqlc.narg('enabled')::boolean, enabled),
+    fail_open = COALESCE(sqlc.narg('fail_open')::boolean, fail_open)
+WHERE id = @id AND tenant_id = @tenant_id
+RETURNING enabled, fail_open;
 
 -- name: DeleteHook :execrows
 DELETE FROM tenant.auth_hooks WHERE id = @id AND tenant_id = @tenant_id;

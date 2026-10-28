@@ -22,6 +22,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -395,35 +396,43 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Hook, error) 
 	return out, nil
 }
 
-// Update enables or disables one of the tenant's hooks and sets whether it
-// fails open, recorded as actor's.
-func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, enabled, failOpen bool, actor audit.Actor) error {
+// HookSettings are a hook's switches. In an update, a nil field keeps its
+// current value.
+type HookSettings struct {
+	Enabled  *bool `json:"enabled"`
+	FailOpen *bool `json:"fail_open"`
+}
+
+// Update sets whichever of the settings are given on one of the tenant's
+// hooks, keeping the rest, and returns whether it is now enabled and fails
+// open. It is recorded as actor's.
+func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in HookSettings, actor audit.Actor) (enabled, failOpen bool, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return false, false, err
 	}
 	defer tx.Rollback(ctx)
-	n, err := s.q.WithTx(tx).UpdateHook(ctx, dbgen.UpdateHookParams{
-		Enabled:  enabled,
-		FailOpen: failOpen,
+	row, err := s.q.WithTx(tx).UpdateHook(ctx, dbgen.UpdateHookParams{
+		Enabled:  in.Enabled,
+		FailOpen: in.FailOpen,
 		ID:       id,
 		TenantID: tenantID,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, false, errs.ErrAuthHookNotFound
+	}
 	if err != nil {
-		return err
+		return false, false, err
 	}
-	if n == 0 {
-		return errs.ErrAuthHookNotFound
-	}
-	metadata := map[string]any{"enabled": enabled, "fail_open": failOpen}
+	metadata := map[string]any{"enabled": row.Enabled, "fail_open": row.FailOpen}
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "auth_hook.updated", "auth_hook", id, metadata)); err != nil {
-		return err
+		return false, false, err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "auth-hook.events", EventType: "auth_hook.updated",
-		Payload: map[string]any{"hook_id": id, "tenant_id": tenantID, "enabled": enabled, "fail_open": failOpen}}); err != nil {
-		return err
+		Payload: map[string]any{"hook_id": id, "tenant_id": tenantID, "enabled": row.Enabled, "fail_open": row.FailOpen}}); err != nil {
+		return false, false, err
 	}
-	return tx.Commit(ctx)
+	return row.Enabled, row.FailOpen, tx.Commit(ctx)
 }
 
 // Delete removes one of the tenant's hooks, recorded as actor's.
@@ -518,19 +527,17 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrAuthHookInvalidID)
 		return
 	}
-	var in struct {
-		Enabled  bool `json:"enabled"`
-		FailOpen bool `json:"fail_open"`
-	}
+	var in HookSettings
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.Update(r.Context(), id, tenantID, in.Enabled, in.FailOpen, audit.ActorOf(r)); err != nil {
+	enabled, failOpen, err := h.Service.Update(r.Context(), id, tenantID, in, audit.ActorOf(r))
+	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"enabled": in.Enabled, "fail_open": in.FailOpen})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"enabled": enabled, "fail_open": failOpen})
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
