@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 // The approximate country of a request comes only from a header a trusted
@@ -12,7 +13,10 @@ import (
 // CF-IPCountry), never from anything the client chooses: with no header
 // configured there is no country. It is an ISO 3166-1 alpha-2 code, or "".
 
-var geoCountryHeader atomic.Value // string
+var (
+	geoCountryHeader atomic.Value // string
+	geoCountrySeen   atomic.Int64 // Unix nanoseconds of the last request it gave a country; 0: none yet
+)
 
 const ctxKeyGeoCountry ctxKey = "qeet.geo_country"
 
@@ -29,10 +33,28 @@ func GeoCountryContext(next http.Handler) http.Handler {
 		if name != "" {
 			if c := strings.ToUpper(strings.TrimSpace(r.Header.Get(name))); isCountryCode(c) {
 				r = r.WithContext(context.WithValue(r.Context(), ctxKeyGeoCountry, c))
+				geoCountrySeen.Store(time.Now().UnixNano())
 			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// GeoCountryHeaderConfigured reports whether a trusted country header is named.
+func GeoCountryHeaderConfigured() bool {
+	name, _ := geoCountryHeader.Load().(string)
+	return name != ""
+}
+
+// GeoCountryLastSeen is when this instance last read a country from the
+// trusted header, or nil if it hasn't since it started.
+func GeoCountryLastSeen() *time.Time {
+	n := geoCountrySeen.Load()
+	if n == 0 {
+		return nil
+	}
+	t := time.Unix(0, n).UTC()
+	return &t
 }
 
 // GeoCountry is the request's approximate country, or "" when unknown.

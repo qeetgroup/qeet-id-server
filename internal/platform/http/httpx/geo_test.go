@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestGeoCountryComesOnlyFromTheTrustedHeader(t *testing.T) {
@@ -25,4 +26,25 @@ func TestGeoCountryComesOnlyFromTheTrustedHeader(t *testing.T) {
 		}
 	}
 	SetGeoCountryHeader("")
+}
+
+// TestGeoCountryHeaderIsReported checks that whether a country header is
+// named, and when one last gave a country, are reported.
+func TestGeoCountryHeaderIsReported(t *testing.T) {
+	SetGeoCountryHeader("")
+	if GeoCountryHeaderConfigured() {
+		t.Error("no header named, but reported as configured")
+	}
+	SetGeoCountryHeader("CF-IPCountry")
+	defer SetGeoCountryHeader("")
+	if !GeoCountryHeaderConfigured() {
+		t.Error("a header named, but reported as not configured")
+	}
+	before := time.Now()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("CF-IPCountry", "IN")
+	GeoCountryContext(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(httptest.NewRecorder(), req)
+	if seen := GeoCountryLastSeen(); seen == nil || seen.Before(before.Add(-time.Second)) {
+		t.Errorf("last seen %v after a request with a country, want about now", seen)
+	}
 }

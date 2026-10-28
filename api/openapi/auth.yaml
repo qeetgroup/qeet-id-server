@@ -4835,6 +4835,16 @@ components:
         device_reputation_enabled:
           type: boolean
           description: Off by default. Flags a login from a browser+OS combination never seen before for this user.
+        country_header_configured:
+          type: boolean
+          readOnly: true
+          description: Whether the deployment names a trusted proxy country header (GEO_COUNTRY_HEADER). Without one impossible travel never fires. Ignored on update.
+        country_last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+          readOnly: true
+          description: When the instance answering last read a country from that header; null if none since it started (no header, or the proxy isn't sending it). Ignored on update.
     Error:
       type: object
       required:

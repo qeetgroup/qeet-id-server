@@ -54,6 +54,12 @@ type Settings struct {
 	ImpossibleTravelEnabled bool    `json:"impossible_travel_enabled"`
 	MinTravelHours          float64 `json:"min_travel_hours"`
 	DeviceReputationEnabled bool    `json:"device_reputation_enabled"`
+
+	// Read-only, ignored on update: whether this deployment names a trusted
+	// country header, and when this instance last read a country from it.
+	// Without one, impossible travel never fires.
+	CountryHeaderConfigured bool       `json:"country_header_configured"`
+	CountryLastSeenAt       *time.Time `json:"country_last_seen_at"`
 }
 
 func defaultSettings() Settings {
@@ -219,7 +225,14 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, st)
+	httpx.WriteJSON(w, http.StatusOK, withCountrySignal(st))
+}
+
+// withCountrySignal sets the read-only country-header fields on st.
+func withCountrySignal(st Settings) Settings {
+	st.CountryHeaderConfigured = httpx.GeoCountryHeaderConfigured()
+	st.CountryLastSeenAt = httpx.GeoCountryLastSeen()
+	return st
 }
 
 func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
@@ -238,7 +251,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, st)
+	httpx.WriteJSON(w, http.StatusOK, withCountrySignal(st))
 }
 
 // UpdateSettings stores the tenant's risk settings.
