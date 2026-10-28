@@ -155,16 +155,37 @@ func (s *Service) sweep(ctx context.Context) error {
 		return err
 	}
 	for _, p := range policies {
-		n, err := s.PurgeTenant(ctx, p.TenantID, int(p.DeletedUsersDays))
-		if err != nil {
-			slog.Warn("retention sweep", "tenant", p.TenantID, "err", err)
-			continue
-		}
+		days := clampDays(int(p.DeletedUsersDays))
+		n, err := s.PurgeTenant(ctx, p.TenantID, days)
 		if n > 0 {
 			slog.Info("retention sweep purged users", "tenant", p.TenantID, "count", n)
+			if err := s.recordSweep(ctx, p.TenantID, n, days); err != nil {
+				slog.Warn("retention sweep: record the purge", "tenant", p.TenantID, "err", err)
+			}
+		}
+		if err != nil {
+			slog.Warn("retention sweep", "tenant", p.TenantID, "err", err)
 		}
 	}
 	return nil
+}
+
+// recordSweep records in the tenant's audit trail, as the system, that the
+// sweep purged n deleted users older than days, as a manual run is recorded.
+func (s *Service) recordSweep(ctx context.Context, tenantID uuid.UUID, n, days int) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID: &tenantID, ActorType: "system",
+		Action: "retention.purge_run", ResourceType: "retention_policy",
+		Metadata: map[string]any{"purged": n, "deleted_users_days": days},
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // Run is the background sweeper, registered as a worker. Only acts on tenants

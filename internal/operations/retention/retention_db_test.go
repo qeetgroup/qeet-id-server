@@ -103,3 +103,41 @@ func TestPurgeRemovesEachRipeUser(t *testing.T) {
 		}
 	}
 }
+
+// TestSweepIsAudited checks that a scheduled sweep that removes people records
+// one retention.purge_run event, as the system, with how many and the window,
+// and that one that removes nobody records none.
+func TestSweepIsAudited(t *testing.T) {
+	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
+	tenant := dbtest.Tenant(t)
+	svc := NewService(pool)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Update(ctx, tx, tenant, Policy{DeletedUsersEnabled: true, DeletedUsersDays: 30}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		u := dbtest.User(t, tenant, tenant)
+		if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'deleted', deleted_at = NOW() - INTERVAL '40 days' WHERE id = $1`, u.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 2 {
+		if err := svc.sweep(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'retention.purge_run'
+		AND actor_type = 'system' AND actor_user_id IS NULL
+		AND metadata->>'purged' = '2' AND metadata->>'deleted_users_days' = '30'`, tenant); n != 1 {
+		t.Errorf("%d purge runs of two people recorded over two sweeps, want 1", n)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'retention.purge_run'`, tenant); n != 1 {
+		t.Errorf("%d purge runs recorded in all, want only the sweep that removed someone", n)
+	}
+}
