@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -256,11 +257,9 @@ func SealedAs(scope string) uuid.UUID {
 
 // Purge deletes keys older than Retention and returns how many.
 func Purge(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
-	tag, err := pool.Exec(ctx, `DELETE FROM platform.idempotency_keys WHERE created_at < $1`, time.Now().Add(-Retention))
-	if err != nil {
-		return 0, err
-	}
-	return tag.RowsAffected(), nil
+	return postgres.PurgeInBatches(ctx, pool, `DELETE FROM platform.idempotency_keys WHERE ctid = ANY(ARRAY(
+		SELECT k.ctid FROM platform.idempotency_keys k WHERE k.created_at < $1 LIMIT $2))`,
+		time.Now().Add(-Retention))
 }
 
 // recorder copies an answer as it is written.

@@ -20,6 +20,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -244,9 +245,12 @@ func (s *Store) Pool() *pgxpool.Pool { return s.pool }
 // email-delivery-cleanup job); suppressions are kept until cleared.
 const Retention = 90 * 24 * time.Hour
 
-// DeleteBefore removes message records sent before t (suppressions stay).
+// DeleteBefore removes message records sent before t, in batches
+// (suppressions stay).
 func (s *Store) DeleteBefore(ctx context.Context, t time.Time) (int64, error) {
-	return s.q.DeleteMessagesBefore(ctx, t)
+	return postgres.DeleteInBatches(ctx, func(ctx context.Context, limit int32) (int64, error) {
+		return s.q.DeleteMessagesBefore(ctx, dbgen.DeleteMessagesBeforeParams{Before: t, MaxRows: limit})
+	})
 }
 
 // idSender is a sender that reports the provider's id for what it accepted.

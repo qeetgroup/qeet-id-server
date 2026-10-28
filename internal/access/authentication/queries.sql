@@ -214,10 +214,11 @@ UPDATE auth.trusted_devices SET last_used_at = NOW()
 WHERE token_hash = @token_hash AND user_id = @user_id AND tenant_id = @tenant_id AND expires_at > NOW()
 RETURNING id;
 
--- PurgeExpiredTrustedDevices deletes remembered devices that expired before
--- the cutoff; they no longer skip anything.
+-- PurgeExpiredTrustedDevices deletes at most @max_rows remembered devices that
+-- expired before the cutoff; they no longer skip anything.
 -- name: PurgeExpiredTrustedDevices :execrows
-DELETE FROM auth.trusted_devices WHERE expires_at < @cutoff;
+DELETE FROM auth.trusted_devices WHERE ctid = ANY(ARRAY(
+    SELECT d.ctid FROM auth.trusted_devices d WHERE d.expires_at < @cutoff LIMIT @max_rows));
 
 -- CheckTenantMembership reports whether an active account is a member of an
 -- active organisation: the organisation's own account, or holding a role there.
@@ -370,37 +371,43 @@ RETURNING expires_at, LEAST(last_seen_at + idle_timeout, expires_at)::timestampt
 -- name: DeleteMFALoginChallenge :exec
 DELETE FROM auth.mfa_login_challenges WHERE id = @id;
 
--- PurgeEndedSessions deletes API and console sessions past retention: ended
--- (revoked) before the cutoff, or never ended but past its maximum age or idle
--- timeout before the cutoff, or with every refresh token expired before it
--- (none was usable after it). A session opened after the cutoff is always kept.
--- Their refresh tokens go with them (cascade). Returns what it deleted;
--- expired marks the sessions that were never ended, which are announced as
--- expired.
+-- PurgeEndedSessions deletes at most @max_rows API and console sessions past
+-- retention: ended (revoked) before the cutoff, or never ended but past its
+-- maximum age or idle timeout before the cutoff, or with every refresh token
+-- expired before it (none was usable after it). A session opened after the
+-- cutoff is always kept. Their refresh tokens go with them (cascade). Returns
+-- what it deleted; expired marks the sessions that were never ended, which are
+-- announced as expired.
 -- name: PurgeEndedSessions :many
 DELETE FROM auth.sessions s
-WHERE s.created_at < @cutoff
-  AND (
-      (s.revoked_at IS NOT NULL AND s.revoked_at < @cutoff)
-      OR (s.revoked_at IS NULL AND (
-          s.expires_at < @cutoff
-          OR s.last_seen_at + s.idle_timeout < @cutoff
-          OR NOT EXISTS (
-              SELECT 1 FROM auth.refresh_tokens rt
-              WHERE rt.session_id = s.id AND rt.expires_at >= @cutoff)))
-  )
+WHERE s.ctid = ANY(ARRAY(
+    SELECT e.ctid FROM auth.sessions e
+    WHERE e.created_at < @cutoff
+      AND (
+          (e.revoked_at IS NOT NULL AND e.revoked_at < @cutoff)
+          OR (e.revoked_at IS NULL AND (
+              e.expires_at < @cutoff
+              OR e.last_seen_at + e.idle_timeout < @cutoff
+              OR NOT EXISTS (
+                  SELECT 1 FROM auth.refresh_tokens rt
+                  WHERE rt.session_id = e.id AND rt.expires_at >= @cutoff)))
+      )
+    LIMIT @max_rows))
 RETURNING s.id, s.user_id, s.tenant_id, (s.revoked_at IS NULL)::boolean AS expired;
 
 -- PurgeExpiredCeremonies deletes passkey ceremony state that has expired
 -- unfinished — every sign-in page now starts one in the background, and most
 -- are never completed. An expired ceremony can no longer be finished.
 -- name: PurgeExpiredCeremonies :execrows
-DELETE FROM auth.webauthn_sessions WHERE expires_at < NOW();
+DELETE FROM auth.webauthn_sessions WHERE ctid = ANY(ARRAY(
+    SELECT w.ctid FROM auth.webauthn_sessions w WHERE w.expires_at < NOW() LIMIT @max_rows));
 
--- PurgeExpiredLoginSessions deletes hosted-login sessions that expired before
--- the cutoff. Their cookie stopped being sent when they expired.
+-- PurgeExpiredLoginSessions deletes at most @max_rows hosted-login sessions
+-- that expired before the cutoff. Their cookie stopped being sent when they
+-- expired.
 -- name: PurgeExpiredLoginSessions :execrows
-DELETE FROM auth.login_sessions WHERE expires_at < @cutoff;
+DELETE FROM auth.login_sessions WHERE ctid = ANY(ARRAY(
+    SELECT l.ctid FROM auth.login_sessions l WHERE l.expires_at < @cutoff LIMIT @max_rows));
 
 -- DeleteTrustedDevicesForUser forgets every device remembered for the user, so
 -- each is asked for the second factor again at its next sign-in.

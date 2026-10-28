@@ -664,18 +664,26 @@ func (q *Queries) MarkRefreshTokenUsed(ctx context.Context, arg MarkRefreshToken
 
 const purgeEndedSessions = `-- name: PurgeEndedSessions :many
 DELETE FROM auth.sessions s
-WHERE s.created_at < $1
-  AND (
-      (s.revoked_at IS NOT NULL AND s.revoked_at < $1)
-      OR (s.revoked_at IS NULL AND (
-          s.expires_at < $1
-          OR s.last_seen_at + s.idle_timeout < $1
-          OR NOT EXISTS (
-              SELECT 1 FROM auth.refresh_tokens rt
-              WHERE rt.session_id = s.id AND rt.expires_at >= $1)))
-  )
+WHERE s.ctid = ANY(ARRAY(
+    SELECT e.ctid FROM auth.sessions e
+    WHERE e.created_at < $1
+      AND (
+          (e.revoked_at IS NOT NULL AND e.revoked_at < $1)
+          OR (e.revoked_at IS NULL AND (
+              e.expires_at < $1
+              OR e.last_seen_at + e.idle_timeout < $1
+              OR NOT EXISTS (
+                  SELECT 1 FROM auth.refresh_tokens rt
+                  WHERE rt.session_id = e.id AND rt.expires_at >= $1)))
+      )
+    LIMIT $2))
 RETURNING s.id, s.user_id, s.tenant_id, (s.revoked_at IS NULL)::boolean AS expired
 `
+
+type PurgeEndedSessionsParams struct {
+	Cutoff  time.Time
+	MaxRows int32
+}
 
 type PurgeEndedSessionsRow struct {
 	ID       uuid.UUID
@@ -684,15 +692,15 @@ type PurgeEndedSessionsRow struct {
 	Expired  bool
 }
 
-// PurgeEndedSessions deletes API and console sessions past retention: ended
-// (revoked) before the cutoff, or never ended but past its maximum age or idle
-// timeout before the cutoff, or with every refresh token expired before it
-// (none was usable after it). A session opened after the cutoff is always kept.
-// Their refresh tokens go with them (cascade). Returns what it deleted;
-// expired marks the sessions that were never ended, which are announced as
-// expired.
-func (q *Queries) PurgeEndedSessions(ctx context.Context, cutoff time.Time) ([]PurgeEndedSessionsRow, error) {
-	rows, err := q.db.Query(ctx, purgeEndedSessions, cutoff)
+// PurgeEndedSessions deletes at most @max_rows API and console sessions past
+// retention: ended (revoked) before the cutoff, or never ended but past its
+// maximum age or idle timeout before the cutoff, or with every refresh token
+// expired before it (none was usable after it). A session opened after the
+// cutoff is always kept. Their refresh tokens go with them (cascade). Returns
+// what it deleted; expired marks the sessions that were never ended, which are
+// announced as expired.
+func (q *Queries) PurgeEndedSessions(ctx context.Context, arg PurgeEndedSessionsParams) ([]PurgeEndedSessionsRow, error) {
+	rows, err := q.db.Query(ctx, purgeEndedSessions, arg.Cutoff, arg.MaxRows)
 	if err != nil {
 		return nil, err
 	}
@@ -717,14 +725,15 @@ func (q *Queries) PurgeEndedSessions(ctx context.Context, cutoff time.Time) ([]P
 }
 
 const purgeExpiredCeremonies = `-- name: PurgeExpiredCeremonies :execrows
-DELETE FROM auth.webauthn_sessions WHERE expires_at < NOW()
+DELETE FROM auth.webauthn_sessions WHERE ctid = ANY(ARRAY(
+    SELECT w.ctid FROM auth.webauthn_sessions w WHERE w.expires_at < NOW() LIMIT $1))
 `
 
 // PurgeExpiredCeremonies deletes passkey ceremony state that has expired
 // unfinished — every sign-in page now starts one in the background, and most
 // are never completed. An expired ceremony can no longer be finished.
-func (q *Queries) PurgeExpiredCeremonies(ctx context.Context) (int64, error) {
-	result, err := q.db.Exec(ctx, purgeExpiredCeremonies)
+func (q *Queries) PurgeExpiredCeremonies(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeExpiredCeremonies, maxRows)
 	if err != nil {
 		return 0, err
 	}
@@ -732,13 +741,20 @@ func (q *Queries) PurgeExpiredCeremonies(ctx context.Context) (int64, error) {
 }
 
 const purgeExpiredLoginSessions = `-- name: PurgeExpiredLoginSessions :execrows
-DELETE FROM auth.login_sessions WHERE expires_at < $1
+DELETE FROM auth.login_sessions WHERE ctid = ANY(ARRAY(
+    SELECT l.ctid FROM auth.login_sessions l WHERE l.expires_at < $1 LIMIT $2))
 `
 
-// PurgeExpiredLoginSessions deletes hosted-login sessions that expired before
-// the cutoff. Their cookie stopped being sent when they expired.
-func (q *Queries) PurgeExpiredLoginSessions(ctx context.Context, cutoff time.Time) (int64, error) {
-	result, err := q.db.Exec(ctx, purgeExpiredLoginSessions, cutoff)
+type PurgeExpiredLoginSessionsParams struct {
+	Cutoff  time.Time
+	MaxRows int32
+}
+
+// PurgeExpiredLoginSessions deletes at most @max_rows hosted-login sessions
+// that expired before the cutoff. Their cookie stopped being sent when they
+// expired.
+func (q *Queries) PurgeExpiredLoginSessions(ctx context.Context, arg PurgeExpiredLoginSessionsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeExpiredLoginSessions, arg.Cutoff, arg.MaxRows)
 	if err != nil {
 		return 0, err
 	}
@@ -746,13 +762,19 @@ func (q *Queries) PurgeExpiredLoginSessions(ctx context.Context, cutoff time.Tim
 }
 
 const purgeExpiredTrustedDevices = `-- name: PurgeExpiredTrustedDevices :execrows
-DELETE FROM auth.trusted_devices WHERE expires_at < $1
+DELETE FROM auth.trusted_devices WHERE ctid = ANY(ARRAY(
+    SELECT d.ctid FROM auth.trusted_devices d WHERE d.expires_at < $1 LIMIT $2))
 `
 
-// PurgeExpiredTrustedDevices deletes remembered devices that expired before
-// the cutoff; they no longer skip anything.
-func (q *Queries) PurgeExpiredTrustedDevices(ctx context.Context, cutoff time.Time) (int64, error) {
-	result, err := q.db.Exec(ctx, purgeExpiredTrustedDevices, cutoff)
+type PurgeExpiredTrustedDevicesParams struct {
+	Cutoff  time.Time
+	MaxRows int32
+}
+
+// PurgeExpiredTrustedDevices deletes at most @max_rows remembered devices that
+// expired before the cutoff; they no longer skip anything.
+func (q *Queries) PurgeExpiredTrustedDevices(ctx context.Context, arg PurgeExpiredTrustedDevicesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeExpiredTrustedDevices, arg.Cutoff, arg.MaxRows)
 	if err != nil {
 		return 0, err
 	}

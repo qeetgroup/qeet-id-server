@@ -149,11 +149,9 @@ func (s *Service) TestSignIn(ctx context.Context, id, connectionID, tenantID uui
 // PurgeTestSignIns deletes the test sign-ins begun more than retention ago,
 // with what the IdP sent them, and returns how many it deleted.
 func PurgeTestSignIns(ctx context.Context, pool *pgxpool.Pool, retention time.Duration) (int64, error) {
-	tag, err := pool.Exec(ctx, `DELETE FROM auth.saml_test_sign_ins WHERE created_at < $1`, time.Now().Add(-retention))
-	if err != nil {
-		return 0, err
-	}
-	return tag.RowsAffected(), nil
+	return postgres.PurgeInBatches(ctx, pool, `DELETE FROM auth.saml_test_sign_ins WHERE ctid = ANY(ARRAY(
+		SELECT s.ctid FROM auth.saml_test_sign_ins s WHERE s.created_at < $1 LIMIT $2))`,
+		time.Now().Add(-retention))
 }
 
 // answeredTest is a test sign-in as the ACS finds it, by its AuthnRequest.

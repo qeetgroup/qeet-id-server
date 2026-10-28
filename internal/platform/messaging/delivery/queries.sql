@@ -48,5 +48,8 @@ SET cleared_at = now(), cleared_by = @cleared_by
 WHERE id = @id AND tenant_id = @tenant_id AND cleared_at IS NULL
 RETURNING address_hint, reason;
 
+-- DeleteMessagesBefore deletes at most @max_rows message records sent before
+-- @before.
 -- name: DeleteMessagesBefore :execrows
-DELETE FROM platform.email_messages WHERE sent_at < @before;
+DELETE FROM platform.email_messages WHERE ctid = ANY(ARRAY(
+    SELECT m.ctid FROM platform.email_messages m WHERE m.sent_at < @before LIMIT @max_rows));
