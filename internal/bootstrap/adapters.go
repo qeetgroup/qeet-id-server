@@ -2,9 +2,11 @@ package bootstrap
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	apikey "github.com/qeetgroup/qeet-id-server/internal/developer/api-keys"
@@ -12,6 +14,8 @@ import (
 	invite "github.com/qeetgroup/qeet-id-server/internal/identity/invitations"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // billingOrgProvisioner adapts the tenant repository to billing.OrgProvisioner,
@@ -95,4 +99,24 @@ func (u entitlementUsageResolver) Usage(ctx context.Context, tenantID uuid.UUID)
 		}
 	}
 	return out, nil
+}
+
+// importRoles lets a bulk user import give a role, with the checks assigning
+// one to a person makes: the caller holds role.write and the role's authority.
+type importRoles struct{ repo *rbac.Repository }
+
+func (g importRoles) CheckGrant(r *http.Request, tenantID, roleID uuid.UUID) error {
+	caller := httpx.PrincipalFromCtx(r.Context())
+	ok, err := rbac.Holds(r.Context(), g.repo, caller, "role.write")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errs.ErrRBACPermissionDenied.WithDetail("giving a role needs role.write")
+	}
+	return g.repo.CheckGrantRole(r.Context(), caller, tenantID, roleID)
+}
+
+func (g importRoles) Assign(ctx context.Context, tx pgx.Tx, userID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID) error {
+	return g.repo.AssignRole(ctx, tx, userID, tenantID, roleID, grantedBy)
 }

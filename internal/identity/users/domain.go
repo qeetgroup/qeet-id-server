@@ -89,6 +89,8 @@ type BulkUserInput struct {
 type BulkCreateInput struct {
 	TenantID uuid.UUID       `json:"tenant_id"`
 	Users    []BulkUserInput `json:"users" validate:"required,min=1,max=1000"`
+	// RoleID, when set, is given to every user the import makes.
+	RoleID *uuid.UUID `json:"role_id"`
 }
 
 // BulkImportError describes why a single row failed. Line is the row's 1-based
@@ -108,6 +110,14 @@ type BulkImportResult struct {
 	Succeeded int               `json:"succeeded"`
 	Failed    int               `json:"failed"`
 	Errors    []BulkImportError `json:"errors,omitempty"`
+	Created   []BulkCreatedUser `json:"created"`
+}
+
+// BulkCreatedUser is a user a bulk import made, by its row.
+type BulkCreatedUser struct {
+	Line  int       `json:"line"`
+	Email string    `json:"email"`
+	ID    uuid.UUID `json:"id"`
 }
 
 // UpdateInput is what Update takes.

@@ -61,6 +61,17 @@ type Handler struct {
 	// ActOnCheck refuses changing the account of someone who outranks the
 	// caller (rbac.Repository.CheckActOn). Without it every change is refused.
 	ActOnCheck func(ctx context.Context, caller *httpx.Principal, tenantID, targetID uuid.UUID) error
+	// Roles gives a role to the people a bulk import makes. Without it an
+	// import can't give one.
+	Roles RoleGranter
+}
+
+// RoleGranter checks and gives a tenant's role to a new member.
+type RoleGranter interface {
+	// CheckGrant refuses r's caller giving roleID of tenantID to anyone.
+	CheckGrant(r *http.Request, tenantID, roleID uuid.UUID) error
+	// Assign gives roleID to userID in tenantID, on tx.
+	Assign(ctx context.Context, tx pgx.Tx, userID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID) error
 }
 
 // endEverySignIn ends, inside tx, every way userID is signed in: sessions,
@@ -452,7 +463,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		}
 		hash = ph
 	}
-	u, err := h.createWithEvidence(r, in, hash)
+	u, err := h.createWithEvidence(r, in, hash, nil)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -460,7 +471,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, u)
 }
 
-func (h *Handler) createWithEvidence(r *http.Request, in CreateInput, passwordHash string) (*User, error) {
+func (h *Handler) createWithEvidence(r *http.Request, in CreateInput, passwordHash string, roleID *uuid.UUID) (*User, error) {
 	ctx := r.Context()
 	if err := domainverify.CheckNewAccount(ctx, h.Repo.Pool(), in.TenantID, in.Email); err != nil {
 		return nil, err
@@ -506,6 +517,16 @@ func (h *Handler) createWithEvidence(r *http.Request, in CreateInput, passwordHa
 		Payload:     map[string]any{"user_id": u.ID, "tenant_id": u.TenantID, "email": u.Email, "source": "admin"},
 	}); err != nil {
 		return nil, err
+	}
+	if roleID != nil {
+		if err := h.Roles.Assign(ctx, tx, u.ID, tenant, *roleID, actorID); err != nil {
+			return nil, err
+		}
+		if err := audit.Record(ctx, tx, audit.Event{TenantID: &tenant, ActorUserID: actorID, ActorType: actorType,
+			Action: "role.assigned", ResourceType: "user", ResourceID: &id, IP: httpx.ClientIP(r), UserAgent: r.UserAgent(),
+			RequestID: httpx.RequestID(r), Metadata: map[string]any{"role_id": *roleID, "source": "bulk_import"}}); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
