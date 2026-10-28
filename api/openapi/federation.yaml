@@ -2019,7 +2019,10 @@ paths:
         signing-in user exactly like one that was never set up. Audited as
         social_provider.updated (fields changed, whether the secret was
         replaced), social_provider.disabled and social_provider.enabled. 404
-        for a provider the organisation does not have.
+        for a provider the organisation does not have. Switching it off is
+        refused with 409 social.provider_in_use (metadata.people: how many)
+        while anyone in the organisation can sign in only through it, as
+        removing it is; give them another way in first.
       responses:
         '200':
           description: The provider (never its secret)
@@ -2033,6 +2036,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -2058,8 +2063,8 @@ paths:
         back — but nobody can sign in through it meanwhile. Refused with 409
         social.provider_in_use (metadata.people: how many) while anyone in the
         organisation can sign in only through it (no password, no passkey, no
-        other linked identity); switch it off instead, or give them another way
-        in first. Audited as social_provider.deleted. 404 for a provider the
+        other linked identity); give them another way in first. Audited as
+        social_provider.deleted. 404 for a provider the
         organisation does not have.
       responses:
         '204':
