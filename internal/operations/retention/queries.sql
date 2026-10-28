@@ -26,13 +26,24 @@ WHERE tenant_id = $1
   AND deleted_at IS NOT NULL
   AND deleted_at < NOW() - make_interval(days => $2);
 
--- Permanently remove soft-deleted users older than `days` days.
--- Returns the number of rows deleted via :execrows.
--- name: PurgeRipeDeletedUsers :execrows
-DELETE FROM "user".users
-WHERE tenant_id = $1
+-- ListRipeDeletedUsers lists, in ID order after @after, at most @max_rows of
+-- the tenant's soft-deleted users older than @days days.
+-- name: ListRipeDeletedUsers :many
+SELECT id FROM "user".users
+WHERE tenant_id = @tenant_id
   AND deleted_at IS NOT NULL
-  AND deleted_at < NOW() - make_interval(days => $2);
+  AND deleted_at < NOW() - make_interval(days => @days)
+  AND id > @after
+ORDER BY id
+LIMIT @max_rows;
+
+-- PurgeRipeDeletedUser permanently removes one of the tenant's soft-deleted
+-- users older than @days days.
+-- name: PurgeRipeDeletedUser :execrows
+DELETE FROM "user".users
+WHERE id = @id AND tenant_id = @tenant_id
+  AND deleted_at IS NOT NULL
+  AND deleted_at < NOW() - make_interval(days => @days);
 
 -- name: ListEnabledRetentionPolicies :many
 SELECT tenant_id, deleted_users_days

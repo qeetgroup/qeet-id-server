@@ -1226,7 +1226,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Purges the deleted users the retention policy has made ripe, now rather than at the next scheduled run. Requires policy.write.'
+      description: 'Purges the deleted users the retention policy has made ripe, now rather than at the next scheduled run, one at a time: a user whose deletion fails is skipped, left for the next run, and not counted in purged. Requires policy.write.'
       responses:
         '201':
           description: Created
@@ -1263,7 +1263,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/GdprCreateInput'
-      description: 'Requests erasure of a person''s data in the organisation, carried out after the grace period unless cancelled. Requires gdpr.write.'
+      description: 'Requests erasure of a person''s account, carried out after the grace period unless cancelled. The erasure ends their sessions, redacts the account (email, phone, name, avatar, external ID and metadata) and deletes everything else it left: credentials and second factors, sign-in history, sessions and remembered devices, linked social and single sign-on accounts, application consents and grants, connected accounts and their tokens, personal API keys, role and group memberships, directory profiles, notifications, sign-in links and failed sign-in counters, and the payloads of the person''s data exports. The audit trail and the request itself are kept; the request goes on naming the account by user_id after the account is deleted for good. Requires gdpr.write.'
       responses:
         '201':
           description: Created
@@ -1441,7 +1441,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Returns status plus the full data payload once status is "ready"; response carries a Content-Disposition download header in that case.
+      description: Returns status plus the full data payload once status is "ready"; response carries a Content-Disposition download header in that case. The payload is deleted seven days after it was built, or when the person is erased, and the status becomes "expired".
       responses:
         '200':
           description: OK
@@ -1475,20 +1475,26 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [profile, sessions, passkeys, roles, mfa_totp_enabled, generated_at]
+                required: [profile, sessions, passkeys, roles, mfa_totp_enabled, identities, otp_factors, app_consents, app_grants, groups, sign_ins, generated_at]
                 properties:
-                  profile: {type: object, additionalProperties: true}
+                  profile: {type: object, additionalProperties: true, description: 'Email, phone, display name, avatar, metadata, status and verification times.'}
                   sessions: {type: array, items: {type: object, additionalProperties: true}}
                   passkeys: {type: array, items: {type: object, additionalProperties: true}}
                   roles: {type: array, items: {type: object, additionalProperties: true}}
                   mfa_totp_enabled: {type: boolean}
+                  identities: {type: array, description: 'Linked social and single sign-on accounts.', items: {type: object, additionalProperties: true}}
+                  otp_factors: {type: array, description: 'Email and SMS second factors, their destinations masked.', items: {type: object, additionalProperties: true}}
+                  app_consents: {type: array, description: 'Applications consented to and the scopes granted.', items: {type: object, additionalProperties: true}}
+                  app_grants: {type: array, description: 'Live application grants.', items: {type: object, additionalProperties: true}}
+                  groups: {type: array, items: {type: object, additionalProperties: true}}
+                  sign_ins: {type: array, description: 'The latest 1000 sign-ins, made and failed, with address and user agent.', items: {type: object, additionalProperties: true}}
                   generated_at: {type: string, format: date-time}
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/account/delete:
     post:
       operationId: post_v1_account_delete
-      description: 'Immediately erases the authenticated user''s personal data and credentials and revokes all of their sessions, exercising the right to erasure. When the account has a password, the current password must be supplied in the body to re-prove identity before this irreversible action; password-less accounts are authorized by the session alone. Audit references are retained in redacted form so the hash-chained log stays verifiable, and the client should sign the user out afterward.'
+      description: 'Immediately erases the authenticated user''s account and revokes all of their sessions, exercising the right to erasure: the account is redacted and everything else it left is deleted, as POST /v1/gdpr/purge describes. When the account has a password, the current password must be supplied in the body to re-prove identity before this irreversible action; password-less accounts are authorized by the session alone. Audit references are retained in redacted form so the hash-chained log stays verifiable, and the client should sign the user out afterward.'
       summary: Delete the authenticated user's account
       tags: [GDPR]
       security:
@@ -4085,11 +4091,13 @@ components:
         payload:
           type: object
           additionalProperties: true
+          description: 'The person''s data in the organisation, while status is ready: profile (with metadata), sessions, passkeys, roles, mfa_totp_enabled, identities (linked social and single sign-on accounts), otp_factors (destinations masked), app_consents, app_grants, groups, sign_ins (the latest 1000) and generated_at.'
         requested_by:
           type: [string, 'null']
           format: uuid
         status:
           type: string
+          description: 'pending, ready, failed, or expired once the payload has been deleted (seven days after it was built, or when the person was erased).'
         tenant_id:
           type: string
           format: uuid
@@ -4289,6 +4297,7 @@ components:
         user_id:
           type: string
           format: uuid
+          description: The account to erase; kept after the account itself is deleted.
     RetentionPolicy:
       type: object
       required: [deleted_users_days, deleted_users_enabled]

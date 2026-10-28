@@ -15,6 +15,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope/reseal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
@@ -178,6 +179,20 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller, box *
 					return err
 				}
 				slog.Info("outbox DLQ cleaned", "deleted", n)
+				return nil
+			},
+		},
+		{
+			// A built data export is downloadable for a week; then its payload,
+			// a full copy of the person's data, is deleted.
+			Name:     "gdpr-export-expiry",
+			Interval: time.Hour,
+			Run: func(ctx context.Context) error {
+				n, err := gdpr.ExpireExports(ctx, pool, gdpr.ExportRetention)
+				if err != nil {
+					return err
+				}
+				slog.Info("data export payloads deleted", "expired", n)
 				return nil
 			},
 		},

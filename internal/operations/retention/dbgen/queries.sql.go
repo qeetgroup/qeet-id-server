@@ -87,22 +87,67 @@ func (q *Queries) ListEnabledRetentionPolicies(ctx context.Context) ([]ListEnabl
 	return items, nil
 }
 
-const purgeRipeDeletedUsers = `-- name: PurgeRipeDeletedUsers :execrows
-DELETE FROM "user".users
+const listRipeDeletedUsers = `-- name: ListRipeDeletedUsers :many
+SELECT id FROM "user".users
 WHERE tenant_id = $1
   AND deleted_at IS NOT NULL
   AND deleted_at < NOW() - make_interval(days => $2)
+  AND id > $3
+ORDER BY id
+LIMIT $4
 `
 
-type PurgeRipeDeletedUsersParams struct {
+type ListRipeDeletedUsersParams struct {
+	TenantID pgtype.UUID
+	Days     int32
+	After    uuid.UUID
+	MaxRows  int32
+}
+
+// ListRipeDeletedUsers lists, in ID order after @after, at most @max_rows of
+// the tenant's soft-deleted users older than @days days.
+func (q *Queries) ListRipeDeletedUsers(ctx context.Context, arg ListRipeDeletedUsersParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listRipeDeletedUsers,
+		arg.TenantID,
+		arg.Days,
+		arg.After,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const purgeRipeDeletedUser = `-- name: PurgeRipeDeletedUser :execrows
+DELETE FROM "user".users
+WHERE id = $1 AND tenant_id = $2
+  AND deleted_at IS NOT NULL
+  AND deleted_at < NOW() - make_interval(days => $3)
+`
+
+type PurgeRipeDeletedUserParams struct {
+	ID       uuid.UUID
 	TenantID pgtype.UUID
 	Days     int32
 }
 
-// Permanently remove soft-deleted users older than `days` days.
-// Returns the number of rows deleted via :execrows.
-func (q *Queries) PurgeRipeDeletedUsers(ctx context.Context, arg PurgeRipeDeletedUsersParams) (int64, error) {
-	result, err := q.db.Exec(ctx, purgeRipeDeletedUsers, arg.TenantID, arg.Days)
+// PurgeRipeDeletedUser permanently removes one of the tenant's soft-deleted
+// users older than @days days.
+func (q *Queries) PurgeRipeDeletedUser(ctx context.Context, arg PurgeRipeDeletedUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeRipeDeletedUser, arg.ID, arg.TenantID, arg.Days)
 	if err != nil {
 		return 0, err
 	}

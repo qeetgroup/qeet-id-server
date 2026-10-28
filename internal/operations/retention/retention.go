@@ -16,6 +16,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/retention/dbgen"
@@ -102,15 +104,48 @@ func (s *Service) RipeDeletedUsers(ctx context.Context, tenantID uuid.UUID, days
 	return int(n), err
 }
 
-// PurgeTenant permanently deletes soft-deleted users past the window. Returns
-// the number purged.
+// purgeListSize is how many ripe users PurgeTenant lists at a time.
+const purgeListSize = 500
+
+// userPurgeFailures counts deleted accounts the purge could not remove.
+var userPurgeFailures = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "retention_user_purge_failures_total",
+	Help: "Deleted accounts the retention purge failed to remove for good; each is tried again at the next run.",
+})
+
+// PurgeTenant permanently deletes soft-deleted users past the window, one at
+// a time, and returns the number purged. A user whose deletion fails is
+// counted in retention_user_purge_failures_total and left for the next run;
+// the others are still purged.
 func (s *Service) PurgeTenant(ctx context.Context, tenantID uuid.UUID, days int) (int, error) {
 	// See RipeDeletedUsers for the pgtype.UUID note.
-	n, err := s.q.PurgeRipeDeletedUsers(ctx, dbgen.PurgeRipeDeletedUsersParams{
-		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-		Days:     int32(clampDays(days)), // #nosec G115 -- clamped to 1–3650 by clampDays
-	})
-	return int(n), err
+	tenant := pgtype.UUID{Bytes: tenantID, Valid: true}
+	window := int32(clampDays(days)) // #nosec G115 -- clamped to 1–3650 by clampDays
+	purged, after := 0, uuid.Nil
+	for {
+		ids, err := s.q.ListRipeDeletedUsers(ctx, dbgen.ListRipeDeletedUsersParams{
+			TenantID: tenant, Days: window, After: after, MaxRows: purgeListSize,
+		})
+		if err != nil {
+			return purged, err
+		}
+		for _, id := range ids {
+			n, err := s.q.PurgeRipeDeletedUser(ctx, dbgen.PurgeRipeDeletedUserParams{ID: id, TenantID: tenant, Days: window})
+			if ctx.Err() != nil {
+				return purged, ctx.Err()
+			}
+			if err != nil {
+				userPurgeFailures.Inc()
+				slog.Warn("retention: purge a deleted user", "tenant", tenantID, "user", id, "err", err)
+				continue
+			}
+			purged += int(n)
+		}
+		if len(ids) < purgeListSize {
+			return purged, nil
+		}
+		after = ids[len(ids)-1]
+	}
 }
 
 // sweep purges ripe users for every tenant that has the policy enabled.

@@ -211,13 +211,15 @@ internal/operations/billing/queries.sql#CompleteCheckout  parent-scoped: checkou
 internal/operations/billing/queries.sql#UpdateCheckoutFailed  parent-scoped: checkout inserted for the tenant just before
 internal/operations/billing/queries.sql#UpdateCheckoutProviderRef  parent-scoped: checkout inserted for the tenant just before
 internal/operations/email/editor.go#Handler.testEmail  session-scoped: sends to the caller's own verified email
+internal/operations/gdpr/erasure.go#eraseAccountData  parent-scoped: the account being erased (see PurgeUserPII), everywhere it left data
 internal/operations/gdpr/gdpr.go#Service.ExportSelf  session-scoped: the caller's own data export
 internal/operations/gdpr/gdpr.go#Service.buildExport  background-sweep: export worker holding the request lease
 internal/operations/gdpr/gdpr.go#Service.exportSweepTick  background-sweep: export worker holding the request lease
 internal/operations/gdpr/gdpr.go#Service.purgeOne  background-sweep: purge worker holding the request lease
 internal/operations/gdpr/gdpr.go#Service.tick  background-sweep: purge worker claiming due requests
 internal/operations/gdpr/queries.sql#CompletePurgeRequest  pending-review: unused query; delete it or add a tenant condition
-internal/operations/gdpr/queries.sql#PurgeUserPII  session-scoped: the caller erasing their own account
+internal/operations/gdpr/queries.sql#ExpireReadyExports  background-sweep: export retention job
+internal/operations/gdpr/queries.sql#PurgeUserPII  parent-scoped: the caller erasing their own account, or one the erasure worker checked against its request under lock
 internal/operations/gdpr/queries.sql#ReadyExportRequest  pending-review: unused query; delete it or add a tenant condition
 internal/operations/gdpr/queries.sql#RevokeUserSessions  pending-review: unused query; delete it or add a tenant condition
 internal/operations/notifications/queries.sql#CountUnreadNotifications  session-scoped: the caller's own inbox; notifications belong to the account

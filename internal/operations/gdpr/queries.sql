@@ -118,9 +118,10 @@ SELECT count(*) FROM "user".export_requests WHERE tenant_id = @tenant_id;
 -- name: InsertPurgeRequest :one
 -- Queue a right-to-erasure request. grace_until is pre-computed in Go
 -- (time.Now().UTC().Add(s.grace)) to avoid pgtype.Interval parameter type issues.
-INSERT INTO "user".purge_requests (tenant_id, user_id, requested_by, reason, grace_until)
-VALUES (@tenant_id, @user_id, @requested_by, @reason, @grace_until)
-RETURNING id, tenant_id, user_id, requested_by, reason, status,
+-- subject_id keeps the account's ID once the account itself is deleted.
+INSERT INTO "user".purge_requests (tenant_id, user_id, subject_id, requested_by, reason, grace_until)
+VALUES (@tenant_id, @subject_id::uuid, @subject_id::uuid, @requested_by, @reason, @grace_until)
+RETURNING id, tenant_id, subject_id, requested_by, reason, status,
           grace_until, completed_at, created_at;
 
 -- name: CancelPurgeRequest :one
@@ -129,40 +130,36 @@ RETURNING id, tenant_id, user_id, requested_by, reason, status,
 UPDATE "user".purge_requests
 SET status = 'cancelled'
 WHERE id = @id AND tenant_id = @tenant_id AND status = 'pending'
-RETURNING user_id;
+RETURNING subject_id;
 
 -- name: ListPurgeRequests :many
 -- List all purge requests for a tenant, most recent first.
-SELECT id, tenant_id, user_id, requested_by, reason, status,
+SELECT id, tenant_id, subject_id, requested_by, reason, status,
        grace_until, completed_at, created_at
 FROM "user".purge_requests
 WHERE tenant_id = @tenant_id
 ORDER BY created_at DESC
 LIMIT 200;
 
--- name: PurgeUserPII :exec
--- Replace PII fields with redacted markers and soft-delete the user row.
--- Audit references are intentionally preserved; only personal data is erased.
-UPDATE "user".users
-SET email              = 'redacted-' || id::text || '@gdpr.invalid',
+-- name: PurgeUserPII :one
+-- Replace PII fields with redacted markers and soft-delete the user row,
+-- returning the address it had. Audit references are intentionally preserved;
+-- only personal data is erased.
+UPDATE "user".users u
+SET email              = 'redacted-' || u.id::text || '@gdpr.invalid',
     phone              = NULL,
     display_name       = NULL,
+    avatar_url         = NULL,
+    external_id        = NULL,
     metadata           = '{}'::jsonb,
     email_verified_at  = NULL,
     phone_verified_at  = NULL,
     status             = 'deleted',
-    deleted_at         = COALESCE(deleted_at, NOW()),
+    deleted_at         = COALESCE(u.deleted_at, NOW()),
     updated_at         = NOW()
-WHERE id = @user_id;
-
--- name: DeletePasswordCredentials :exec
-DELETE FROM auth.password_credentials WHERE user_id = @user_id;
-
--- name: DeleteMFATOTP :exec
-DELETE FROM auth.mfa_totp WHERE user_id = @user_id;
-
--- name: DeleteMFARecoveryCodes :exec
-DELETE FROM auth.mfa_recovery_codes WHERE user_id = @user_id;
+FROM (SELECT p.id, p.email FROM "user".users p WHERE p.id = @user_id FOR UPDATE) prior
+WHERE u.id = prior.id
+RETURNING prior.email;
 
 -- name: RevokeUserSessions :exec
 UPDATE auth.sessions
@@ -208,12 +205,21 @@ UPDATE "user".export_requests
 SET status = 'ready', payload = @payload, completed_at = NOW()
 WHERE id = @id;
 
+-- ExpireReadyExports deletes the payloads of at most @max_rows exports that
+-- became ready before @cutoff and marks them expired.
+-- name: ExpireReadyExports :execrows
+UPDATE "user".export_requests SET payload = NULL, status = 'expired'
+WHERE ctid = ANY(ARRAY(
+    SELECT r.ctid FROM "user".export_requests r
+    WHERE r.status = 'ready' AND r.completed_at < @cutoff::timestamptz
+    LIMIT @max_rows));
+
 -- -----------------------------------------------------------------------
 -- User data collection for export (collectUserData)
 -- -----------------------------------------------------------------------
 
 -- name: GetUserProfileForExport :one
-SELECT email, phone, display_name, status,
+SELECT email, phone, display_name, avatar_url, status, metadata,
        email_verified_at, phone_verified_at, created_at
 FROM "user".users
 WHERE id = @user_id AND tenant_id = @tenant_id;
@@ -242,3 +248,68 @@ WHERE ur.user_id = @user_id AND ur.tenant_id = @tenant_id;
 SELECT (confirmed_at IS NOT NULL)::boolean AS mfa_enabled
 FROM auth.mfa_totp
 WHERE user_id = @user_id;
+
+-- -----------------------------------------------------------------------
+-- Export sections: one organisation's part of the person's data when
+-- tenant_id is set (its export of a member), all of it when it is null (the
+-- person's own export).
+-- -----------------------------------------------------------------------
+
+-- ListUserIdentitiesForExport lists the accounts linked for signing in: social
+-- and single sign-on identities, and the platform's own social sign-ins.
+-- name: ListUserIdentitiesForExport :many
+SELECT i.provider, i.subject, i.email, i.linked_at
+FROM "user".external_identities i
+WHERE i.user_id = @user_id AND (sqlc.narg('tenant_id')::uuid IS NULL OR i.tenant_id = sqlc.narg('tenant_id'))
+UNION ALL
+SELECT p.provider, p.subject, p.email, p.linked_at
+FROM auth.platform_social_identities p
+WHERE p.user_id = @user_id
+ORDER BY linked_at;
+
+-- name: ListUserOTPFactorsForExport :many
+SELECT channel, destination, verified_at, created_at
+FROM auth.mfa_otp_factors
+WHERE user_id = @user_id
+ORDER BY created_at;
+
+-- ListUserConsentsForExport lists the applications the person consented to
+-- and the scopes they granted.
+-- name: ListUserConsentsForExport :many
+SELECT c.client_id, COALESCE(cl.name, '')::text AS client_name, c.scopes, c.granted_at
+FROM auth.oidc_consents c
+LEFT JOIN auth.oidc_clients cl ON cl.client_id = c.client_id
+WHERE c.user_id = @user_id AND (sqlc.narg('tenant_id')::uuid IS NULL OR cl.tenant_id = sqlc.narg('tenant_id'))
+ORDER BY c.granted_at;
+
+-- ListUserGrantsForExport lists the person's live application grants, by
+-- their latest refresh token.
+-- name: ListUserGrantsForExport :many
+SELECT t.client_id, COALESCE(cl.name, '')::text AS client_name, t.scopes, t.issued_at, t.expires_at
+FROM auth.oidc_refresh_tokens t
+LEFT JOIN auth.oidc_clients cl ON cl.client_id = t.client_id
+WHERE t.user_id = @user_id AND t.revoked_at IS NULL AND t.replaced_by IS NULL AND t.expires_at > NOW()
+  AND (sqlc.narg('tenant_id')::uuid IS NULL OR t.tenant_id = sqlc.narg('tenant_id'))
+ORDER BY t.issued_at;
+
+-- name: ListUserGroupsForExport :many
+SELECT g.name, o.name AS organization, m.added_at
+FROM tenant.group_members m
+JOIN tenant.groups g ON g.id = m.group_id AND g.tenant_id = m.tenant_id
+JOIN tenant.tenants o ON o.id = m.tenant_id
+WHERE m.user_id = @user_id AND (sqlc.narg('tenant_id')::uuid IS NULL OR m.tenant_id = sqlc.narg('tenant_id'))
+ORDER BY m.added_at;
+
+-- ListUserSignInsForExport lists the person's most recent sign-ins, made and
+-- failed, from the audit trail.
+-- name: ListUserSignInsForExport :many
+SELECT e.created_at, (e.action = 'auth.login_succeeded')::boolean AS succeeded,
+       COALESCE(e.metadata->>'method', '')::text AS method,
+       COALESCE(host(e.ip), '')::text AS ip, COALESCE(e.user_agent, '')::text AS user_agent,
+       COALESCE(o.name, '')::text AS organization
+FROM audit.events e
+LEFT JOIN tenant.tenants o ON o.id = e.tenant_id
+WHERE e.actor_user_id = @user_id::uuid AND e.action IN ('auth.login_succeeded', 'auth.sign_in_failed')
+  AND (sqlc.narg('tenant_id')::uuid IS NULL OR e.tenant_id = sqlc.narg('tenant_id'))
+ORDER BY e.created_at DESC
+LIMIT 1000;
