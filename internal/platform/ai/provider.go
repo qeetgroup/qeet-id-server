@@ -50,13 +50,20 @@ const (
 	EventProviderError EventType = "error"           // a terminal provider error (ErrorMessage)
 )
 
+// Bounds on the tool calls of one turn. Every provider's stream is held to
+// them: one that sends more calls, or a larger input, has the turn refused.
+const (
+	MaxToolCalls      = 16       // tool calls in one turn
+	MaxToolInputBytes = 64 << 10 // the JSON input of one tool call
+)
+
 // Event is a normalized streaming event from a Provider. Only the fields for
 // its Type are set.
 type Event struct {
 	Type EventType
 
 	TextDelta      string // EventTextDelta: the text fragment
-	ToolIndex      int    // tool-call events: 0-based slot shared by start, delta and stop
+	ToolIndex      int    // tool-call events: slot shared by start, delta and stop, 0, 1, 2… in the order calls start
 	ToolID         string // EventToolCallStart: the provider's call ID (e.g. "toolu_abc123")
 	ToolName       string // EventToolCallStart: the manifest tool name (e.g. "search_users")
 	ToolInputDelta string // EventToolCallDelta: a fragment of the JSON input

@@ -112,13 +112,36 @@ func (o *Orchestrator) Run(ctx context.Context, tc turnContext, sse *sseWriter) 
 
 	sse.send(EventTypeThinking, thinkingData{Text: "Thinking..."})
 
-	events, errC := provider.Stream(ctx, system, aiMsgs, toolDefs)
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	events, errC := provider.Stream(streamCtx, system, aiMsgs, toolDefs)
+	text, toolBlocks, ok := collect(events, errC, cancel, sse)
+	if !ok {
+		return
+	}
+	if len(toolBlocks) > 0 {
+		o.handleToolUse(ctx, tc, sse, text, toolBlocks)
+	} else {
+		o.handleEndTurn(ctx, tc, sse, text)
+	}
+}
 
-	// Accumulate response blocks while streaming.
-	var (
-		textBuilder strings.Builder
-		toolBlocks  []*toolUseAccum
-	)
+// collect reads one turn's stream into its text and tool calls, sending the
+// text to sse as it arrives. A tool call must start on the next slot, below
+// ai.MaxToolCalls, and its input stay within ai.MaxToolInputBytes; otherwise
+// the stream is cancelled and the turn refused. ok is false once collect has
+// sent the error and done frames.
+func collect(events <-chan ai.Event, errC <-chan error, cancel context.CancelFunc, sse *sseWriter) (text string, tools []*toolUseAccum, ok bool) {
+	var textBuilder strings.Builder
+	fail := func(code, message string) (string, []*toolUseAccum, bool) {
+		cancel()
+		for range events {
+		}
+		<-errC
+		sse.send(EventTypeError, errorData{Code: code, Message: message})
+		sse.send(EventTypeDone, doneData{Reason: "error"})
+		return "", nil, false
+	}
 
 	for ev := range events {
 		switch ev.Type {
@@ -127,35 +150,33 @@ func (o *Orchestrator) Run(ctx context.Context, tc turnContext, sse *sseWriter) 
 			sse.send(EventTypeToken, tokenData{Text: ev.TextDelta})
 
 		case ai.EventToolCallStart:
-			// Grow toolBlocks to accommodate this index (providers assign
-			// indices 0, 1, 2… in order; pre-allocate empty slots if needed).
-			for len(toolBlocks) <= ev.ToolIndex {
-				toolBlocks = append(toolBlocks, &toolUseAccum{})
+			if ev.ToolIndex != len(tools) || len(tools) >= ai.MaxToolCalls {
+				slog.Warn("qeetai: model tool call out of bounds", "slot", ev.ToolIndex, "calls", len(tools))
+				return fail("model_error", "the model asked for more tool calls than one turn allows")
 			}
-			toolBlocks[ev.ToolIndex].ID = ev.ToolID
-			toolBlocks[ev.ToolIndex].Name = ev.ToolName
+			tools = append(tools, &toolUseAccum{ID: ev.ToolID, Name: ev.ToolName})
 
 		case ai.EventToolCallDelta:
-			if ev.ToolIndex < len(toolBlocks) {
-				toolBlocks[ev.ToolIndex].Input.WriteString(ev.ToolInputDelta)
+			if ev.ToolIndex < 0 || ev.ToolIndex >= len(tools) {
+				slog.Warn("qeetai: model tool input for no call", "slot", ev.ToolIndex, "calls", len(tools))
+				return fail("model_error", "the model sent a tool call it had not started")
 			}
+			input := &tools[ev.ToolIndex].Input
+			if input.Len()+len(ev.ToolInputDelta) > ai.MaxToolInputBytes {
+				return fail("model_error", "the model sent a tool call input larger than allowed")
+			}
+			input.WriteString(ev.ToolInputDelta)
 
 		case ai.EventToolCallStop:
 			// No action needed; tool blocks are processed after the loop.
 
 		case ai.EventStop:
 			// StopReason is captured implicitly: the path is chosen by
-			// len(toolBlocks) > 0 after the loop.
+			// len(tools) > 0 after the loop.
 
 		case ai.EventProviderError:
 			slog.Error("qeetai: provider stream error", "msg", ev.ErrorMessage)
-			sse.send(EventTypeError, errorData{Code: "model_error", Message: ev.ErrorMessage})
-			sse.send(EventTypeDone, doneData{Reason: "error"})
-			// Drain remaining events.
-			for range events {
-			}
-			<-errC
-			return
+			return fail("model_error", ev.ErrorMessage)
 		}
 	}
 
@@ -164,14 +185,9 @@ func (o *Orchestrator) Run(ctx context.Context, tc turnContext, sse *sseWriter) 
 		slog.Error("qeetai: stream io error", "err", streamErr)
 		sse.send(EventTypeError, errorData{Code: "stream_error", Message: "model stream failed"})
 		sse.send(EventTypeDone, doneData{Reason: "error"})
-		return
+		return "", nil, false
 	}
-
-	if len(toolBlocks) > 0 {
-		o.handleToolUse(ctx, tc, sse, textBuilder.String(), toolBlocks)
-	} else {
-		o.handleEndTurn(ctx, tc, sse, textBuilder.String())
-	}
+	return textBuilder.String(), tools, true
 }
 
 // handleEndTurn persists the assistant text reply and emits done{end_turn}.
