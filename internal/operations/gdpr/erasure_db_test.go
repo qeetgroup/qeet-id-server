@@ -20,7 +20,7 @@ func leaveTraces(t *testing.T, tenant uuid.UUID, a dbtest.Account) {
 	t.Helper()
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	u, email := a.ID, strings.ToLower(a.Email)
-	client, session, login, group, oidc := dbtest.Unique("app"), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	client, session, login, group, oidc, sp := dbtest.Unique("app"), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	soon := time.Now().Add(time.Hour)
 	for _, s := range []struct {
 		sql  string
@@ -71,6 +71,10 @@ func leaveTraces(t *testing.T, tenant uuid.UUID, a dbtest.Account) {
 		{`INSERT INTO tenant.directory_alerts (id, tenant_id, user_id, name) VALUES ($1, $2, $3, 'Sync failures')`, []any{uuid.New(), tenant, u}},
 		{`INSERT INTO tenant.groups (id, tenant_id, name) VALUES ($1, $2, $3)`, []any{group, tenant, dbtest.Unique("group")}},
 		{`INSERT INTO tenant.group_members (group_id, user_id, tenant_id) VALUES ($1, $2, $3)`, []any{group, u, tenant}},
+		{`INSERT INTO tenant.saml_service_providers (id, tenant_id, name, entity_id, acs_url) VALUES ($1, $2, 'Payroll', $3, 'https://sp.example.test/acs')`, []any{sp, tenant, dbtest.Unique("https://sp.example.test/")}},
+		{`INSERT INTO tenant.saml_sp_user_assignments (tenant_id, sp_id, user_id) VALUES ($1, $2, $3)`, []any{tenant, sp, u}},
+		{`INSERT INTO tenant.saml_idp_persistent_ids (tenant_id, sp_id, user_id, name_id) VALUES ($1, $2, $3, $4)`, []any{tenant, sp, u, dbtest.Unique("pid")}},
+		{`INSERT INTO tenant.break_glass_members (tenant_id, user_id) VALUES ($1, $2)`, []any{tenant, u}},
 		{`INSERT INTO audit.actor_baselines (tenant_id, actor_user_id) VALUES ($1, $2)`, []any{tenant, u}},
 		{`INSERT INTO qeetai.conversations (tenant_id, user_id) VALUES ($1, $2)`, []any{tenant, u}},
 		{`INSERT INTO "user".export_requests (tenant_id, user_id, subject_id, status, payload, completed_at) VALUES ($1, $2, $2, 'ready', '{"profile": {}}', NOW())`, []any{tenant, u}},
