@@ -227,3 +227,40 @@ func TestPolicyRefusalsStoreNothing(t *testing.T) {
 		t.Errorf("auth_policy.updated events: %d here, %d for the other organisation; want one each", a, b)
 	}
 }
+
+// TestUsageCountsHowPeopleSignIn checks that the usage counts the
+// organisation's live people by way of signing in, and those each way alone
+// lets in, and leaves out other organisations' people.
+func TestUsageCountsHowPeopleSignIn(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	passwordOnly, both, passkeyOnly, googleOnly := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
+	elsewhere := dbtest.User(t, other, other)
+	for _, u := range []uuid.UUID{passwordOnly.ID, both.ID, elsewhere.ID} {
+		dbtest.SetPassword(t, u, "Kx7mQ2vLp9Wz")
+	}
+	for _, u := range []uuid.UUID{both.ID, passkeyOnly.ID} {
+		if _, err := pool.Exec(ctx, `INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, sign_count) VALUES ($1, $2, $3, 0)`,
+			u, []byte(uuid.NewString()), []byte("key")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant.social_providers (tenant_id, provider, client_id, client_secret, encryption_version) VALUES ($1, 'google', 'cid', 'legacy-secret', 0)`, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject) VALUES ($1, $2, 'google', $3), ($4, $2, 'google', $5)`,
+		googleOnly.ID, tenant, uuid.NewString(), both.ID, uuid.NewString()); err != nil {
+		t.Fatal(err)
+	}
+	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: NewService(pool)}).Mount)
+	var got MethodUsage
+	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, "/tenants/"+tenant.String()+"/auth-policy/usage", nil), &got)
+	if got.People != 5 || got.Password != (MethodCount{People: 2, Only: 1}) || got.Passkey != (MethodCount{People: 2, Only: 1}) {
+		t.Errorf("usage %+v; want 5 people, 2 with a password (1 only), 2 with a passkey (1 only)", got)
+	}
+	if len(got.Social) != 1 || got.Social[0] != (SocialCount{Provider: "google", Linked: 2, Only: 1}) || !got.MagicLinkEnabled {
+		t.Errorf("social %+v, magic link %v; want google with 2 linked, 1 only, and magic links on", got.Social, got.MagicLinkEnabled)
+	}
+}

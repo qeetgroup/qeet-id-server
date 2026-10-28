@@ -45,6 +45,93 @@ func (q *Queries) GetAuthPolicy(ctx context.Context, tenantID uuid.UUID) (Tenant
 	return i, err
 }
 
+const signInMethodUsage = `-- name: SignInMethodUsage :one
+WITH people AS (
+    SELECT EXISTS (SELECT 1 FROM auth.password_credentials pc WHERE pc.user_id = u.id) AS password,
+           EXISTS (SELECT 1 FROM auth.passkey_credentials pk WHERE pk.user_id = u.id) AS passkey,
+           EXISTS (SELECT 1 FROM "user".external_identities ei WHERE ei.user_id = u.id)
+             OR EXISTS (SELECT 1 FROM auth.platform_social_identities ps WHERE ps.user_id = u.id) AS linked
+    FROM "user".users u
+    WHERE u.tenant_id = $1::uuid AND u.deleted_at IS NULL
+)
+SELECT count(*)::int AS people,
+       count(*) FILTER (WHERE password)::int AS with_password,
+       count(*) FILTER (WHERE password AND NOT passkey AND NOT linked)::int AS only_password,
+       count(*) FILTER (WHERE passkey)::int AS with_passkey,
+       count(*) FILTER (WHERE passkey AND NOT password AND NOT linked)::int AS only_passkey
+FROM people
+`
+
+type SignInMethodUsageRow struct {
+	People       int32
+	WithPassword int32
+	OnlyPassword int32
+	WithPasskey  int32
+	OnlyPasskey  int32
+}
+
+// The organisation's live accounts, those with a password and with a passkey,
+// and of each those with no other way in: no other credential and no linked
+// identity.
+func (q *Queries) SignInMethodUsage(ctx context.Context, tenantID uuid.UUID) (SignInMethodUsageRow, error) {
+	row := q.db.QueryRow(ctx, signInMethodUsage, tenantID)
+	var i SignInMethodUsageRow
+	err := row.Scan(
+		&i.People,
+		&i.WithPassword,
+		&i.OnlyPassword,
+		&i.WithPasskey,
+		&i.OnlyPasskey,
+	)
+	return i, err
+}
+
+const socialProviderUsage = `-- name: SocialProviderUsage :many
+SELECT sp.provider,
+       count(DISTINCT ei.user_id)::int AS linked,
+       count(DISTINCT ei.user_id) FILTER (WHERE
+           NOT EXISTS (SELECT 1 FROM auth.password_credentials pc WHERE pc.user_id = ei.user_id)
+       AND NOT EXISTS (SELECT 1 FROM auth.passkey_credentials pk WHERE pk.user_id = ei.user_id)
+       AND NOT EXISTS (SELECT 1 FROM "user".external_identities other
+                        WHERE other.user_id = ei.user_id AND other.id <> ei.id
+                          AND NOT (other.tenant_id = ei.tenant_id AND other.provider = ei.provider))
+       AND NOT EXISTS (SELECT 1 FROM auth.platform_social_identities ps WHERE ps.user_id = ei.user_id))::int AS only
+FROM tenant.social_providers sp
+LEFT JOIN "user".external_identities ei ON ei.tenant_id = sp.tenant_id AND ei.provider = sp.provider
+     AND EXISTS (SELECT 1 FROM "user".users u WHERE u.id = ei.user_id AND u.deleted_at IS NULL)
+WHERE sp.tenant_id = $1
+GROUP BY sp.provider
+ORDER BY sp.provider
+`
+
+type SocialProviderUsageRow struct {
+	Provider string
+	Linked   int32
+	Only     int32
+}
+
+// Per social provider the organisation set up: the live accounts linked to it,
+// and those who can sign in only through it.
+func (q *Queries) SocialProviderUsage(ctx context.Context, tenantID uuid.UUID) ([]SocialProviderUsageRow, error) {
+	rows, err := q.db.Query(ctx, socialProviderUsage, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SocialProviderUsageRow{}
+	for rows.Next() {
+		var i SocialProviderUsageRow
+		if err := rows.Scan(&i.Provider, &i.Linked, &i.Only); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertAuthPolicy = `-- name: UpsertAuthPolicy :one
 INSERT INTO tenant.auth_policy
     (tenant_id, password_enabled, password_min_length, password_require_uppercase,
