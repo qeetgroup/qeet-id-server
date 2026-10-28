@@ -305,10 +305,11 @@ func userPermissionMap() map[string]string {
 		"GET /v1/tenants/{tenantID}/audit/verify": "audit.read",
 
 		// Live Activity feed — sourced from the audit log; same sensitivity.
-		"GET /v1/activity":              "audit.read",
-		"GET /v1/activity/summary":      "audit.read",
-		"GET /v1/activity/stream":       "audit.read",
-		"GET /v1/activity/{id}/related": "audit.read",
+		"GET /v1/activity":                         "audit.read",
+		"GET /v1/activity/summary":                 "audit.read",
+		"GET /v1/activity/stream":                  "audit.read",
+		"GET /v1/activity/{id}/related":            "audit.read",
+		"GET /v1/tenants/{tenantID}/activity/{id}": "audit.read",
 
 		// Audit intelligence: behavioral-baseline anomaly detection over audit.events.
 		"GET /v1/tenants/{tenantID}/audit/anomalies":               "audit.read",

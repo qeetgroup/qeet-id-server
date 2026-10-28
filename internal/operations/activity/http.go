@@ -44,6 +44,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/activity/summary", h.summary)
 	r.Get("/activity/stream", h.stream)
 	r.Get("/activity/{id}/related", h.related)
+	r.Get("/tenants/{tenantID}/activity/{id}", h.event)
 }
 
 // stream serves GET /v1/activity/stream as Server-Sent Events. It replays audit
@@ -529,6 +530,35 @@ type activityRelatedSet struct {
 // related serves GET /v1/activity/{id}/related: the anchor event, the events
 // sharing its request_id, and the same actor's events within the time window.
 // An unknown or other-tenant id is a 404; no event appears in both lists.
+// event serves GET /tenants/{tenantID}/activity/{id}: one of the
+// organisation's events, with its metadata, actor and browser. Another
+// organisation's id answers 404, like an unknown one.
+func (h *Handler) event(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := httpx.PathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid event id"))
+		return
+	}
+	row, err := dbgen.New(h.pool).GetActivityEventByID(r.Context(), dbgen.GetActivityEventByIDParams{
+		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+		ID:       id,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, mapAuditRow(getRowToAuditRow(row)))
+}
+
 func (h *Handler) related(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := httpx.RequireTenant(r)
 	if err != nil {

@@ -353,3 +353,32 @@ func TestSubjectIncludesEventsNamingThePerson(t *testing.T) {
 		t.Errorf("the person's summary counts %d events, want 1", summary.Total)
 	}
 }
+
+// TestOneEventByID checks that an organisation's event is fetched by its id
+// with its metadata, and that another organisation's id answers 404.
+func TestOneEventByID(t *testing.T) {
+	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	mine, theirs := uuid.New(), uuid.New()
+	for id, owner := range map[uuid.UUID]uuid.UUID{mine: tenant, theirs: other} {
+		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
+			INSERT INTO audit.events (id, tenant_id, actor_user_id, actor_type, action, resource_type, user_agent, metadata, created_at)
+			VALUES ($1, $2, $3, 'user', 'user.updated', 'user', 'Mozilla/5.0', '{"fields": ["name"]}', NOW())
+		`, id, owner, admin.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
+	base := "/tenants/" + tenant.String() + "/activity/"
+
+	rec := dbtest.Do(t, h, http.MethodGet, base+mine.String(), nil)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), mine.String()) || !strings.Contains(rec.Body.String(), `"fields"`) {
+		t.Errorf("own event: %d %s, want it with its metadata", rec.Code, rec.Body.String())
+	}
+	if rec := dbtest.Do(t, h, http.MethodGet, base+theirs.String(), nil); rec.Code != http.StatusNotFound {
+		t.Errorf("another organisation's event: %d, want 404", rec.Code)
+	}
+	if rec := dbtest.Do(t, h, http.MethodGet, "/tenants/"+other.String()+"/activity/"+theirs.String(), nil); rec.Code != http.StatusForbidden {
+		t.Errorf("naming another organisation in the path: %d, want 403", rec.Code)
+	}
+}

@@ -493,6 +493,48 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/activity/{id}:
+    get:
+      operationId: get_v1_tenants_ByTenantID_activity_ById
+      summary: One activity event
+      description: >-
+        One of the organisation's activity events by its id (an audit.events
+        row id), with its metadata, actor name and email, address and browser,
+        as in the history. 404 for an unknown id or another organisation's.
+        Needs audit.read.
+      tags:
+        - Activity
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The event
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityEvent'
+        '400':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/tenants/{tenantID}/analytics/overview:
     get:
       operationId: get_v1_tenants_ByTenantID_analytics_overview
