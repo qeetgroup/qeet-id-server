@@ -704,6 +704,75 @@ func SubjectAttributes(userID string, tenantID uuid.UUID) map[string]any {
 	return map[string]any{"id": userID, "type": "user", "tenant_id": tenantID.String()}
 }
 
+// Request is what the platform itself knows of a decision it makes for a user:
+// who they are and, when it is the user's own call, its session and address.
+// Nothing in it comes from what the caller sends.
+type Request struct {
+	Subject   string    // the user's id as the engines name it
+	UserID    uuid.UUID // the same, parsed; uuid.Nil when it names no platform user
+	TenantID  uuid.UUID // the organisation decided in
+	SessionID uuid.UUID // the user's own session (uuid.Nil: none)
+	MFA       bool      // the call itself proved a second factor (a hosted-login sign-in that did)
+	IP        string    // the client address ("": not the user's own call)
+}
+
+// OwnRequest is the Request for userID's own call in ctx: with the call's
+// session, second factor and client address when ctx carries userID's
+// principal in tenantID, and without them otherwise.
+func OwnRequest(ctx context.Context, userID, tenantID uuid.UUID) Request {
+	r := Request{Subject: userID.String(), UserID: userID, TenantID: tenantID}
+	p := httpx.PrincipalFromCtx(ctx)
+	if p == nil || p.UserID == nil || *p.UserID != userID || p.TenantID == nil || *p.TenantID != tenantID {
+		return r
+	}
+	r.IP = httpx.ClientIPFromContext(ctx)
+	r.MFA = p.SignedInAt != nil
+	// An application's token names no session of the user's own.
+	if p.SessionID != nil && p.ClientID == "" && (p.ActorType == "" || p.ActorType == "user") {
+		r.SessionID = *p.SessionID
+	}
+	return r
+}
+
+// PlatformAttributes is the subject and context namespaces the platform
+// supplies for r: subject id, type, tenant_id, and the groups and roles (by
+// name) the user holds in the organisation; context mfa and ip when the call
+// is the user's own. An attribute it can't know is left out, so it is unknown.
+func (s *Service) PlatformAttributes(ctx context.Context, r Request) (subject, ctxAttrs map[string]any, err error) {
+	subject, ctxAttrs = SubjectAttributes(r.Subject, r.TenantID), map[string]any{}
+	if r.UserID != uuid.Nil {
+		rows, err := s.q.ListSubjectMemberships(ctx, dbgen.ListSubjectMembershipsParams{TenantID: r.TenantID, UserID: r.UserID})
+		if err != nil {
+			return nil, nil, err
+		}
+		groups, roles := []any{}, []any{}
+		for _, row := range rows {
+			if row.Kind == "group" {
+				groups = append(groups, row.Name)
+			} else {
+				roles = append(roles, row.Name)
+			}
+		}
+		subject["groups"], subject["roles"] = groups, roles
+	}
+	if r.IP != "" {
+		ctxAttrs["ip"] = r.IP
+	}
+	switch {
+	case r.MFA:
+		ctxAttrs["mfa"] = true
+	case r.SessionID != uuid.Nil && r.UserID != uuid.Nil:
+		met, err := s.q.SessionSecondFactorMet(ctx, dbgen.SessionSecondFactorMetParams{SessionID: r.SessionID, UserID: r.UserID, TenantID: r.TenantID})
+		switch {
+		case err == nil:
+			ctxAttrs["mfa"] = met
+		case !errors.Is(err, pgx.ErrNoRows):
+			return nil, nil, err
+		}
+	}
+	return subject, ctxAttrs, nil
+}
+
 // Resource and action of the policies that guard managing policies: a deny
 // that matches its own author here would leave nobody able to remove it.
 const (
@@ -712,21 +781,30 @@ const (
 )
 
 // locksOutAuthor reports whether an enabled deny policy would refuse its own
-// author the right to change policies (policy.write), which would leave the
-// tenant with nobody able to undo it. A condition error counts as a match: the
-// route guard fails closed on it too.
-func locksOutAuthor(effect, resourceType, action string, enabled bool, cond json.RawMessage, tenantID uuid.UUID, actor audit.Actor) bool {
+// author the right to change policies (policy.write) at the route guard, on
+// the attributes it would see for the author's call now; that would leave the
+// tenant with nobody able to undo it. See refusesPolicyWrite.
+func (s *Service) locksOutAuthor(ctx context.Context, tenantID uuid.UUID, effect, resourceType, action string, enabled bool, cond json.RawMessage, actor audit.Actor) (bool, error) {
 	if effect != "deny" || !enabled || actor.UserID == nil {
-		return false
+		return false, nil
 	}
 	if (resourceType != policyResourceType && resourceType != "*") || (action != policyWriteAction && action != "*") {
-		return false
+		return false, nil
 	}
-	matched, err := EvaluateCondition(cond, effect, AttributeBag{
-		"subject":  SubjectAttributes(actor.UserID.String(), tenantID),
-		"resource": {"type": policyResourceType, "id": ""},
-		"context":  {},
-	})
+	subject, ctxAttrs, err := s.PlatformAttributes(ctx, OwnRequest(ctx, *actor.UserID, tenantID))
+	if err != nil {
+		return false, err
+	}
+	return refusesPolicyWrite(cond, subject, ctxAttrs), nil
+}
+
+// refusesPolicyWrite reports whether a deny with cond refuses policy.write to a
+// caller with these subject and context attributes, as the route guard would.
+// A condition error counts: the route guard fails closed on it too.
+func refusesPolicyWrite(cond json.RawMessage, subject, ctxAttrs map[string]any) bool {
+	matched, err := EvaluateCondition(cond, "deny", attributeBag(EvaluationInput{
+		Subject: subject, Resource: EvaluationResource{Type: policyResourceType}, Action: policyWriteAction, Context: ctxAttrs,
+	}))
 	return matched || err != nil
 }
 
@@ -794,7 +872,9 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput
 	if err := validateCondition(cond); err != nil {
 		return nil, errs.ErrABACConditionInvalid
 	}
-	if locksOutAuthor(in.Effect, in.ResourceType, in.Action, in.Enabled, cond, tenantID, actor) {
+	if locked, err := s.locksOutAuthor(ctx, tenantID, in.Effect, in.ResourceType, in.Action, in.Enabled, cond, actor); err != nil {
+		return nil, err
+	} else if locked {
 		return nil, errs.ErrABACPolicyLocksOut
 	}
 
@@ -889,7 +969,9 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 	if err := validateCondition(cond); err != nil {
 		return nil, errs.ErrABACConditionInvalid
 	}
-	if locksOutAuthor(in.Effect, in.ResourceType, in.Action, in.Enabled, cond, tenantID, actor) {
+	if locked, err := s.locksOutAuthor(ctx, tenantID, in.Effect, in.ResourceType, in.Action, in.Enabled, cond, actor); err != nil {
+		return nil, err
+	} else if locked {
 		return nil, errs.ErrABACPolicyLocksOut
 	}
 

@@ -226,6 +226,87 @@ func (q *Queries) ListEvaluationCandidates(ctx context.Context, arg ListEvaluati
 	return items, nil
 }
 
+const listSubjectMemberships = `-- name: ListSubjectMemberships :many
+SELECT 'group'::text AS kind, g.name
+FROM tenant.group_members gm
+JOIN tenant.groups g ON g.id = gm.group_id AND g.tenant_id = gm.tenant_id
+WHERE gm.tenant_id = $1 AND gm.user_id = $2
+UNION
+SELECT 'role'::text AS kind, ro.name
+FROM rbac.user_roles ur
+JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.tenant_id = ur.tenant_id
+WHERE ur.tenant_id = $1 AND ur.user_id = $2
+UNION
+SELECT 'role'::text AS kind, ro.name
+FROM tenant.group_members gm
+JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.tenant_id = gr.tenant_id
+WHERE gm.tenant_id = $1 AND gm.user_id = $2
+ORDER BY kind, name
+`
+
+type ListSubjectMembershipsParams struct {
+	TenantID uuid.UUID
+	UserID   uuid.UUID
+}
+
+type ListSubjectMembershipsRow struct {
+	Kind string
+	Name string
+}
+
+// ListSubjectMemberships is what the platform knows of a person in an
+// organisation for its policies: the groups they belong to and the roles they
+// hold there, directly or through a group, by name.
+func (q *Queries) ListSubjectMemberships(ctx context.Context, arg ListSubjectMembershipsParams) ([]ListSubjectMembershipsRow, error) {
+	rows, err := q.db.Query(ctx, listSubjectMemberships, arg.TenantID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSubjectMembershipsRow{}
+	for rows.Next() {
+		var i ListSubjectMembershipsRow
+		if err := rows.Scan(&i.Kind, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sessionSecondFactorMet = `-- name: SessionSecondFactorMet :one
+SELECT (s.second_factor IS NOT NULL OR EXISTS (
+           SELECT 1 FROM auth.mfa_verifications v
+           WHERE v.session_id = s.id
+             AND v.verified_at > NOW() - COALESCE(sp.step_up_window, INTERVAL '5 minutes')
+       ))::bool AS met
+FROM auth.sessions s
+LEFT JOIN tenant.security_policies sp ON sp.tenant_id = s.tenant_id
+WHERE s.id = $1 AND s.user_id = $2 AND s.tenant_id = $3::uuid
+  AND s.revoked_at IS NULL AND s.expires_at > NOW()
+`
+
+type SessionSecondFactorMetParams struct {
+	SessionID uuid.UUID
+	UserID    uuid.UUID
+	TenantID  uuid.UUID
+}
+
+// SessionSecondFactorMet reports whether a person's live session in an
+// organisation met a second factor as the organisation's MFA requirement
+// counts one (a challenge, a passkey, a remembered device), or holds a step-up
+// still inside its window. No row: no such session.
+func (q *Queries) SessionSecondFactorMet(ctx context.Context, arg SessionSecondFactorMetParams) (bool, error) {
+	row := q.db.QueryRow(ctx, sessionSecondFactorMet, arg.SessionID, arg.UserID, arg.TenantID)
+	var met bool
+	err := row.Scan(&met)
+	return met, err
+}
+
 const updateAbacPolicy = `-- name: UpdateAbacPolicy :one
 UPDATE auth.abac_policies
 SET name = $1, description = $2, effect = $3,

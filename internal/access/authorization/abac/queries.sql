@@ -43,6 +43,42 @@ WHERE tenant_id = @tenant_id
   AND (action = @action OR action = '*')
 ORDER BY priority DESC;
 
+-- ListSubjectMemberships is what the platform knows of a person in an
+-- organisation for its policies: the groups they belong to and the roles they
+-- hold there, directly or through a group, by name.
+-- name: ListSubjectMemberships :many
+SELECT 'group'::text AS kind, g.name
+FROM tenant.group_members gm
+JOIN tenant.groups g ON g.id = gm.group_id AND g.tenant_id = gm.tenant_id
+WHERE gm.tenant_id = @tenant_id AND gm.user_id = @user_id
+UNION
+SELECT 'role'::text AS kind, ro.name
+FROM rbac.user_roles ur
+JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.tenant_id = ur.tenant_id
+WHERE ur.tenant_id = @tenant_id AND ur.user_id = @user_id
+UNION
+SELECT 'role'::text AS kind, ro.name
+FROM tenant.group_members gm
+JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.tenant_id = gr.tenant_id
+WHERE gm.tenant_id = @tenant_id AND gm.user_id = @user_id
+ORDER BY kind, name;
+
+-- SessionSecondFactorMet reports whether a person's live session in an
+-- organisation met a second factor as the organisation's MFA requirement
+-- counts one (a challenge, a passkey, a remembered device), or holds a step-up
+-- still inside its window. No row: no such session.
+-- name: SessionSecondFactorMet :one
+SELECT (s.second_factor IS NOT NULL OR EXISTS (
+           SELECT 1 FROM auth.mfa_verifications v
+           WHERE v.session_id = s.id
+             AND v.verified_at > NOW() - COALESCE(sp.step_up_window, INTERVAL '5 minutes')
+       ))::bool AS met
+FROM auth.sessions s
+LEFT JOIN tenant.security_policies sp ON sp.tenant_id = s.tenant_id
+WHERE s.id = @session_id AND s.user_id = @user_id AND s.tenant_id = @tenant_id::uuid
+  AND s.revoked_at IS NULL AND s.expires_at > NOW();
+
 -- name: CountEnabledPolicies :one
 -- How many enabled deny and allow policies a tenant has, so a decision can
 -- skip ABAC for a tenant with none of the kind it needs.

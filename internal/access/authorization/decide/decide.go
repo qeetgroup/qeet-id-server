@@ -29,6 +29,7 @@ type Relations interface {
 type Attributes interface {
 	Presence(ctx context.Context, tenantID uuid.UUID) (hasDeny, hasAllow bool, err error)
 	Evaluate(ctx context.Context, tenantID uuid.UUID, in abac.EvaluationInput) (*abac.Decision, error)
+	PlatformAttributes(ctx context.Context, r abac.Request) (subject, ctxAttrs map[string]any, err error)
 }
 
 // The engine that decided.
@@ -104,6 +105,7 @@ type question struct {
 	permissions                      []string // RBAC permission keys, any one of which allows
 	object, relation                 string   // the ReBAC question; object "" for none
 	abacAllows                       bool     // whether an ABAC allow permits (only deny binds at the route guard)
+	own                              bool     // the user's own call, whose session and address ABAC sees
 }
 
 // Permission decides whether userID may use permission in tenantID: an ABAC
@@ -148,6 +150,7 @@ func (d *Decider) Check(ctx context.Context, userID, tenantID uuid.UUID, permiss
 		tenantID: tenantID, subject: userID.String(), userID: userID,
 		resourceType: resourceType, action: action,
 		permissions: []string{permission},
+		own:         true,
 	})
 	return dec.Allow && err == nil, err
 }
@@ -169,10 +172,19 @@ func (d *Decider) decide(ctx context.Context, q question) (Decision, error) {
 	}
 	var abacAllow *abac.Decision
 	if hasDeny || (q.abacAllows && hasAllow) {
+		request := abac.Request{Subject: q.subject, UserID: q.userID, TenantID: q.tenantID}
+		if q.own {
+			request = abac.OwnRequest(ctx, q.userID, q.tenantID)
+		}
+		subject, ctxAttrs, err := d.attributes.PlatformAttributes(ctx, request)
+		if err != nil {
+			return refuse(ModelABAC, err)
+		}
 		res, err := d.attributes.Evaluate(ctx, q.tenantID, abac.EvaluationInput{
-			Subject:  abac.SubjectAttributes(q.subject, q.tenantID),
+			Subject:  subject,
 			Resource: abac.EvaluationResource{Type: q.resourceType, ID: q.resourceID},
 			Action:   q.action,
+			Context:  ctxAttrs,
 		})
 		if err != nil {
 			return refuse(ModelABAC, err)

@@ -3498,7 +3498,7 @@ paths:
     post:
       operationId: post_v1_tenants_ByTenantID_abac_policies
       summary: Create ABAC policy
-      description: Creates a new ABAC policy for the tenant.
+      description: Creates a new ABAC policy for the tenant. An enabled deny for policy writes (resource type policy or *, action write or *) that would refuse its own author, judged on the attributes the route guard sees for the author's call now (their groups, roles, address and whether their session met a second factor), is refused with abac.policy_locks_out, as nobody could then remove it.
       tags:
         - ABAC
       parameters:
@@ -3571,7 +3571,7 @@ paths:
     patch:
       operationId: patch_v1_tenants_ByTenantID_abac_policies_ById
       summary: Update ABAC policy
-      description: Replaces all mutable fields of a policy. Send the full desired state.
+      description: Replaces all mutable fields of a policy. Send the full desired state. A deny that would refuse its author policy writes is refused with abac.policy_locks_out, as on create.
       tags:
         - ABAC
       parameters:
@@ -3654,9 +3654,18 @@ paths:
         when ?explain=true, a trace of every policy evaluated.
         A deny policy whose condition compares an attribute the request doesn't
         supply applies (fail closed); an allow policy doesn't match. Supply the
-        resource's attributes (such as created_by) for policies that compare them:
-        the route guard and the permission checks supply only subject.id,
-        subject.type, subject.tenant_id, resource.type and resource.id.
+        resource's attributes (such as created_by) for policies that compare them.
+        The platform's own decisions (the route guard, the permission and
+        relationship checks, AuthZEN) supply what it knows of the user, which a
+        caller can't override: subject.id, subject.type, subject.tenant_id,
+        subject.groups and subject.roles (names in the organisation; roles held
+        directly or through a group), resource.type and resource.id. The route
+        guard, deciding on the person's own call, also supplies context.ip (the
+        client address) and context.mfa: true when the session's sign-in met a
+        second factor as the organisation's MFA requirement counts one (a
+        challenge, a passkey or a remembered device) or the session holds a step-up
+        still inside its window, false otherwise, and left out, so unknown, for an
+        application's token, whose session the platform doesn't hold.
       tags:
         - ABAC
       parameters:

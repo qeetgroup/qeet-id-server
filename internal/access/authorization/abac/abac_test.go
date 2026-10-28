@@ -1,6 +1,7 @@
 package abac
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -510,38 +511,65 @@ func TestEvaluateCondition_CrossNamespace(t *testing.T) {
 	}
 }
 
-// TestLocksOutAuthor checks that an enabled deny refusing its own author
-// policy.write is refused at save, since nobody could then remove it, while a
-// deny aimed elsewhere, a disabled one, or an allow is not.
+// TestLocksOutAuthor checks that a deny aimed away from policy.write, a
+// disabled one, an allow, or a save with no user author is never a lock-out,
+// without reading the author's attributes (the service here has no database).
 func TestLocksOutAuthor(t *testing.T) {
-	author, other, tenantID := uuid.New(), uuid.New(), uuid.New()
+	author, tenantID := uuid.New(), uuid.New()
 	actor := audit.Actor{UserID: &author}
-	subjectIs := func(id uuid.UUID) json.RawMessage {
-		return json.RawMessage(`{"attr":"subject.id","op":"eq","value":"` + id.String() + `"}`)
-	}
+	s := &Service{}
 	for _, tc := range []struct {
 		name                         string
 		effect, resourceType, action string
 		enabled                      bool
-		cond                         json.RawMessage
-		want                         bool
+		actor                        audit.Actor
 	}{
-		{"deny everything for everyone", "deny", "*", "*", true, json.RawMessage(`{}`), true},
-		{"deny policy writes for everyone", "deny", "policy", "write", true, json.RawMessage(`{}`), true},
-		{"deny everything for the author", "deny", "*", "*", true, subjectIs(author), true},
-		{"deny everything for someone else", "deny", "*", "*", true, subjectIs(other), false},
-		{"deny everything for a resource's creator", "deny", "*", "*", true, json.RawMessage(creatorMayNotApprove), true},
-		{"deny another resource for everyone", "deny", "doc", "*", true, json.RawMessage(`{}`), false},
-		{"deny policy reads for everyone", "deny", "policy", "read", true, json.RawMessage(`{}`), false},
-		{"disabled deny everything", "deny", "*", "*", false, json.RawMessage(`{}`), false},
-		{"allow everything", "allow", "*", "*", true, json.RawMessage(`{}`), false},
+		{"deny another resource for everyone", "deny", "doc", "*", true, actor},
+		{"deny policy reads for everyone", "deny", "policy", "read", true, actor},
+		{"disabled deny everything", "deny", "*", "*", false, actor},
+		{"allow everything", "allow", "*", "*", true, actor},
+		{"a save with no user author (system)", "deny", "*", "*", true, audit.Actor{}},
 	} {
-		if got := locksOutAuthor(tc.effect, tc.resourceType, tc.action, tc.enabled, tc.cond, tenantID, actor); got != tc.want {
-			t.Errorf("%s: locksOutAuthor = %v, want %v", tc.name, got, tc.want)
+		if locked, err := s.locksOutAuthor(context.Background(), tenantID, tc.effect, tc.resourceType, tc.action, tc.enabled, json.RawMessage(`{}`), tc.actor); locked || err != nil {
+			t.Errorf("%s: locksOutAuthor = %v, %v; want no lock-out", tc.name, locked, err)
 		}
 	}
-	if locksOutAuthor("deny", "*", "*", true, json.RawMessage(`{}`), tenantID, audit.Actor{}) {
-		t.Error("a save with no user author (system) is never a lock-out")
+}
+
+// TestRefusesPolicyWrite checks which deny conditions refuse policy.write to a
+// caller with given attributes: an unconditional one, one naming them, one
+// they meet or one left unknown by an attribute they lack, and not one naming
+// someone else or one they don't meet.
+func TestRefusesPolicyWrite(t *testing.T) {
+	author, other, tenantID := uuid.New(), uuid.New(), uuid.New()
+	subject := SubjectAttributes(author.String(), tenantID)
+	subject["groups"], subject["roles"] = []any{"admins"}, []any{"owner"}
+	withMFA, withoutMFA := map[string]any{"mfa": true, "ip": "203.0.113.7"}, map[string]any{"mfa": false}
+	subjectIs := func(id uuid.UUID) string {
+		return `{"attr":"subject.id","op":"eq","value":"` + id.String() + `"}`
+	}
+	noMFA := `{"attr":"context.mfa","op":"ne","value":true}`
+	for _, tc := range []struct {
+		name     string
+		cond     string
+		ctxAttrs map[string]any
+		want     bool
+	}{
+		{"for everyone", `{}`, withMFA, true},
+		{"for the author", subjectIs(author), withMFA, true},
+		{"for someone else", subjectIs(other), withMFA, false},
+		{"for a resource's creator", creatorMayNotApprove, withMFA, true},
+		{"for an attribute the platform doesn't supply", `{"attr":"subject.department","op":"eq","value":"sales"}`, withMFA, true},
+		{"for a group the author is in", `{"attr":"subject.groups","op":"contains","value":"admins"}`, withMFA, true},
+		{"for a group the author isn't in", `{"attr":"subject.groups","op":"contains","value":"contractors"}`, withMFA, false},
+		{"without MFA, to an author with it", noMFA, withMFA, false},
+		{"without MFA, to an author without it", noMFA, withoutMFA, true},
+		{"without MFA, when it can't be known", noMFA, map[string]any{}, true},
+		{"outside an address range, to an author inside it", `{"not":{"attr":"context.ip","op":"prefix","value":"203.0.113."}}`, withMFA, false},
+	} {
+		if got := refusesPolicyWrite(json.RawMessage(tc.cond), subject, tc.ctxAttrs); got != tc.want {
+			t.Errorf("deny %s: refusesPolicyWrite = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
 
