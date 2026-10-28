@@ -9,11 +9,9 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
 )
 
-// security is an organisation's security policy: password strength, how long
+// security is an organisation's security policy: how long
 // sessions last and who must use a second factor.
 type security struct {
-	minLength   int
-	complexity  string
 	maxAge      time.Duration
 	idle        time.Duration
 	maxSessions int // 0: no limit
@@ -24,12 +22,12 @@ type security struct {
 // securityPolicies are the organisations that set their own security policy.
 // The MFA requirement and grace period come from each one's Features.
 var securityPolicies = map[string]security{
-	"qeet":      {minLength: 12, complexity: "standard", maxAge: 7 * 24 * time.Hour, idle: 24 * time.Hour, stepUp: 10 * time.Minute},
-	"northwind": {minLength: 14, complexity: "strict", maxAge: 12 * time.Hour, idle: 30 * time.Minute, maxSessions: 5, stepUp: 5 * time.Minute, methods: []string{"totp", "webauthn"}},
-	"meridian":  {minLength: 12, complexity: "strict", maxAge: 12 * time.Hour, idle: 15 * time.Minute, stepUp: 5 * time.Minute},
-	"lumen":     {minLength: 10, complexity: "standard", maxAge: 30 * 24 * time.Hour, idle: 7 * 24 * time.Hour, stepUp: 15 * time.Minute},
-	"aster":     {minLength: 8, complexity: "standard", maxAge: 14 * 24 * time.Hour, idle: 72 * time.Hour, stepUp: 5 * time.Minute},
-	"kestrel":   {minLength: 10, complexity: "standard", maxAge: 24 * time.Hour, idle: time.Hour, stepUp: 5 * time.Minute},
+	"qeet":      {maxAge: 7 * 24 * time.Hour, idle: 24 * time.Hour, stepUp: 10 * time.Minute},
+	"northwind": {maxAge: 12 * time.Hour, idle: 30 * time.Minute, maxSessions: 5, stepUp: 5 * time.Minute, methods: []string{"totp", "webauthn"}},
+	"meridian":  {maxAge: 12 * time.Hour, idle: 15 * time.Minute, stepUp: 5 * time.Minute},
+	"lumen":     {maxAge: 30 * 24 * time.Hour, idle: 7 * 24 * time.Hour, stepUp: 15 * time.Minute},
+	"aster":     {maxAge: 14 * 24 * time.Hour, idle: 72 * time.Hour, stepUp: 5 * time.Minute},
+	"kestrel":   {maxAge: 24 * time.Hour, idle: time.Hour, stepUp: 5 * time.Minute},
 }
 
 // signIn is how an organisation's people may sign in, beyond its Features.
@@ -96,7 +94,6 @@ func (s *seeder) policies(o *world.Org) {
 
 	if sp, ok := securityPolicies[slug]; ok {
 		p := policy.Policy{
-			PasswordMinLength: sp.minLength, PasswordComplexity: sp.complexity,
 			SessionMaxAge: policy.Duration(sp.maxAge), SessionIdleTimeout: policy.Duration(sp.idle),
 			MFAEnforcement: f.MFA, MFAGraceDays: f.MFAGrace,
 			StepUpWindow: policy.Duration(sp.stepUp), StepUpMethods: sp.methods, Settings: map[string]any{},

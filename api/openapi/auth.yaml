@@ -5073,11 +5073,14 @@ components:
           format: uuid
         password_min_length:
           type: integer
-          minimum: 8
-          maximum: 128
+          deprecated: true
+          writeOnly: true
+          description: Accepted and ignored, and never returned. Password rules are the auth policy's (AuthPolicy, PUT /v1/tenants/{tenantID}/auth-policy), which sign-in and the compliance checks apply.
         password_complexity:
           type: string
-          enum: [relaxed, standard, strict]
+          deprecated: true
+          writeOnly: true
+          description: Accepted and ignored, and never returned; see password_min_length.
         session_max_age:
           type: string
           example: 720h
