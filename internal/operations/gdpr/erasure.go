@@ -12,7 +12,8 @@ import (
 // the audit trail: credentials and second factors, sign-ins, devices, linked
 // accounts, application grants, connected accounts' tokens, memberships,
 // directory profiles, inbox, behaviour baseline and AI conversations. Its data
-// exports lose their payloads. $1 is the account.
+// exports lose their payloads, and verifiable credentials issued to it are
+// revoked. $1 is the account.
 var accountData = []string{
 	`DELETE FROM auth.passkey_credentials WHERE user_id = $1`,
 	`DELETE FROM auth.passkey_challenges WHERE user_id = $1`,
@@ -37,6 +38,7 @@ var accountData = []string{
 	`DELETE FROM auth.oidc_ciba_requests WHERE user_id = $1`,
 	`DELETE FROM auth.social_login_codes WHERE user_id = $1`,
 	`DELETE FROM auth.saml_login_codes WHERE user_id = $1`,
+	`DELETE FROM auth.oidc_connection_login_codes WHERE user_id = $1`,
 	`DELETE FROM auth.platform_social_codes WHERE user_id = $1`,
 	`DELETE FROM auth.platform_social_link_codes WHERE user_id = $1`,
 	`DELETE FROM auth.platform_social_states WHERE link_user_id = $1`,
@@ -58,6 +60,11 @@ var accountData = []string{
 	`DELETE FROM rbac.user_roles WHERE user_id = $1`,
 	`DELETE FROM audit.actor_baselines WHERE actor_user_id = $1`,
 	`DELETE FROM qeetai.conversations WHERE user_id = $1`,
+	// A credential issued to the person is revoked and its claims cleared; the
+	// row stays so a verifier still learns it is revoked.
+	`UPDATE auth.credentials
+	 SET subject = 'erased', claims = '{}', revoked_at = COALESCE(revoked_at, NOW()), user_id = NULL
+	 WHERE user_id = $1`,
 	`UPDATE "user".export_requests
 	 SET payload = NULL, lease_owner = NULL, lease_until = NULL,
 	     status = CASE status WHEN 'pending' THEN 'failed' WHEN 'ready' THEN 'expired' ELSE status END,

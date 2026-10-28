@@ -20,7 +20,7 @@ func leaveTraces(t *testing.T, tenant uuid.UUID, a dbtest.Account) {
 	t.Helper()
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	u, email := a.ID, strings.ToLower(a.Email)
-	client, session, login, group := dbtest.Unique("app"), uuid.New(), uuid.New(), uuid.New()
+	client, session, login, group, oidc := dbtest.Unique("app"), uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	soon := time.Now().Add(time.Hour)
 	for _, s := range []struct {
 		sql  string
@@ -50,6 +50,9 @@ func leaveTraces(t *testing.T, tenant uuid.UUID, a dbtest.Account) {
 		{`INSERT INTO auth.oidc_ciba_requests (auth_req_id_hash, client_id, tenant_id, user_id, expires_at) VALUES ($1, $2, $3, $4, $5)`, []any{dbtest.Unique("ciba"), client, tenant, u, soon}},
 		{`INSERT INTO auth.social_login_codes (code_hash, user_id, tenant_id, expires_at) VALUES ($1, $2, $3, $4)`, []any{dbtest.Unique("social"), u, tenant, soon}},
 		{`INSERT INTO auth.saml_login_codes (code_hash, user_id, tenant_id, expires_at) VALUES ($1, $2, $3, $4)`, []any{dbtest.Unique("saml"), u, tenant, soon}},
+		{`INSERT INTO tenant.oidc_connections (id, tenant_id, name, issuer, client_id, client_secret_ct, client_secret_nonce) VALUES ($1, $2, 'Entra', 'https://login.example.test', 'qeet', '\x00', '\x00')`, []any{oidc, tenant}},
+		{`INSERT INTO auth.oidc_connection_login_codes (code_hash, connection_id, user_id, expires_at) VALUES ($1, $2, $3, $4)`, []any{dbtest.Unique("oidc"), oidc, u, soon}},
+		{`INSERT INTO auth.credentials (tenant_id, subject, type, claims, user_id) VALUES ($1, $2, 'EmploymentCredential', '{"name": "Asha"}', $3)`, []any{tenant, email, u}},
 		{`INSERT INTO auth.platform_social_codes (code_hash, user_id, expires_at) VALUES ($1, $2, $3)`, []any{dbtest.Unique("psc"), u, soon}},
 		{`INSERT INTO auth.platform_social_link_codes (code_hash, user_id, provider, subject, email, expires_at) VALUES ($1, $2, 'google', 'g-1', $3, $4)`, []any{dbtest.Unique("link"), u, email, soon}},
 		{`INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at, link_user_id) VALUES ($1, 'google', 'v', 'https://id.example.test/cb', $2, $3)`, []any{dbtest.Unique("state"), soon, u}},
@@ -84,6 +87,15 @@ func leaveTraces(t *testing.T, tenant uuid.UUID, a dbtest.Account) {
 	}
 }
 
+// due ends an erasure request's grace period by the database's clock, which
+// may run behind the test's.
+func due(t *testing.T, id uuid.UUID) {
+	t.Helper()
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE "user".purge_requests SET grace_until = NOW() - INTERVAL '1 second' WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // erasedRow matches one statement of accountData: the table it changes and
 // the column naming the account.
 var erasedRow = regexp.MustCompile(`(?s)(?:FROM|UPDATE)\s+(\S+).*WHERE\s+(\w+)\s*=\s*\$1`)
@@ -99,7 +111,7 @@ func tracesLeft(t *testing.T, userID uuid.UUID, email string) map[string]int {
 			t.Fatalf("can't read the table of %s", stmt)
 		}
 		query := `SELECT count(*) FROM ` + m[1] + ` WHERE ` + m[2] + ` = $1`
-		if strings.HasPrefix(strings.TrimSpace(stmt), "UPDATE") {
+		if strings.Contains(m[1], "export_requests") {
 			query += ` AND payload IS NOT NULL`
 		}
 		if n := dbtest.Count(t, query, userID); n > 0 {
@@ -133,6 +145,7 @@ func TestErasureRemovesEveryTrace(t *testing.T) {
 	rec := dbtest.Do(t, asAdmin, http.MethodPost, "/gdpr/purge", map[string]any{"user_id": erased.ID})
 	var req Request
 	dbtest.Decode(t, rec, &req)
+	due(t, req.ID)
 	if err := svc.tick(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -144,6 +157,9 @@ func TestErasureRemovesEveryTrace(t *testing.T) {
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND email LIKE 'redacted-%' AND avatar_url IS NULL AND external_id IS NULL AND metadata = '{}'`, erased.ID); n != 1 {
 		t.Error("the user row wasn't redacted")
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.credentials WHERE tenant_id = $1 AND subject = 'erased' AND claims = '{}' AND revoked_at IS NOT NULL`, tenant); n != 1 {
+		t.Errorf("%d credentials revoked and cleared, want the erased person's one", n)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE resource_id = $1`, req.ID); n != 2 {
 		t.Errorf("%d audit events about the request, want them kept (2)", n)
@@ -229,6 +245,7 @@ func TestErasureOfAnAccountAlreadyGone(t *testing.T) {
 	if _, err := pool.Exec(ctx, `DELETE FROM "user".users WHERE id = $1`, gone.ID); err != nil {
 		t.Fatalf("delete an account awaiting erasure: %v", err)
 	}
+	due(t, req.ID)
 	if err := svc.tick(ctx); err != nil {
 		t.Fatal(err)
 	}
