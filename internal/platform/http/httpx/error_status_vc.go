@@ -13,5 +13,6 @@ func init() {
 		errs.CodeVCClaimsInvalid:       http.StatusUnprocessableEntity,
 		errs.CodeVCCredentialRequired:  http.StatusUnprocessableEntity,
 		errs.CodeVCCredentialNotFound:  http.StatusNotFound,
+		errs.CodeVCUserNotMember:       http.StatusUnprocessableEntity,
 	})
 }

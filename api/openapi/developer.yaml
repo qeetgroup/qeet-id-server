@@ -656,7 +656,7 @@ paths:
   /v1/tenants/{tenantID}/credentials:
     get:
       operationId: get_v1_tenants_ByTenantID_credentials
-      description: 'Lists the verifiable credentials issued by the tenant.'
+      description: 'Lists the verifiable credentials issued by the tenant, each with the person it was issued to when the issuer named one.'
       summary: List credentials
       tags:
         - Credentials
@@ -719,6 +719,10 @@ paths:
                   additionalProperties: true
                 ttl_seconds:
                   type: integer
+                user_id:
+                  type: [string, 'null']
+                  format: uuid
+                  description: The person the credential is for, a member of the organisation (else 422 vc.user_not_member). Recorded with the credential, not in the signed JWT-VC.
       responses:
         '201':
           description: Signed JWT-VC + credential id
@@ -2233,7 +2237,7 @@ components:
           type: string
     VcCredential:
       type: object
-      required: [id, issued_at, revoked, subject, type]
+      required: [id, issued_at, revoked, subject, type, user]
       properties:
         expires_at:
           type: string
@@ -2250,6 +2254,20 @@ components:
           type: string
         type:
           type: string
+        user:
+          description: The person the credential was issued to; null when the issuer named no one, or the account was deleted.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [display_name, email, id]
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                email:
+                  type: string
+                display_name:
+                  type: string
     WebhookDelivery:
       type: object
       required: [attempt, created_at, event_type, id, payload]

@@ -6,6 +6,7 @@ const (
 	CodeVCClaimsInvalid       = "vc.claims_invalid"
 	CodeVCCredentialRequired  = "vc.credential_required"
 	CodeVCCredentialNotFound  = "vc.credential_not_found"
+	CodeVCUserNotMember       = "vc.user_not_member"
 )
 
 // Verifiable-credential errors. The Message is what the end user sees. Handlers
@@ -16,4 +17,5 @@ var (
 	ErrVCClaimsInvalid       = New(CodeVCClaimsInvalid, "Credential claims must be a valid JSON object.")
 	ErrVCCredentialRequired  = New(CodeVCCredentialRequired, "A credential (JWT) is required.")
 	ErrVCCredentialNotFound  = New(CodeVCCredentialNotFound, "We couldn't find that credential.")
+	ErrVCUserNotMember       = New(CodeVCUserNotMember, "That person isn't a member of this organisation.")
 )
