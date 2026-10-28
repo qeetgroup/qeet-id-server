@@ -24,7 +24,9 @@ import (
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -249,9 +251,15 @@ func TestPortalLinkConfiguresOnlyWhatItGrants(t *testing.T) {
 	}
 }
 
+// txtRecords answers every TXT lookup with its records.
+type txtRecords []string
+
+func (r txtRecords) LookupTXT(context.Context, string) ([]string, error) { return r, nil }
+
 // TestPortalFinishesAnSSOSetup checks that the portal gives the IT admin the
-// addresses their IdP needs and begins and reads a test sign-in, as far as the
-// link allows and only for its organisation.
+// addresses their IdP needs, begins and reads a test sign-in, and claims and
+// verifies domains, as far as the link allows and only for its organisation:
+// a domain another organisation verified stays theirs.
 func TestPortalFinishesAnSSOSetup(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
@@ -259,12 +267,14 @@ func TestPortalFinishesAnSSOSetup(t *testing.T) {
 	admin := dbtest.User(t, tenant, tenant)
 	users := user.NewRepository(pool)
 	samlService := saml.NewService(pool, auth.NewService(pool, users, dbtest.Issuer(t)), "https://id.example.test")
+	domains := domainverify.NewService(pool)
 	const api = "https://api.example.test"
 	h := &Handler{
 		Service:       NewService(pool, branded{}, "https://login.example.test"),
 		SAML:          samlService,
 		SAMLSignIn:    &saml.Handler{Service: samlService, PublicBaseURL: api},
 		SCIM:          scim.NewService(pool, users),
+		Domains:       domains,
 		PublicBaseURL: api,
 	}
 	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
@@ -284,13 +294,13 @@ func TestPortalFinishesAnSSOSetup(t *testing.T) {
 		t.Fatalf("no portal session for %v", capabilities)
 		return ""
 	}
-	everything := session("saml", "scim")
+	everything := session("saml", "scim", "domain_verification")
 	samlOnly := session("saml")
 
 	var pc PortalContext
 	dbtest.Decode(t, portal(t, public, http.MethodGet, "/admin-portal/context", "", everything, nil), &pc)
-	if pc.SCIMBaseURL != api+"/scim/v2" || len(pc.Capabilities) != 2 {
-		t.Errorf("context %+v; want the SCIM base URL and both capabilities", pc)
+	if pc.SCIMBaseURL != api+"/scim/v2" || len(pc.Capabilities) != 3 {
+		t.Errorf("context %+v; want the SCIM base URL and all three capabilities", pc)
 	}
 	pc = PortalContext{}
 	dbtest.Decode(t, portal(t, public, http.MethodGet, "/admin-portal/context", "", samlOnly, nil), &pc)
@@ -388,7 +398,57 @@ func TestPortalFinishesAnSSOSetup(t *testing.T) {
 		}
 	}
 
-	for action, want := range map[string]int{"saml.test_sign_in_started": 1} {
+	// Domains: only with the capability, and only the organisation's own.
+	if rec := portal(t, public, http.MethodGet, "/admin-portal/domains", "", samlOnly, nil); !strings.Contains(rec.Body.String(), errs.CodeAdminPortalCapabilityNotGranted) {
+		t.Errorf("domains through a SAML-only link: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := portal(t, public, http.MethodPost, "/admin-portal/domains", "", everything, map[string]string{"domain": "not a domain"}); !strings.Contains(rec.Body.String(), errs.CodeDomainVerifyInvalidDomain) {
+		t.Errorf("claim an invalid domain: %d %s", rec.Code, rec.Body.String())
+	}
+	name := dbtest.Unique("acme") + ".example.test"
+	rec = portal(t, public, http.MethodPost, "/admin-portal/domains", "", everything, map[string]string{"domain": "https://" + strings.ToUpper(name) + "/"})
+	var claimed domainverify.Domain
+	dbtest.Decode(t, rec, &claimed)
+	if rec.Code != http.StatusCreated || claimed.Domain != name || claimed.DNSRecordName != "_qeet-verification."+name || claimed.Status != "pending" {
+		t.Fatalf("claim a domain: %d %s", rec.Code, rec.Body.String())
+	}
+	domains.SetResolver(txtRecords{claimed.VerificationToken})
+	rec = portal(t, public, http.MethodPost, "/admin-portal/domains/"+claimed.ID.String()+"/verify", "", everything, nil)
+	var verified domainverify.Domain
+	dbtest.Decode(t, rec, &verified)
+	if rec.Code != http.StatusOK || verified.Status != "verified" || verified.VerifiedAt == nil {
+		t.Errorf("verify the domain: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = portal(t, public, http.MethodPost, "/admin-portal/domains", "", everything, map[string]string{"domain": dbtest.Domain(t, other)})
+	var squat domainverify.Domain
+	dbtest.Decode(t, rec, &squat)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("claim another organisation's verified domain: %d %s", rec.Code, rec.Body.String())
+	}
+	domains.SetResolver(txtRecords{squat.VerificationToken})
+	if rec := portal(t, public, http.MethodPost, "/admin-portal/domains/"+squat.ID.String()+"/verify", "", everything, nil); !strings.Contains(rec.Body.String(), errs.CodeDomainVerifyClaimedByOther) {
+		t.Errorf("verify a domain another organisation verified: %d %s", rec.Code, rec.Body.String())
+	}
+	elsewhere, err := domains.Add(ctx, other, dbtest.Unique("other")+".example.test", audit.Actor{Type: "system"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	domains.SetResolver(txtRecords{elsewhere.VerificationToken})
+	if rec := portal(t, public, http.MethodPost, "/admin-portal/domains/"+elsewhere.ID.String()+"/verify", "", everything, nil); rec.Code != http.StatusNotFound {
+		t.Errorf("verify another organisation's domain: %d %s, want 404", rec.Code, rec.Body.String())
+	}
+	var mine struct {
+		Items []domainverify.Domain `json:"items"`
+	}
+	dbtest.Decode(t, portal(t, public, http.MethodGet, "/admin-portal/domains", "", everything, nil), &mine)
+	if len(mine.Items) != 2 {
+		t.Errorf("listed %d domains, want the organisation's two", len(mine.Items))
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.domains WHERE id = $1 AND verified_at IS NULL`, elsewhere.ID); n != 1 {
+		t.Error("the portal verified another organisation's domain")
+	}
+
+	for action, want := range map[string]int{"saml.test_sign_in_started": 1, "domain.created": 2, "domain.verified": 1} {
 		if n := dbtest.Count(t, `
 			SELECT count(*) FROM audit.events
 			WHERE tenant_id = $1 AND action = $2 AND actor_type = 'admin_portal' AND actor_user_id = $3

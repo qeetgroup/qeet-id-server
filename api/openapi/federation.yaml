@@ -59,7 +59,7 @@ tags:
   - name: SCIM
     description: 'SCIM 2.0 user/group provisioning (per-tenant bearer token presented by the IdP) plus tenant-admin token management. The /scim/v2 surface returns the RFC 7644 error envelope, not the standard Qeet error shape.'
   - name: Admin Portal
-    description: A unique, time-limited, capability-scoped link a tenant admin can hand to their own IT admin — no Qeet ID account required — to configure the tenant's SAML connection and test it, and/or roll its SCIM token directly.
+    description: A unique, time-limited, capability-scoped link a tenant admin can hand to their own IT admin — no Qeet ID account required — to configure the tenant's SAML connection and test it, roll its SCIM token, or verify its domains directly.
 paths:
   /.well-known/jwks.json:
     get:
@@ -4214,7 +4214,7 @@ paths:
                   type: array
                   items:
                     type: string
-                    enum: [saml, scim]
+                    enum: [saml, scim, domain_verification]
                 ttl_seconds:
                   type: integer
       responses:
@@ -4629,6 +4629,97 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /v1/admin-portal/domains:
+    get:
+      operationId: get_v1_admin_portal_domains
+      summary: List domains (portal)
+      description: Lists the domains of the tenant bound to the portal session, with the DNS record each needs and its verification status. Requires the link's capabilities to include domain_verification.
+      tags:
+        - Admin Portal
+      security:
+        - adminPortalCookie: []
+      responses:
+        '200':
+          description: Domains with their DNS verification records
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Domain'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: post_v1_admin_portal_domains
+      summary: Claim a domain (portal)
+      description: Claims a domain for the tenant bound to the portal session and returns the DNS TXT record to publish, as the tenant-admin claim-domain endpoint does, under the same plan. Requires the link's capabilities to include domain_verification. Audited as domain.created by the admin portal.
+      tags:
+        - Admin Portal
+      security:
+        - adminPortalCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - domain
+              properties:
+                domain:
+                  type: string
+      responses:
+        '201':
+          description: Domain claimed; publish the returned TXT record, then verify
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Domain'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/admin-portal/domains/{id}/verify:
+    post:
+      operationId: post_v1_admin_portal_domains_ById_verify
+      summary: Verify a domain (portal)
+      description: Looks up the domain's TXT record and, on a match, marks it verified, as the tenant-admin verify-domain endpoint does. A domain another organisation has verified answers 409 domainverify.claimed_by_other; a record not found yet 422 domainverify.dns_record_missing (retryable). Requires the link's capabilities to include domain_verification; the domain must belong to the tenant bound to the portal session. Audited as domain.verified by the admin portal.
+      tags:
+        - Admin Portal
+      security:
+        - adminPortalCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The domain, verified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Domain'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
 components:
   parameters:
     IdempotencyKey:
@@ -5408,7 +5499,7 @@ components:
           type: array
           items:
             type: string
-            enum: [saml, scim]
+            enum: [saml, scim, domain_verification]
         created_by:
           type: string
           format: uuid
@@ -5436,7 +5527,7 @@ components:
           type: array
           items:
             type: string
-            enum: [saml, scim]
+            enum: [saml, scim, domain_verification]
         expires_at:
           type: string
           format: date-time
@@ -5540,6 +5631,42 @@ components:
           type: array
           items:
             type: string
+    Domain:
+      type: object
+      required: [created_at, dns_record_name, dns_record_type, dns_record_value, domain, id, is_default, jit_enabled, sso_enabled, status, verification_token]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        dns_record_name:
+          type: string
+        dns_record_type:
+          type: string
+        dns_record_value:
+          type: string
+        domain:
+          type: string
+        id:
+          type: string
+          format: uuid
+        is_default:
+          type: boolean
+        jit_enabled:
+          type: boolean
+        last_checked_at:
+          type: string
+          format: date-time
+        last_error:
+          type: string
+        sso_enabled:
+          type: boolean
+        status:
+          type: string
+        verification_token:
+          type: string
+        verified_at:
+          type: string
+          format: date-time
     SCIMUser:
       type: object
       required:

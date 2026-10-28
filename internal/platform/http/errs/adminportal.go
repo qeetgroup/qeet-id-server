@@ -33,8 +33,8 @@ const (
 // wrapped cause with `.Wrap(err)` when there's an underlying error worth logging.
 var (
 	// Capabilities.
-	ErrAdminPortalCapabilitiesRequired = New(CodeAdminPortalCapabilitiesRequired, `Choose at least one capability ("saml", "scim", or both).`)
-	ErrAdminPortalCapabilityUnknown    = New(CodeAdminPortalCapabilityUnknown, `Unknown capability (must be "saml" or "scim").`)
+	ErrAdminPortalCapabilitiesRequired = New(CodeAdminPortalCapabilitiesRequired, `Choose at least one capability ("saml", "scim" or "domain_verification").`)
+	ErrAdminPortalCapabilityUnknown    = New(CodeAdminPortalCapabilityUnknown, `Unknown capability (must be "saml", "scim" or "domain_verification").`)
 	ErrAdminPortalCapabilityNotGranted = New(CodeAdminPortalCapabilityNotGranted, "This admin portal link doesn't include that access.")
 
 	// Link lifecycle.

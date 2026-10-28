@@ -19,6 +19,7 @@ func TestNormalizeCapabilities(t *testing.T) {
 		{name: "single", in: []string{"saml"}, want: []string{"saml"}},
 		{name: "both, mixed case and whitespace", in: []string{" SAML", "scim "}, want: []string{"saml", "scim"}},
 		{name: "dedupes", in: []string{"saml", "saml", "scim"}, want: []string{"saml", "scim"}},
+		{name: "domain verification", in: []string{"Domain_Verification"}, want: []string{"domain_verification"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

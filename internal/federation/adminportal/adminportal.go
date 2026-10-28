@@ -1,6 +1,7 @@
-// Package adminportal implements capability-scoped, account-less SAML/SCIM
-// administration. A one-time link token is exchanged for a short-lived browser
-// session cookie; subsequent requests never carry credentials in their URL.
+// Package adminportal implements capability-scoped, account-less SAML, SCIM
+// and domain administration. A one-time link token is exchanged for a
+// short-lived browser session cookie; subsequent requests never carry
+// credentials in their URL.
 package adminportal
 
 import (
@@ -20,6 +21,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/adminportal/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -28,8 +30,9 @@ import (
 )
 
 const (
-	CapabilitySAML = "saml"
-	CapabilitySCIM = "scim"
+	CapabilitySAML               = "saml"
+	CapabilitySCIM               = "scim"
+	CapabilityDomainVerification = "domain_verification" // prove the organisation owns a domain
 
 	minTTL              = 15 * time.Minute
 	maxTTL              = 24 * time.Hour
@@ -39,7 +42,7 @@ const (
 	portalCookiePath    = "/v1/admin-portal"
 )
 
-var validCapabilities = []string{CapabilitySAML, CapabilitySCIM}
+var validCapabilities = []string{CapabilitySAML, CapabilitySCIM, CapabilityDomainVerification}
 
 // Link is an admin-portal link, without its token.
 type Link struct {
@@ -418,6 +421,14 @@ type samlSignIn interface {
 	BeginTestSignIn(w http.ResponseWriter, r *http.Request, tx pgx.Tx, tenantID, id uuid.UUID, returnURL string) (*saml.TestSignIn, error)
 }
 
+// domainService is the slice of domainverify.Service the portal needs to
+// claim and verify the tenant's domains.
+type domainService interface {
+	List(ctx context.Context, tenantID uuid.UUID) ([]domainverify.Domain, error)
+	Add(ctx context.Context, tenantID uuid.UUID, raw string, actor audit.Actor) (*domainverify.Domain, error)
+	Verify(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) (*domainverify.Domain, error)
+}
+
 // scimService is the slice of scim.Service the portal needs to manage the
 // tenant's SCIM bearer token — never the provisioned-users list.
 type scimService interface {
@@ -435,6 +446,7 @@ type Handler struct {
 	SAML          samlService
 	SAMLSignIn    samlSignIn
 	SCIM          scimService
+	Domains       domainService
 	PublicBaseURL string
 	CookieSecure  bool
 }
@@ -470,6 +482,10 @@ func (h *Handler) MountPublic(r chi.Router) {
 		r.Get("/admin-portal/scim", h.scimConfig)
 		r.Post("/admin-portal/scim/token", h.scimRotate)
 		r.Delete("/admin-portal/scim/token", h.scimRevoke)
+
+		r.Get("/admin-portal/domains", h.domainList)
+		r.Post("/admin-portal/domains", h.domainAdd)
+		r.Post("/admin-portal/domains/{id}/verify", h.domainVerify)
 	})
 }
 
@@ -730,6 +746,12 @@ func (h *Handler) portalContext(r *http.Request, l *Link) (*PortalContext, error
 // are built on.
 func (h *Handler) origin(r *http.Request) string {
 	return httpx.PublicOrigin(r, h.PublicBaseURL)
+}
+
+// portalActor is who acts through link l in an audit event: the portal, on
+// behalf of the link's creator.
+func portalActor(l *Link, r *http.Request) audit.Actor {
+	return audit.Actor{UserID: l.CreatedBy, Type: "admin_portal", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
 }
 
 // --- public: SAML ---
@@ -1073,4 +1095,64 @@ func (h *Handler) scimRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- public: domains ---
+
+func (h *Handler) domainList(w http.ResponseWriter, r *http.Request) {
+	l, err := h.resolve(r, CapabilityDomainVerification)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Domains.List(r.Context(), l.TenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+// domainAdd claims a domain for the tenant and answers with the DNS record to
+// publish, as the admin API does.
+func (h *Handler) domainAdd(w http.ResponseWriter, r *http.Request) {
+	l, err := h.resolve(r, CapabilityDomainVerification)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var in struct {
+		Domain string `json:"domain"`
+	}
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	d, err := h.Domains.Add(r.Context(), l.TenantID, in.Domain, portalActor(l, r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, d)
+}
+
+// domainVerify checks the DNS record of the tenant's domain, as the admin API
+// does: a domain another organisation verified stays theirs.
+func (h *Handler) domainVerify(w http.ResponseWriter, r *http.Request) {
+	l, err := h.resolve(r, CapabilityDomainVerification)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrAdminPortalIDInvalid)
+		return
+	}
+	d, err := h.Domains.Verify(r.Context(), id, l.TenantID, portalActor(l, r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, d)
 }

@@ -59,6 +59,15 @@ type PlanGate interface {
 // SetPlanGate sets the plan-feature gate (nil allows all features).
 func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 
+// Resolver looks up the TXT records at a DNS name.
+type Resolver interface {
+	LookupTXT(ctx context.Context, name string) ([]string, error)
+}
+
+// SetResolver sets where verification looks up TXT records; by default the
+// system resolver.
+func (s *Service) SetResolver(r Resolver) { s.resolver = r }
+
 // Domain is a domain a tenant has claimed, and whether it is verified.
 type Domain struct {
 	ID                uuid.UUID  `json:"id"`
