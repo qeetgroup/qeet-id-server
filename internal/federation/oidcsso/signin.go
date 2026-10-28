@@ -65,6 +65,10 @@ func (s *Service) BeginSignIn(ctx context.Context, id uuid.UUID, redirectURI str
 	if err != nil {
 		return "", "", err
 	}
+	// Every sign-in needs a plan with SSO, not only setting the connection up.
+	if err := s.RequireSSO(ctx, c.TenantID); err != nil {
+		return "", "", err
+	}
 	doc, _, err := s.providerFor(ctx, c)
 	if err != nil {
 		return "", "", err
@@ -160,6 +164,11 @@ func (s *Service) CompleteSignIn(ctx context.Context, cb Callback) (loginCode st
 	}
 	if cb.Code == "" {
 		return "", errs.ErrOIDCSSOCallbackInvalid
+	}
+	// Checked again as the answer arrives, so a plan that has since lapsed
+	// signs no one in.
+	if err := s.RequireSSO(ctx, c.TenantID); err != nil {
+		return "", err
 	}
 	doc, rules, err := s.providerFor(ctx, c)
 	if err != nil {

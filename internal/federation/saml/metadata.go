@@ -314,13 +314,14 @@ func (s *Service) ApplyMetadata(ctx context.Context, tx pgx.Tx, connectionID, te
 // or as a URL to fetch it from and refresh it from later. IdpEntityID names
 // the IdP to use from metadata describing several.
 type ImportInput struct {
-	Name           string `json:"name"`
-	MetadataURL    string `json:"metadata_url"`
-	MetadataXML    string `json:"metadata_xml"`
-	IdpEntityID    string `json:"idp_entity_id"`
-	EmailAttribute string `json:"email_attribute"`
-	NameAttribute  string `json:"name_attribute"`
-	Status         string `json:"status"`
+	Name            string `json:"name"`
+	MetadataURL     string `json:"metadata_url"`
+	MetadataXML     string `json:"metadata_xml"`
+	IdpEntityID     string `json:"idp_entity_id"`
+	EmailAttribute  string `json:"email_attribute"`
+	NameAttribute   string `json:"name_attribute"`
+	GroupsAttribute string `json:"groups_attribute"`
+	Status          string `json:"status"`
 }
 
 // Import creates a connection in tenantID within tx with md's entity ID, SSO
@@ -328,7 +329,7 @@ type ImportInput struct {
 func (s *Service) Import(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in ImportInput, md *IdPMetadata) (*Connection, error) {
 	conn, err := s.Create(ctx, tx, tenantID, CreateInput{
 		Name: in.Name, IdpEntityID: md.EntityID, IdpSSOURL: md.SSOURL, IdpCertificate: certificatePEM(md.Certificates[0]),
-		EmailAttribute: in.EmailAttribute, NameAttribute: in.NameAttribute, Status: in.Status,
+		EmailAttribute: in.EmailAttribute, NameAttribute: in.NameAttribute, GroupsAttribute: in.GroupsAttribute, Status: in.Status,
 	})
 	if err != nil {
 		return nil, err
@@ -491,6 +492,11 @@ func (h *Handler) importConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	// Before the metadata is fetched: a plan without SSO sets up no connection.
+	if err := h.Service.RequireSSO(ctx, tenantID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	md, err := h.Service.LoadMetadata(ctx, in.MetadataURL, in.MetadataXML, in.IdpEntityID)
 	if err != nil {
 		httpx.WriteError(w, r, err)

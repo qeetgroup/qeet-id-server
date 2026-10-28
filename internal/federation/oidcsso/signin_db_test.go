@@ -590,3 +590,24 @@ func TestOIDCSignInProvisionsOnlyWithJIT(t *testing.T) {
 		t.Errorf("the member's sign-in with provisioning off: %s, want %s", pair.UserID, member.ID)
 	}
 }
+
+// TestOIDCSignInNeedsSSOInThePlan checks that a sign-in through a connection
+// needs a plan with single sign-on when it starts and again when the answer
+// arrives, so a plan that lapsed in between signs no one in.
+func TestOIDCSignInNeedsSSOInThePlan(t *testing.T) {
+	s := newRP(t)
+	idp := newFakeIdP(t)
+	tenant := dbtest.Tenant(t)
+	conn := s.connect(t, tenant, idp, nil)
+	email := dbtest.Unique("asha") + "@" + dbtest.Domain(t, tenant)
+
+	authURL := s.begin(t, conn.ID)
+	idp.expect(t, authURL, "code-1", as(idp, "u-1", email, nil), nil, "")
+	s.svc.SetPlanGate(denyPlan{})
+	refused(t, "the answer after the plan lapsed", s.callback(t, conn.ID, authURL, "code-1", nil), errs.CodeUpgradeRequired)
+	rec := s.send(httptest.NewRequestWithContext(dbtest.Context(t), http.MethodGet, "/oidc-connections/"+conn.ID.String()+"/login", nil))
+	refused(t, "a sign-in started on a plan without single sign-on", rec, errs.CodeUpgradeRequired)
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, email); n != 0 {
+		t.Errorf("a sign-in refused for the plan provisioned %d accounts", n)
+	}
+}

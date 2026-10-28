@@ -175,3 +175,31 @@ func TestSAMLMetadataImportAndRefresh(t *testing.T) {
 		t.Errorf("apply another IdP's metadata: %d %s, want %s", rec.Code, rec.Body.String(), errs.CodeSAMLMetadataInvalid)
 	}
 }
+
+// TestSAMLMetadataImportNeedsSSOInThePlan checks that importing a connection
+// from metadata, like creating one, needs a plan with SSO and fetches nothing
+// without one, and that an import keeps the groups attribute it is given.
+func TestSAMLMetadataImportNeedsSSOInThePlan(t *testing.T) {
+	sp := newSPSide(t)
+	sp.handler.Service.SetEgressPolicy(egress.DevelopmentPolicy())
+	idp := newUpstreamIdP(t)
+	paid, free := dbtest.Tenant(t), dbtest.Tenant(t)
+	sp.handler.Service.SetPlanGate(poolGate{pool: dbtest.Pool(t), allowed: map[uuid.UUID]bool{paid: true}})
+	metadata := newMetadataServer(t)
+	metadata.serve(http.StatusOK, idpEntity(idp.entityID, upstreamSSO, map[string][]string{"signing": {idp.der(t)}}))
+	body := map[string]any{"name": "Okta", "metadata_url": metadata.server.URL, "groups_attribute": "memberOf"}
+
+	rec := dbtest.Do(t, sp.asAdmin(t, free), http.MethodPost, "/tenants/"+free.String()+"/saml/import", body)
+	if rec.Code != http.StatusPaymentRequired || !strings.Contains(rec.Body.String(), errs.CodeUpgradeRequired) {
+		t.Errorf("import on a plan without SSO: %d %s, want 402 %s", rec.Code, rec.Body.String(), errs.CodeUpgradeRequired)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.saml_connections WHERE tenant_id = $1`, free); n != 0 {
+		t.Errorf("%d connections imported on a plan without SSO, want none", n)
+	}
+	rec = dbtest.Do(t, sp.asAdmin(t, paid), http.MethodPost, "/tenants/"+paid.String()+"/saml/import", body)
+	var conn Connection
+	dbtest.Decode(t, rec, &conn)
+	if rec.Code != http.StatusCreated || conn.GroupsAttribute != "memberOf" {
+		t.Errorf("import on a plan with SSO: %d %s; want it created with its groups attribute", rec.Code, rec.Body.String())
+	}
+}
