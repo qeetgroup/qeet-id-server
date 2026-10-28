@@ -94,21 +94,30 @@ func (u entitlementUsageResolver) Usage(ctx context.Context, tenantID uuid.UUID)
 }
 
 // importRoles lets a bulk user import give a role, with the checks assigning
-// one to a person makes: the caller holds role.write and the role's authority.
-type importRoles struct{ repo *rbac.Repository }
+// one to a person makes: the caller holds role.write and the role's authority,
+// and a person's first role takes one of the plan's seats.
+type importRoles struct {
+	repo  *rbac.Repository
+	seats rbac.SeatGuard
+}
 
-func (g importRoles) CheckGrant(r *http.Request, tenantID, roleID uuid.UUID) error {
+func (g importRoles) CheckGrant(r *http.Request, tenantID, roleID uuid.UUID) (int, error) {
 	caller := httpx.PrincipalFromCtx(r.Context())
 	ok, err := rbac.Holds(r.Context(), g.repo, caller, "role.write")
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if !ok {
-		return errs.ErrRBACPermissionDenied.WithDetail("giving a role needs role.write")
+		return 0, errs.ErrRBACPermissionDenied.WithDetail("giving a role needs role.write")
 	}
-	return g.repo.CheckGrantRole(r.Context(), caller, tenantID, roleID)
+	if err := g.repo.CheckGrantRole(r.Context(), caller, tenantID, roleID); err != nil {
+		return 0, err
+	}
+	return g.seats.SeatLimit(r.Context(), tenantID)
 }
 
-func (g importRoles) Assign(ctx context.Context, tx pgx.Tx, userID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID) error {
-	return g.repo.AssignRole(ctx, tx, userID, tenantID, roleID, grantedBy)
+func (g importRoles) Assign(ctx context.Context, tx pgx.Tx, userID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID, seats int) error {
+	return g.seats.WithinSeats(ctx, tx, tenantID, seats, func() error {
+		return g.repo.AssignRole(ctx, tx, userID, tenantID, roleID, grantedBy)
+	})
 }

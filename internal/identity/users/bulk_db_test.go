@@ -141,9 +141,9 @@ func TestBulkImportRowErrorsCarryCodes(t *testing.T) {
 // fakeRoles gives roles as RoleGranter does, refusing when refuse is set.
 type fakeRoles struct{ refuse error }
 
-func (f fakeRoles) CheckGrant(*http.Request, uuid.UUID, uuid.UUID) error { return f.refuse }
+func (f fakeRoles) CheckGrant(*http.Request, uuid.UUID, uuid.UUID) (int, error) { return -1, f.refuse }
 
-func (fakeRoles) Assign(ctx context.Context, tx pgx.Tx, userID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID) error {
+func (fakeRoles) Assign(ctx context.Context, tx pgx.Tx, userID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID, _ int) error {
 	_, err := tx.Exec(ctx, `INSERT INTO rbac.user_roles (user_id, tenant_id, role_id, granted_by) VALUES ($1, $2, $3, $4)`, userID, tenantID, roleID, grantedBy)
 	return err
 }

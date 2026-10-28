@@ -80,6 +80,9 @@ func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUI
 				rowErr.Code, rowErr.Field, rowErr.Message = e.Code, "email", "a user with this email already exists"
 			} else if e != nil && e.Code == errs.CodeUserDomainManaged {
 				rowErr.Code, rowErr.Field, rowErr.Message = e.Code, "email", e.Message
+			} else if e != nil && (e.Code == errs.CodePlanLimit || e.Code == errs.CodeServerOverloaded) {
+				// No seat left for the role, or no room to hash the password now.
+				rowErr.Code, rowErr.Message = e.Code, e.Message
 			} else if e != nil && isPasswordRefusal(e.Code) {
 				// Name the rule the row's password broke, so the operator can
 				// fix that row and resubmit it alone.
@@ -163,11 +166,14 @@ func (h *Handler) bulkCreate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
+	var role *importRole
 	if in.RoleID != nil {
-		if err := h.checkImportRole(r, tenantID, *in.RoleID); err != nil {
+		seats, err := h.checkImportRole(r, tenantID, *in.RoleID)
+		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
+		role = &importRole{ID: *in.RoleID, Seats: seats}
 	}
 
 	// Each row's password is checked against the tenant's rules before its
@@ -181,7 +187,7 @@ func (h *Handler) bulkCreate(w http.ResponseWriter, r *http.Request) {
 			}
 			hash = ph
 		}
-		return h.createWithEvidence(r, ci, hash, in.RoleID)
+		return h.createWithEvidence(r, ci, hash, role)
 	}
 
 	res := runBulkImport(r.Context(), h.Validate, tenantID, in.Users, create)
@@ -194,17 +200,18 @@ func (h *Handler) bulkCreate(w http.ResponseWriter, r *http.Request) {
 
 // checkImportRole refuses giving roleID to an import's users unless it is one
 // of the tenant's roles and the caller may give it: they hold role.write and
-// the authority the role carries, as when assigning it to one person.
-func (h *Handler) checkImportRole(r *http.Request, tenantID, roleID uuid.UUID) error {
+// the authority the role carries, as when assigning it to one person. It
+// returns the tenant's seat cap, which each user's role then counts against.
+func (h *Handler) checkImportRole(r *http.Request, tenantID, roleID uuid.UUID) (int, error) {
 	if h.Roles == nil {
-		return errs.ErrForbidden.WithDetail("roles can't be given here")
+		return 0, errs.ErrForbidden.WithDetail("roles can't be given here")
 	}
 	var exists bool
 	if err := h.Repo.Pool().QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM rbac.roles WHERE id = $1 AND tenant_id = $2)`, roleID, tenantID).Scan(&exists); err != nil {
-		return err
+		return 0, err
 	}
 	if !exists {
-		return errs.ErrRBACUserOrRoleNotFound
+		return 0, errs.ErrRBACUserOrRoleNotFound
 	}
 	return h.Roles.CheckGrant(r, tenantID, roleID)
 }
