@@ -194,3 +194,40 @@ func normaliseMetadata(raw []byte) ([]byte, error) {
 	}
 	return json.Marshal(m)
 }
+
+// ChainVerification is an organisation's chain as the scheduled verification
+// last left it, without walking it again.
+type ChainVerification struct {
+	Verified       bool       `json:"verified"`         // the scheduled verification has reached the chain
+	Intact         bool       `json:"intact"`           // no break found; false also before a first verification
+	LastVerifiedAt *time.Time `json:"last_verified_at"` // when the chain was last verified up to LastEventID
+	BrokenAt       *time.Time `json:"broken_at"`        // when a break was found; it stays until resolved
+	LastEventID    *uuid.UUID `json:"last_verified_event_id"`
+	LastRunAt      *time.Time `json:"last_run_at"`    // when the latest scheduled run finished
+	LastRunScope   string     `json:"last_run_scope"` // "all" or "incremental"
+}
+
+// LastVerification returns how the scheduled verification last left tenantID's
+// chain: when it verified it, up to which event, and whether it found a break.
+func (v *Verifier) LastVerification(ctx context.Context, tenantID uuid.UUID) (*ChainVerification, error) {
+	out := &ChainVerification{}
+	run, err := v.q.GetLatestVerificationRun(ctx)
+	switch {
+	case err == nil:
+		out.LastRunAt, out.LastRunScope = &run.FinishedAt, run.Scope
+	case !errors.Is(err, pgx.ErrNoRows):
+		return nil, err
+	}
+	row, err := v.q.GetTenantChainCheckpoint(ctx, tenantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return out, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out.Verified, out.Intact, out.LastEventID, out.LastVerifiedAt = true, !row.BrokenAt.Valid, &row.EventID, &row.VerifiedAt
+	if row.BrokenAt.Valid {
+		out.BrokenAt = &row.BrokenAt.Time
+	}
+	return out, nil
+}

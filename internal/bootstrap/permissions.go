@@ -304,8 +304,9 @@ func userPermissionMap() map[string]string {
 		"GET /v1/tenants/{tenantID}/compliance/evidence/{id}":         "audit.read",
 
 		// Audit (sensitive read).
-		"GET /v1/tenants/{tenantID}/audit":        "audit.read",
-		"GET /v1/tenants/{tenantID}/audit/verify": "audit.read",
+		"GET /v1/tenants/{tenantID}/audit":              "audit.read",
+		"GET /v1/tenants/{tenantID}/audit/verify":       "audit.read",
+		"GET /v1/tenants/{tenantID}/audit/verification": "audit.read",
 
 		// Live Activity feed — sourced from the audit log; same sensitivity.
 		"GET /v1/activity":                         "audit.read",

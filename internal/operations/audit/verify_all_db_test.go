@@ -4,6 +4,8 @@ package audit
 
 import (
 	"errors"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -177,5 +179,46 @@ func TestPlatformChainHasOneCheckpoint(t *testing.T) {
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM platform.audit_chain_checkpoints WHERE tenant_id IS NULL`); n != 1 {
 		t.Errorf("the platform chain has %d checkpoints, want 1", n)
+	}
+}
+
+// TestLastVerificationIsRead checks that an organisation's last verification
+// is read from what the scheduled run stored: nothing before it reaches the
+// chain, then when and how far, and a break once found.
+func TestLastVerificationIsRead(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Verifier: NewVerifier(pool)}).Mount)
+	path := "/tenants/" + tenant.String() + "/audit/verification"
+	var got ChainVerification
+	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, path, nil), &got)
+	if got.Verified || got.Intact || got.LastVerifiedAt != nil {
+		t.Errorf("before any verification: %+v, want not verified", got)
+	}
+
+	last := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO platform.audit_chain_checkpoints (tenant_id, event_id, event_created_at, row_hash) VALUES ($1, $2, NOW(), $3)`,
+		tenant, last, strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO platform.audit_chain_checkpoints (tenant_id, event_id, event_created_at, row_hash, broken_at) VALUES ($1, $2, NOW(), $3, NOW())`,
+		other, uuid.New(), strings.Repeat("b", 64)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO platform.audit_verification_runs (id, started_at, finished_at, scope, tenants_walked, rows_checked, outcome) VALUES ($1, NOW(), NOW(), 'incremental', 2, 10, 'broken')`, uuid.New()); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, path, nil), &got)
+	if !got.Verified || !got.Intact || got.LastEventID == nil || *got.LastEventID != last || got.LastRunScope != "incremental" || got.LastRunAt == nil {
+		t.Errorf("once verified: %+v; want intact up to its last event, and the incremental run, whatever another organisation's chain shows", got)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE platform.audit_chain_checkpoints SET broken_at = NOW() WHERE tenant_id = $1`, tenant); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, path, nil), &got)
+	if got.Intact || got.BrokenAt == nil {
+		t.Errorf("once a break is found: %+v, want not intact with when", got)
 	}
 }

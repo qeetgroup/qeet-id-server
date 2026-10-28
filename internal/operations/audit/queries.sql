@@ -167,3 +167,12 @@ INSERT INTO platform.audit_verification_runs (
 -- When a scheduled verification last found every chain intact (0: never).
 SELECT COALESCE(extract(epoch FROM max(finished_at)), 0)::float8 AS at
 FROM platform.audit_verification_runs WHERE outcome = 'intact';
+
+-- name: GetTenantChainCheckpoint :one
+-- One organisation's chain as the scheduled verification last left it.
+SELECT event_id, event_created_at, verified_at, broken_at
+FROM platform.audit_chain_checkpoints
+WHERE tenant_id = @tenant_id::uuid;
+
+-- name: GetLatestVerificationRun :one
+SELECT finished_at, scope FROM platform.audit_verification_runs ORDER BY started_at DESC LIMIT 1;

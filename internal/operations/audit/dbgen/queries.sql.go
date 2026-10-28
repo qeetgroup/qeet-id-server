@@ -163,6 +163,48 @@ func (q *Queries) GetAuditEventForVerify(ctx context.Context, arg GetAuditEventF
 	return i, err
 }
 
+const getLatestVerificationRun = `-- name: GetLatestVerificationRun :one
+SELECT finished_at, scope FROM platform.audit_verification_runs ORDER BY started_at DESC LIMIT 1
+`
+
+type GetLatestVerificationRunRow struct {
+	FinishedAt time.Time
+	Scope      string
+}
+
+func (q *Queries) GetLatestVerificationRun(ctx context.Context) (GetLatestVerificationRunRow, error) {
+	row := q.db.QueryRow(ctx, getLatestVerificationRun)
+	var i GetLatestVerificationRunRow
+	err := row.Scan(&i.FinishedAt, &i.Scope)
+	return i, err
+}
+
+const getTenantChainCheckpoint = `-- name: GetTenantChainCheckpoint :one
+SELECT event_id, event_created_at, verified_at, broken_at
+FROM platform.audit_chain_checkpoints
+WHERE tenant_id = $1::uuid
+`
+
+type GetTenantChainCheckpointRow struct {
+	EventID        uuid.UUID
+	EventCreatedAt time.Time
+	VerifiedAt     time.Time
+	BrokenAt       pgtype.Timestamptz
+}
+
+// One organisation's chain as the scheduled verification last left it.
+func (q *Queries) GetTenantChainCheckpoint(ctx context.Context, tenantID uuid.UUID) (GetTenantChainCheckpointRow, error) {
+	row := q.db.QueryRow(ctx, getTenantChainCheckpoint, tenantID)
+	var i GetTenantChainCheckpointRow
+	err := row.Scan(
+		&i.EventID,
+		&i.EventCreatedAt,
+		&i.VerifiedAt,
+		&i.BrokenAt,
+	)
+	return i, err
+}
+
 const insertAuditChainCheckpoint = `-- name: InsertAuditChainCheckpoint :exec
 INSERT INTO platform.audit_chain_checkpoints (tenant_id, event_id, event_created_at, row_hash)
 VALUES ($1, $2, $3, $4)

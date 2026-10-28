@@ -128,6 +128,7 @@ type Handler struct {
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/audit", h.list)
 	r.Get("/tenants/{tenantID}/audit/verify", h.verify)
+	r.Get("/tenants/{tenantID}/audit/verification", h.lastVerification)
 }
 
 // MountPublic registers GET /audit/verify, an unauthenticated check of the
@@ -181,6 +182,22 @@ func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := h.Verifier.Verify(r.Context(), &tid)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// lastVerification serves GET /tenants/{tenantID}/audit/verification: how the
+// scheduled verification last left the organisation's chain, read, not walked.
+func (h *Handler) lastVerification(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := httpx.PathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	res, err := h.Verifier.LastVerification(r.Context(), tenantID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
