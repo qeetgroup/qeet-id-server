@@ -634,7 +634,9 @@ const assertionClockSkew = 3 * time.Minute
 // gosaml2 checks the expiry times on a clock assertionClockSkew behind now, and
 // withinValidity the whole window either way; the signature, issuer, audience,
 // recipient and destination checks are unchanged. key, when not nil, decrypts
-// an EncryptedAssertion, which must still be signed.
+// an EncryptedAssertion, which must still be signed. A signed assertion whose
+// conditions fail comes back with ErrSAMLAssertionConditions, for a test
+// sign-in to report what it asserted.
 func (s *Service) validateResponse(base string, conn *Connection, certs []*x509.Certificate, key *tls.Certificate, encoded string, now time.Time) (*samltypes.Response, *saml2.AssertionInfo, error) {
 	var failures []error
 	for _, cert := range certs {
@@ -666,7 +668,7 @@ func (s *Service) validateResponse(base string, conn *Connection, certs []*x509.
 			if elsewhere {
 				why = "the assertion's audience isn't this connection's SP entity ID"
 			}
-			return nil, nil, errs.ErrSAMLAssertionConditions.Wrap(errors.New(why))
+			return response, info, errs.ErrSAMLAssertionConditions.Wrap(errors.New(why))
 		}
 		return response, info, nil
 	}

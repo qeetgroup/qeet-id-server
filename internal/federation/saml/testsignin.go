@@ -239,13 +239,15 @@ func (s *Service) checkTestAnswer(ctx context.Context, base string, conn *Connec
 		slog.Error("saml test sign-in: SP encryption key unusable", "err", err, "connection", conn.ID)
 	}
 	response, info, err := s.validateResponse(base, conn, certs, key, encoded, time.Now())
+	if info != nil {
+		res.NameID, res.NameIDFormat, res.Attributes = info.NameID, info.NameIDFormat, testAttributes(info.Values)
+	}
 	if e := errs.As(err); e != nil {
 		return fail(e, e.Unwrap())
 	}
 	if err != nil {
 		return "", res, err
 	}
-	res.NameID, res.NameIDFormat, res.Attributes = info.NameID, info.NameIDFormat, testAttributes(info.Values)
 	trusted, assertionIDs, err := trustedCorrelation(response)
 	if e := errs.As(err); e != nil {
 		return fail(e, nil)
