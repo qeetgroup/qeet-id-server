@@ -218,15 +218,15 @@ func (c *ProviderConfig) Resolve(ctx context.Context, tenantID uuid.UUID) (Effec
 		}, nil
 	}
 	if c.platform.configured() {
-		return EffectiveConfig{
-			Source:    SourcePlatform,
-			Provider:  c.platform.Provider,
-			Model:     c.platform.Model,
-			BaseURL:   c.platform.BaseURL,
-			MaxTokens: c.platform.MaxTokens,
-		}, nil
+		return c.platform.view(), nil
 	}
 	return EffectiveConfig{Source: SourceNone}, nil
+}
+
+// view is what an organisation is shown of the deployment's provider: which
+// provider and model answer, never where the deployment reaches it.
+func (p PlatformProvider) view() EffectiveConfig {
+	return EffectiveConfig{Source: SourcePlatform, Provider: p.Provider, Model: p.Model, MaxTokens: p.MaxTokens}
 }
 
 // ProviderFor builds the ai.Provider a turn should stream through for a tenant.

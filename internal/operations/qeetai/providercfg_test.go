@@ -170,3 +170,17 @@ func bodyCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 	}
 	return body.Error.Code
 }
+
+// TestPlatformViewHidesTheDeploymentsEndpoint checks that an organisation using
+// the Qeet-managed provider sees which provider and model answer, not the
+// deployment's base URL.
+func TestPlatformViewHidesTheDeploymentsEndpoint(t *testing.T) {
+	p := PlatformProvider{Provider: "openai", APIKey: "sk-secret", Model: "gpt-x", BaseURL: "https://llm.internal.example", MaxTokens: 2048}
+	v := p.view()
+	if v.Source != SourcePlatform || v.Provider != "openai" || v.Model != "gpt-x" || v.MaxTokens != 2048 {
+		t.Errorf("view = %+v; want the platform source, provider, model and token limit", v)
+	}
+	if v.BaseURL != "" || v.Last4 != "" {
+		t.Errorf("view = %+v; want no base URL and no key hint", v)
+	}
+}

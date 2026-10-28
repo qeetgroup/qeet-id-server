@@ -2376,7 +2376,7 @@ paths:
                   source: {type: string, enum: [tenant, platform, none], description: 'Whose key answers: the organisation''s own, the deployment''s, or none.'}
                   provider: {type: string}
                   model: {type: string}
-                  base_url: {type: string}
+                  base_url: {type: string, description: 'The organisation''s own endpoint; empty for the Qeet-managed provider, whose endpoint is not shown.'}
                   max_tokens: {type: integer}
                   last4: {type: string, description: The key's last four characters.}
                   platform_fallback: {type: boolean, description: Whether the deployment has a key to fall back on.}
@@ -2407,7 +2407,7 @@ paths:
                   source: {type: string, enum: [tenant, platform, none], description: 'Whose key answers: the organisation''s own, the deployment''s, or none.'}
                   provider: {type: string}
                   model: {type: string}
-                  base_url: {type: string}
+                  base_url: {type: string, description: 'The organisation''s own endpoint; empty for the Qeet-managed provider, whose endpoint is not shown.'}
                   max_tokens: {type: integer}
                   last4: {type: string, description: The key's last four characters.}
                   platform_fallback: {type: boolean, description: Whether the deployment has a key to fall back on.}
