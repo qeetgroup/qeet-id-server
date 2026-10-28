@@ -16,6 +16,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope/reseal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
@@ -183,6 +184,24 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller, box *
 			},
 		},
 		{
+			// Spent sign-in links, codes and requests, and stale failure counters
+			// (retention.SignInSweeps).
+			Name:     "sign-in-state-cleanup",
+			Interval: time.Hour,
+			Run: func(ctx context.Context) error {
+				return runSweeps(ctx, pool, "sign-in state cleaned", retention.SignInSweeps)
+			},
+		},
+		{
+			// Deliveries, detections, events, notifications, invitations and
+			// application grants past their use (retention.RecordSweeps).
+			Name:     "record-cleanup",
+			Interval: 24 * time.Hour,
+			Run: func(ctx context.Context) error {
+				return runSweeps(ctx, pool, "records cleaned", retention.RecordSweeps)
+			},
+		},
+		{
 			// A built data export is downloadable for a week; then its payload,
 			// a full copy of the person's data, is deleted.
 			Name:     "gdpr-export-expiry",
@@ -228,6 +247,18 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller, box *
 			},
 		},
 	}
+}
+
+// runSweeps runs the retention sweeps across every organisation and logs what
+// each deleted as msg.
+func runSweeps(ctx context.Context, pool *pgxpool.Pool, msg string, sweeps []retention.Sweep) error {
+	deleted, err := retention.RunSweeps(postgres.AcrossTenants(ctx), pool, sweeps)
+	attrs := make([]any, 0, 2*len(deleted))
+	for _, s := range sweeps {
+		attrs = append(attrs, s.Name, deleted[s.Name])
+	}
+	slog.Info(msg, attrs...)
+	return err
 }
 
 // RegisterMaintenanceMetrics exposes when each scheduled job, and the audit

@@ -226,6 +226,8 @@ internal/operations/notifications/queries.sql#CountUnreadNotifications  session-
 internal/operations/notifications/queries.sql#ListNotifications  session-scoped: the caller's own inbox; notifications belong to the account
 internal/operations/notifications/queries.sql#MarkAllNotificationsRead  session-scoped: the caller's own inbox; notifications belong to the account
 internal/operations/retention/queries.sql#ListEnabledRetentionPolicies  background-sweep: retention job
+internal/operations/retention/sweeps.go#RecordSweeps  background-sweep: retention job for every organisation's old records
+internal/operations/retention/sweeps.go#SignInSweeps  background-sweep: retention job for every organisation's spent sign-in state
 internal/operations/siem/queries.sql#AdvanceLogSinkCursor  background-sweep: log forwarding job
 internal/operations/siem/queries.sql#SetLogSinkError  background-sweep: log forwarding job
 internal/operations/siem/queries.sql#ClaimLogSink  background-sweep: log forwarding job, by sink id
