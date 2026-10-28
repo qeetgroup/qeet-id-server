@@ -200,7 +200,7 @@ func (h *Handler) grant(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.GrantPermission(r.Context(), roleID, permID, audit.ActorOf(r)); err != nil {
+	if err := h.Service.GrantPermission(r.Context(), scope, roleID, permID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -233,7 +233,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.RevokePermission(r.Context(), roleID, permID, audit.ActorOf(r)); err != nil {
+	if err := h.Service.RevokePermission(r.Context(), scope, roleID, permID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

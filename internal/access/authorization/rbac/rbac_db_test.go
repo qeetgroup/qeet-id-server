@@ -141,8 +141,19 @@ func TestRoleLifecycle(t *testing.T) {
 	if err != nil || audited("role.created") != 1 {
 		t.Fatalf("create role: %+v, %v, audited %d times", role, err, audited("role.created"))
 	}
-	if err := svc.GrantPermission(ctx, role.ID, permID, actor); err != nil {
+	if err := svc.GrantPermission(ctx, tenant, role.ID, permID, actor); err != nil {
 		t.Fatalf("grant permission: %v", err)
+	}
+	// The organisation's log names the role, the permission and who changed it.
+	permissionChanged := func(action string) int {
+		return dbtest.Count(t, `
+			SELECT count(*) FROM audit.events
+			WHERE tenant_id = $1 AND action = $2 AND resource_type = 'role' AND resource_id = $3
+			  AND actor_user_id = $4 AND metadata->>'permission' = $5 AND metadata->>'permission_id' = $6`,
+			tenant, action, role.ID, admin.ID, perm, permID.String())
+	}
+	if n := permissionChanged("role.permission_granted"); n != 1 {
+		t.Errorf("%d role.permission_granted records in the organisation, want 1", n)
 	}
 	if holds(direct) || enforced(direct) != http.StatusForbidden {
 		t.Fatal("a person without the role holds its permission")
@@ -169,8 +180,14 @@ func TestRoleLifecycle(t *testing.T) {
 	if holds(viaGroup) {
 		t.Error("a group member kept the permission after the group lost the role")
 	}
-	if err := svc.RevokePermission(ctx, role.ID, permID, actor); err != nil {
+	if err := svc.RevokePermission(ctx, tenant, role.ID, permID, actor); err != nil {
 		t.Fatalf("revoke permission: %v", err)
+	}
+	if n := permissionChanged("role.permission_revoked"); n != 1 {
+		t.Errorf("%d role.permission_revoked records in the organisation, want 1", n)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id IS NULL AND resource_id = $1`, role.ID); n != 0 {
+		t.Errorf("%d of the role's changes are on the platform's record, want none", n)
 	}
 	if holds(direct) || enforced(direct) != http.StatusForbidden {
 		t.Error("a person kept a permission revoked from their role")

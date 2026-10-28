@@ -240,6 +240,17 @@ func (q *Queries) ExplainGrants(ctx context.Context, arg ExplainGrantsParams) ([
 	return items, nil
 }
 
+const getPermissionKey = `-- name: GetPermissionKey :one
+SELECT key FROM rbac.permissions WHERE id = $1
+`
+
+func (q *Queries) GetPermissionKey(ctx context.Context, id uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getPermissionKey, id)
+	var key string
+	err := row.Scan(&key)
+	return key, err
+}
+
 const getRoleTenant = `-- name: GetRoleTenant :one
 SELECT tenant_id FROM rbac.roles WHERE id = $1
 `

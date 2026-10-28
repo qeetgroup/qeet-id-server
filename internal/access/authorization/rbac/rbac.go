@@ -297,6 +297,16 @@ func (r *Repository) ListRolePermissions(ctx context.Context, roleID uuid.UUID) 
 	return out, nil
 }
 
+// PermissionKey returns the key of permission permID, read through tx.
+// ErrNotFound when there is no such permission.
+func (r *Repository) PermissionKey(ctx context.Context, tx pgx.Tx, permID uuid.UUID) (string, error) {
+	key, err := r.q.WithTx(tx).GetPermissionKey(ctx, permID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errs.ErrNotFound
+	}
+	return key, err
+}
+
 // GrantPermission adds a permission to a role.
 func (r *Repository) GrantPermission(ctx context.Context, tx pgx.Tx, roleID, permID uuid.UUID) error {
 	return r.q.WithTx(tx).GrantPermission(ctx, dbgen.GrantPermissionParams{RoleID: roleID, PermissionID: permID})

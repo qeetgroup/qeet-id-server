@@ -12,6 +12,9 @@ RETURNING id, key, description;
 -- name: ListPermissions :many
 SELECT id, key, description FROM rbac.permissions ORDER BY key;
 
+-- name: GetPermissionKey :one
+SELECT key FROM rbac.permissions WHERE id = @id;
+
 -- name: CreateRole :one
 INSERT INTO rbac.roles (tenant_id, name, description, is_system)
 VALUES (@tenant_id, @name, @description, @is_system)

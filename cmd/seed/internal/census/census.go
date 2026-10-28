@@ -698,7 +698,7 @@ func grant(w *world.World, o *world.Org, roleID uuid.UUID, name string, by *worl
 	}
 	for _, p := range perms {
 		if name == world.RoleAdmin || keys[p.Key] {
-			w.Check(w.Deps.RBAC.Service.GrantPermission(w.Ctx, roleID, p.ID, by.Actor()), "grant "+p.Key+" to "+name)
+			w.Check(w.Deps.RBAC.Service.GrantPermission(w.Ctx, o.ID, roleID, p.ID, by.Actor()), "grant "+p.Key+" to "+name)
 		}
 	}
 }

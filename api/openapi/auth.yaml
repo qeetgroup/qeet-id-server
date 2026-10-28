@@ -3110,7 +3110,7 @@ paths:
   /v1/roles/{roleID}/permissions/{permID}:
     delete:
       operationId: delete_v1_roles_ByRoleID_permissions_ByPermID
-      description: 'Revokes a permission from a role; holders lose it from their effective permissions as soon as this returns, unless another role still grants it. This is the counterpart to the grant-permission-to-role call. Confirm the resulting grants with the list-role-permissions call. The built-in owner role always holds every permission, so it can''t be changed (403 rbac.system_role_fixed), and nobody takes away a permission they don''t hold (403 rbac.grant_exceeds_caller).'
+      description: 'Revokes a permission from a role; holders lose it from their effective permissions as soon as this returns, unless another role still grants it. This is the counterpart to the grant-permission-to-role call. Confirm the resulting grants with the list-role-permissions call. The built-in owner role always holds every permission, so it can''t be changed (403 rbac.system_role_fixed), and nobody takes away a permission they don''t hold (403 rbac.grant_exceeds_caller). Audited in the organization''s audit log as role.permission_revoked, naming the role, the permission (permission_id, permission) and the caller.'
       summary: Revoke permission from role
       tags:
         - RBAC
@@ -3141,7 +3141,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     post:
       operationId: post_v1_roles_ByRoleID_permissions_ByPermID
-      description: 'Grants a permission to a role, so every current and future holder of the role gains it through their effective permissions. The role and permission must both exist, and the grant is idempotent. Reverse it with the revoke-permission-from-role call, and inspect the role''s grants with the list-role-permissions call. The caller must hold the permission in this organization, unless they are an owner (403 rbac.grant_exceeds_caller otherwise). The built-in owner role always holds every permission, so it can''t be changed (403 rbac.system_role_fixed).'
+      description: 'Grants a permission to a role, so every current and future holder of the role gains it through their effective permissions. The role and permission must both exist, and the grant is idempotent. Reverse it with the revoke-permission-from-role call, and inspect the role''s grants with the list-role-permissions call. The caller must hold the permission in this organization, unless they are an owner (403 rbac.grant_exceeds_caller otherwise). The built-in owner role always holds every permission, so it can''t be changed (403 rbac.system_role_fixed). Audited in the organization''s audit log as role.permission_granted, naming the role, the permission (permission_id, permission) and the caller.'
       summary: Grant permission to role
       tags:
         - RBAC

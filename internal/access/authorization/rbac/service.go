@@ -86,37 +86,48 @@ func (s *Service) CreateRole(ctx context.Context, tenantID uuid.UUID, name, desc
 	return role, nil
 }
 
-// GrantPermission adds a permission to a role, recorded as actor's.
-func (s *Service) GrantPermission(ctx context.Context, roleID, permID uuid.UUID, actor audit.Actor) error {
+// GrantPermission adds a permission to tenantID's role roleID, recorded as
+// actor's in the tenant's audit log. The caller checks the role is tenantID's.
+func (s *Service) GrantPermission(ctx context.Context, tenantID, roleID, permID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.repo.Pool().Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
+	key, err := s.repo.PermissionKey(ctx, tx, permID)
+	if err != nil {
+		return err
+	}
 	if err := s.repo.GrantPermission(ctx, tx, roleID, permID); err != nil {
 		return err
 	}
-	if err := audit.Record(ctx, tx, actor.PlatformEvent("role.permission_granted", "role", roleID,
-		map[string]any{"permission_id": permID})); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "role.permission_granted", "role", roleID,
+		map[string]any{"permission_id": permID, "permission": key})); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
-// RevokePermission removes a permission from a role, recorded as actor's.
-func (s *Service) RevokePermission(ctx context.Context, roleID, permID uuid.UUID, actor audit.Actor) error {
+// RevokePermission removes a permission from tenantID's role roleID, recorded
+// as actor's in the tenant's audit log. The caller checks the role is
+// tenantID's.
+func (s *Service) RevokePermission(ctx context.Context, tenantID, roleID, permID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.repo.Pool().Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
+	key, err := s.repo.PermissionKey(ctx, tx, permID)
+	if err != nil {
+		return err
+	}
 	if err := s.repo.RevokePermission(ctx, tx, roleID, permID); err != nil {
 		return err
 	}
-	if err := audit.Record(ctx, tx, actor.PlatformEvent("role.permission_revoked", "role", roleID,
-		map[string]any{"permission_id": permID})); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "role.permission_revoked", "role", roleID,
+		map[string]any{"permission_id": permID, "permission": key})); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
