@@ -4371,6 +4371,20 @@ paths:
                     type: object
                     additionalProperties: true
                     description: For ip.deny_rule, the rule's cidr.
+                  rules:
+                    type: object
+                    required: [allowed, reason, reason_code]
+                    description: What the organisation's rules decide whatever the enforcement flag, so they can be tried before they are turned on; with enforcement on it matches the fields above.
+                    properties:
+                      allowed: {type: boolean}
+                      reason: {type: string, description: The reason in English.}
+                      reason_code:
+                        type: string
+                        enum: [ip.allowed, ip.deny_rule, ip.not_in_allow_rules, ip.address_unknown]
+                      reason_params:
+                        type: object
+                        additionalProperties: true
+                        description: For ip.deny_rule, the rule's cidr.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

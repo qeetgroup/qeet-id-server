@@ -118,9 +118,20 @@ func (d Decision) sentence() string {
 
 // CheckResult is what Check makes of an address. ReasonCode is "ip." and the
 // Decision.Reason, or CodeEnforcementOff; Reason is the same in English.
-// ReasonParams names the deny rule's CIDR when one refused it.
+// ReasonParams names the deny rule's CIDR when one refused it. Rules is what
+// the rules decide whatever the enforcement flag, so they can be tried before
+// they're turned on; with enforcement on it matches the rest.
 type CheckResult struct {
 	Enabled      bool           `json:"enabled"`
+	Allowed      bool           `json:"allowed"`
+	Reason       string         `json:"reason"`
+	ReasonCode   string         `json:"reason_code"`
+	ReasonParams map[string]any `json:"reason_params,omitempty"`
+	Rules        RulesDecision  `json:"rules"`
+}
+
+// RulesDecision is what an organisation's rules make of an address.
+type RulesDecision struct {
 	Allowed      bool           `json:"allowed"`
 	Reason       string         `json:"reason"`
 	ReasonCode   string         `json:"reason_code"`
@@ -234,19 +245,20 @@ func (s *Service) Check(ctx context.Context, tenantID uuid.UUID, ip string) (Che
 	if err != nil {
 		return CheckResult{}, err
 	}
-	if !enabled {
-		return CheckResult{Allowed: true, Reason: reasonEnforcingOff, ReasonCode: CodeEnforcementOff}, nil
-	}
 	rules, err := s.ListRules(ctx, tenantID)
 	if err != nil {
 		return CheckResult{}, err
 	}
 	d := Decide(rules, ip)
-	res := CheckResult{Enabled: true, Allowed: d.Allowed, Reason: d.sentence(), ReasonCode: "ip." + d.Reason}
+	decision := RulesDecision{Allowed: d.Allowed, Reason: d.sentence(), ReasonCode: "ip." + d.Reason}
 	if d.Rule != nil {
-		res.ReasonParams = map[string]any{"cidr": d.Rule.CIDR}
+		decision.ReasonParams = map[string]any{"cidr": d.Rule.CIDR}
 	}
-	return res, nil
+	if !enabled {
+		return CheckResult{Allowed: true, Reason: reasonEnforcingOff, ReasonCode: CodeEnforcementOff, Rules: decision}, nil
+	}
+	return CheckResult{Enabled: true, Allowed: decision.Allowed, Reason: decision.Reason,
+		ReasonCode: decision.ReasonCode, ReasonParams: decision.ReasonParams, Rules: decision}, nil
 }
 
 // CheckSignIn returns errs.ErrAuthAddressNotAllowed when the tenant's enforced
