@@ -4,7 +4,7 @@
 
 -- name: ListActivityHistory :many
 -- Cursor-paginated history, newest first. Optional filters: action type array,
--- actor, subject (actor OR user-resource target), time range, and GIN full-text
+-- actor, subject (actor, user-resource target or metadata.user_id), time range, and GIN full-text
 -- search. The cursor carries both created_at and id so the tuple comparison can
 -- be expanded — sqlc does not support row-value predicates, so
 -- (created_at, id) < (cursor_ts, cursor_id) is rewritten as the equivalent OR
@@ -13,7 +13,8 @@
 -- request_id is nullable TEXT (may be empty); it is surfaced so the console can
 -- display, copy, and correlate events by request.
 -- subject captures a user's full identity timeline: every event where that user
--- is either the actor or the target of a 'user' resource event.
+-- is the actor, the target of a 'user' resource event, or the person another
+-- resource's event names in metadata.user_id (a group membership change).
 -- actor_display_name / actor_email are LEFT-joined from the users table so the
 -- console can show a human actor name instead of a bare UUID (nullable: system/
 -- service actors have no user row).
@@ -25,7 +26,7 @@ LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
 WHERE e.tenant_id = @tenant_id
   AND (sqlc.narg('actions')::text[] IS NULL OR e.action = ANY(sqlc.narg('actions')))
   AND (sqlc.narg('actor_id')::uuid IS NULL OR e.actor_user_id = sqlc.narg('actor_id'))
-  AND (sqlc.narg('subject')::uuid IS NULL OR e.actor_user_id = sqlc.narg('subject') OR (e.resource_type = 'user' AND e.resource_id = sqlc.narg('subject')))
+  AND (sqlc.narg('subject')::uuid IS NULL OR e.actor_user_id = sqlc.narg('subject') OR (e.resource_type = 'user' AND e.resource_id = sqlc.narg('subject')) OR e.metadata->>'user_id' = sqlc.narg('subject')::uuid::text)
   AND (sqlc.narg('from_ts')::timestamptz IS NULL OR e.created_at >= sqlc.narg('from_ts'))
   AND (sqlc.narg('to_ts')::timestamptz IS NULL OR e.created_at <= sqlc.narg('to_ts'))
   AND (sqlc.narg('q')::text IS NULL OR e.search_vector @@ websearch_to_tsquery('simple', sqlc.narg('q')))
@@ -58,7 +59,7 @@ FROM audit.events
 WHERE tenant_id = @tenant_id
   AND (sqlc.narg('actions')::text[] IS NULL OR action = ANY(sqlc.narg('actions')))
   AND (sqlc.narg('actor_id')::uuid IS NULL OR actor_user_id = sqlc.narg('actor_id'))
-  AND (sqlc.narg('subject')::uuid IS NULL OR actor_user_id = sqlc.narg('subject') OR (resource_type = 'user' AND resource_id = sqlc.narg('subject')))
+  AND (sqlc.narg('subject')::uuid IS NULL OR actor_user_id = sqlc.narg('subject') OR (resource_type = 'user' AND resource_id = sqlc.narg('subject')) OR metadata->>'user_id' = sqlc.narg('subject')::uuid::text)
   AND (sqlc.narg('from_ts')::timestamptz IS NULL OR created_at >= sqlc.narg('from_ts'))
   AND (sqlc.narg('to_ts')::timestamptz IS NULL OR created_at <= sqlc.narg('to_ts'))
   AND (sqlc.narg('q')::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', sqlc.narg('q')))
@@ -74,7 +75,7 @@ FROM audit.events
 WHERE tenant_id = @tenant_id
   AND (sqlc.narg('actions')::text[] IS NULL OR action = ANY(sqlc.narg('actions')))
   AND (sqlc.narg('actor_id')::uuid IS NULL OR actor_user_id = sqlc.narg('actor_id'))
-  AND (sqlc.narg('subject')::uuid IS NULL OR actor_user_id = sqlc.narg('subject') OR (resource_type = 'user' AND resource_id = sqlc.narg('subject')))
+  AND (sqlc.narg('subject')::uuid IS NULL OR actor_user_id = sqlc.narg('subject') OR (resource_type = 'user' AND resource_id = sqlc.narg('subject')) OR metadata->>'user_id' = sqlc.narg('subject')::uuid::text)
   AND (sqlc.narg('from_ts')::timestamptz IS NULL OR created_at >= sqlc.narg('from_ts'))
   AND (sqlc.narg('to_ts')::timestamptz IS NULL OR created_at <= sqlc.narg('to_ts'))
   AND (sqlc.narg('q')::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', sqlc.narg('q')));
@@ -91,7 +92,7 @@ FROM audit.events
 WHERE tenant_id = @tenant_id
   AND (sqlc.narg('actions')::text[] IS NULL OR action = ANY(sqlc.narg('actions')))
   AND (sqlc.narg('actor_id')::uuid IS NULL OR actor_user_id = sqlc.narg('actor_id'))
-  AND (sqlc.narg('subject')::uuid IS NULL OR actor_user_id = sqlc.narg('subject') OR (resource_type = 'user' AND resource_id = sqlc.narg('subject')))
+  AND (sqlc.narg('subject')::uuid IS NULL OR actor_user_id = sqlc.narg('subject') OR (resource_type = 'user' AND resource_id = sqlc.narg('subject')) OR metadata->>'user_id' = sqlc.narg('subject')::uuid::text)
   AND (sqlc.narg('from_ts')::timestamptz IS NULL OR created_at >= sqlc.narg('from_ts'))
   AND (sqlc.narg('to_ts')::timestamptz IS NULL OR created_at <= sqlc.narg('to_ts'))
   AND (sqlc.narg('q')::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', sqlc.narg('q')))

@@ -319,3 +319,37 @@ func TestReconnectReplaysEventsTheOutboxHadNotPublished(t *testing.T) {
 		t.Errorf("reconnecting replayed %q (%v), want the lagged event %s", cursor, err, lagged.id)
 	}
 }
+
+// TestSubjectIncludesEventsNamingThePerson checks that a person's timeline and
+// summary include events about another resource that name them in
+// metadata.user_id, such as being added to a group, and not someone else's.
+func TestSubjectIncludesEventsNamingThePerson(t *testing.T) {
+	tenant := dbtest.Tenant(t)
+	admin, person, other := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
+	at := time.Now().Add(-time.Hour).UTC().Truncate(time.Microsecond)
+	insert := func(userID string) uuid.UUID {
+		id := uuid.New()
+		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
+			INSERT INTO audit.events (id, tenant_id, actor_user_id, actor_type, action, resource_type, resource_id, metadata, created_at)
+			VALUES ($1, $2, $3, 'user', 'group.member_added', 'group', $4, jsonb_build_object('user_id', $5::text), $6)
+		`, id, tenant, admin.ID, uuid.New(), userID, at); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	added := insert(person.ID.String())
+	insert(other.ID.String())
+	insert("not-a-uuid") // a malformed value doesn't break the filter
+
+	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
+	if got := allPages(t, h, "subject="+person.ID.String()); !slices.Equal(got, []uuid.UUID{added}) {
+		t.Errorf("the person's timeline = %v, want their group membership %v", got, added)
+	}
+	var summary struct {
+		Total int64 `json:"total"`
+	}
+	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, "/activity/summary?subject="+person.ID.String(), nil), &summary)
+	if summary.Total != 1 {
+		t.Errorf("the person's summary counts %d events, want 1", summary.Total)
+	}
+}

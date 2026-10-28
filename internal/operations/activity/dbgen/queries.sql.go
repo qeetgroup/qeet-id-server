@@ -80,7 +80,7 @@ LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
 WHERE e.tenant_id = $1
   AND ($2::text[] IS NULL OR e.action = ANY($2))
   AND ($3::uuid IS NULL OR e.actor_user_id = $3)
-  AND ($4::uuid IS NULL OR e.actor_user_id = $4 OR (e.resource_type = 'user' AND e.resource_id = $4))
+  AND ($4::uuid IS NULL OR e.actor_user_id = $4 OR (e.resource_type = 'user' AND e.resource_id = $4) OR e.metadata->>'user_id' = $4::uuid::text)
   AND ($5::timestamptz IS NULL OR e.created_at >= $5)
   AND ($6::timestamptz IS NULL OR e.created_at <= $6)
   AND ($7::text IS NULL OR e.search_vector @@ websearch_to_tsquery('simple', $7))
@@ -123,7 +123,7 @@ type ListActivityHistoryRow struct {
 // Static queries against audit.events; compiled by sqlc into ./dbgen.
 // All queries are scoped by tenant_id (multi-tenancy).
 // Cursor-paginated history, newest first. Optional filters: action type array,
-// actor, subject (actor OR user-resource target), time range, and GIN full-text
+// actor, subject (actor, user-resource target or metadata.user_id), time range, and GIN full-text
 // search. The cursor carries both created_at and id so the tuple comparison can
 // be expanded — sqlc does not support row-value predicates, so
 // (created_at, id) < (cursor_ts, cursor_id) is rewritten as the equivalent OR
@@ -132,7 +132,8 @@ type ListActivityHistoryRow struct {
 // request_id is nullable TEXT (may be empty); it is surfaced so the console can
 // display, copy, and correlate events by request.
 // subject captures a user's full identity timeline: every event where that user
-// is either the actor or the target of a 'user' resource event.
+// is the actor, the target of a 'user' resource event, or the person another
+// resource's event names in metadata.user_id (a group membership change).
 // actor_display_name / actor_email are LEFT-joined from the users table so the
 // console can show a human actor name instead of a bare UUID (nullable: system/
 // service actors have no user row).
@@ -425,7 +426,7 @@ FROM audit.events
 WHERE tenant_id = $1
   AND ($2::text[] IS NULL OR action = ANY($2))
   AND ($3::uuid IS NULL OR actor_user_id = $3)
-  AND ($4::uuid IS NULL OR actor_user_id = $4 OR (resource_type = 'user' AND resource_id = $4))
+  AND ($4::uuid IS NULL OR actor_user_id = $4 OR (resource_type = 'user' AND resource_id = $4) OR metadata->>'user_id' = $4::uuid::text)
   AND ($5::timestamptz IS NULL OR created_at >= $5)
   AND ($6::timestamptz IS NULL OR created_at <= $6)
   AND ($7::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', $7))
@@ -487,7 +488,7 @@ FROM audit.events
 WHERE tenant_id = $2
   AND ($3::text[] IS NULL OR action = ANY($3))
   AND ($4::uuid IS NULL OR actor_user_id = $4)
-  AND ($5::uuid IS NULL OR actor_user_id = $5 OR (resource_type = 'user' AND resource_id = $5))
+  AND ($5::uuid IS NULL OR actor_user_id = $5 OR (resource_type = 'user' AND resource_id = $5) OR metadata->>'user_id' = $5::uuid::text)
   AND ($6::timestamptz IS NULL OR created_at >= $6)
   AND ($7::timestamptz IS NULL OR created_at <= $7)
   AND ($8::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', $8))
@@ -552,7 +553,7 @@ FROM audit.events
 WHERE tenant_id = $1
   AND ($2::text[] IS NULL OR action = ANY($2))
   AND ($3::uuid IS NULL OR actor_user_id = $3)
-  AND ($4::uuid IS NULL OR actor_user_id = $4 OR (resource_type = 'user' AND resource_id = $4))
+  AND ($4::uuid IS NULL OR actor_user_id = $4 OR (resource_type = 'user' AND resource_id = $4) OR metadata->>'user_id' = $4::uuid::text)
   AND ($5::timestamptz IS NULL OR created_at >= $5)
   AND ($6::timestamptz IS NULL OR created_at <= $6)
   AND ($7::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', $7))
