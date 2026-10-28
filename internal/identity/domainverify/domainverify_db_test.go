@@ -8,6 +8,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
@@ -72,5 +74,60 @@ func TestDomainsStayInTheirTenant(t *testing.T) {
 		WHERE id = $1 AND verified_at IS NOT NULL AND NOT sso_enabled AND NOT is_default
 	`, domainA.ID); n != 1 {
 		t.Error("tenant B changed tenant A's domain")
+	}
+}
+
+// countingResolver answers every TXT lookup with records and counts them.
+type countingResolver struct {
+	records []string
+	lookups int
+}
+
+func (r *countingResolver) LookupTXT(context.Context, string) ([]string, error) {
+	r.lookups++
+	return r.records, nil
+}
+
+// TestLoginDomainKeepsItsLastCheck checks that reading the sign-in address
+// returns the last check instead of checking again, that a new check is run on
+// request or when the address changes, and that each says when it was made.
+func TestLoginDomainKeepsItsLastCheck(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	dns := &countingResolver{}
+	svc := NewService(pool)
+	svc.resolver, svc.web = dns, nil
+	setHost := func(id uuid.UUID, host string) {
+		if _, err := pool.Exec(ctx, `INSERT INTO tenant.branding (tenant_id, custom_domain) VALUES ($1, $2)
+			ON CONFLICT (tenant_id) DO UPDATE SET custom_domain = EXCLUDED.custom_domain`, id, host); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setHost(tenant, "auth.acme.example")
+	setHost(other, "auth.other.example")
+
+	first, err := svc.LoginDomain(ctx, tenant)
+	if err != nil || first.CheckedAt == nil || dns.lookups != 1 {
+		t.Fatalf("first read: %+v, %v, %d lookups; want it checked once, with its time", first, err, dns.lookups)
+	}
+	again, err := svc.LoginDomain(ctx, tenant)
+	if err != nil || dns.lookups != 1 || again.CheckedAt == nil || !again.CheckedAt.Equal(*first.CheckedAt) || again.Status != first.Status {
+		t.Errorf("second read: %+v, %v, %d lookups; want the kept check, not a new one", again, err, dns.lookups)
+	}
+	dns.records = []string{"qeetid-verify=" + shortTenant(tenant)}
+	checked, err := svc.CheckLoginDomain(ctx, tenant)
+	if err != nil || dns.lookups != 2 || !checked.DNSVerified || !checked.CheckedAt.After(*first.CheckedAt) {
+		t.Errorf("a new check: %+v, %v, %d lookups; want it run and newer", checked, err, dns.lookups)
+	}
+	if read, _ := svc.LoginDomain(ctx, tenant); dns.lookups != 2 || !read.DNSVerified {
+		t.Errorf("a read after the new check: %+v, %d lookups; want the new check kept", read, dns.lookups)
+	}
+	setHost(tenant, "login.acme.example")
+	if read, _ := svc.LoginDomain(ctx, tenant); dns.lookups != 3 || read.LoginDomain != "login.acme.example" {
+		t.Errorf("after the address changed: %+v, %d lookups; want it checked again", read, dns.lookups)
+	}
+	if read, _ := svc.LoginDomain(ctx, other); dns.lookups != 4 || read.LoginDomain != "auth.other.example" {
+		t.Errorf("another organisation's read: %+v, %d lookups; want its own check", read, dns.lookups)
 	}
 }

@@ -3,6 +3,7 @@ package domainverify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,7 +12,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
@@ -32,6 +35,8 @@ const loginVerifyHost = "_qeetid-verify"
 type LoginDomainStatus struct {
 	LoginDomain string `json:"login_domain"`
 	Status      string `json:"status"`
+	// CheckedAt is when this result was found; nil with no address set.
+	CheckedAt *time.Time `json:"checked_at"`
 
 	DNSVerified   bool       `json:"dns_verified"`
 	DNSCheckedAt  *time.Time `json:"dns_checked_at,omitempty"`
@@ -88,8 +93,49 @@ func loginProbeClient(policy *egress.Policy) *http.Client {
 }
 
 // LoginDomain reports the provisioning state of the tenant's custom login
-// hostname, checking each stage live.
+// hostname as last checked, checking it now only when it never was or the
+// hostname has changed since.
 func (s *Service) LoginDomain(ctx context.Context, tenantID uuid.UUID) (*LoginDomainStatus, error) {
+	host := s.loginHost(ctx, tenantID)
+	if host == "" {
+		return s.loginDomainStatus(ctx, tenantID, host), nil
+	}
+	last, err := s.q.GetLoginDomainCheck(ctx, tenantID)
+	if err == nil && last.Host == host {
+		var st LoginDomainStatus
+		if json.Unmarshal(last.Result, &st) == nil {
+			at := last.CheckedAt
+			st.CheckedAt = &at
+			return &st, nil
+		}
+	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	return s.CheckLoginDomain(ctx, tenantID)
+}
+
+// CheckLoginDomain checks each stage of the tenant's custom login hostname now
+// and keeps the result for LoginDomain.
+func (s *Service) CheckLoginDomain(ctx context.Context, tenantID uuid.UUID) (*LoginDomainStatus, error) {
+	host := s.loginHost(ctx, tenantID)
+	st := s.loginDomainStatus(ctx, tenantID, host)
+	if host == "" {
+		return st, nil
+	}
+	now := time.Now().UTC()
+	st.CheckedAt = &now
+	result, err := json.Marshal(st)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.q.SaveLoginDomainCheck(ctx, dbgen.SaveLoginDomainCheckParams{TenantID: tenantID, Host: host, CheckedAt: now, Result: result}); err != nil {
+		return nil, err
+	}
+	return st, nil
+}
+
+// loginHost is the tenant's custom login hostname, normalised; "" for none.
+func (s *Service) loginHost(ctx context.Context, tenantID uuid.UUID) string {
 	var host string
 	if err := s.pool.QueryRow(ctx,
 		`SELECT COALESCE(custom_domain, '') FROM tenant.branding WHERE tenant_id = $1`,
@@ -97,7 +143,7 @@ func (s *Service) LoginDomain(ctx context.Context, tenantID uuid.UUID) (*LoginDo
 		// No branding row yet simply means no custom domain has been set.
 		host = ""
 	}
-	return s.loginDomainStatus(ctx, tenantID, strings.TrimSpace(strings.ToLower(host))), nil
+	return strings.TrimSpace(strings.ToLower(host))
 }
 
 // loginDomainStatus checks host's stages in order: its DNS records, then a
@@ -187,6 +233,22 @@ func (h *Handler) loginDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st, err := h.Service.LoginDomain(r.Context(), tenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, st)
+}
+
+// checkLoginDomain serves POST /tenants/{tenantID}/login-domain/check: a new
+// check of the sign-in address, kept as its last.
+func (h *Handler) checkLoginDomain(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := httpx.PathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	st, err := h.Service.CheckLoginDomain(r.Context(), tenantID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

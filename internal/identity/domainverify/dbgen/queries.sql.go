@@ -81,6 +81,23 @@ func (q *Queries) GetDomainForVerify(ctx context.Context, arg GetDomainForVerify
 	return i, err
 }
 
+const getLoginDomainCheck = `-- name: GetLoginDomainCheck :one
+SELECT host, checked_at, result FROM tenant.login_domain_checks WHERE tenant_id = $1
+`
+
+type GetLoginDomainCheckRow struct {
+	Host      string
+	CheckedAt time.Time
+	Result    []byte
+}
+
+func (q *Queries) GetLoginDomainCheck(ctx context.Context, tenantID uuid.UUID) (GetLoginDomainCheckRow, error) {
+	row := q.db.QueryRow(ctx, getLoginDomainCheck, tenantID)
+	var i GetLoginDomainCheckRow
+	err := row.Scan(&i.Host, &i.CheckedAt, &i.Result)
+	return i, err
+}
+
 const insertDomain = `-- name: InsertDomain :one
 
 INSERT INTO tenant.domains (tenant_id, domain, verification_token)
@@ -188,4 +205,28 @@ func (q *Queries) MarkDomainVerified(ctx context.Context, arg MarkDomainVerified
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const saveLoginDomainCheck = `-- name: SaveLoginDomainCheck :exec
+INSERT INTO tenant.login_domain_checks (tenant_id, host, checked_at, result)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (tenant_id) DO UPDATE
+SET host = EXCLUDED.host, checked_at = EXCLUDED.checked_at, result = EXCLUDED.result
+`
+
+type SaveLoginDomainCheckParams struct {
+	TenantID  uuid.UUID
+	Host      string
+	CheckedAt time.Time
+	Result    []byte
+}
+
+func (q *Queries) SaveLoginDomainCheck(ctx context.Context, arg SaveLoginDomainCheckParams) error {
+	_, err := q.db.Exec(ctx, saveLoginDomainCheck,
+		arg.TenantID,
+		arg.Host,
+		arg.CheckedAt,
+		arg.Result,
+	)
+	return err
 }

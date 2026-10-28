@@ -35,3 +35,12 @@ WHERE d.verified_at IS NOT NULL
        OR right(@domain::text, length(d.domain) + 1) = '.' || lower(d.domain))
 ORDER BY length(d.domain) DESC
 LIMIT 1;
+
+-- name: GetLoginDomainCheck :one
+SELECT host, checked_at, result FROM tenant.login_domain_checks WHERE tenant_id = @tenant_id;
+
+-- name: SaveLoginDomainCheck :exec
+INSERT INTO tenant.login_domain_checks (tenant_id, host, checked_at, result)
+VALUES (@tenant_id, @host, @checked_at, @result)
+ON CONFLICT (tenant_id) DO UPDATE
+SET host = EXCLUDED.host, checked_at = EXCLUDED.checked_at, result = EXCLUDED.result;

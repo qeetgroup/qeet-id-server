@@ -291,6 +291,7 @@ func userPermissionMap() map[string]string {
 		"DELETE /v1/tenants/{tenantID}/domains/{id}":      "connection.write",
 		"PATCH /v1/tenants/{tenantID}/domains/{id}":       "connection.write",
 		"GET /v1/tenants/{tenantID}/login-domain":         "connection.read",
+		"POST /v1/tenants/{tenantID}/login-domain/check":  "connection.read",
 
 		// GDPR.
 		"POST /v1/gdpr/purge":                                         "gdpr.write",

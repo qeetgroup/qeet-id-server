@@ -412,6 +412,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/tenants/{tenantID}/domains", h.add)
 	r.Post("/tenants/{tenantID}/domains/{id}/verify", h.verify)
 	r.Get("/tenants/{tenantID}/login-domain", h.loginDomain)
+	r.Post("/tenants/{tenantID}/login-domain/check", h.checkLoginDomain)
 	r.Patch("/tenants/{tenantID}/domains/{id}", h.updateSettings)
 	r.Delete("/tenants/{tenantID}/domains/{id}", h.remove)
 }
