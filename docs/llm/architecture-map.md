@@ -92,6 +92,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | ABAC | `internal/access/authorization/abac/` |
 | ReBAC (Zanzibar-style) | `internal/access/authorization/rebac/` |
 | AuthZEN PDP/PEP | `internal/access/authorization/authzen/` |
+| Access decision log | `internal/access/authorization/decisionlog/` |
 | Tenant security policy | `internal/access/authorization/policy/` |
 | Password rules, login methods | `internal/access/authorization/authpolicy/` |
 | **Route → permission map** | `internal/bootstrap/permissions.go` |

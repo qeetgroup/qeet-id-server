@@ -16,6 +16,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/abac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authzen"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decisionlog"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/policy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rebac"
@@ -136,6 +137,7 @@ type Deps struct {
 	ABAC          *abac.Handler
 	ReBAC         *rebac.Handler
 	AuthZEN       *authzen.Handler
+	DecisionLog   *decisionlog.Handler
 	Agent         *agent.Handler
 	VC            *vc.Handler
 	Search        *search.Handler
@@ -424,6 +426,7 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.ABAC.Mount(r)
 	d.ReBAC.Mount(r)
 	d.AuthZEN.Mount(r)
+	d.DecisionLog.Mount(r)
 	d.Agent.Mount(r)
 	d.VC.Mount(r)
 	d.Qeetai.Mount(r)

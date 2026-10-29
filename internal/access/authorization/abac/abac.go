@@ -26,6 +26,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/abac/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decisionlog"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
@@ -1584,6 +1585,8 @@ func combine(policies []candidate, bag AttributeBag) *Decision {
 // Handler serves the ABAC policy HTTP API.
 type Handler struct {
 	Service *Service
+	// Decisions keeps the decisions evaluate answers (nil: none).
+	Decisions *decisionlog.Log
 }
 
 // Mount registers the ABAC policy routes on r.
@@ -1759,6 +1762,18 @@ func (h *Handler) evalHandler(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	source := decisionlog.SourceABACEvaluate
+	if in.Draft != nil {
+		source = decisionlog.SourceABACDraft
+	}
+	subject, _ := in.Subject["id"].(string)
+	resource := in.Resource.Type
+	if in.Resource.ID != "" {
+		resource += ":" + in.Resource.ID
+	}
+	rule, _ := decision.ReasonParams["policy_name"].(string)
+	h.Decisions.Record(r.Context(), decisionlog.Entry{TenantID: tenantID, Source: source, Subject: subject,
+		Resource: resource, Action: in.Action, Allowed: decision.Allow, Model: "abac", Rule: rule, ReasonCode: decision.ReasonCode})
 	// Omit the trace unless ?explain=true, mirroring the rebac/authzen convention.
 	if r.URL.Query().Get("explain") != "true" {
 		decision.Trace = nil

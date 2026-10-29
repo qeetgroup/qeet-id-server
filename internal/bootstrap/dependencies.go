@@ -18,6 +18,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authzen"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decide"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decisionlog"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/policy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rebac"
@@ -213,8 +214,10 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	// allow): the route guard, /v1/check, the relationship check and AuthZEN.
 	decider := decide.New(rbacRepo, rebacService, abacService)
 	authzenService := authzen.NewService(rbacRepo, rebacService, decider) // OpenID AuthZEN PDP facade
-	agentService := agent.NewService(pool, issuer)                        // AI-agent identities (ephemeral scoped tokens)
-	vcService := vc.NewService(pool, issuer)                              // W3C verifiable credentials (JWT-VC)
+	decisionLog := decisionlog.New(pool)                                  // the decisions organisations ask for, kept 30 days
+	authzenService.Decisions = decisionLog
+	agentService := agent.NewService(pool, issuer) // AI-agent identities (ephemeral scoped tokens)
+	vcService := vc.NewService(pool, issuer)       // W3C verifiable credentials (JWT-VC)
 
 	// Qeet AI assistant: the conversation store is created here; the per-tenant
 	// BYOK provider-config service + orchestrator + handler are wired below,
@@ -436,7 +439,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 			Roles: importRoles{repo: rbacRepo, seats: inviteService}},
 		AuthPolicy:    &authpolicy.Handler{Service: authPolicyService},
 		Auth:          &auth.Handler{Service: authService, Validate: v, CookieSecure: !cfg.IsDev(), Bot: botService, GeoCountryHeader: cfg.GeoCountryHeader},
-		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbacService, Validate: v, Decider: decider},
+		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbacService, Validate: v, Decider: decider, Decisions: decisionLog},
+		DecisionLog:   &decisionlog.Handler{Log: decisionLog},
 		RBACChecker:   decider,
 		Verification:  &verification.Handler{Service: verifyService},
 		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService, DevMode: cfg.IsDev(), CookieSecure: !cfg.IsDev(), PublicBaseURL: cfg.PublicBaseURL},
@@ -485,8 +489,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		DomainVerify: &domainverify.Handler{Service: domainVerifyService},
 		SIEM:         &siem.Handler{Service: siemService},
 		AuthHook:     &authhook.Handler{Service: authHookService},
-		ABAC:         &abac.Handler{Service: abacService},
-		ReBAC:        &rebac.Handler{Service: rebacService, Decider: decider},
+		ABAC:         &abac.Handler{Service: abacService, Decisions: decisionLog},
+		ReBAC:        &rebac.Handler{Service: rebacService, Decider: decider, Decisions: decisionLog},
 		AuthZEN:      &authzen.Handler{Service: authzenService},
 		Agent:        &agent.Handler{Service: agentService, GrantCheck: rbacRepo.CheckGrantScopes},
 		VC:           &vc.Handler{Service: vcService},
@@ -525,6 +529,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		{name: "rate-limit-overrides", run: func(ctx context.Context) {
 			ratelimit.ReloadEvery(ctx, time.Minute, tenantTenantLim, tenantUserLim, tenantAPIKeyLim)
 		}, always: true},
+		{name: "authz-decision-log", run: decisionLog.Run, always: true}, // each instance writes the decisions it answered
 		{name: "outbox", run: outboxDispatcher.Run},
 		{name: "oidc-logout", run: oidcService.RunLogoutDeliveries},
 		{name: "webhook", run: webhookService.RunDispatcher},

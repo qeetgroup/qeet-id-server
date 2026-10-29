@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decide"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decisionlog"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rebac"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -117,6 +118,8 @@ type Service struct {
 	rbac    rbacChecker
 	rebac   rebacChecker
 	decider *decide.Decider
+	// Decisions keeps each evaluation's decision (nil: none).
+	Decisions *decisionlog.Log
 }
 
 // NewService fronts decider; rbacRepo and rebacSvc supply the grant paths an
@@ -187,6 +190,12 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, req Evaluati
 		}
 	}
 
+	resource := req.Resource.Type
+	if resource != permissionResourceType {
+		resource += ":" + req.Resource.ID
+	}
+	s.Decisions.Record(ctx, decisionlog.Entry{TenantID: tenantID, Source: decisionlog.SourceAuthZEN, Subject: req.Subject.ID,
+		Resource: resource, Action: req.Action.Name, Allowed: dec.Allow, Model: dec.Model, Rule: dec.Rule, ReasonCode: dec.ReasonCode})
 	dec = s.decider.ForViewer(ctx, httpx.PrincipalFromCtx(ctx), tenantID, dec)
 	out := &EvaluationResponse{Decision: dec.Allow, Context: map[string]any{"decided_by": dec.DecidedBy()}}
 	if explain {

@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decide"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decisionlog"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -23,6 +24,8 @@ type Handler struct {
 	Service  *Service
 	Validate *validator.Validate
 	Decider  *decide.Decider
+	// Decisions keeps the decisions /check answers (nil: none).
+	Decisions *decisionlog.Log
 }
 
 // Mount registers the role and permission routes on r.
@@ -461,6 +464,8 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	h.Decisions.Record(r.Context(), decisionlog.Entry{TenantID: tid, Source: decisionlog.SourceCheck, Subject: uid.String(),
+		Resource: "permission", Action: perm, Allowed: dec.Allow, Model: dec.Model, Rule: dec.Rule, ReasonCode: dec.ReasonCode})
 	dec = h.Decider.ForViewer(r.Context(), httpx.PrincipalFromCtx(r.Context()), tid, dec)
 	out := map[string]any{"allowed": dec.Allow, "decided_by": dec.DecidedBy()}
 	if q.Get("explain") == "true" {

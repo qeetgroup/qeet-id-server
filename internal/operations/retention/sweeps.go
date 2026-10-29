@@ -79,9 +79,10 @@ var SignInSweeps = []Sweep{
 // deliveries after 30 days (logout deliveries after a week), bot detections
 // after 30 days, directory sync events and notifications after 90, security
 // events and audit anomalies 90 days after they are resolved or a year after
-// they were raised, invitations 90 days after they lapse, and application
-// grants a week after they end. A delivery still to be made, an open alert
-// and a live grant are kept. audit.events is never deleted.
+// they were raised, invitations 90 days after they lapse, application grants a
+// week after they end, and access decisions after 30 days. A delivery still to
+// be made, an open alert and a live grant are kept. audit.events is never
+// deleted.
 var RecordSweeps = []Sweep{
 	{"webhook deliveries", `DELETE FROM tenant.webhook_deliveries WHERE ctid = ANY(ARRAY(
 		SELECT d.ctid FROM tenant.webhook_deliveries d
@@ -105,6 +106,8 @@ var RecordSweeps = []Sweep{
 		SELECT e.ctid FROM tenant.directory_events e WHERE e.started_at < NOW() - INTERVAL '90 days' LIMIT $1))`},
 	{"notifications", `DELETE FROM auth.notifications WHERE ctid = ANY(ARRAY(
 		SELECT n.ctid FROM auth.notifications n WHERE n.created_at < NOW() - INTERVAL '90 days' LIMIT $1))`},
+	{"access decisions", `DELETE FROM auth.authz_decisions WHERE ctid = ANY(ARRAY(
+		SELECT d.ctid FROM auth.authz_decisions d WHERE d.decided_at < NOW() - INTERVAL '30 days' LIMIT $1))`},
 	{"invitations", `DELETE FROM tenant.invites WHERE ctid = ANY(ARRAY(
 		SELECT i.ctid FROM tenant.invites i WHERE i.expires_at < NOW() - INTERVAL '90 days' LIMIT $1))`},
 	// Oldest first, so a token goes no later than the one it was renewed from.

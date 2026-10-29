@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decide"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decisionlog"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rebac/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
@@ -589,6 +590,8 @@ func (s *Service) ListBySubject(ctx context.Context, tenantID uuid.UUID, subject
 type Handler struct {
 	Service *Service
 	Decider *decide.Decider
+	// Decisions keeps the decisions the check answers (nil: none).
+	Decisions *decisionlog.Log
 }
 
 // Mount registers the relationship routes on r.
@@ -732,6 +735,8 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	h.Decisions.Record(r.Context(), decisionlog.Entry{TenantID: tenantID, Source: decisionlog.SourceRelationCheck, Subject: in.UserID,
+		Resource: in.Object, Action: in.Relation, Allowed: dec.Allow, Model: dec.Model, Rule: dec.Rule, ReasonCode: dec.ReasonCode})
 	dec = h.Decider.ForViewer(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, dec)
 	out := map[string]any{"allowed": dec.Allow, "decided_by": dec.DecidedBy()}
 	if r.URL.Query().Get("explain") == "true" {

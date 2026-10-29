@@ -83,7 +83,7 @@ service_test.go     unit
 
 **Purpose** — RBAC *"models permissions, per-tenant roles, role→permission bindings, and user
 assignments. The Check endpoint is the hot path callers use to authorize an action."*
-**Path** `internal/access/authorization/{rbac,abac,rebac,authzen,policy,authpolicy}/`
+**Path** `internal/access/authorization/{rbac,abac,rebac,decide,decisionlog,authzen,policy,authpolicy}/`
 **Key dependencies** `platform/http/{errs,httpx}` · **`operations/audit`** (cross-context)
 **Security** **Critical** — every access decision
 
@@ -94,10 +94,11 @@ rbac/rbac.go          roles, permissions, bindings
 rbac/service.go       decision service
 rbac/enforce.go       router middleware — consumes bootstrap/permissions.go
 rbac/http.go          /check, /roles, /permissions
-abac/abac.go          13 operators, deny-overrides, fail-closed
+abac/abac.go          13 operators, role and relation leaves, deny-overrides, fail-closed
 rebac/rebac.go        Zanzibar relation tuples, recursive check
 decide/decide.go      one decision across all three: tenant, ABAC deny, then any allow
 authzen/authzen.go    OpenID AuthZEN PDP/PEP facade
+decisionlog/decisionlog.go   the decisions check, AuthZEN and evaluate answer, kept 30 days
 policy/policy.go      tenant security policy
 authpolicy/authpolicy.go   password rules, permitted login methods
 ```

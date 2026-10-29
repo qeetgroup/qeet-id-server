@@ -93,6 +93,7 @@ func userPermissionMap() map[string]string {
 		"POST /v1/tenants/{tenantID}/abac/evaluate":                                 "policy.read",
 		"POST /v1/tenants/{tenantID}/access/v1/evaluation":                          "role.read",
 		"POST /v1/tenants/{tenantID}/access/v1/evaluations":                         "role.read",
+		"GET /v1/tenants/{tenantID}/authorization/decisions":                        "policy.read",
 
 		// ReBAC: relationship tuples + identity graph.
 		// Reads are gated on role.read (structural authz data). Writes/deletes

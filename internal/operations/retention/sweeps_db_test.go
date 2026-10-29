@@ -198,6 +198,9 @@ func recordCases(w world) []sweepCase {
 		{"notifications", `INSERT INTO auth.notifications (user_id, tenant_id, title, created_at) VALUES
 			($1, $2, 'Old', NOW() - INTERVAL '91 days'), ($1, $2, 'New', NOW() - INTERVAL '1 day')`,
 			[]any{w.user, w.tenant}, `SELECT count(*) FROM auth.notifications WHERE user_id = $1`, w.user, 1},
+		{"access decisions", `INSERT INTO auth.authz_decisions (tenant_id, source, subject, allowed, decided_at) VALUES
+			($1, 'check', 'u1', true, NOW() - INTERVAL '31 days'), ($1, 'check', 'u1', false, NOW() - INTERVAL '1 day')`,
+			[]any{w.tenant}, `SELECT count(*) FROM auth.authz_decisions WHERE tenant_id = $1`, w.tenant, 1},
 		{"invitations", `INSERT INTO tenant.invites (tenant_id, email, token_hash, status, expires_at) VALUES
 			($1, 'old@example.test', gen_random_uuid()::text, 'expired', NOW() - INTERVAL '91 days'),
 			($1, 'lapsed@example.test', gen_random_uuid()::text, 'expired', NOW() - INTERVAL '10 days'),
