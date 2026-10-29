@@ -23,6 +23,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math"
 	"math/big"
 	"net/http"
 	"strconv"
@@ -41,6 +42,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
@@ -59,6 +61,21 @@ type Subscription struct {
 	PreviousSecretExpiresAt *time.Time `json:"previous_secret_expires_at"`
 	CreatedAt               time.Time  `json:"created_at"`
 	Secret                  string     `json:"secret,omitempty"`
+	// DisabledBy is the administrator who disabled it.
+	DisabledBy *uuid.UUID `json:"disabled_by,omitempty"`
+	// LastDeliveredAt and LastStatusCode are its latest delivery and answer;
+	// Counts its deliveries yet to go and given up.
+	LastDeliveredAt *time.Time      `json:"last_delivered_at"`
+	LastStatusCode  *int            `json:"last_status_code"`
+	Counts          *DeliveryCounts `json:"counts,omitempty"`
+}
+
+// DeliveryCounts are a subscription's deliveries not yet tried (held while it
+// is disabled), retrying, and given up.
+type DeliveryCounts struct {
+	Pending  int `json:"pending"`
+	Retrying int `json:"retrying"`
+	GaveUp   int `json:"gave_up"`
 }
 
 // Notifier alerts a person in-app. Satisfied by *notification.Service.
@@ -150,7 +167,7 @@ type CreateInput struct {
 // least one and only events in the catalogue.
 func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Subscription, error) {
 	if _, err := s.egress.ValidateHTTPURL(in.URL); err != nil {
-		return nil, errs.ErrBadRequest.WithDetail("webhook URL is not an allowed outbound destination")
+		return nil, errs.ErrWebhookURLNotAllowed
 	}
 	events, err := subscribableEvents(in.Events)
 	if err != nil {
@@ -232,13 +249,25 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Subscription,
 	}
 	out := make([]Subscription, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, Subscription{
-			ID: row.ID, TenantID: row.TenantID, URL: row.Url, Events: row.Events,
-			DisabledAt: tsPtr(row.DisabledAt), DisabledReason: row.DisabledReason, FailingSince: tsPtr(row.FailingSince),
-			PreviousSecretExpiresAt: tsPtr(row.PreviousSecretExpiresAt), CreatedAt: row.CreatedAt,
-		})
+		out = append(out, *subscriptionOf(dbgen.GetWebhookSubscriptionRow(row)))
 	}
 	return out, nil
+}
+
+// subscriptionOf maps a stored subscription with its delivery figures.
+func subscriptionOf(row dbgen.GetWebhookSubscriptionRow) *Subscription {
+	sub := &Subscription{
+		ID: row.ID, TenantID: row.TenantID, URL: row.Url, Events: row.Events,
+		DisabledAt: tsPtr(row.DisabledAt), DisabledReason: row.DisabledReason, FailingSince: tsPtr(row.FailingSince),
+		PreviousSecretExpiresAt: tsPtr(row.PreviousSecretExpiresAt), CreatedAt: row.CreatedAt,
+		LastDeliveredAt: tsPtr(row.LastDeliveredAt), LastStatusCode: int32PtrToInt(row.LastStatusCode),
+		Counts: &DeliveryCounts{Pending: int(row.Pending), Retrying: int(row.Retrying), GaveUp: int(row.GaveUp)},
+	}
+	if row.DisabledBy.Valid {
+		by := uuid.UUID(row.DisabledBy.Bytes)
+		sub.DisabledBy = &by
+	}
+	return sub
 }
 
 // Get returns one of the tenant's webhook subscriptions.
@@ -250,17 +279,65 @@ func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Subscriptio
 	if err != nil {
 		return nil, err
 	}
-	return &Subscription{
-		ID: row.ID, TenantID: row.TenantID, URL: row.Url, Events: row.Events,
-		DisabledAt: tsPtr(row.DisabledAt), DisabledReason: row.DisabledReason, FailingSince: tsPtr(row.FailingSince),
-		PreviousSecretExpiresAt: tsPtr(row.PreviousSecretExpiresAt), CreatedAt: row.CreatedAt,
-	}, nil
+	return subscriptionOf(row), nil
 }
 
-// Disable marks the subscription disabled and returns the (tenantID, url)
-// so the caller doesn't have to re-query for the audit row.
-func (s *Service) Disable(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID) (uuid.UUID, string, error) {
-	row, err := s.q.WithTx(tx).DisableWebhookSubscription(ctx, dbgen.DisableWebhookSubscriptionParams{ID: id, TenantID: tenantID})
+// UpdateInput changes a subscription's URL, its events, or both.
+type UpdateInput struct {
+	URL    *string   `json:"url"`
+	Events *[]string `json:"events"`
+}
+
+// Update changes the subscription's URL or events within tx, each checked as
+// Create checks them, and returns what they were and are.
+func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, in UpdateInput) (before, after *Subscription, err error) {
+	if in.URL != nil {
+		url := strings.TrimSpace(*in.URL)
+		if url == "" {
+			return nil, nil, errs.ErrWebhookURLRequired
+		}
+		if _, err := s.egress.ValidateHTTPURL(url); err != nil {
+			return nil, nil, errs.ErrWebhookURLNotAllowed
+		}
+		in.URL = &url
+	}
+	if in.Events != nil {
+		events, err := subscribableEvents(*in.Events)
+		if err != nil {
+			return nil, nil, err
+		}
+		in.Events = &events
+	}
+	if before, err = s.Get(ctx, id, tenantID); err != nil {
+		return nil, nil, err
+	}
+	var events []string
+	if in.Events != nil {
+		events = *in.Events
+	}
+	if _, err := s.q.WithTx(tx).UpdateWebhookSubscription(ctx, dbgen.UpdateWebhookSubscriptionParams{
+		ID: id, TenantID: tenantID, Url: in.URL, Events: events,
+	}); errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil, errs.ErrWebhookNotFound
+	} else if err != nil {
+		return nil, nil, err
+	}
+	row, err := s.q.WithTx(tx).GetWebhookSubscription(ctx, dbgen.GetWebhookSubscriptionParams{ID: id, TenantID: tenantID})
+	if err != nil {
+		return nil, nil, err
+	}
+	return before, subscriptionOf(row), nil
+}
+
+// Disable marks the subscription disabled by by (nil: no one in particular)
+// and returns the (tenantID, url) so the caller doesn't have to re-query for
+// the audit row.
+func (s *Service) Disable(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, by *uuid.UUID) (uuid.UUID, string, error) {
+	var disabledBy pgtype.UUID
+	if by != nil {
+		disabledBy = pgtype.UUID{Bytes: *by, Valid: true}
+	}
+	row, err := s.q.WithTx(tx).DisableWebhookSubscription(ctx, dbgen.DisableWebhookSubscriptionParams{ID: id, TenantID: tenantID, DisabledBy: disabledBy})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, "", errs.ErrWebhookNotFound
 	}
@@ -351,20 +428,38 @@ func int32PtrToInt(p *int32) *int {
 	return &v
 }
 
-// ListDeliveries returns recent deliveries for a subscription, newest first.
+// ListDeliveries returns a page of up to limit of a subscription's deliveries
+// (50 when not in 1..200), newest first, after cursor, of status when given
+// (delivered, pending, retrying or dead), and the next page's cursor.
 // Tenant-scoped via the subscription join, so one tenant can't read another's
 // delivery history.
-func (s *Service) ListDeliveries(ctx context.Context, subscriptionID, tenantID uuid.UUID, limit int) ([]Delivery, error) {
+func (s *Service) ListDeliveries(ctx context.Context, subscriptionID, tenantID uuid.UUID, limit int, cursor, status string) ([]Delivery, string, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.q.ListWebhookDeliveries(ctx, dbgen.ListWebhookDeliveriesParams{
+	params := dbgen.ListWebhookDeliveriesParams{
 		SubscriptionID: subscriptionID,
 		TenantID:       tenantID,
-		RowLimit:       int32(limit),
-	})
+		RowLimit:       int32(limit + 1), // #nosec G115 -- at most 201
+	}
+	switch status {
+	case "":
+	case "delivered", "pending", "retrying", "dead":
+		params.Status = &status
+	default:
+		return nil, "", errs.ErrBadRequest.WithDetail("status is delivered, pending, retrying or dead")
+	}
+	if cursor != "" {
+		at, id, err := paging.DecodeTimeUUID(cursor)
+		if err != nil {
+			return nil, "", errs.ErrBadRequest.WithDetail("invalid cursor")
+		}
+		params.BeforeTs = pgtype.Timestamptz{Time: at, Valid: true}
+		params.BeforeID = pgtype.UUID{Bytes: id, Valid: true}
+	}
+	rows, err := s.q.ListWebhookDeliveries(ctx, params)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	out := make([]Delivery, 0, len(rows))
 	for _, row := range rows {
@@ -381,6 +476,46 @@ func (s *Service) ListDeliveries(ctx context.Context, subscriptionID, tenantID u
 			DeadAt:        tsPtr(row.DeadAt),
 			CreatedAt:     row.CreatedAt,
 		})
+	}
+	var next string
+	if len(out) > limit {
+		out = out[:limit]
+		last := out[limit-1]
+		next = paging.EncodeTimeUUID(last.CreatedAt, last.ID)
+	}
+	return out, next, nil
+}
+
+// retryBatch is how many given-up deliveries one bulk retry re-queues.
+const retryBatch = 1000
+
+// RetryDead re-queues, with a fresh budget of attempts, up to retryBatch of
+// the subscription's given-up deliveries, and returns how many.
+func (s *Service) RetryDead(ctx context.Context, subscriptionID, tenantID uuid.UUID) (int64, error) {
+	if _, err := s.Get(ctx, subscriptionID, tenantID); err != nil {
+		return 0, err
+	}
+	return s.q.RetryDeadDeliveries(ctx, dbgen.RetryDeadDeliveriesParams{SubscriptionID: subscriptionID, TenantID: tenantID, RowLimit: retryBatch})
+}
+
+// Attempt is one try at a delivery: when, the answer's status (none when the
+// endpoint gave no answer), how long it took, and what went wrong.
+type Attempt struct {
+	AttemptedAt time.Time `json:"attempted_at"`
+	StatusCode  *int      `json:"status_code"`
+	DurationMS  int       `json:"duration_ms"`
+	Error       *string   `json:"error"`
+}
+
+// Attempts returns a delivery's attempts, oldest first.
+func (s *Service) Attempts(ctx context.Context, subscriptionID, deliveryID, tenantID uuid.UUID) ([]Attempt, error) {
+	rows, err := s.q.ListDeliveryAttempts(ctx, dbgen.ListDeliveryAttemptsParams{DeliveryID: deliveryID, SubscriptionID: subscriptionID, TenantID: tenantID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Attempt, len(rows))
+	for i, r := range rows {
+		out[i] = Attempt{AttemptedAt: r.AttemptedAt, StatusCode: int32PtrToInt(r.StatusCode), DurationMS: int(r.DurationMs), Error: r.Error}
 	}
 	return out, nil
 }
@@ -566,8 +701,10 @@ func (s *Service) tick(ctx context.Context) error {
 				secrets = append(secrets, string(previous))
 			}
 		}
+		started := time.Now()
 		status, respBody, derr := s.deliver(ctx, it.ID, it.URL, secrets, it.EventType, it.Payload)
 		now := time.Now()
+		s.recordAttempt(ctx, it.TenantID, it.ID, status, now.Sub(started), derr)
 		if derr == nil && status >= 200 && status < 300 {
 			if _, err := s.pool.Exec(ctx, `
 				UPDATE tenant.webhook_deliveries
@@ -624,6 +761,25 @@ func (s *Service) tick(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// recordAttempt keeps one try at a delivery. Losing it costs the history
+// only, so a failure is logged, not returned.
+func (s *Service) recordAttempt(ctx context.Context, tenantID, deliveryID uuid.UUID, status int, took time.Duration, derr error) {
+	var code *int32
+	if status > 0 {
+		code = int32Ptr(status)
+	}
+	var failure *string
+	if derr != nil {
+		failure = strPtr(truncate(derr.Error(), 1000))
+	}
+	ms := min(took.Milliseconds(), math.MaxInt32)
+	if err := s.q.InsertDeliveryAttempt(ctx, dbgen.InsertDeliveryAttemptParams{
+		TenantID: tenantID, DeliveryID: deliveryID, StatusCode: code, DurationMs: int32(ms), Error: failure, // #nosec G115 -- capped above
+	}); err != nil {
+		slog.Warn("webhook attempt not recorded", "delivery_id", deliveryID, "err", err)
+	}
 }
 
 // maxDeliveryAttempts bounds retry so a permanently-failing endpoint doesn't
@@ -769,6 +925,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/webhooks/events", h.events)
 	r.Post("/tenants/{tenantID}/webhooks/{id}/enable", h.enable)
 	r.Post("/tenants/{tenantID}/webhooks/{id}/rotate-secret", h.rotateSecret)
+	r.Patch("/tenants/{tenantID}/webhooks/{id}", h.update)
+	r.Post("/tenants/{tenantID}/webhooks/{id}/deliveries/retry", h.retryDead)
+	r.Get("/tenants/{tenantID}/webhooks/{id}/deliveries/{deliveryID}/attempts", h.attempts)
 	r.Get("/webhooks/{id}", h.get)
 	r.Delete("/webhooks/{id}", h.disable)
 	r.Post("/webhooks/{id}/test", h.test)
@@ -806,12 +965,13 @@ func (h *Handler) listDeliveries(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.ListDeliveries(r.Context(), id, tenantID, 50)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	out, next, err := h.Service.ListDeliveries(r.Context(), id, tenantID, limit, r.URL.Query().Get("cursor"), r.URL.Query().Get("status"))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out, "next_cursor": next})
 }
 
 func (h *Handler) retryDelivery(w http.ResponseWriter, r *http.Request) {
@@ -926,12 +1086,12 @@ func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	tenantID, url, err := h.Service.Disable(ctx, tx, id, scopeTenant)
+	actorID, actorType := audit.ActorOf(r).Identity()
+	tenantID, url, err := h.Service.Disable(ctx, tx, id, scopeTenant, actorID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := audit.ActorOf(r).Identity()
 	rid := id
 	if err := audit.Record(ctx, tx, audit.Event{
 		TenantID:     &tenantID,

@@ -179,7 +179,7 @@ func (d *dev) subscriptions(o *world.Org) {
 			sb.until = dt
 			w.At(dt, func() {
 				w.Tx("disable webhook", func(tx pgx.Tx) error {
-					_, u, err := w.Deps.Webhook.Service.Disable(w.Ctx, tx, created.ID, o.ID)
+					_, u, err := w.Deps.Webhook.Service.Disable(w.Ctx, tx, created.ID, o.ID, d.as(by).UserID)
 					if err != nil {
 						return err
 					}

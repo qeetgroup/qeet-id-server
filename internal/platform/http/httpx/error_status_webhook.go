@@ -12,6 +12,7 @@ func init() {
 		errs.CodeWebhookNotFound:         http.StatusNotFound,
 		errs.CodeWebhookDeliveryNotFound: http.StatusNotFound,
 		errs.CodeWebhookURLRequired:      http.StatusUnprocessableEntity,
+		errs.CodeWebhookURLNotAllowed:    http.StatusBadRequest,
 		errs.CodeWebhookInvalidID:        http.StatusBadRequest,
 		errs.CodeWebhookTenantMismatch:   http.StatusForbidden,
 		errs.CodeWebhookEventsRequired:   http.StatusUnprocessableEntity,

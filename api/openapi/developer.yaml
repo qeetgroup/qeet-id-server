@@ -1039,6 +1039,99 @@ paths:
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/webhooks/{id}:
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_webhooks_ById
+      summary: Change a webhook
+      description: 'Changes a webhook''s URL, its events, or both, each checked as on creation: a URL that isn''t a public https address is refused with 400 webhook.url_not_allowed, events outside the catalogue with webhook.event_unknown. Audited as webhook.subscription_updated with what changed. Needs a recent step-up.'
+      tags: [Webhooks]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url: {type: string, format: uri}
+                events: {type: array, items: {type: string}}
+      responses:
+        '200':
+          description: The changed webhook
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookSubscription'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/webhooks/{id}/deliveries/retry:
+    post:
+      operationId: post_v1_tenants_ByTenantID_webhooks_ById_deliveries_retry
+      summary: Retry given-up deliveries
+      description: 'Sends again, each with a fresh budget of attempts, up to 1,000 of the webhook''s given-up deliveries, and says how many. Audited as webhook.deliveries_retried.'
+      tags: [Webhooks]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: How many were re-queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requeued: {type: integer}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/webhooks/{id}/deliveries/{deliveryID}/attempts:
+    get:
+      operationId: get_v1_tenants_ByTenantID_webhooks_ById_deliveries_ByDeliveryID_attempts
+      summary: List a delivery's attempts
+      description: 'Every attempt to send one of the webhook''s deliveries, oldest first: when, the status answered, how long it took and what went wrong; recorded from this release.'
+      tags: [Webhooks]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: deliveryID, in: path, required: true, schema: {type: string, format: uuid}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Attempts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/WebhookAttempt'}}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/tenants/{tenantID}/webhooks/{id}/rotate-secret:
     post:
       operationId: post_v1_tenants_ByTenantID_webhooks_ById_rotateSecret
@@ -1190,12 +1283,15 @@ paths:
           required: true
           schema:
             type: string
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+        - {name: cursor, in: query, required: false, description: The previous page's next_cursor., schema: {type: string}}
+        - {name: status, in: query, required: false, description: 'delivered, pending (not tried yet), retrying or dead (given up).', schema: {type: string, enum: [delivered, pending, retrying, dead]}}
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
         '200':
-          description: Recent deliveries
+          description: A page of deliveries, newest first
           content:
             application/json:
               schema:
@@ -1205,6 +1301,11 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/WebhookDelivery'
+                  next_cursor:
+                    type: string
+                    description: Empty on the last page.
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2235,6 +2336,31 @@ components:
           format: uuid
         url:
           type: string
+        disabled_by:
+          type: string
+          format: uuid
+          description: The administrator who disabled it.
+        last_delivered_at:
+          type: [string, 'null']
+          format: date-time
+          description: Its latest delivery.
+        last_status_code:
+          type: [integer, 'null']
+          description: The status its endpoint answered last.
+        counts:
+          type: object
+          description: Its deliveries not yet tried (held while it is disabled), retrying, and given up.
+          properties:
+            pending: {type: integer}
+            retrying: {type: integer}
+            gave_up: {type: integer}
+    WebhookAttempt:
+      type: object
+      properties:
+        attempted_at: {type: string, format: date-time}
+        status_code: {type: [integer, 'null'], description: 'Null when the endpoint gave no answer.'}
+        duration_ms: {type: integer}
+        error: {type: [string, 'null']}
     VcCredential:
       type: object
       required: [id, issued_at, revoked, subject, type, user]

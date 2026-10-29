@@ -38,14 +38,15 @@ func (q *Queries) DeadLetterDelivery(ctx context.Context, arg DeadLetterDelivery
 }
 
 const disableWebhookSubscription = `-- name: DisableWebhookSubscription :one
-UPDATE tenant.webhook_subscriptions SET disabled_at = NOW(), disabled_reason = 'disabled'
-WHERE id = $1 AND tenant_id = $2 AND disabled_at IS NULL
+UPDATE tenant.webhook_subscriptions SET disabled_at = NOW(), disabled_reason = 'disabled', disabled_by = $1
+WHERE id = $2 AND tenant_id = $3 AND disabled_at IS NULL
 RETURNING tenant_id, url
 `
 
 type DisableWebhookSubscriptionParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	DisabledBy pgtype.UUID
+	ID         uuid.UUID
+	TenantID   uuid.UUID
 }
 
 type DisableWebhookSubscriptionRow struct {
@@ -56,14 +57,14 @@ type DisableWebhookSubscriptionRow struct {
 // DisableWebhookSubscription marks the subscription disabled by an
 // administrator. RETURNING tenant_id and url for the audit row.
 func (q *Queries) DisableWebhookSubscription(ctx context.Context, arg DisableWebhookSubscriptionParams) (DisableWebhookSubscriptionRow, error) {
-	row := q.db.QueryRow(ctx, disableWebhookSubscription, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, disableWebhookSubscription, arg.DisabledBy, arg.ID, arg.TenantID)
 	var i DisableWebhookSubscriptionRow
 	err := row.Scan(&i.TenantID, &i.Url)
 	return i, err
 }
 
 const enableWebhookSubscription = `-- name: EnableWebhookSubscription :one
-UPDATE tenant.webhook_subscriptions SET disabled_at = NULL, disabled_reason = NULL, failing_since = NULL
+UPDATE tenant.webhook_subscriptions SET disabled_at = NULL, disabled_reason = NULL, failing_since = NULL, disabled_by = NULL
 WHERE id = $1 AND tenant_id = $2
 RETURNING url
 `
@@ -116,8 +117,18 @@ func (q *Queries) GetSubscriptionsForEvent(ctx context.Context, arg GetSubscript
 }
 
 const getWebhookSubscription = `-- name: GetWebhookSubscription :one
-SELECT id, tenant_id, url, events, disabled_at, disabled_reason, failing_since, previous_secret_expires_at, created_at
-FROM tenant.webhook_subscriptions WHERE id = $1 AND tenant_id = $2
+SELECT s.id, s.tenant_id, s.url, s.events, s.disabled_at, s.disabled_reason, s.failing_since, s.previous_secret_expires_at, s.created_at,
+       (SELECT d.delivered_at FROM tenant.webhook_deliveries d WHERE d.subscription_id = s.id AND d.delivered_at IS NOT NULL
+        ORDER BY d.delivered_at DESC LIMIT 1) AS last_delivered_at,
+       (SELECT d.status_code FROM tenant.webhook_deliveries d WHERE d.subscription_id = s.id AND d.status_code IS NOT NULL
+        ORDER BY COALESCE(d.delivered_at, d.dead_at, d.next_attempt_at) DESC LIMIT 1) AS last_status_code,
+       (SELECT count(*) FROM tenant.webhook_deliveries d WHERE d.subscription_id = s.id
+        AND d.delivered_at IS NULL AND d.dead_at IS NULL AND d.attempt = 0)::int AS pending,
+       (SELECT count(*) FROM tenant.webhook_deliveries d WHERE d.subscription_id = s.id
+        AND d.delivered_at IS NULL AND d.dead_at IS NULL AND d.attempt > 0)::int AS retrying,
+       (SELECT count(*) FROM tenant.webhook_deliveries d WHERE d.subscription_id = s.id AND d.dead_at IS NOT NULL)::int AS gave_up,
+       s.disabled_by
+FROM tenant.webhook_subscriptions s WHERE s.id = $1 AND s.tenant_id = $2
 `
 
 type GetWebhookSubscriptionParams struct {
@@ -135,6 +146,12 @@ type GetWebhookSubscriptionRow struct {
 	FailingSince            pgtype.Timestamptz
 	PreviousSecretExpiresAt pgtype.Timestamptz
 	CreatedAt               time.Time
+	LastDeliveredAt         pgtype.Timestamptz
+	LastStatusCode          *int32
+	Pending                 int32
+	Retrying                int32
+	GaveUp                  int32
+	DisabledBy              pgtype.UUID
 }
 
 func (q *Queries) GetWebhookSubscription(ctx context.Context, arg GetWebhookSubscriptionParams) (GetWebhookSubscriptionRow, error) {
@@ -150,6 +167,12 @@ func (q *Queries) GetWebhookSubscription(ctx context.Context, arg GetWebhookSubs
 		&i.FailingSince,
 		&i.PreviousSecretExpiresAt,
 		&i.CreatedAt,
+		&i.LastDeliveredAt,
+		&i.LastStatusCode,
+		&i.Pending,
+		&i.Retrying,
+		&i.GaveUp,
+		&i.DisabledBy,
 	)
 	return i, err
 }
@@ -179,19 +202,102 @@ func (q *Queries) InsertDelivery(ctx context.Context, arg InsertDeliveryParams) 
 	return err
 }
 
+const insertDeliveryAttempt = `-- name: InsertDeliveryAttempt :exec
+INSERT INTO tenant.webhook_delivery_attempts (tenant_id, delivery_id, status_code, duration_ms, error)
+VALUES ($1, $2, $3, $4, $5)
+`
+
+type InsertDeliveryAttemptParams struct {
+	TenantID   uuid.UUID
+	DeliveryID uuid.UUID
+	StatusCode *int32
+	DurationMs int32
+	Error      *string
+}
+
+func (q *Queries) InsertDeliveryAttempt(ctx context.Context, arg InsertDeliveryAttemptParams) error {
+	_, err := q.db.Exec(ctx, insertDeliveryAttempt,
+		arg.TenantID,
+		arg.DeliveryID,
+		arg.StatusCode,
+		arg.DurationMs,
+		arg.Error,
+	)
+	return err
+}
+
+const listDeliveryAttempts = `-- name: ListDeliveryAttempts :many
+SELECT a.attempted_at, a.status_code, a.duration_ms, a.error
+FROM tenant.webhook_delivery_attempts a
+JOIN tenant.webhook_deliveries d ON d.id = a.delivery_id
+JOIN tenant.webhook_subscriptions sub ON sub.id = d.subscription_id
+WHERE a.delivery_id = $1 AND d.subscription_id = $2 AND a.tenant_id = $3 AND sub.tenant_id = $3
+ORDER BY a.attempted_at
+LIMIT 200
+`
+
+type ListDeliveryAttemptsParams struct {
+	DeliveryID     uuid.UUID
+	SubscriptionID uuid.UUID
+	TenantID       uuid.UUID
+}
+
+type ListDeliveryAttemptsRow struct {
+	AttemptedAt time.Time
+	StatusCode  *int32
+	DurationMs  int32
+	Error       *string
+}
+
+// One of the tenant's deliveries' attempts, oldest first.
+func (q *Queries) ListDeliveryAttempts(ctx context.Context, arg ListDeliveryAttemptsParams) ([]ListDeliveryAttemptsRow, error) {
+	rows, err := q.db.Query(ctx, listDeliveryAttempts, arg.DeliveryID, arg.SubscriptionID, arg.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDeliveryAttemptsRow{}
+	for rows.Next() {
+		var i ListDeliveryAttemptsRow
+		if err := rows.Scan(
+			&i.AttemptedAt,
+			&i.StatusCode,
+			&i.DurationMs,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWebhookDeliveries = `-- name: ListWebhookDeliveries :many
 SELECT d.id, d.event_type, d.attempt, d.status_code, d.error,
        d.payload::text, d.response_body, d.delivered_at, d.next_attempt_at, d.dead_at, d.created_at
 FROM tenant.webhook_deliveries d
 JOIN tenant.webhook_subscriptions sub ON sub.id = d.subscription_id
 WHERE d.subscription_id = $1 AND sub.tenant_id = $2
-ORDER BY d.created_at DESC
-LIMIT $3
+  AND ($3::text IS NULL
+       OR ($3 = 'delivered' AND d.delivered_at IS NOT NULL)
+       OR ($3 = 'dead' AND d.dead_at IS NOT NULL)
+       OR ($3 = 'pending' AND d.delivered_at IS NULL AND d.dead_at IS NULL AND d.attempt = 0)
+       OR ($3 = 'retrying' AND d.delivered_at IS NULL AND d.dead_at IS NULL AND d.attempt > 0))
+  AND ($4::timestamptz IS NULL OR d.created_at < $4
+       OR (d.created_at = $4 AND d.id < $5::uuid))
+ORDER BY d.created_at DESC, d.id DESC
+LIMIT $6
 `
 
 type ListWebhookDeliveriesParams struct {
 	SubscriptionID uuid.UUID
 	TenantID       uuid.UUID
+	Status         *string
+	BeforeTs       pgtype.Timestamptz
+	BeforeID       pgtype.UUID
 	RowLimit       int32
 }
 
@@ -209,10 +315,18 @@ type ListWebhookDeliveriesRow struct {
 	CreatedAt     time.Time
 }
 
-// ListWebhookDeliveries returns recent deliveries for a subscription, newest
-// first. Tenant-scoped via the subscription join.
+// ListWebhookDeliveries returns a page of a subscription's deliveries, newest
+// first, after the cursor, of a status when given: delivered, pending (not
+// tried yet), retrying or dead. Tenant-scoped via the subscription join.
 func (q *Queries) ListWebhookDeliveries(ctx context.Context, arg ListWebhookDeliveriesParams) ([]ListWebhookDeliveriesRow, error) {
-	rows, err := q.db.Query(ctx, listWebhookDeliveries, arg.SubscriptionID, arg.TenantID, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listWebhookDeliveries,
+		arg.SubscriptionID,
+		arg.TenantID,
+		arg.Status,
+		arg.BeforeTs,
+		arg.BeforeID,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -284,9 +398,19 @@ func (q *Queries) ListWebhookManagers(ctx context.Context, tenantID uuid.UUID) (
 
 const listWebhookSubscriptions = `-- name: ListWebhookSubscriptions :many
 
-SELECT id, tenant_id, url, events, disabled_at, disabled_reason, failing_since, previous_secret_expires_at, created_at
-FROM tenant.webhook_subscriptions
-WHERE tenant_id = $1 ORDER BY created_at DESC
+SELECT s.id, s.tenant_id, s.url, s.events, s.disabled_at, s.disabled_reason, s.failing_since, s.previous_secret_expires_at, s.created_at,
+       (SELECT d.delivered_at FROM tenant.webhook_deliveries d WHERE d.subscription_id = s.id AND d.delivered_at IS NOT NULL
+        ORDER BY d.delivered_at DESC LIMIT 1) AS last_delivered_at,
+       (SELECT d.status_code FROM tenant.webhook_deliveries d WHERE d.subscription_id = s.id AND d.status_code IS NOT NULL
+        ORDER BY COALESCE(d.delivered_at, d.dead_at, d.next_attempt_at) DESC LIMIT 1) AS last_status_code,
+       (SELECT count(*) FROM tenant.webhook_deliveries d WHERE d.subscription_id = s.id
+        AND d.delivered_at IS NULL AND d.dead_at IS NULL AND d.attempt = 0)::int AS pending,
+       (SELECT count(*) FROM tenant.webhook_deliveries d WHERE d.subscription_id = s.id
+        AND d.delivered_at IS NULL AND d.dead_at IS NULL AND d.attempt > 0)::int AS retrying,
+       (SELECT count(*) FROM tenant.webhook_deliveries d WHERE d.subscription_id = s.id AND d.dead_at IS NOT NULL)::int AS gave_up,
+       s.disabled_by
+FROM tenant.webhook_subscriptions s
+WHERE s.tenant_id = $1 ORDER BY s.created_at DESC
 `
 
 type ListWebhookSubscriptionsRow struct {
@@ -299,12 +423,21 @@ type ListWebhookSubscriptionsRow struct {
 	FailingSince            pgtype.Timestamptz
 	PreviousSecretExpiresAt pgtype.Timestamptz
 	CreatedAt               time.Time
+	LastDeliveredAt         pgtype.Timestamptz
+	LastStatusCode          *int32
+	Pending                 int32
+	Retrying                int32
+	GaveUp                  int32
+	DisabledBy              pgtype.UUID
 }
 
 // Queries for the webhooks domain.
 // Create and Disable accept a pgx.Tx from the handler (audit sharing);
 // they are called via q.WithTx(tx). Dispatcher (tick) queries are also
 // static and included here.
+// Each subscription comes with its last delivery, and how many of its
+// deliveries are pending (none tried yet; held while it is disabled),
+// retrying and given up.
 func (q *Queries) ListWebhookSubscriptions(ctx context.Context, tenantID uuid.UUID) ([]ListWebhookSubscriptionsRow, error) {
 	rows, err := q.db.Query(ctx, listWebhookSubscriptions, tenantID)
 	if err != nil {
@@ -324,6 +457,12 @@ func (q *Queries) ListWebhookSubscriptions(ctx context.Context, tenantID uuid.UU
 			&i.FailingSince,
 			&i.PreviousSecretExpiresAt,
 			&i.CreatedAt,
+			&i.LastDeliveredAt,
+			&i.LastStatusCode,
+			&i.Pending,
+			&i.Retrying,
+			&i.GaveUp,
+			&i.DisabledBy,
 		); err != nil {
 			return nil, err
 		}
@@ -376,6 +515,33 @@ type MarkDeliverySucceededParams struct {
 func (q *Queries) MarkDeliverySucceeded(ctx context.Context, arg MarkDeliverySucceededParams) error {
 	_, err := q.db.Exec(ctx, markDeliverySucceeded, arg.StatusCode, arg.ResponseBody, arg.ID)
 	return err
+}
+
+const retryDeadDeliveries = `-- name: RetryDeadDeliveries :execrows
+UPDATE tenant.webhook_deliveries d
+SET delivered_at = NULL, dead_at = NULL, error = NULL, next_attempt_at = NOW(), attempt = 0,
+    lease_owner = NULL, lease_until = NULL
+WHERE d.id IN (
+    SELECT dd.id FROM tenant.webhook_deliveries dd
+    JOIN tenant.webhook_subscriptions sub ON sub.id = dd.subscription_id
+    WHERE dd.subscription_id = $1 AND sub.tenant_id = $2 AND dd.dead_at IS NOT NULL
+    LIMIT $3)
+`
+
+type RetryDeadDeliveriesParams struct {
+	SubscriptionID uuid.UUID
+	TenantID       uuid.UUID
+	RowLimit       int32
+}
+
+// RetryDeadDeliveries re-queues, with a fresh budget of attempts, up to
+// row_limit of a subscription's given-up deliveries.
+func (q *Queries) RetryDeadDeliveries(ctx context.Context, arg RetryDeadDeliveriesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, retryDeadDeliveries, arg.SubscriptionID, arg.TenantID, arg.RowLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const retryWebhookDelivery = `-- name: RetryWebhookDelivery :execrows
@@ -458,4 +624,35 @@ func (q *Queries) ScheduleDeliveryRetry(ctx context.Context, arg ScheduleDeliver
 		arg.ID,
 	)
 	return err
+}
+
+const updateWebhookSubscription = `-- name: UpdateWebhookSubscription :one
+UPDATE tenant.webhook_subscriptions
+SET url = COALESCE($1, url), events = COALESCE($2::text[], events)
+WHERE id = $3 AND tenant_id = $4
+RETURNING url, events
+`
+
+type UpdateWebhookSubscriptionParams struct {
+	Url      *string
+	Events   []string
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+type UpdateWebhookSubscriptionRow struct {
+	Url    string
+	Events []string
+}
+
+func (q *Queries) UpdateWebhookSubscription(ctx context.Context, arg UpdateWebhookSubscriptionParams) (UpdateWebhookSubscriptionRow, error) {
+	row := q.db.QueryRow(ctx, updateWebhookSubscription,
+		arg.Url,
+		arg.Events,
+		arg.ID,
+		arg.TenantID,
+	)
+	var i UpdateWebhookSubscriptionRow
+	err := row.Scan(&i.Url, &i.Events)
+	return i, err
 }
