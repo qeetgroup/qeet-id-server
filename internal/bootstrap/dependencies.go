@@ -206,8 +206,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	botService := bot.NewService(pool)
 	siemService := siem.NewService(pool, outboundPolicy) // forwards audit events to configured log sinks
 	siemService.SetCipher(sharedCipher)
-	rebacService := rebac.NewService(pool) // fine-grained (relationship) authorization
-	abacService := abac.NewService(pool)   // attribute-based access control (policy store + PDP)
+	rebacService := rebac.NewService(pool)           // fine-grained (relationship) authorization
+	abacService := abac.NewService(pool)             // attribute-based access control (policy store + PDP)
+	abacService.SetRelationCheck(rebacService.Check) // relation conditions
 	// One decision across the three engines (an ABAC deny refuses, then any
 	// allow): the route guard, /v1/check, the relationship check and AuthZEN.
 	decider := decide.New(rbacRepo, rebacService, abacService)

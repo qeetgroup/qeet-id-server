@@ -557,9 +557,93 @@ func evaluateNode(raw json.RawMessage, bag AttributeBag) (truth, error) {
 	case m["attr"] != nil:
 		return evalLeaf(m, bag)
 
+	case m["role"] != nil:
+		return evalRole(m["role"], bag)
+
+	case m["relation"] != nil:
+		return evalRelation(m["relation"], bag)
+
 	default:
-		return isFalse, fmt.Errorf("abac: condition node has no recognized key ('all', 'any', 'not', 'attr')")
+		return isFalse, fmt.Errorf("abac: condition node has no recognized key ('all', 'any', 'not', 'attr', 'role', 'relation')")
 	}
+}
+
+// evalRole evaluates {"role": "<name>"}: whether subject.roles, the roles the
+// platform supplies by name, holds name. Unknown when it supplies none.
+func evalRole(raw json.RawMessage, bag AttributeBag) (truth, error) {
+	var name string
+	if err := json.Unmarshal(raw, &name); err != nil || name == "" {
+		return isFalse, errors.New("abac: condition 'role' must be a non-empty string")
+	}
+	roles, present := resolvePath("subject.roles", bag)
+	list, ok := toArray(roles)
+	if !present || !ok {
+		return isUnknown, nil
+	}
+	return truthOf(slices.ContainsFunc(list, func(r any) bool { return r == name })), nil
+}
+
+// relationsKey is where a bag holds the relationships its policies ask about,
+// resolved before evaluation (Service.resolveRelations); no attribute path
+// reaches it.
+const relationsKey = "#relations"
+
+// relationLeaf is {"relation": "<relation>", "object": "<type>:<id>"}, or with
+// object an attribute reference {"attr": "<namespace>.<path>"} naming it.
+type relationLeaf struct {
+	Relation string          `json:"relation"`
+	Object   json.RawMessage `json:"object"`
+}
+
+// parseRelation returns a relation leaf's relation and its object, or the
+// attribute it references for one.
+func parseRelation(raw json.RawMessage) (relation, object, ref string, err error) {
+	var leaf relationLeaf
+	if err := json.Unmarshal(raw, &leaf); err != nil || strings.TrimSpace(leaf.Relation) == "" || len(leaf.Object) == 0 {
+		return "", "", "", errors.New(`condition 'relation' must be {"relation": "<relation>", "object": "<type>:<id>"}`)
+	}
+	if json.Unmarshal(leaf.Object, &object) == nil {
+		if t, id, ok := strings.Cut(object, ":"); !ok || t == "" || id == "" {
+			return "", "", "", fmt.Errorf("condition 'relation' object %q must be <type>:<id>", object)
+		}
+		return leaf.Relation, object, "", nil
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(leaf.Object, &obj) != nil || len(obj) != 1 || json.Unmarshal(obj["attr"], &ref) != nil {
+		return "", "", "", errors.New(`condition 'relation' object must be "<type>:<id>" or an attribute reference {"attr": "<namespace>.<path>"}`)
+	}
+	ns, path, _ := strings.Cut(ref, ".")
+	if !refNamespaces[ns] || path == "" || slices.Contains(strings.Split(path, "."), "") {
+		return "", "", "", fmt.Errorf("condition 'relation' object references %q, which is not a subject., resource., action. or context. attribute", ref)
+	}
+	return leaf.Relation, "", ref, nil
+}
+
+// relationObject is the object a relation leaf asks about in bag, "" when it
+// references an attribute bag lacks.
+func relationObject(object, ref string, bag AttributeBag) string {
+	if ref == "" {
+		return object
+	}
+	v, _ := resolvePath(ref, bag)
+	o, _ := v.(string)
+	return o
+}
+
+// evalRelation evaluates a relation leaf: whether the subject has the relation
+// on the object, as resolved into bag. Unknown when it couldn't be resolved: no
+// subject id, no object, or no relationship engine.
+func evalRelation(raw json.RawMessage, bag AttributeBag) (truth, error) {
+	relation, object, ref, err := parseRelation(raw)
+	if err != nil {
+		return isFalse, fmt.Errorf("abac: %w", err)
+	}
+	object = relationObject(object, ref, bag)
+	held, ok := bag[relationsKey][object+"#"+relation].(bool)
+	if object == "" || !ok {
+		return isUnknown, nil
+	}
+	return truthOf(held), nil
 }
 
 // EvaluateCondition reports whether a policy with effect and condition node
@@ -647,10 +731,43 @@ func validateCondition(raw json.RawMessage) error {
 				}
 			}
 		}
+	case m["role"] != nil:
+		var name string
+		if err := json.Unmarshal(m["role"], &name); err != nil || strings.TrimSpace(name) == "" {
+			return errors.New("'role' must be a non-empty role name")
+		}
+	case m["relation"] != nil:
+		if _, _, _, err := parseRelation(m["relation"]); err != nil {
+			return err
+		}
 	default:
-		return fmt.Errorf("node has no recognized key ('all', 'any', 'not', 'attr')")
+		return fmt.Errorf("node has no recognized key ('all', 'any', 'not', 'attr', 'role', 'relation')")
 	}
 	return nil
+}
+
+// relationLeaves calls found for each relation leaf in a condition tree.
+func relationLeaves(raw json.RawMessage, found func(relation, object, ref string)) {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return
+	}
+	for _, key := range []string{"all", "any"} {
+		var children []json.RawMessage
+		if json.Unmarshal(m[key], &children) == nil {
+			for _, c := range children {
+				relationLeaves(c, found)
+			}
+		}
+	}
+	if m["not"] != nil {
+		relationLeaves(m["not"], found)
+	}
+	if m["relation"] != nil {
+		if relation, object, ref, err := parseRelation(m["relation"]); err == nil {
+			found(relation, object, ref)
+		}
+	}
 }
 
 // Service — CRUD + evaluate.
@@ -658,12 +775,52 @@ func validateCondition(raw json.RawMessage) error {
 // Service stores each tenant's ABAC policies and evaluates requests against
 // them.
 type Service struct {
-	pool *pgxpool.Pool
-	q    *dbgen.Queries
-	gate PlanGate
+	pool      *pgxpool.Pool
+	q         *dbgen.Queries
+	gate      PlanGate
+	relations RelationCheck
 
 	presenceMu sync.Mutex
 	presence   map[uuid.UUID]presenceEntry
+}
+
+// RelationCheck answers whether userID has relation on object (type:id) in
+// tenantID. Satisfied by rebac.Service.Check.
+type RelationCheck func(ctx context.Context, tenantID uuid.UUID, object, relation, userID string) (bool, error)
+
+// SetRelationCheck sets how relation conditions are answered; without one
+// they are unknown, so a deny holding one applies and an allow grants nothing.
+func (s *Service) SetRelationCheck(c RelationCheck) { s.relations = c }
+
+// resolveRelations answers, into bag, each relationship the conditions ask
+// about for the bag's subject, so evaluation needs no lookups of its own.
+func (s *Service) resolveRelations(ctx context.Context, tenantID uuid.UUID, conditions [][]byte, bag AttributeBag) error {
+	subject, _ := bag["subject"]["id"].(string)
+	if s.relations == nil || subject == "" {
+		return nil
+	}
+	answers := map[string]any{}
+	var failed error
+	for _, cond := range conditions {
+		relationLeaves(cond, func(relation, object, ref string) {
+			object = relationObject(object, ref, bag)
+			key := object + "#" + relation
+			if _, done := answers[key]; done || object == "" || failed != nil {
+				return
+			}
+			held, err := s.relations(ctx, tenantID, object, relation, subject)
+			switch {
+			case errors.Is(err, errs.ErrReBACObjectInvalid):
+				// An object that isn't type:id holds no relationship: left unknown.
+			case err != nil:
+				failed = err
+			default:
+				answers[key] = held
+			}
+		})
+	}
+	bag[relationsKey] = answers
+	return failed
 }
 
 // NewService returns the ABAC policy service.
@@ -806,16 +963,20 @@ func (s *Service) locksOutAuthor(ctx context.Context, tenantID uuid.UUID, effect
 	if err != nil {
 		return false, err
 	}
-	return refusesPolicyWrite(cond, subject, ctxAttrs), nil
+	bag := attributeBag(EvaluationInput{
+		Subject: subject, Resource: EvaluationResource{Type: policyResourceType}, Action: policyWriteAction, Context: ctxAttrs,
+	})
+	if err := s.resolveRelations(ctx, tenantID, [][]byte{cond}, bag); err != nil {
+		return false, err
+	}
+	return refusesPolicyWrite(cond, bag), nil
 }
 
 // refusesPolicyWrite reports whether a deny with cond refuses policy.write to a
-// caller with these subject and context attributes, as the route guard would.
-// A condition error counts: the route guard fails closed on it too.
-func refusesPolicyWrite(cond json.RawMessage, subject, ctxAttrs map[string]any) bool {
-	matched, err := EvaluateCondition(cond, "deny", attributeBag(EvaluationInput{
-		Subject: subject, Resource: EvaluationResource{Type: policyResourceType}, Action: policyWriteAction, Context: ctxAttrs,
-	}))
+// caller with the attributes in bag, as the route guard would. A condition
+// error counts: the route guard fails closed on it too.
+func refusesPolicyWrite(cond json.RawMessage, bag AttributeBag) bool {
+	matched, err := EvaluateCondition(cond, "deny", bag)
 	return matched || err != nil
 }
 
@@ -1173,7 +1334,22 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in Evaluatio
 	if err != nil {
 		return nil, err
 	}
-	return combine(policies, attributeBag(in)), nil
+	bag, err := s.bagFor(ctx, tenantID, in, policies)
+	if err != nil {
+		return nil, err
+	}
+	return combine(policies, bag), nil
+}
+
+// bagFor is in's attribute bag with the relationships policies ask about
+// answered.
+func (s *Service) bagFor(ctx context.Context, tenantID uuid.UUID, in EvaluationInput, policies []candidate) (AttributeBag, error) {
+	bag := attributeBag(in)
+	conditions := make([][]byte, 0, len(policies))
+	for _, p := range policies {
+		conditions = append(conditions, p.condition)
+	}
+	return bag, s.resolveRelations(ctx, tenantID, conditions, bag)
 }
 
 // candidates returns tenantID's enabled policies for in's resource type and
@@ -1254,7 +1430,11 @@ func (s *Service) EvaluateDraft(ctx context.Context, tenantID uuid.UUID, in Eval
 		}
 		policies = slices.Insert(policies, at, d)
 	}
-	decision := combine(policies, attributeBag(in))
+	bag, err := s.bagFor(ctx, tenantID, in, policies)
+	if err != nil {
+		return nil, err
+	}
+	decision := combine(policies, bag)
 	if applies && decision.MatchedPolicyID != nil && *decision.MatchedPolicyID == draftID {
 		decision.MatchedDraft = true
 		if draftID == uuid.Nil {

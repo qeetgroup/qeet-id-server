@@ -6241,6 +6241,17 @@ components:
             need a non-empty string value and match only string attributes; any
             other value is refused with 422 abac.condition_invalid, as is contains
             or regex with an empty value.
+            Two more leaves combine roles and relationships with attributes:
+            {"role":"<name>"} holds when the subject has the role, by name, in
+            the organisation (directly or through a group), as the platform
+            supplies subject.roles when it decides for a person itself; it is
+            unknown when no roles are supplied. {"relation":{"relation":"viewer",
+            "object":"document:1"}} holds when the subject (subject.id, a user)
+            has the relationship on the object in the organisation's ReBAC
+            tuples, the object given as type:id or as an attribute reference
+            {"attr":"resource.object"}; it is unknown with no subject id or no
+            object. Like a missing attribute, an unknown role or relation applies
+            a deny and grants nothing.
           additionalProperties: true
         priority:
           type: integer

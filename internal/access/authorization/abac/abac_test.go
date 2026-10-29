@@ -594,7 +594,10 @@ func TestRefusesPolicyWrite(t *testing.T) {
 		{"without MFA, when it can't be known", noMFA, map[string]any{}, true},
 		{"outside an address range, to an author inside it", `{"not":{"attr":"context.ip","op":"prefix","value":"203.0.113."}}`, withMFA, false},
 	} {
-		if got := refusesPolicyWrite(json.RawMessage(tc.cond), subject, tc.ctxAttrs); got != tc.want {
+		bag := attributeBag(EvaluationInput{
+			Subject: subject, Resource: EvaluationResource{Type: policyResourceType}, Action: policyWriteAction, Context: tc.ctxAttrs,
+		})
+		if got := refusesPolicyWrite(json.RawMessage(tc.cond), bag); got != tc.want {
 			t.Errorf("deny %s: refusesPolicyWrite = %v, want %v", tc.name, got, tc.want)
 		}
 	}
@@ -991,5 +994,43 @@ func TestDecisionReasonCodes(t *testing.T) {
 	dec := combine([]candidate{broken}, b)
 	if shown := dec.Reason + strings.Join(dec.Trace, "\n"); strings.Contains(shown, "unknown operator") || strings.Contains(shown, "bogus") {
 		t.Errorf("a condition error showed its evaluation error: %q", shown)
+	}
+}
+
+// TestRoleAndRelationConditions checks a role condition against the roles the
+// platform supplies, unknown without them, and a relation condition against
+// the relationships resolved into the bag, unknown when unresolved; and that a
+// malformed one is refused.
+func TestRoleAndRelationConditions(t *testing.T) {
+	withRoles := AttributeBag{"subject": {"id": "u1", "roles": []any{"admin", "billing"}}, "resource": {"id": "doc-1"}}
+	withRelations := AttributeBag{"subject": {"id": "u1"}, "resource": {"object": "document:doc-1"},
+		relationsKey: {"document:doc-1#viewer": true, "document:doc-1#owner": false}}
+	for _, tc := range []struct {
+		name, cond string
+		bag        AttributeBag
+		want       truth
+	}{
+		{"a role held", `{"role":"admin"}`, withRoles, isTrue},
+		{"a role not held", `{"role":"auditor"}`, withRoles, isFalse},
+		{"a role without the roles", `{"role":"admin"}`, AttributeBag{"subject": {"id": "u1"}}, isUnknown},
+		{"a relation held", `{"relation":{"relation":"viewer","object":"document:doc-1"}}`, withRelations, isTrue},
+		{"a relation not held", `{"relation":{"relation":"owner","object":"document:doc-1"}}`, withRelations, isFalse},
+		{"a relation by reference", `{"relation":{"relation":"viewer","object":{"attr":"resource.object"}}}`, withRelations, isTrue},
+		{"a relation unresolved", `{"relation":{"relation":"editor","object":"document:doc-1"}}`, withRelations, isUnknown},
+		{"a reference to nothing", `{"relation":{"relation":"viewer","object":{"attr":"resource.missing"}}}`, withRelations, isUnknown},
+		{"a role and a relation", `{"all":[{"role":"admin"},{"relation":{"relation":"viewer","object":"document:doc-1"}}]}`,
+			AttributeBag{"subject": {"id": "u1", "roles": []any{"admin"}}, relationsKey: {"document:doc-1#viewer": true}}, isTrue},
+	} {
+		got, err := evaluateNode(json.RawMessage(tc.cond), tc.bag)
+		if err != nil || got != tc.want {
+			t.Errorf("%s: %v, %v; want %v", tc.name, got, err, tc.want)
+		}
+	}
+	for _, bad := range []string{`{"role":""}`, `{"role":7}`, `{"relation":{"relation":"viewer"}}`,
+		`{"relation":{"relation":"","object":"document:1"}}`, `{"relation":{"relation":"viewer","object":"document"}}`,
+		`{"relation":{"relation":"viewer","object":{"attr":"secrets.key"}}}`} {
+		if validateCondition(json.RawMessage(bad)) == nil {
+			t.Errorf("condition %s was accepted", bad)
+		}
 	}
 }
