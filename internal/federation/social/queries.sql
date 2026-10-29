@@ -2,7 +2,7 @@
 -- All queries are STATIC and compiled by sqlc into ./dbgen.
 
 -- name: ListSocialProviders :many
-SELECT id, tenant_id, provider, client_id, discovery_url, enabled, created_at
+SELECT id, tenant_id, provider, client_id, discovery_url, enabled, created_at, apple_team_id, apple_key_id
 FROM tenant.social_providers WHERE tenant_id = @tenant_id ORDER BY provider;
 
 -- name: ListExternalIdentities :many
@@ -60,12 +60,12 @@ SELECT id FROM tenant.tenants WHERE slug = @slug;
 
 -- name: InsertSocialOAuthState :exec
 INSERT INTO auth.social_oauth_states
-    (state_hash, tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at)
-VALUES (@state_hash, @tenant_id, @provider, @code_verifier, @redirect_uri, @return_to, @expires_at);
+    (state_hash, tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at, nonce_hash)
+VALUES (@state_hash, @tenant_id, @provider, @code_verifier, @redirect_uri, @return_to, @expires_at, sqlc.narg('nonce_hash'));
 
 -- name: ConsumeSocialOAuthState :one
 DELETE FROM auth.social_oauth_states WHERE state_hash = @state_hash
-RETURNING tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at;
+RETURNING tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at, nonce_hash;
 
 -- name: InsertSocialLoginCode :exec
 INSERT INTO auth.social_login_codes (code_hash, user_id, tenant_id, expires_at)

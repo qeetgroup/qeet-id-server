@@ -34,13 +34,18 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
-// Provider is a tenant's social identity provider, without its secret.
+// Provider is a tenant's social identity provider, without its secret. Kind is
+// oidc, found by DiscoveryURL, or the adapter its name picks (github,
+// facebook, x, discord or apple); Apple's names its team and key.
 type Provider struct {
 	ID           uuid.UUID `json:"id"`
 	TenantID     uuid.UUID `json:"tenant_id"`
 	Provider     string    `json:"provider"`
+	Kind         string    `json:"kind"`
 	ClientID     string    `json:"client_id"`
 	DiscoveryURL *string   `json:"discovery_url"`
+	AppleTeamID  *string   `json:"apple_team_id,omitempty"`
+	AppleKeyID   *string   `json:"apple_key_id,omitempty"`
 	Enabled      bool      `json:"enabled"`
 	CreatedAt    time.Time `json:"created_at"`
 }
@@ -144,6 +149,9 @@ func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string, po
 // CreateProviderInput adds a provider, or replaces the settings of one the
 // organisation already has. Replacing keeps whether it is switched on, and an
 // empty ClientSecret keeps the stored secret (a new provider needs one).
+// DiscoveryURL is an OpenID Connect provider's alone. For Apple, ClientID is
+// the Services ID and ClientSecret the .p8 private key, with AppleTeamID and
+// AppleKeyID; the client secret is signed from them for each sign-in.
 // ChangedBy is who saved it, for the audit record.
 type CreateProviderInput struct {
 	TenantID     uuid.UUID `json:"tenant_id"`
@@ -151,18 +159,51 @@ type CreateProviderInput struct {
 	ClientID     string    `json:"client_id"`
 	ClientSecret string    `json:"client_secret"`
 	DiscoveryURL string    `json:"discovery_url"`
+	AppleTeamID  string    `json:"apple_team_id"`
+	AppleKeyID   string    `json:"apple_key_id"`
 	ChangedBy    ChangedBy `json:"-"`
+}
+
+// checkAppleKey refuses an Apple private key, team ID and key ID that can't
+// sign a client secret.
+func checkAppleKey(servicesID, teamID, keyID, privateKey string) error {
+	if _, err := appleClientSecret(servicesID, teamID, keyID, privateKey); err != nil {
+		return errs.ErrValidationFailed.WithFields([]errs.FieldError{{
+			Field: "client_secret", Code: "invalid", Message: "Enter the .p8 private key Apple gave for the key ID.",
+		}})
+	}
+	return nil
 }
 
 // UpsertProvider adds or updates one of the tenant's social providers.
 func (s *Service) UpsertProvider(ctx context.Context, in CreateProviderInput) (*Provider, error) {
-	if _, err := s.egress.ValidateHTTPURL(in.DiscoveryURL); err != nil {
-		return nil, errs.ErrSocialProviderNoDiscovery
+	kind := adapterKind(in.Provider)
+	if kind == kindOIDC {
+		if _, err := s.egress.ValidateHTTPURL(in.DiscoveryURL); err != nil {
+			return nil, errs.ErrSocialProviderNoDiscovery
+		}
+	} else {
+		in.DiscoveryURL = ""
+	}
+	if kind != kindApple {
+		in.AppleTeamID, in.AppleKeyID = "", ""
 	}
 	if strings.TrimSpace(in.Provider) == "" || strings.TrimSpace(in.ClientID) == "" {
 		return nil, errs.ErrValidationFailed.WithFields([]errs.FieldError{
 			{Field: "client_id", Code: "required", Message: "Enter the provider and its client ID."},
 		})
+	}
+	if kind == kindApple {
+		if strings.TrimSpace(in.AppleTeamID) == "" || strings.TrimSpace(in.AppleKeyID) == "" {
+			return nil, errs.ErrValidationFailed.WithFields([]errs.FieldError{
+				{Field: "apple_team_id", Code: "required", Message: "Enter Apple's team ID and key ID."},
+			})
+		}
+		if in.ClientSecret != "" {
+			if err := checkAppleKey(in.ClientID, in.AppleTeamID, in.AppleKeyID, in.ClientSecret); err != nil {
+				return nil, err
+			}
+		}
 	}
 	replaceSecret := in.ClientSecret != ""
 	var ciphertext, nonce []byte
@@ -191,12 +232,13 @@ func (s *Service) UpsertProvider(ctx context.Context, in CreateProviderInput) (*
 		})
 	}
 	var r struct {
-		ID                 uuid.UUID
-		TenantID           uuid.UUID
-		Provider, ClientID string
-		DiscoveryURL       *string
-		Enabled            bool
-		CreatedAt          time.Time
+		ID                      uuid.UUID
+		TenantID                uuid.UUID
+		Provider, ClientID      string
+		DiscoveryURL            *string
+		AppleTeamID, AppleKeyID *string
+		Enabled                 bool
+		CreatedAt               time.Time
 	}
 	if existing {
 		// Replacing keeps whether the provider is switched on, and the stored
@@ -208,21 +250,23 @@ func (s *Service) UpsertProvider(ctx context.Context, in CreateProviderInput) (*
 			    client_secret = CASE WHEN $7::boolean THEN '' ELSE client_secret END,
 			    client_secret_ct = CASE WHEN $7::boolean THEN $4 ELSE client_secret_ct END,
 			    client_secret_nonce = CASE WHEN $7::boolean THEN $5 ELSE client_secret_nonce END,
-			    encryption_version = CASE WHEN $7::boolean THEN 1 ELSE encryption_version END
+			    encryption_version = CASE WHEN $7::boolean THEN 1 ELSE encryption_version END,
+			    apple_team_id = NULLIF($8, ''),
+			    apple_key_id = NULLIF($9, '')
 			WHERE tenant_id = $1 AND provider = $2
-			RETURNING id, tenant_id, provider, client_id, discovery_url, enabled, created_at
-		`, in.TenantID, in.Provider, in.ClientID, ciphertext, nonce, in.DiscoveryURL, replaceSecret).Scan(
-			&r.ID, &r.TenantID, &r.Provider, &r.ClientID, &r.DiscoveryURL, &r.Enabled, &r.CreatedAt,
+			RETURNING id, tenant_id, provider, client_id, discovery_url, enabled, created_at, apple_team_id, apple_key_id
+		`, in.TenantID, in.Provider, in.ClientID, ciphertext, nonce, in.DiscoveryURL, replaceSecret, in.AppleTeamID, in.AppleKeyID).Scan(
+			&r.ID, &r.TenantID, &r.Provider, &r.ClientID, &r.DiscoveryURL, &r.Enabled, &r.CreatedAt, &r.AppleTeamID, &r.AppleKeyID,
 		)
 	} else {
 		err = tx.QueryRow(ctx, `
 			INSERT INTO tenant.social_providers
 			    (tenant_id, provider, client_id, client_secret, client_secret_ct,
-			     client_secret_nonce, encryption_version, discovery_url)
-			VALUES ($1, $2, $3, '', $4, $5, 1, NULLIF($6, ''))
-			RETURNING id, tenant_id, provider, client_id, discovery_url, enabled, created_at
-		`, in.TenantID, in.Provider, in.ClientID, ciphertext, nonce, in.DiscoveryURL).Scan(
-			&r.ID, &r.TenantID, &r.Provider, &r.ClientID, &r.DiscoveryURL, &r.Enabled, &r.CreatedAt,
+			     client_secret_nonce, encryption_version, discovery_url, apple_team_id, apple_key_id)
+			VALUES ($1, $2, $3, '', $4, $5, 1, NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''))
+			RETURNING id, tenant_id, provider, client_id, discovery_url, enabled, created_at, apple_team_id, apple_key_id
+		`, in.TenantID, in.Provider, in.ClientID, ciphertext, nonce, in.DiscoveryURL, in.AppleTeamID, in.AppleKeyID).Scan(
+			&r.ID, &r.TenantID, &r.Provider, &r.ClientID, &r.DiscoveryURL, &r.Enabled, &r.CreatedAt, &r.AppleTeamID, &r.AppleKeyID,
 		)
 		if pgxerr.IsUnique(err) {
 			// Added by a concurrent save; this one is a replacement after all.
@@ -248,8 +292,11 @@ func (s *Service) UpsertProvider(ctx context.Context, in CreateProviderInput) (*
 		ID:           r.ID,
 		TenantID:     r.TenantID,
 		Provider:     r.Provider,
+		Kind:         kind,
 		ClientID:     r.ClientID,
 		DiscoveryURL: r.DiscoveryURL,
+		AppleTeamID:  r.AppleTeamID,
+		AppleKeyID:   r.AppleKeyID,
 		Enabled:      r.Enabled,
 		CreatedAt:    r.CreatedAt,
 	}
@@ -268,8 +315,11 @@ func (s *Service) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]Prov
 			ID:           r.ID,
 			TenantID:     r.TenantID,
 			Provider:     r.Provider,
+			Kind:         adapterKind(r.Provider),
 			ClientID:     r.ClientID,
 			DiscoveryURL: r.DiscoveryUrl,
+			AppleTeamID:  r.AppleTeamID,
+			AppleKeyID:   r.AppleKeyID,
 			Enabled:      r.Enabled,
 			CreatedAt:    r.CreatedAt,
 		}
@@ -405,10 +455,10 @@ const (
 	socialScopes   = "openid email profile"
 )
 
-// providerConfig is one provider's settings. kind is "oidc" (or "" for an
-// organisation's provider) when discoveryURL drives the generic OIDC flow, or
-// "github" or "apple" for the adapters in github.go and apple.go. Only Apple
-// uses teamID, keyID and privateKey, to sign its short-lived client secret.
+// providerConfig is one provider's settings. kind is "oidc" when discoveryURL
+// drives the generic OIDC flow, or the adapter of github.go, apple.go or
+// adapters.go. Only Apple uses teamID, keyID and privateKey, to sign its
+// short-lived client secret.
 type providerConfig struct {
 	clientID     string
 	clientSecret string
@@ -437,19 +487,20 @@ func (s *Service) resolveTenant(ctx context.Context, ref string) (uuid.UUID, err
 	return id, nil
 }
 
-// loadProvider returns an enabled, discovery-based provider config for a tenant.
+// loadProvider returns a tenant's enabled provider config: discovery-based for
+// OpenID Connect, or for the adapter the provider's name picks.
 func (s *Service) loadProvider(ctx context.Context, tenantID uuid.UUID, provider string) (providerConfig, error) {
 	var pc providerConfig
 	var enabled bool
 	var clientID, legacySecret string
-	var discoveryURL *string
+	var discoveryURL, teamID, keyID *string
 	var ciphertext, nonce []byte
 	err := s.pool.QueryRow(ctx, `
 		SELECT client_id, client_secret, client_secret_ct, client_secret_nonce,
-		       discovery_url, enabled
+		       discovery_url, enabled, apple_team_id, apple_key_id
 		FROM tenant.social_providers
 		WHERE tenant_id = $1 AND provider = $2
-	`, tenantID, provider).Scan(&clientID, &legacySecret, &ciphertext, &nonce, &discoveryURL, &enabled)
+	`, tenantID, provider).Scan(&clientID, &legacySecret, &ciphertext, &nonce, &discoveryURL, &enabled, &teamID, &keyID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return pc, errs.ErrSocialProviderNotConfigured
 	}
@@ -461,11 +512,20 @@ func (s *Service) loadProvider(ctx context.Context, tenantID uuid.UUID, provider
 	if !enabled {
 		return pc, errs.ErrSocialProviderNotConfigured
 	}
-	if discoveryURL == nil || *discoveryURL == "" {
-		return pc, errs.ErrSocialProviderNoDiscovery
+	pc.kind = adapterKind(provider)
+	if pc.kind == kindOIDC {
+		if discoveryURL == nil || *discoveryURL == "" {
+			return pc, errs.ErrSocialProviderNoDiscovery
+		}
+		pc.discoveryURL = *discoveryURL
+	}
+	if pc.kind == kindApple {
+		if teamID == nil || keyID == nil {
+			return pc, errs.ErrSocialProviderNotConfigured
+		}
+		pc.teamID, pc.keyID = *teamID, *keyID
 	}
 	pc.clientID = clientID
-	pc.discoveryURL = *discoveryURL
 	if len(ciphertext) > 0 {
 		if s.box == nil {
 			return pc, errs.ErrSocialProviderNotConfigured
@@ -475,6 +535,9 @@ func (s *Service) loadProvider(ctx context.Context, tenantID uuid.UUID, provider
 			return pc, openErr
 		}
 		pc.clientSecret = string(plain)
+		if pc.kind == kindApple {
+			pc.privateKey = pc.clientSecret
+		}
 	} else {
 		pc.clientSecret = legacySecret
 		if legacySecret != "" && s.box != nil {
@@ -511,12 +574,14 @@ func (s *Service) BeginLogin(ctx context.Context, provider, tenantRef, redirectU
 	if err != nil {
 		return "", err
 	}
-	doc, err := s.oauth.discovery(ctx, pc.discoveryURL)
-	if err != nil {
-		return "", errs.ErrSocialDiscoveryFailed.Wrap(err)
-	}
-	if err := checkAuthorizationEndpoint(doc.AuthorizationEndpoint); err != nil {
-		return "", errs.ErrSocialProviderNoDiscovery.Wrap(err)
+	var doc discoveryDoc
+	if pc.kind == kindOIDC {
+		if doc, err = s.oauth.discovery(ctx, pc.discoveryURL); err != nil {
+			return "", errs.ErrSocialDiscoveryFailed.Wrap(err)
+		}
+		if err := checkAuthorizationEndpoint(doc.AuthorizationEndpoint); err != nil {
+			return "", errs.ErrSocialProviderNoDiscovery.Wrap(err)
+		}
 	}
 	// PKCE S256: verifier is the raw token, challenge is its SHA-256 (codes.Hash).
 	verifier, challenge, err := codes.URLToken()
@@ -527,6 +592,15 @@ func (s *Service) BeginLogin(ctx context.Context, provider, tenantRef, redirectU
 	if err != nil {
 		return "", err
 	}
+	var nonce string
+	var nonceHash *string
+	if pc.kind == kindApple {
+		raw, hash, err := codes.URLToken()
+		if err != nil {
+			return "", err
+		}
+		nonce, nonceHash = raw, &hash
+	}
 	if err := s.q.InsertSocialOAuthState(ctx, dbgen.InsertSocialOAuthStateParams{
 		StateHash:    stateHash,
 		TenantID:     tenantID,
@@ -535,8 +609,23 @@ func (s *Service) BeginLogin(ctx context.Context, provider, tenantRef, redirectU
 		RedirectUri:  redirectURI,
 		ReturnTo:     returnTo,
 		ExpiresAt:    time.Now().UTC().Add(socialStateTTL),
+		NonceHash:    nonceHash,
 	}); err != nil {
 		return "", err
+	}
+	switch pc.kind {
+	case kindGitHub:
+		return githubAuthorizeURL + "?" + url.Values{
+			"client_id": {pc.clientID}, "redirect_uri": {redirectURI}, "scope": {githubScopes}, "state": {state},
+		}.Encode(), nil
+	case kindApple:
+		// Asking for the name and address makes Apple answer by form_post.
+		return appleAuthorizeURL + "?" + url.Values{
+			"response_type": {"code"}, "response_mode": {"form_post"}, "client_id": {pc.clientID},
+			"redirect_uri": {redirectURI}, "scope": {appleScopes}, "state": {state}, "nonce": {nonce},
+		}.Encode(), nil
+	case kindFacebook, kindX, kindDiscord:
+		return s.oauth.oauth2AuthorizeURL(pc.kind, pc.clientID, redirectURI, state, challenge), nil
 	}
 	q := url.Values{
 		"response_type":         {"code"},
@@ -596,17 +685,9 @@ func (s *Service) CompleteCallback(ctx context.Context, provider, state, code st
 	if err != nil {
 		return nil, err
 	}
-	doc, err := s.oauth.discovery(ctx, pc.discoveryURL)
+	ui, err := s.signedIn(ctx, pc, code, st.RedirectUri, st.CodeVerifier, st.NonceHash)
 	if err != nil {
-		return nil, errs.ErrSocialDiscoveryFailed.Wrap(err)
-	}
-	accessToken, err := s.oauth.exchange(ctx, doc, pc.clientID, pc.clientSecret, code, st.RedirectUri, st.CodeVerifier)
-	if err != nil {
-		return nil, errs.ErrSocialTokenExchangeFailed.Wrap(err)
-	}
-	ui, err := s.oauth.userinfo(ctx, doc, accessToken)
-	if err != nil {
-		return nil, errs.ErrSocialUserinfoFailed.Wrap(err)
+		return nil, err
 	}
 	userID, err := s.findOrCreateUser(ctx, st.TenantID, provider, ui)
 	if errors.Is(err, errs.ErrAuthSelfRegistrationDisabled) {
@@ -638,6 +719,59 @@ func (s *Service) CompleteCallback(ctx context.Context, provider, state, code st
 		return nil, err
 	}
 	return &CallbackResult{Code: rawCode, ReturnTo: st.ReturnTo, UserID: userID, TenantID: st.TenantID}, nil
+}
+
+// signedIn trades code with pc's provider and returns who signed in: through
+// discovery for OpenID Connect, or the provider's adapter.
+func (s *Service) signedIn(ctx context.Context, pc providerConfig, code, redirectURI, verifier string, nonceHash *string) (userInfo, error) {
+	switch pc.kind {
+	case kindGitHub:
+		accessToken, err := s.oauth.githubExchange(ctx, pc.clientID, pc.clientSecret, code, redirectURI)
+		if err != nil {
+			return userInfo{}, errs.ErrSocialTokenExchangeFailed.Wrap(err)
+		}
+		ui, err := s.oauth.githubUserinfo(ctx, accessToken)
+		if err != nil {
+			return userInfo{}, errs.ErrSocialUserinfoFailed.Wrap(err)
+		}
+		return ui, nil
+	case kindApple:
+		if nonceHash == nil || *nonceHash == "" {
+			return userInfo{}, errs.ErrSocialStateInvalid
+		}
+		secret, err := appleClientSecret(pc.clientID, pc.teamID, pc.keyID, pc.privateKey)
+		if err != nil {
+			return userInfo{}, errs.ErrSocialTokenExchangeFailed.Wrap(errors.Join(errAppleKey, err))
+		}
+		ui, err := s.oauth.appleExchange(ctx, secret, pc.clientID, code, redirectURI, *nonceHash)
+		if err != nil {
+			return userInfo{}, errs.ErrSocialTokenExchangeFailed.Wrap(err)
+		}
+		return ui, nil
+	case kindFacebook, kindX, kindDiscord:
+		accessToken, err := s.oauth.oauth2Exchange(ctx, pc.kind, pc.clientID, pc.clientSecret, code, redirectURI, verifier)
+		if err != nil {
+			return userInfo{}, errs.ErrSocialTokenExchangeFailed.Wrap(err)
+		}
+		ui, err := s.oauth.oauth2Userinfo(ctx, pc.kind, accessToken)
+		if err != nil {
+			return userInfo{}, errs.ErrSocialUserinfoFailed.Wrap(err)
+		}
+		return ui, nil
+	}
+	doc, err := s.oauth.discovery(ctx, pc.discoveryURL)
+	if err != nil {
+		return userInfo{}, errs.ErrSocialDiscoveryFailed.Wrap(err)
+	}
+	accessToken, err := s.oauth.exchange(ctx, doc, pc.clientID, pc.clientSecret, code, redirectURI, verifier)
+	if err != nil {
+		return userInfo{}, errs.ErrSocialTokenExchangeFailed.Wrap(err)
+	}
+	ui, err := s.oauth.userinfo(ctx, doc, accessToken)
+	if err != nil {
+		return userInfo{}, errs.ErrSocialUserinfoFailed.Wrap(err)
+	}
+	return ui, nil
 }
 
 // EnabledProviderNames returns the names of a tenant's enabled social providers

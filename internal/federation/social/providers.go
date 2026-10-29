@@ -74,6 +74,8 @@ type UpdateProviderInput struct {
 	ClientID     *string `json:"client_id"`
 	ClientSecret *string `json:"client_secret"`
 	DiscoveryURL *string `json:"discovery_url"`
+	AppleTeamID  *string `json:"apple_team_id"`
+	AppleKeyID   *string `json:"apple_key_id"`
 	Enabled      *bool   `json:"enabled"`
 }
 
@@ -87,9 +89,24 @@ func (s *Service) UpdateProvider(ctx context.Context, tenantID uuid.UUID, provid
 	if in.ClientID != nil && strings.TrimSpace(*in.ClientID) == "" {
 		bad = append(bad, errs.FieldError{Field: "client_id", Code: "required", Message: "Enter the client ID."})
 	}
+	kind := adapterKind(provider)
+	if kind != kindOIDC {
+		in.DiscoveryURL = nil
+	}
+	if kind != kindApple {
+		in.AppleTeamID, in.AppleKeyID = nil, nil
+	}
 	if in.DiscoveryURL != nil && *in.DiscoveryURL != "" {
 		if _, err := s.egress.ValidateHTTPURL(*in.DiscoveryURL); err != nil {
 			bad = append(bad, errs.FieldError{Field: "discovery_url", Code: "invalid", Message: "Enter a public https discovery URL."})
+		}
+	}
+	for _, f := range []struct {
+		name string
+		v    *string
+	}{{"apple_team_id", in.AppleTeamID}, {"apple_key_id", in.AppleKeyID}} {
+		if f.v != nil && strings.TrimSpace(*f.v) == "" {
+			bad = append(bad, errs.FieldError{Field: f.name, Code: "required", Message: "Enter Apple's team ID and key ID."})
 		}
 	}
 	if len(bad) > 0 {
@@ -111,12 +128,32 @@ func (s *Service) UpdateProvider(ctx context.Context, tenantID uuid.UUID, provid
 	defer tx.Rollback(ctx)
 	var wasEnabled bool
 	var id uuid.UUID
+	var clientID string
+	var teamID, keyID *string
 	if err := tx.QueryRow(ctx, `
-		SELECT id, enabled FROM tenant.social_providers
-		WHERE tenant_id = $1 AND provider = $2 FOR UPDATE`, tenantID, provider).Scan(&id, &wasEnabled); errors.Is(err, pgx.ErrNoRows) {
+		SELECT id, enabled, client_id, apple_team_id, apple_key_id FROM tenant.social_providers
+		WHERE tenant_id = $1 AND provider = $2 FOR UPDATE`, tenantID, provider).Scan(&id, &wasEnabled, &clientID, &teamID, &keyID); errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	} else if err != nil {
 		return nil, err
+	}
+	// A new Apple key must sign with the team and key ids it will be used with.
+	if kind == kindApple && replaceSecret {
+		pick := func(given, stored *string) string {
+			if given != nil {
+				return *given
+			}
+			if stored != nil {
+				return *stored
+			}
+			return ""
+		}
+		if in.ClientID != nil {
+			clientID = *in.ClientID
+		}
+		if err := checkAppleKey(clientID, pick(in.AppleTeamID, teamID), pick(in.AppleKeyID, keyID), *in.ClientSecret); err != nil {
+			return nil, err
+		}
 	}
 	if wasEnabled && in.Enabled != nil && !*in.Enabled {
 		dependent, _, err := providerDependents(ctx, tx, tenantID, provider)
@@ -136,13 +173,16 @@ func (s *Service) UpdateProvider(ctx context.Context, tenantID uuid.UUID, provid
 		    client_secret = CASE WHEN $6::boolean THEN '' ELSE client_secret END,
 		    client_secret_ct = CASE WHEN $6::boolean THEN $7 ELSE client_secret_ct END,
 		    client_secret_nonce = CASE WHEN $6::boolean THEN $8 ELSE client_secret_nonce END,
-		    encryption_version = CASE WHEN $6::boolean THEN 1 ELSE encryption_version END
+		    encryption_version = CASE WHEN $6::boolean THEN 1 ELSE encryption_version END,
+		    apple_team_id = COALESCE($9, apple_team_id),
+		    apple_key_id = COALESCE($10, apple_key_id)
 		WHERE id = $1
-		RETURNING id, tenant_id, provider, client_id, discovery_url, enabled, created_at`,
-		id, in.ClientID, in.DiscoveryURL != nil, in.DiscoveryURL, in.Enabled, replaceSecret, ciphertext, nonce).
-		Scan(&p.ID, &p.TenantID, &p.Provider, &p.ClientID, &p.DiscoveryURL, &p.Enabled, &p.CreatedAt); err != nil {
+		RETURNING id, tenant_id, provider, client_id, discovery_url, enabled, created_at, apple_team_id, apple_key_id`,
+		id, in.ClientID, in.DiscoveryURL != nil, in.DiscoveryURL, in.Enabled, replaceSecret, ciphertext, nonce, in.AppleTeamID, in.AppleKeyID).
+		Scan(&p.ID, &p.TenantID, &p.Provider, &p.ClientID, &p.DiscoveryURL, &p.Enabled, &p.CreatedAt, &p.AppleTeamID, &p.AppleKeyID); err != nil {
 		return nil, err
 	}
+	p.Kind = kind
 
 	var changed []string
 	if in.ClientID != nil {
@@ -150,6 +190,12 @@ func (s *Service) UpdateProvider(ctx context.Context, tenantID uuid.UUID, provid
 	}
 	if in.DiscoveryURL != nil {
 		changed = append(changed, "discovery_url")
+	}
+	if in.AppleTeamID != nil {
+		changed = append(changed, "apple_team_id")
+	}
+	if in.AppleKeyID != nil {
+		changed = append(changed, "apple_key_id")
 	}
 	if replaceSecret {
 		changed = append(changed, "client_secret")
