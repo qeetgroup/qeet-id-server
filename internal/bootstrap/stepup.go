@@ -86,6 +86,7 @@ func StepUpRoutes() map[string]mfa.StepUpRule {
 		"DELETE /v1/tenants/{tenantID}/rate-limits",
 		"PUT /v1/users/{id}/mfa-required",
 		"DELETE /v1/users/{id}/mfa",
+		"DELETE /v1/tenants/{tenantID}/users/{id}/passkeys/{passkeyID}",
 		"POST /v1/users/{id}/password",
 
 		// Single sign-on, directories and the domains that route to them.

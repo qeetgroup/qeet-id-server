@@ -46,11 +46,14 @@ func userPermissionMap() map[string]string {
 		"DELETE /v1/users/{id}/push-devices/{deviceID}": "user.credentials",
 
 		// User 360 — per-user admin read surfaces + force sign-out (see user360.go).
-		"GET /v1/users/{id}/security":             "user.read",
-		"GET /v1/users/{id}/sessions":             "user.read",
-		"GET /v1/users/{id}/access":               "user.read",
-		"POST /v1/users/{id}/sessions/revoke-all": "session.revoke",
-		"PUT /v1/users/{id}/mfa-required":         "user.credentials",
+		"GET /v1/users/{id}/security":                                   "user.read",
+		"GET /v1/users/{id}/sessions":                                   "user.read",
+		"GET /v1/users/{id}/access":                                     "user.read",
+		"POST /v1/users/{id}/sessions/revoke-all":                       "session.revoke",
+		"DELETE /v1/tenants/{tenantID}/users/{id}/sessions/{sessionID}": "session.revoke",
+		"GET /v1/tenants/{tenantID}/users/{id}/passkeys":                "user.read",
+		"DELETE /v1/tenants/{tenantID}/users/{id}/passkeys/{passkeyID}": "user.credentials",
+		"PUT /v1/users/{id}/mfa-required":                               "user.credentials",
 
 		// Invites (inviting/removing members is user management).
 		"POST /v1/invites":                   "member.invite",

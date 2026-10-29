@@ -103,6 +103,49 @@ func (q *Queries) CountUserEffectivePermissions(ctx context.Context, arg CountUs
 	return effective, err
 }
 
+const deleteUserPasskey = `-- name: DeleteUserPasskey :one
+DELETE FROM auth.passkey_credentials WHERE id = $1 AND user_id = $2
+RETURNING name
+`
+
+type DeleteUserPasskeyParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+func (q *Queries) DeleteUserPasskey(ctx context.Context, arg DeleteUserPasskeyParams) (*string, error) {
+	row := q.db.QueryRow(ctx, deleteUserPasskey, arg.ID, arg.UserID)
+	var name *string
+	err := row.Scan(&name)
+	return name, err
+}
+
+const endMemberSession = `-- name: EndMemberSession :one
+UPDATE auth.sessions s SET revoked_at = NOW()
+WHERE s.id = $1 AND s.user_id = $2 AND s.revoked_at IS NULL
+  AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
+  AND (s.tenant_id = $3::uuid
+       OR (s.tenant_id IS NULL AND EXISTS (SELECT 1 FROM "user".users u WHERE u.id = s.user_id AND u.tenant_id = $3::uuid)))
+RETURNING COALESCE(s.tenant_id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS tenant_id
+`
+
+type EndMemberSessionParams struct {
+	ID       uuid.UUID
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+}
+
+// EndMemberSession ends one of a person's live sessions in the tenant, as
+// ListUserActiveSessions shows them, and returns its organisation for the
+// session.revoked signal (the nil UUID for none). No row: it isn't theirs
+// there, or has already ended.
+func (q *Queries) EndMemberSession(ctx context.Context, arg EndMemberSessionParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, endMemberSession, arg.ID, arg.UserID, arg.TenantID)
+	var tenant_id uuid.UUID
+	err := row.Scan(&tenant_id)
+	return tenant_id, err
+}
+
 const getAccessOrganization = `-- name: GetAccessOrganization :one
 SELECT id, name, slug FROM tenant.tenants WHERE id = $1
 `
@@ -722,6 +765,45 @@ func (q *Queries) ListUserGroupsInTenant(ctx context.Context, arg ListUserGroups
 	for rows.Next() {
 		var i ListUserGroupsInTenantRow
 		if err := rows.Scan(&i.ID, &i.Name, &i.Description); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUserPasskeys = `-- name: ListUserPasskeys :many
+SELECT id, name, created_at, last_used_at
+FROM auth.passkey_credentials
+WHERE user_id = $1
+ORDER BY created_at
+`
+
+type ListUserPasskeysRow struct {
+	ID         uuid.UUID
+	Name       *string
+	CreatedAt  time.Time
+	LastUsedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ListUserPasskeys(ctx context.Context, userID uuid.UUID) ([]ListUserPasskeysRow, error) {
+	rows, err := q.db.Query(ctx, listUserPasskeys, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUserPasskeysRow{}
+	for rows.Next() {
+		var i ListUserPasskeysRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.LastUsedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -3045,6 +3045,149 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/users/{id}/sessions/{sessionID}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_users_ById_sessions_BySessionID
+      summary: End one of a user's sessions
+      description: >-
+        Ends one of the user's live sessions, as GET /v1/users/{id}/sessions
+        lists them: one in the caller's organization, or an account-level one
+        when it is the user's home organization. Its refresh tokens stop
+        working at once; access tokens it was issued are refused as the
+        session's end is noticed. Requires session.revoke. The person must not
+        outrank the caller: only an owner signs out an owner (403
+        rbac.target_is_owner), and the caller must hold every permission the
+        person holds here (403 rbac.target_outranks_caller naming one). A
+        session that isn't theirs there, or has already ended, answers 404.
+        Audited as session.admin_revoked with the session's ID, and announced to
+        session.revoked subscribers with reason admin_revoked.
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: sessionID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Ended
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/users/{id}/passkeys:
+    get:
+      operationId: get_v1_tenants_ByTenantID_users_ById_passkeys
+      summary: List a user's passkeys
+      description: >-
+        The passkeys on a member's account, oldest first: each one's name, when
+        it was added and when it last signed them in. Requires user.read; someone
+        who doesn't belong to the caller's organization answers 404.
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The user's passkeys
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        name: { type: string, nullable: true }
+                        created_at: { type: string, format: date-time }
+                        last_used_at: { type: string, format: date-time, nullable: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/users/{id}/passkeys/{passkeyID}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_users_ById_passkeys_ByPasskeyID
+      summary: Remove a user's passkey
+      description: >-
+        Removes a passkey from a user's account, for example a lost device's,
+        so it no longer signs them in. Requires user.credentials and a recent
+        sign-in (step-up). Like a second-factor reset it is for the account's
+        home organization only (403 user.managed_elsewhere for a member from
+        elsewhere), and is refused with 403 user.credentials_shared, nothing
+        changing, while the account also belongs to another organization. The
+        person must not outrank the caller: only an owner changes an owner (403
+        rbac.target_is_owner), and the caller must hold every permission the
+        person holds here (403 rbac.target_outranks_caller naming one). The
+        account's last way to sign in isn't removed (409
+        auth.last_sign_in_method). A passkey that isn't theirs answers 404.
+        Audited as passkey.admin_deleted with the passkey's ID and name, and the
+        person is emailed that an administrator of this organization removed it.
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: passkeyID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Removed
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v1/tenants/{tenantID}/invites:
     get:
       operationId: get_v1_tenants_ByTenantID_invites

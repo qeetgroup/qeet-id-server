@@ -144,6 +144,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/users/{id}/security", h.getSecurity)
 	r.Get("/users/{id}/sessions", h.getSessions)
 	r.Post("/users/{id}/sessions/revoke-all", h.revokeAllSessions)
+	r.Delete("/tenants/{tenantID}/users/{id}/sessions/{sessionID}", h.endSession)
+	r.Get("/tenants/{tenantID}/users/{id}/passkeys", h.listPasskeys)
+	r.Delete("/tenants/{tenantID}/users/{id}/passkeys/{passkeyID}", h.removePasskey)
 	r.Get("/users/{id}/access", h.getAccess)
 	r.Put("/users/{id}/mfa-required", h.setMfaRequired)
 }
@@ -339,7 +342,7 @@ func (h *Handler) resetMFA(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.tellCredentialChange(ctx, tenantID, target.Email, credentialFactorsReset)
+	h.tellCredentialChange(ctx, tenantID, target.Email, credentialFactorsReset, "")
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"message": "The user's multi-factor authentication has been reset. They can re-enroll at next sign-in.",
 	})
@@ -714,7 +717,7 @@ func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.tellCredentialChange(r.Context(), tenantID, target.Email, credentialPasswordSet)
+	h.tellCredentialChange(r.Context(), tenantID, target.Email, credentialPasswordSet, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 
