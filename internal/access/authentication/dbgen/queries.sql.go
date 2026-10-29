@@ -1120,6 +1120,18 @@ func (q *Queries) SessionSecondFactor(ctx context.Context, arg SessionSecondFact
 	return i, err
 }
 
+const signInClientName = `-- name: SignInClientName :one
+SELECT name FROM auth.oidc_clients WHERE client_id = $1
+`
+
+// SignInClientName is the name of the application a hosted sign-in is for.
+func (q *Queries) SignInClientName(ctx context.Context, clientID string) (string, error) {
+	row := q.db.QueryRow(ctx, signInClientName, clientID)
+	var name string
+	err := row.Scan(&name)
+	return name, err
+}
+
 const spendAuthorizationCodesForUser = `-- name: SpendAuthorizationCodesForUser :execrows
 UPDATE auth.oidc_authorization_codes SET used_at = NOW()
 WHERE user_id = $1 AND used_at IS NULL

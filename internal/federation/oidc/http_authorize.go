@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -45,6 +46,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		h.authorizeError(w, r, clientID, redirect, state, oauthErr("login_required", "no active sign-in"))
 		return
 	case !ok:
+		auth.SetSignInClientCookie(w, clientID, h.CookieSecure)
 		http.Redirect(w, r, h.LoginBaseURL+"/sign-in?return_to="+url.QueryEscape(h.currentURL(r)), http.StatusFound)
 		return
 	case signInRequired(q, loginAfter, signedInAt, now) && silent:
@@ -112,6 +114,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// RFC 9207: identify the issuer in the authorization response.
+	auth.ClearSignInClientCookie(w, r, h.CookieSecure)
 	http.Redirect(w, r, appendQuery(redirect, "code", code, "state", state, "iss", h.Service.issuer.JWTIssuer()), http.StatusFound) // #nosec G710 -- redirect_uri matched against the registered list (a loopback port aside)
 }
 

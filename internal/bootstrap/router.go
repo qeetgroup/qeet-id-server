@@ -171,7 +171,8 @@ func NewRouter(d Deps) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(chimw.RequestID)
-	r.Use(httpx.ClientIPContext) // the client address, for audit records written below a handler
+	r.Use(httpx.ClientIPContext)    // the client address, for audit records written below a handler
+	r.Use(auth.SignInClientContext) // the application a hosted sign-in is for, for its audit record
 	// chimw.RealIP is deliberately not used: it trusts X-Forwarded-For from anyone.
 	// Client IPs come from httpx.ClientIP, governed by TRUSTED_PROXY_HOPS.
 	r.Use(httpx.GeoCountryContext) // the trusted upstream country, for the sessions a request opens

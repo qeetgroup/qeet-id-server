@@ -39,6 +39,7 @@ internal/access/authentication/mfalogin.go#Service.SendMFACode  secret-lookup: c
 internal/access/authentication/mfalogin.go#Service.StartMFAPush  secret-lookup: challenge found by its random MFA token
 internal/access/authentication/mfalogin.go#loadMFAChallenge  secret-lookup: challenge found by its random MFA token
 internal/access/authentication/mfapolicy.go#Service.StartMFAEnrollment  secret-lookup: challenge found by its random MFA token
+internal/access/authentication/queries.sql#SignInClientName  global-client: the name of the application a hosted sign-in is for, recorded on that sign-in
 internal/access/authentication/queries.sql#DeleteMFALoginChallenge  pending-review: unused query; delete it or add a tenant condition
 internal/access/authentication/queries.sql#DeleteTrustedDevicesForUser  parent-scoped: EndAllSignIns callers check the user first
 internal/access/authentication/queries.sql#DenyBackchannelRequestsForUser  parent-scoped: EndAllSignIns callers check the user first

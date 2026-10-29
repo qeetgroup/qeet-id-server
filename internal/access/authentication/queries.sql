@@ -508,3 +508,7 @@ UPDATE auth.mfa_failure_streaks SET locked_at = NOW() WHERE user_id = @user_id;
 -- set.
 -- name: EndMFAFailureStreak :exec
 DELETE FROM auth.mfa_failure_streaks WHERE user_id = @user_id;
+
+-- SignInClientName is the name of the application a hosted sign-in is for.
+-- name: SignInClientName :one
+SELECT name FROM auth.oidc_clients WHERE client_id = @client_id;

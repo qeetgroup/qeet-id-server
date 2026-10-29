@@ -113,7 +113,7 @@ func (s *Service) createLoginSession(ctx context.Context, userID, tenantID uuid.
 	if err != nil {
 		return "", err
 	}
-	if err := audit.Record(ctx, tx, signInEvent(userID, tenantID, "login_session", sessionID, ip, ua, method, nil)); err != nil {
+	if err := audit.Record(ctx, tx, signInEvent(userID, tenantID, "login_session", sessionID, ip, ua, method, s.signInClientMeta(ctx))); err != nil {
 		return "", err
 	}
 	return raw, tx.Commit(ctx)
