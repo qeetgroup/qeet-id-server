@@ -220,13 +220,13 @@ func (s *stripeProvider) CreateCheckout(ctx context.Context, in CheckoutInput) (
 	form.Set("line_items[0][price_data][unit_amount]", strconv.FormatInt(in.AmountMinor, 10))
 	form.Set("line_items[0][price_data][product_data][name]", in.PlanName)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.apiBase+"/v1/checkout/sessions", strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.apiBase+"/v1/checkout/sessions", strings.NewReader(form.Encode())) // #nosec G704 -- apiBase is stripeAPI; only tests change it
 	if err != nil {
 		return "", "", err
 	}
 	req.SetBasicAuth(s.secretKey, "")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := s.client.Do(req)
+	resp, err := s.client.Do(req) // #nosec G704 -- apiBase is stripeAPI; only tests change it
 	if err != nil {
 		return "", "", err
 	}
@@ -287,12 +287,12 @@ func (s *stripeProvider) PaymentMethod(ctx context.Context, body []byte) (*Payme
 		return nil, nil
 	}
 	u := s.apiBase + "/v1/payment_intents/" + url.PathEscape(evt.Data.Object.PaymentIntent) + "?expand[]=payment_method"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil) // #nosec G704 -- apiBase is stripeAPI; only tests change it
 	if err != nil {
 		return nil, err
 	}
 	req.SetBasicAuth(s.secretKey, "")
-	resp, err := s.client.Do(req)
+	resp, err := s.client.Do(req) // #nosec G704 -- apiBase is stripeAPI; only tests change it
 	if err != nil {
 		return nil, err
 	}
