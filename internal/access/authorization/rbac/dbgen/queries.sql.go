@@ -262,6 +262,25 @@ func (q *Queries) GetRoleTenant(ctx context.Context, id uuid.UUID) (uuid.UUID, e
 	return tenant_id, err
 }
 
+const grantBuiltinRolePermissions = `-- name: GrantBuiltinRolePermissions :exec
+INSERT INTO rbac.role_permissions (role_id, permission_id)
+SELECT ro.id, p.id
+FROM rbac.roles ro
+JOIN rbac.permissions p ON ro.name = 'owner'
+                        OR (ro.name = 'admin' AND p.key <> 'tenant.delete')
+                        OR (ro.name = 'viewer' AND p.key LIKE '%.read' AND p.key <> 'secret.read')
+WHERE ro.is_system
+ON CONFLICT DO NOTHING
+`
+
+// Every organisation's built-in roles hold what their definitions cover of the
+// catalogue as it is now: owner everything, admin everything but deleting the
+// organisation, viewer every read but secrets' (whose read reveals them).
+func (q *Queries) GrantBuiltinRolePermissions(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, grantBuiltinRolePermissions)
+	return err
+}
+
 const grantPermission = `-- name: GrantPermission :exec
 INSERT INTO rbac.role_permissions (role_id, permission_id)
 VALUES ($1, $2)

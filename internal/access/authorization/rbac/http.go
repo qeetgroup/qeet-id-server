@@ -223,8 +223,8 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	// Taking a permission away is held to the rule for giving it: the owner
-	// role keeps every permission, and nobody removes one they don't hold.
+	// Taking a permission away is held to the rule for giving it: a built-in
+	// role keeps its permissions, and nobody removes one they don't hold.
 	if err := h.Repo.CheckRoleEditable(r.Context(), scope, roleID); err != nil {
 		httpx.WriteError(w, r, err)
 		return

@@ -27,5 +27,5 @@ var (
 	ErrRBACOwnerOnly           = New(CodeRBACOwnerOnly, "Only an owner can make someone an owner.")
 	ErrRBACTargetIsOwner       = New(CodeRBACTargetIsOwner, "Only an owner can change an owner's account or roles.")
 	ErrRBACTargetOutranks      = New(CodeRBACTargetOutranks, "You can't change the account of someone who holds a permission you don't.")
-	ErrRBACSystemRoleFixed     = New(CodeRBACSystemRoleFixed, "The owner role always holds every permission; it can't be changed.")
+	ErrRBACSystemRoleFixed     = New(CodeRBACSystemRoleFixed, "A built-in role's permissions can't be changed. Create a role of your own for a different set.")
 )

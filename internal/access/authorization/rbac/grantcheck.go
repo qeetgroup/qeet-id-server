@@ -115,12 +115,12 @@ func (r *Repository) CheckActOn(ctx context.Context, caller *httpx.Principal, te
 	return nil
 }
 
-// CheckRoleEditable refuses changing the permissions of roleID of tenantID
-// when it is the built-in owner role, with ErrRBACSystemRoleFixed. A role that
-// isn't tenantID's passes, so the write itself must refuse it.
+// CheckRoleEditable refuses changing roleID of tenantID when it is one of the
+// built-in roles (owner, admin, member, viewer), with ErrRBACSystemRoleFixed.
+// A role that isn't tenantID's passes, so the write itself must refuse it.
 func (r *Repository) CheckRoleEditable(ctx context.Context, tenantID, roleID uuid.UUID) error {
 	var fixed bool
-	err := r.pool.QueryRow(ctx, `SELECT is_system AND name = 'owner' FROM rbac.roles WHERE id = $1 AND tenant_id = $2`, roleID, tenantID).Scan(&fixed)
+	err := r.pool.QueryRow(ctx, `SELECT is_system FROM rbac.roles WHERE id = $1 AND tenant_id = $2`, roleID, tenantID).Scan(&fixed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}

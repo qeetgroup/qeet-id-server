@@ -165,6 +165,9 @@ func (r *Repository) CreateWithOwnerTx(ctx context.Context, tx pgx.Tx, in Create
 	if err := q.GrantAllPermissionsToRole(ctx, roleID); err != nil {
 		return nil, err
 	}
+	if err := q.InsertBuiltinRoles(ctx, t.ID); err != nil {
+		return nil, err
+	}
 	if err := q.GrantRoleToUser(ctx, dbgen.GrantRoleToUserParams{
 		UserID:   ownerID,
 		TenantID: t.ID,

@@ -138,6 +138,22 @@ RETURNING id;
 INSERT INTO rbac.role_permissions (role_id, permission_id)
 SELECT $1, id FROM rbac.permissions;
 
+-- name: InsertBuiltinRoles :exec
+-- A new organisation's built-in roles, read-only like owner: admin holds
+-- everything but deleting the organisation, viewer every read but secrets'
+-- (whose read reveals them), member nothing.
+WITH builtin AS (
+    INSERT INTO rbac.roles (tenant_id, name, description, is_system)
+    VALUES (@tenant_id, 'admin', 'Administrator — everything but deleting the organisation', TRUE),
+           (@tenant_id, 'member', 'Member — signs in to the organisation''s apps, no administration', TRUE),
+           (@tenant_id, 'viewer', 'Viewer — reads everything, changes nothing', TRUE)
+    RETURNING id, name
+)
+INSERT INTO rbac.role_permissions (role_id, permission_id)
+SELECT b.id, p.id FROM builtin b
+JOIN rbac.permissions p ON (b.name = 'admin' AND p.key <> 'tenant.delete')
+                        OR (b.name = 'viewer' AND p.key LIKE '%.read' AND p.key <> 'secret.read');
+
 -- name: GrantRoleToUser :exec
 INSERT INTO rbac.user_roles (user_id, tenant_id, role_id, granted_by)
 VALUES ($1, $2, $3, $1);

@@ -9,6 +9,19 @@ VALUES (@key, @description)
 ON CONFLICT (key) DO UPDATE SET description = EXCLUDED.description
 RETURNING id, key, description;
 
+-- name: GrantBuiltinRolePermissions :exec
+-- Every organisation's built-in roles hold what their definitions cover of the
+-- catalogue as it is now: owner everything, admin everything but deleting the
+-- organisation, viewer every read but secrets' (whose read reveals them).
+INSERT INTO rbac.role_permissions (role_id, permission_id)
+SELECT ro.id, p.id
+FROM rbac.roles ro
+JOIN rbac.permissions p ON ro.name = 'owner'
+                        OR (ro.name = 'admin' AND p.key <> 'tenant.delete')
+                        OR (ro.name = 'viewer' AND p.key LIKE '%.read' AND p.key <> 'secret.read')
+WHERE ro.is_system
+ON CONFLICT DO NOTHING;
+
 -- name: ListPermissions :many
 SELECT id, key, description FROM rbac.permissions ORDER BY key;
 

@@ -179,7 +179,7 @@ paths:
   /v1/tenants/{tenantID}:
     delete:
       operationId: delete_v1_tenants_ByTenantID
-      description: 'Schedules the tenant''s deletion seven days from now (202 with deletion_due_at), audited as tenant.deletion_scheduled. Only a person who owns the tenant may (403 tenant.owner_only otherwise), and 409 tenant.deletion_scheduled answers one already scheduled. Until it is due the tenant keeps working and shows deletion_due_at, and an owner can call it off (POST /v1/tenants/{tenantID}/deletion/cancel). Once due, a background job soft-deletes it: members lose access and tenant-scoped calls stop resolving. Users who belonged only to this tenant are left without one and must create or join another. In the same transaction every session in the tenant ends (session.revoked with reason tenant_deleted) and the deletion is audited (tenant.deleted, by the system) and queued as an event; refresh and every sign-in refuse the tenant from then on (403 auth.tenant_inactive). The sessions'' access tokens stop working on this API at once; a service that verifies tokens offline accepts one until it expires. Thirty days after that its data is purged for good: every row of it, its audit trail included, and the accounts whose home it was (one still a member of another organisation is kept, with no home organisation). A record of the purge (when, and how many rows of each table) outlives it, with a platform audit event tenant.purged.'
+      description: 'Schedules the tenant''s deletion seven days from now (202 with deletion_due_at), audited as tenant.deletion_scheduled. Requires tenant.delete, and only a person who owns the tenant may (403 tenant.owner_only otherwise), and 409 tenant.deletion_scheduled answers one already scheduled. Until it is due the tenant keeps working and shows deletion_due_at, and an owner can call it off (POST /v1/tenants/{tenantID}/deletion/cancel). Once due, a background job soft-deletes it: members lose access and tenant-scoped calls stop resolving. Users who belonged only to this tenant are left without one and must create or join another. In the same transaction every session in the tenant ends (session.revoked with reason tenant_deleted) and the deletion is audited (tenant.deleted, by the system) and queued as an event; refresh and every sign-in refuse the tenant from then on (403 auth.tenant_inactive). The sessions'' access tokens stop working on this API at once; a service that verifies tokens offline accepts one until it expires. Thirty days after that its data is purged for good: every row of it, its audit trail included, and the accounts whose home it was (one still a member of another organisation is kept, with no home organisation). A record of the purge (when, and how many rows of each table) outlives it, with a platform audit event tenant.purged.'
       summary: Delete tenant
       tags:
         - Tenants
@@ -283,7 +283,7 @@ paths:
   /v1/tenants/{tenantID}/deletion/cancel:
     post:
       operationId: post_v1_tenants_ByTenantID_deletion_cancel
-      description: 'Calls off the tenant''s scheduled deletion and returns the tenant, audited as tenant.deletion_cancelled. Only a person who owns the tenant may (403 tenant.owner_only otherwise); 409 tenant.deletion_not_scheduled when none is.'
+      description: 'Calls off the tenant''s scheduled deletion and returns the tenant, audited as tenant.deletion_cancelled. Requires tenant.delete, and only a person who owns the tenant may (403 tenant.owner_only otherwise); 409 tenant.deletion_not_scheduled when none is.'
       summary: Cancel tenant deletion
       tags:
         - Tenants
@@ -739,7 +739,7 @@ paths:
     post:
       operationId: post_v1_users_ById_reactivate
       summary: Reactivate a suspended owned user
-      description: 'Requires user.write and ownership in the active tenant. Revokes existing sessions and records audit/outbox evidence atomically; old sessions are never restored. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
+      description: 'Requires user.suspend and ownership in the active tenant. Revokes existing sessions and records audit/outbox evidence atomically; old sessions are never restored. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
       tags: [Users]
       security: [{bearerAuth: []}, {apiKeyAuth: []}]
       parameters:
@@ -752,14 +752,14 @@ paths:
               schema:
                 $ref: '#/components/schemas/UserUser'
         '401': {description: Authentication required}
-        '403': {description: Missing user.write}
+        '403': {description: Missing user.suspend}
         '404': {description: Account not owned by this tenant}
         '409': {description: Account is no longer suspended}
   /v1/users/{id}/suspension:
     put:
       operationId: put_v1_users_ById_suspension
       summary: Review a suspended owned user
-      description: Requires user.write and ownership. Updates review facts and emits audit/outbox evidence without reactivating the account.
+      description: Requires user.suspend and ownership. Updates review facts and emits audit/outbox evidence without reactivating the account.
       tags: [Users]
       security: [{bearerAuth: []}, {apiKeyAuth: []}]
       parameters:
@@ -779,7 +779,7 @@ paths:
         '204': {description: Review saved}
         '400': {description: Invalid review facts}
         '401': {description: Authentication required}
-        '403': {description: Missing user.write}
+        '403': {description: Missing user.suspend}
         '404': {description: Account not owned by this tenant}
         '409': {description: Account is no longer suspended}
   /v1/users/trends:
@@ -1022,7 +1022,7 @@ paths:
   /v1/users/{id}:
     delete:
       operationId: delete_v1_users_ById
-      description: 'Soft-deletes the user, moving the account into the tenant recycle bin rather than erasing it. A soft-deleted account can be brought back with the restore call or removed for good with the purge call. It continues to appear in the deleted-users list until purged. In the same transaction every way the user is signed in ends (sessions, hosted-login sessions, application grants, remembered devices and pending authorizations), the deletion is audited (user.deleted, naming the admin) and a user.deleted event is queued; restoring the account brings none of those sessions back. The answer names the deleted user, when, and by whom. Only the organization the account belongs to can delete it; for a member whose account belongs elsewhere the call answers 403 user.managed_elsewhere. Refused with 409 tenant.last_owner, and nothing changes, when it would leave this organization with no active owner: make someone else an owner first. An organization the person owns elsewhere doesn''t block it; it is left without an active owner. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
+      description: 'Soft-deletes the user, moving the account into the tenant recycle bin rather than erasing it. Requires user.delete. A soft-deleted account can be brought back with the restore call or removed for good with the purge call. It continues to appear in the deleted-users list until purged. In the same transaction every way the user is signed in ends (sessions, hosted-login sessions, application grants, remembered devices and pending authorizations), the deletion is audited (user.deleted, naming the admin) and a user.deleted event is queued; restoring the account brings none of those sessions back. The answer names the deleted user, when, and by whom. Only the organization the account belongs to can delete it; for a member whose account belongs elsewhere the call answers 403 user.managed_elsewhere. Refused with 409 tenant.last_owner, and nothing changes, when it would leave this organization with no active owner: make someone else an owner first. An organization the person owns elsewhere doesn''t block it; it is left without an active owner. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
       summary: Delete user
       tags:
         - Users
@@ -1128,7 +1128,7 @@ paths:
   /v1/users/{id}/password:
     post:
       operationId: post_v1_users_ById_password
-      description: 'Administratively sets or replaces a user''s password. The password must meet the organisation''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). Every way the user is signed in ends in the same step, as with the revoke-all-sessions call, since an admin password reset is treated as incident response: their sessions, their hosted sign-in (browser) sessions, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey, the refresh grants their applications hold, the devices remembered to skip the second factor, and pending authorisations (unredeemed codes and device or back-channel sign-in requests). The user must authenticate again after this call. The audit record counts each (revoked_sessions, revoked_login_sessions, revoked_app_grants, revoked_trusted_devices, ended_pending_authorizations). Answers 501 not_implemented when this server is not configured to end sign-ins. Refused with 403 user.credentials_shared, and nothing changes, when the account also belongs to another organization: its password and second factors are the person''s credentials there too, so only they change them (the password reset link reaches only their address). Otherwise the person is emailed that an administrator of this organization made the change. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
+      description: 'Administratively sets or replaces a user''s password. Requires user.credentials. The password must meet the organisation''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). Every way the user is signed in ends in the same step, as with the revoke-all-sessions call, since an admin password reset is treated as incident response: their sessions, their hosted sign-in (browser) sessions, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey, the refresh grants their applications hold, the devices remembered to skip the second factor, and pending authorisations (unredeemed codes and device or back-channel sign-in requests). The user must authenticate again after this call. The audit record counts each (revoked_sessions, revoked_login_sessions, revoked_app_grants, revoked_trusted_devices, ended_pending_authorizations). Answers 501 not_implemented when this server is not configured to end sign-ins. Refused with 403 user.credentials_shared, and nothing changes, when the account also belongs to another organization: its password and second factors are the person''s credentials there too, so only they change them (the password reset link reaches only their address). Otherwise the person is emailed that an administrator of this organization made the change. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
       summary: Set password
       tags:
         - Users
@@ -1175,7 +1175,7 @@ paths:
     delete:
       operationId: delete_v1_users_ById_mfa
       summary: Admin reset user MFA
-      description: 'Account-recovery for a locked-out user, which also lifts a lock of their second-factor sign-in (403 mfa.locked). Requires the `user.write` permission; audited as `mfa.admin_reset`. Refused with 403 user.credentials_shared, and nothing changes, when the account also belongs to another organization: its password and second factors are the person''s credentials there too, so only they change them (the password reset link reaches only their address). Otherwise the person is emailed that an administrator of this organization made the change. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
+      description: 'Account-recovery for a locked-out user, which also lifts a lock of their second-factor sign-in (403 mfa.locked). Requires the `user.credentials` permission; audited as `mfa.admin_reset`. Refused with 403 user.credentials_shared, and nothing changes, when the account also belongs to another organization: its password and second factors are the person''s credentials there too, so only they change them (the password reset link reaches only their address). Otherwise the person is emailed that an administrator of this organization made the change. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
       tags:
         - Users
       parameters:
@@ -1278,7 +1278,7 @@ paths:
       operationId: delete_v1_users_ById_trusted_devices
       summary: Forget a member's remembered devices
       description: >-
-        Forgets every device a member has remembered in the caller's organisation, so each is asked for the second factor at its next sign-in there. Requires the user.write permission; each is audited as auth.trusted_device_revoked.
+        Forgets every device a member has remembered in the caller's organisation, so each is asked for the second factor at its next sign-in there. Requires the user.credentials permission; each is audited as auth.trusted_device_revoked.
       tags:
         - Users
       parameters:
@@ -1315,7 +1315,7 @@ paths:
       operationId: delete_v1_users_ById_trusted_devices_ByDeviceID
       summary: Forget one of a member's remembered devices
       description: >-
-        Forgets one device a member has remembered in the caller's organisation. Requires the user.write permission; 404 for a device that is not theirs there. Audited as auth.trusted_device_revoked.
+        Forgets one device a member has remembered in the caller's organisation. Requires the user.credentials permission; 404 for a device that is not theirs there. Audited as auth.trusted_device_revoked.
       tags:
         - Users
       parameters:
@@ -1407,7 +1407,7 @@ paths:
     delete:
       operationId: delete_v1_users_ById_push_devices_ByDeviceID
       summary: Disconnect a member's phone
-      description: Disconnects a member's linked phone, for example a lost one, so it receives no approval requests and cannot answer one. Requires the user.write permission; audited as mfa.push_device_revoked.
+      description: Disconnects a member's linked phone, for example a lost one, so it receives no approval requests and cannot answer one. Requires the user.credentials permission; audited as mfa.push_device_revoked.
       tags:
         - Users
       parameters:
@@ -1535,7 +1535,7 @@ paths:
         an administrative force sign-out. The access tokens of the user's
         sessions stop working on this API at once; applications' access tokens,
         and any a service verifies offline, last until they expire (minutes).
-        Requires `user.write`. The person must not outrank the caller: only an
+        Requires `session.revoke`. The person must not outrank the caller: only an
         owner signs out an owner (403 rbac.target_is_owner), and the caller must
         hold every permission the person holds here (403
         rbac.target_outranks_caller naming one); acting on yourself is allowed.
@@ -1654,7 +1654,7 @@ paths:
     put:
       operationId: put_v1_users_ById_mfaRequired
       summary: Set user MFA-required policy
-      description: 'Toggle the per-user `mfa_required` policy flag. Requires `user.write`; audited as `user.mfa_required_set` with the value set (`mfa_required`), in the same transaction as the change. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
+      description: 'Toggle the per-user `mfa_required` policy flag. Requires `user.credentials`; audited as `user.mfa_required_set` with the value set (`mfa_required`), in the same transaction as the change. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
       tags:
         - Users
       parameters:
@@ -1697,7 +1697,7 @@ paths:
   /v1/users/{id}/purge:
     delete:
       operationId: delete_v1_users_ById_purge
-      description: 'Permanently deletes a soft-deleted user, removing it from the recycle bin. This is irreversible and cannot be undone by the restore call. Use it only after the account has been soft-deleted. The account''s personal API keys and role memberships go with it; agents it sponsored and applications it reviewed are kept without it; an erasure request for it is kept and still names it. Audited as user.purged, in the same transaction as the purge. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
+      description: 'Permanently deletes a soft-deleted user, removing it from the recycle bin. Requires user.delete. This is irreversible and cannot be undone by the restore call. Use it only after the account has been soft-deleted. The account''s personal API keys and role memberships go with it; agents it sponsored and applications it reviewed are kept without it; an erasure request for it is kept and still names it. Audited as user.purged, in the same transaction as the purge. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
       summary: Purge user
       tags:
         - Users
@@ -1725,7 +1725,7 @@ paths:
     delete:
       operationId: delete_v1_users_ById_membership
       summary: Remove a member from this organization
-      description: 'Removes a member whose account belongs to another organization (or to none) from the caller''s organization, in one transaction: their roles and groups here, their sessions here, and the application grants and API keys they hold here. Their account and their other organizations are left alone. Audited as user.removed_from_organization, with an event. The organization''s own accounts are suspended or deleted instead (409 user.managed_here); someone who doesn''t belong here is 404. Removing an owner is refused with 409 tenant.last_owner, and nothing changes, when it would leave the organization with no active owner. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
+      description: 'Removes a member whose account belongs to another organization (or to none) from the caller''s organization (requires user.delete), in one transaction: their roles and groups here, their sessions here, and the application grants and API keys they hold here. Their account and their other organizations are left alone. Audited as user.removed_from_organization, with an event. The organization''s own accounts are suspended or deleted instead (409 user.managed_here); someone who doesn''t belong here is 404. Removing an owner is refused with 409 tenant.last_owner, and nothing changes, when it would leave the organization with no active owner. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
       tags:
         - Users
       parameters:
@@ -1764,7 +1764,7 @@ paths:
   /v1/users/{id}/restore:
     post:
       operationId: post_v1_users_ById_restore
-      description: 'Brings a soft-deleted user back from the tenant recycle bin, reversing an earlier delete call and returning the reactivated account. Only accounts that are still soft-deleted (not yet purged) can be restored. It is the counterpart to the purge call. An address another account has taken since the deletion is refused with 409 auth.email_exists. Audited as user.restored, in the same transaction as the restore. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
+      description: 'Brings a soft-deleted user back from the tenant recycle bin, reversing an earlier delete call and returning the reactivated account. Requires user.delete. Only accounts that are still soft-deleted (not yet purged) can be restored. It is the counterpart to the purge call. An address another account has taken since the deletion is refused with 409 auth.email_exists. Audited as user.restored, in the same transaction as the restore. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
       summary: Restore user
       tags:
         - Users
@@ -2620,7 +2620,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/InviteCreateInput'
-      description: 'Creates an invitation and emails its accept link. The address is kept lower-case and matched without regard to case. An invitation with no role_id, to someone already at home in another organization, is refused with 422 invite.role_required, as accepting it would join them to nothing. The accept link goes only to the invited address; the response carries the invitation and invite.delivery: status sent when a provider accepted the email, or not_sent with code and message when it did not (email.suppressed: the address bounced or reported spam before; email.provider_unavailable: no provider is configured). The invitation is created either way. A role_id that is not a role of the caller''s organization is refused with 404 not_found, the same answer whether the role does not exist or belongs to another organization, and no invitation is created. A pending invitation holds a seat, as does each person holding a role, directly or through a group; when the plan''s seats are all taken the invitation is refused with 402 billing.plan_limit (metadata resource seats, limit), and accepting it later takes no further seat. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key.'
+      description: 'Creates an invitation and emails its accept link. Requires member.invite. The address is kept lower-case and matched without regard to case. An invitation with no role_id, to someone already at home in another organization, is refused with 422 invite.role_required, as accepting it would join them to nothing. The accept link goes only to the invited address; the response carries the invitation and invite.delivery: status sent when a provider accepted the email, or not_sent with code and message when it did not (email.suppressed: the address bounced or reported spam before; email.provider_unavailable: no provider is configured). The invitation is created either way. A role_id that is not a role of the caller''s organization is refused with 404 not_found, the same answer whether the role does not exist or belongs to another organization, and no invitation is created. A pending invitation holds a seat, as does each person holding a role, directly or through a group; when the plan''s seats are all taken the invitation is refused with 402 billing.plan_limit (metadata resource seats, limit), and accepting it later takes no further seat. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key.'
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
@@ -3000,7 +3000,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Withdraws a pending invitation; its link stops working. Requires user.write.'
+      description: 'Withdraws a pending invitation; its link stops working. Requires member.invite.'
       responses:
         '204':
           description: No Content
@@ -3017,7 +3017,7 @@ paths:
   /v1/invites/{id}/resend:
     post:
       operationId: post_v1_invites_ById_resend
-      description: 'Rotates the invitation token, extends its expiry, and re-sends the invitation email; the new link goes only to the invited address. The response carries the invitation. Only pending or expired invites belonging to the caller''s tenant qualify; already-accepted or revoked invites are rejected. The recipient completes the flow through the accept-invite call, as with the original invitation. invite.delivery says whether the email went out (as on create): a suppressed address reports not_sent with email.suppressed rather than success.'
+      description: 'Rotates the invitation token, extends its expiry, and re-sends the invitation email; the new link goes only to the invited address. Requires member.invite. The response carries the invitation. Only pending or expired invites belonging to the caller''s tenant qualify; already-accepted or revoked invites are rejected. The recipient completes the flow through the accept-invite call, as with the original invitation. invite.delivery says whether the email went out (as on create): a suppressed address reports not_sent with email.suppressed rather than success.'
       summary: Resend an invitation
       tags: [Invites]
       parameters:

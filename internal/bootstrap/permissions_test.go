@@ -121,7 +121,7 @@ func TestEveryRouteNamesAnApplicationScope(t *testing.T) {
 		"PATCH /v1/me":            "account.write",
 		"POST /v1/account/delete": "account.write",
 		"GET /v1/users":           "user.read",
-		"DELETE /v1/users/{id}":   "user.write",
+		"DELETE /v1/users/{id}":   "user.delete",
 	} {
 		if got := policies[route].ApplicationScope; got != want {
 			t.Errorf("%s needs %q of an application, want %q", route, got, want)

@@ -136,3 +136,79 @@ func TestOwnersAndTheOwnerRoleStayProtected(t *testing.T) {
 		t.Errorf("the reviewers' role has %d permissions, want its one kept", n)
 	}
 }
+
+// TestBuiltinRolesHoldTheirDefinitions checks that seeding at boot gives an
+// organisation's built-in roles what their definitions cover of the catalogue
+// (owner everything, admin all but tenant.delete, viewer every read but
+// secret.read, member nothing), that nobody changes them, and that none counts
+// as a custom role.
+func TestBuiltinRolesHoldTheirDefinitions(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	repo := NewRepository(pool)
+	tenant := dbtest.Tenant(t)
+	roles := map[string]uuid.UUID{}
+	for _, name := range []string{"owner", "admin", "member", "viewer"} {
+		var id uuid.UUID
+		if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, $2, true) RETURNING id`, tenant, name).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		roles[name] = id
+	}
+	if err := repo.SeedBuiltins(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for name, role := range roles {
+		held := map[string]bool{}
+		for _, key := range permissionKeys(t, role) {
+			held[key] = true
+		}
+		for _, p := range builtinPermissionDefinitions {
+			want := map[string]bool{
+				"owner":  true,
+				"admin":  p.Key != "tenant.delete",
+				"member": false,
+				"viewer": strings.HasSuffix(p.Key, ".read") && p.Key != "secret.read",
+			}[name]
+			if held[p.Key] != want {
+				t.Errorf("the built-in %s role holds %s: %v, want %v", name, p.Key, held[p.Key], want)
+			}
+		}
+	}
+	if n, err := repo.CountCustomRoles(ctx, tenant); err != nil || n != 0 {
+		t.Errorf("custom roles: %d, %v; want the built-in ones not counted", n, err)
+	}
+
+	owner := dbtest.User(t, tenant)
+	dbtest.Assign(t, owner.ID, tenant, roles["owner"])
+	var tenantDelete, auditRead uuid.UUID
+	for key, id := range map[string]*uuid.UUID{"tenant.delete": &tenantDelete, "audit.read": &auditRead} {
+		if err := pool.QueryRow(ctx, `SELECT id FROM rbac.permissions WHERE key = $1`, key).Scan(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := &Handler{Repo: repo, Service: NewService(repo), Validate: validator.New(validator.WithRequiredStructEnabled())}
+	asOwner := dbtest.Serve(dbtest.Principal(owner.ID, tenant), h.Mount)
+	for _, tc := range []struct{ name, method, path string }{
+		{"an owner grants tenant.delete to admin", http.MethodPost, "/roles/" + roles["admin"].String() + "/permissions/" + tenantDelete.String()},
+		{"an owner takes audit.read from viewer", http.MethodDelete, "/roles/" + roles["viewer"].String() + "/permissions/" + auditRead.String()},
+		{"an owner grants audit.read to member", http.MethodPost, "/roles/" + roles["member"].String() + "/permissions/" + auditRead.String()},
+	} {
+		rec := dbtest.Do(t, asOwner, tc.method, tc.path, nil)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeRBACSystemRoleFixed) {
+			t.Errorf("%s: %d %s, want 403 %s", tc.name, rec.Code, rec.Body.String(), errs.CodeRBACSystemRoleFixed)
+		}
+	}
+}
+
+// permissionKeys lists the permissions role holds.
+func permissionKeys(t *testing.T, role uuid.UUID) []string {
+	t.Helper()
+	var keys []string
+	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `
+		SELECT coalesce(array_agg(p.key), '{}') FROM rbac.role_permissions rp
+		JOIN rbac.permissions p ON p.id = rp.permission_id WHERE rp.role_id = $1`, role).Scan(&keys); err != nil {
+		t.Fatal(err)
+	}
+	return keys
+}

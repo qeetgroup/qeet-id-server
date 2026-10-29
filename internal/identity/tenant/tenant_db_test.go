@@ -323,6 +323,46 @@ func TestOrganisationLifecycleIsTheOwners(t *testing.T) {
 // ptr is a pointer to v.
 func ptr[T any](v T) *T { return &v }
 
+// TestANewOrganisationHasItsBuiltinRoles checks that creating an organisation
+// gives it built-in admin, member and viewer roles beside owner: admin holding
+// all but tenant.delete, viewer only reads and not secret.read, member nothing.
+func TestANewOrganisationHasItsBuiltinRoles(t *testing.T) {
+	ctx := dbtest.Context(t)
+	h, _, _ := newHandler(t)
+	keys := []string{"tenant.delete", "secret.read", "audit.read", "user.write"}
+	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO rbac.permissions (key) SELECT unnest($1::text[]) ON CONFLICT (key) DO NOTHING`, keys); err != nil {
+		t.Fatal(err)
+	}
+	org, err := h.Repo.CreateWithOwner(ctx, CreateInput{Slug: dbtest.Unique("org"), Name: "Acme"}, verifiedAccount(t).ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string][]string{
+		"owner":  keys,
+		"admin":  {"secret.read", "audit.read", "user.write"},
+		"member": {},
+		"viewer": {"audit.read"},
+	} {
+		var held []string
+		if err := dbtest.Pool(t).QueryRow(ctx, `
+			SELECT coalesce(array_agg(p.key) FILTER (WHERE p.key = ANY($3)), '{}')
+			FROM rbac.roles ro
+			LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
+			LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
+			WHERE ro.tenant_id = $1 AND ro.is_system AND ro.name = $2`, org.ID, name, keys).Scan(&held); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		slices.Sort(held)
+		want = slices.Sorted(slices.Values(want))
+		if !slices.Equal(held, want) {
+			t.Errorf("the built-in %s role holds %v of %v, want %v", name, held, keys, want)
+		}
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.role_permissions rp JOIN rbac.roles ro ON ro.id = rp.role_id WHERE ro.tenant_id = $1 AND ro.name = 'member'`, org.ID); n != 0 {
+		t.Errorf("the built-in member role holds %d permissions, want none", n)
+	}
+}
+
 // TestOrganisationProfileChangesAreAudited checks that an update to an
 // organisation's name, region, logo or metadata is recorded as one
 // tenant.updated naming every field that changed (the name and region with

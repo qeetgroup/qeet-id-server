@@ -54,7 +54,10 @@ func MarkAddressVerified(ctx context.Context, q Querier, userID uuid.UUID) error
 
 // adminPermissions change who signs in to an organisation, or with what
 // authority. Domain capture counts the same administrators.
-var adminPermissions = []string{"user.write", "role.write", "group.write", "connection.write", "policy.write", "tenant.write"}
+var adminPermissions = []string{
+	"user.write", "user.delete", "user.suspend", "user.credentials", "session.revoke", "member.invite",
+	"role.write", "group.write", "connection.write", "policy.write", "tenant.write", "tenant.delete",
+}
 
 // AdminPermissions returns the permissions that administer an organisation:
 // single sign-on neither adopts an account holding one nor gives one by group.

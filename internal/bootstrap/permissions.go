@@ -15,8 +15,8 @@ func userPermissionMap() map[string]string {
 		// Tenants (GET /v1/tenants lists the caller's own memberships — ungated).
 		"GET /v1/tenants/{tenantID}":                  "tenant.read",
 		"PATCH /v1/tenants/{tenantID}":                "tenant.write",
-		"DELETE /v1/tenants/{tenantID}":               "tenant.write",
-		"POST /v1/tenants/{tenantID}/deletion/cancel": "tenant.write",
+		"DELETE /v1/tenants/{tenantID}":               "tenant.delete",
+		"POST /v1/tenants/{tenantID}/deletion/cancel": "tenant.delete",
 
 		// Users.
 		"GET /v1/users":                    "user.read",
@@ -27,36 +27,36 @@ func userPermissionMap() map[string]string {
 		"POST /v1/users/bulk/import":       "user.write",
 		"GET /v1/users/deleted":            "user.read",
 		"GET /v1/users/suspended":          "user.read",
-		"POST /v1/users/{id}/reactivate":   "user.write",
-		"PUT /v1/users/{id}/suspension":    "user.write",
+		"POST /v1/users/{id}/reactivate":   "user.suspend",
+		"PUT /v1/users/{id}/suspension":    "user.suspend",
 		"GET /v1/users/{id}":               "user.read",
 		"PATCH /v1/users/{id}":             "user.write",
-		"DELETE /v1/users/{id}":            "user.write",
-		"DELETE /v1/users/{id}/membership": "user.write",
-		"POST /v1/users/{id}/restore":      "user.write",
-		"DELETE /v1/users/{id}/purge":      "user.write",
-		"POST /v1/users/{id}/password":     "user.write",
-		"DELETE /v1/users/{id}/mfa":        "user.write", // admin MFA reset (Phase 3 feature)
+		"DELETE /v1/users/{id}":            "user.delete",
+		"DELETE /v1/users/{id}/membership": "user.delete",
+		"POST /v1/users/{id}/restore":      "user.delete",
+		"DELETE /v1/users/{id}/purge":      "user.delete",
+		"POST /v1/users/{id}/password":     "user.credentials",
+		"DELETE /v1/users/{id}/mfa":        "user.credentials", // admin MFA reset
 		// A member's remembered devices, in the administrator's organisation.
 		"GET /v1/users/{id}/trusted-devices":               "user.read",
-		"DELETE /v1/users/{id}/trusted-devices":            "user.write",
-		"DELETE /v1/users/{id}/trusted-devices/{deviceID}": "user.write",
+		"DELETE /v1/users/{id}/trusted-devices":            "user.credentials",
+		"DELETE /v1/users/{id}/trusted-devices/{deviceID}": "user.credentials",
 		// A member's linked phones, in the administrator's organisation.
 		"GET /v1/users/{id}/push-devices":               "user.read",
-		"DELETE /v1/users/{id}/push-devices/{deviceID}": "user.write",
+		"DELETE /v1/users/{id}/push-devices/{deviceID}": "user.credentials",
 
 		// User 360 — per-user admin read surfaces + force sign-out (see user360.go).
 		"GET /v1/users/{id}/security":             "user.read",
 		"GET /v1/users/{id}/sessions":             "user.read",
 		"GET /v1/users/{id}/access":               "user.read",
-		"POST /v1/users/{id}/sessions/revoke-all": "user.write",
-		"PUT /v1/users/{id}/mfa-required":         "user.write",
+		"POST /v1/users/{id}/sessions/revoke-all": "session.revoke",
+		"PUT /v1/users/{id}/mfa-required":         "user.credentials",
 
 		// Invites (inviting/removing members is user management).
-		"POST /v1/invites":                   "user.write",
+		"POST /v1/invites":                   "member.invite",
 		"GET /v1/tenants/{tenantID}/invites": "user.read",
-		"POST /v1/invites/{id}/resend":       "user.write",
-		"DELETE /v1/invites/{id}":            "user.write",
+		"POST /v1/invites/{id}/resend":       "member.invite",
+		"DELETE /v1/invites/{id}":            "member.invite",
 
 		// RBAC: roles, permissions, assignments, checks.
 		"GET /v1/permissions":                                         "role.read",

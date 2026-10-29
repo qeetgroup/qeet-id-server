@@ -88,7 +88,7 @@ func (h *Handler) MountAuthed(r chi.Router) {
 	r.Delete("/auth/trusted-devices", h.forgetOwnTrustedDevices)
 	r.Delete("/auth/trusted-devices/{id}", h.forgetOwnTrustedDevices)
 	// An administrator's view of a member's remembered devices, in the
-	// administrator's own organisation (user.read / user.write).
+	// administrator's own organisation (user.read / user.credentials).
 	r.Get("/users/{id}/trusted-devices", h.listMemberTrustedDevices)
 	r.Delete("/users/{id}/trusted-devices", h.forgetMemberTrustedDevices)
 	r.Delete("/users/{id}/trusted-devices/{deviceID}", h.forgetMemberTrustedDevices)

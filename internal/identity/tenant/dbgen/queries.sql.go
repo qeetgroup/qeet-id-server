@@ -123,6 +123,28 @@ func (q *Queries) GrantRoleToUser(ctx context.Context, arg GrantRoleToUserParams
 	return err
 }
 
+const insertBuiltinRoles = `-- name: InsertBuiltinRoles :exec
+WITH builtin AS (
+    INSERT INTO rbac.roles (tenant_id, name, description, is_system)
+    VALUES ($1, 'admin', 'Administrator — everything but deleting the organisation', TRUE),
+           ($1, 'member', 'Member — signs in to the organisation''s apps, no administration', TRUE),
+           ($1, 'viewer', 'Viewer — reads everything, changes nothing', TRUE)
+    RETURNING id, name
+)
+INSERT INTO rbac.role_permissions (role_id, permission_id)
+SELECT b.id, p.id FROM builtin b
+JOIN rbac.permissions p ON (b.name = 'admin' AND p.key <> 'tenant.delete')
+                        OR (b.name = 'viewer' AND p.key LIKE '%.read' AND p.key <> 'secret.read')
+`
+
+// A new organisation's built-in roles, read-only like owner: admin holds
+// everything but deleting the organisation, viewer every read but secrets'
+// (whose read reveals them), member nothing.
+func (q *Queries) InsertBuiltinRoles(ctx context.Context, tenantID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, insertBuiltinRoles, tenantID)
+	return err
+}
+
 const insertOwnerRole = `-- name: InsertOwnerRole :one
 
 INSERT INTO rbac.roles (tenant_id, name, description, is_system)

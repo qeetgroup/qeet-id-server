@@ -33,8 +33,14 @@ type permissionDefinition struct{ Key, Description string }
 var builtinPermissionDefinitions = []permissionDefinition{
 	{"tenant.read", "Read tenant configuration"},
 	{"tenant.write", "Modify tenant configuration"},
+	{"tenant.delete", "Delete the organisation, or call its deletion off"},
 	{"user.read", "List and read users"},
-	{"user.write", "Create, update, delete users (incl. set password, reset MFA)"},
+	{"user.write", "Create and update people"},
+	{"user.delete", "Delete, restore and purge people, and remove them from the organisation"},
+	{"user.suspend", "Suspend and reactivate people"},
+	{"user.credentials", "Set people's passwords, reset their second factors and require them, remove their trusted and push devices"},
+	{"session.revoke", "End people's sessions"},
+	{"member.invite", "Invite people, and resend or withdraw invitations"},
 	{"role.read", "Read roles and assignments"},
 	{"role.write", "Manage roles and assignments"},
 	{"audit.read", "Read audit events"},
@@ -485,8 +491,10 @@ func (r *Repository) Explain(ctx context.Context, userID, tenantID uuid.UUID, pe
 	return exp, nil
 }
 
-// SeedBuiltins upserts the built-in permissions in its own transaction. It is
-// idempotent and safe to run on every boot.
+// SeedBuiltins upserts the built-in permissions and gives every organisation's
+// built-in roles the ones their definitions cover, so a permission added in a
+// release reaches its owners, admins and viewers. It is idempotent and safe to
+// run on every boot.
 func (r *Repository) SeedBuiltins(ctx context.Context) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -497,6 +505,9 @@ func (r *Repository) SeedBuiltins(ctx context.Context) error {
 		if _, err := r.UpsertPermission(ctx, tx, permission.Key, permission.Description); err != nil {
 			return err
 		}
+	}
+	if err := r.q.WithTx(tx).GrantBuiltinRolePermissions(ctx); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
 }

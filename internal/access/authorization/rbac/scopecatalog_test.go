@@ -10,9 +10,10 @@ import (
 )
 
 // TestBackfillMigrationMatchesBuiltinPermissions checks that migration 0105's
-// machine-scope backfill lists exactly builtinPermissionDefinitions. Otherwise
-// backfilled credentials lack a new permission, or ValidateMachineScopes
-// rejects a scope the migration wrote.
+// machine-scope backfill, with the permissions 0207 split from user.write and
+// tenant.write and gave every holder of those, lists exactly
+// builtinPermissionDefinitions. Otherwise backfilled credentials lack a
+// permission, or ValidateMachineScopes rejects a scope a migration wrote.
 func TestBackfillMigrationMatchesBuiltinPermissions(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -28,6 +29,11 @@ func TestBackfillMigrationMatchesBuiltinPermissions(t *testing.T) {
 	}
 
 	inMigration := scopeLiteralsIn(string(raw))
+	split, err := os.ReadFile(filepath.Join(filepath.Dir(migration), "0207_finer_permissions.up.sql"))
+	if err != nil {
+		t.Fatalf("read the permission split migration: %v", err)
+	}
+	inMigration = append(inMigration, permissionsInsertedBy(string(split))...)
 	inCode := make([]string, 0, len(builtinPermissionDefinitions))
 	for _, permission := range builtinPermissionDefinitions {
 		inCode = append(inCode, permission.Key)
@@ -62,4 +68,25 @@ func scopeLiteralsIn(sql string) []string {
 		}
 	}
 	return scopes
+}
+
+// permissionsInsertedBy pulls the keys out of a migration's INSERT INTO
+// rbac.permissions: the first literal of each row.
+func permissionsInsertedBy(sql string) []string {
+	start := strings.Index(sql, "INSERT INTO rbac.permissions")
+	if start < 0 {
+		return nil
+	}
+	end := strings.Index(sql[start:], ";")
+	var keys []string
+	for _, line := range strings.Split(sql[start:start+end], "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "('") {
+			continue
+		}
+		if key, _, ok := strings.Cut(line[2:], "'"); ok {
+			keys = append(keys, key)
+		}
+	}
+	return keys
 }

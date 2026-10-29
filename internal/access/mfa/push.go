@@ -574,7 +574,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 }
 
 // MountAdmin mounts an administrator's view of a member's linked phones, in
-// the administrator's own organisation (user.read / user.write).
+// the administrator's own organisation (user.read / user.credentials).
 func (h *Handler) MountAdmin(r chi.Router) {
 	r.Get("/users/{id}/push-devices", h.listMemberPushDevices)
 	r.Delete("/users/{id}/push-devices/{deviceID}", h.revokeMemberPushDevice)
