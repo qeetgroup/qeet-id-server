@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/accountnotice"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/dbgen"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
@@ -357,7 +358,12 @@ func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) er
 	}); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	accountnotice.Tell(ctx, s.pool, s.sender, in.UserID, "Your password was changed",
+		"A new password was set for your Qeet ID account, and you were signed out everywhere else.")
+	return nil
 }
 
 // HasPassword reports whether the user has a password credential set — lets the

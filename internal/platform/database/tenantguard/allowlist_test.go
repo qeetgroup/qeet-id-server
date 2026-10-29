@@ -32,6 +32,7 @@ cmd/seed/internal/world/audit.go#World.Rechain  dev-seed: lists every audit chai
 cmd/seed/internal/world/audit.go#World.rechain  dev-seed: reads one chain, the tenant or platform one, to rehash it
 cmd/seed/internal/world/audit.go#World.VerifyChains  dev-seed: lists every audit chain to verify it
 
+internal/access/accountnotice/accountnotice.go#Tell  session-scoped: the account the change was made to, by its owner or on their account, read for its own address
 internal/access/authentication/accountstatus.go#Service.refuseInactiveAccount  pre-tenant: sign-in checks the account it just verified
 internal/access/authentication/mfalogin.go#Service.BeginMFAPasskey  secret-lookup: challenge found by its random MFA token
 internal/access/authentication/mfalogin.go#Service.SendMFACode  secret-lookup: challenge found by its random MFA token

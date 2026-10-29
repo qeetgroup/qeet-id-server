@@ -19,6 +19,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/accountnotice"
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
@@ -412,7 +413,12 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 	}); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	accountnotice.Tell(ctx, s.pool, s.sender, userID, "Your password was reset",
+		"The password for your Qeet ID account was reset with a link sent to this address, and you were signed out everywhere.")
+	return nil
 }
 
 // resetLink reads the reset link hash names through q, refusing one that is

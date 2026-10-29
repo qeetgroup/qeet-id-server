@@ -4,6 +4,7 @@ package dbtest
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -178,6 +179,13 @@ func (b *Mailbox) Last(t testing.TB) notifier.Message {
 		t.Fatal("dbtest: no message was sent")
 	}
 	return b.sent[len(b.sent)-1]
+}
+
+// Messages returns every message sent, oldest first.
+func (b *Mailbox) Messages() []notifier.Message {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.sent)
 }
 
 // Len returns how many messages were sent.

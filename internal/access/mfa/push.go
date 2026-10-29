@@ -626,6 +626,7 @@ func (h *Handler) registerPushDevice(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	h.Service.tellPhoneLinked(r.Context(), *p.UserID)
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
 		"device":       device,
 		"device_token": deviceToken,
@@ -649,6 +650,7 @@ func (h *Handler) revokePushDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.Service.auditPushDevice(r, p.TenantID, *p.UserID, deviceID, "mfa.push_device_revoked")
+	h.Service.tellPhoneUnlinked(r.Context(), *p.UserID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -687,6 +689,7 @@ func (h *Handler) unlinkPushDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.Service.auditPushDevice(r, nil, in.UserID, id, "mfa.push_device_unlinked")
+	h.Service.tellPhoneUnlinked(r.Context(), in.UserID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

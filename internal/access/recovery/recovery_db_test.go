@@ -74,6 +74,9 @@ func TestPasswordReset(t *testing.T) {
 	if err := svc.ConfirmPasswordReset(ctx, token, newPassword, AuditCtx{}); err != nil {
 		t.Fatalf("confirm reset: %v", err)
 	}
+	if m := mail.Last(t); m.To != a.Email || m.Subject != "Your password was reset" || strings.Contains(m.Body, token) {
+		t.Errorf("notice %q to %s: %q; want the person told, without the link", m.Subject, m.To, m.Body)
+	}
 	var hash string
 	if err := pool.QueryRow(ctx, `SELECT password_hash FROM auth.password_credentials WHERE user_id = $1`, a.ID).Scan(&hash); err != nil {
 		t.Fatalf("read password: %v", err)

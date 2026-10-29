@@ -5,8 +5,12 @@
 package mfa
 
 import (
+	"context"
+
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/accountnotice"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -24,6 +28,25 @@ type Service struct {
 	webauthn        WebAuthnVerifier          // passkeys as a sign-in second factor (nil = not offered)
 	plan            PlanGate                  // gates SMS codes by plan (nil = no gate)
 	deliverable     func(channel string) bool // whether a channel can deliver (nil = assume it can)
+}
+
+// tellAccountChange emails userID that how they sign in changed, after the
+// change has committed (accountnotice.Tell).
+func (s *Service) tellAccountChange(ctx context.Context, userID uuid.UUID, subject, intro string) {
+	accountnotice.Tell(ctx, s.pool, s.sender, userID, subject, intro)
+}
+
+// tellPhoneLinked emails userID that a phone can now approve their sign-ins.
+func (s *Service) tellPhoneLinked(ctx context.Context, userID uuid.UUID) {
+	s.tellAccountChange(ctx, userID, "A phone was linked to approve your sign-ins",
+		"A phone was linked to your Qeet ID account and can now approve your sign-ins.")
+}
+
+// tellPhoneUnlinked emails userID that a phone no longer approves their
+// sign-ins.
+func (s *Service) tellPhoneUnlinked(ctx context.Context, userID uuid.UUID) {
+	s.tellAccountChange(ctx, userID, "A phone was unlinked from your account",
+		"A phone that approved your sign-ins was unlinked from your Qeet ID account.")
 }
 
 // NewService returns the second-factor service.

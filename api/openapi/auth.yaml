@@ -675,7 +675,7 @@ paths:
   /v1/auth/reset-password:
     post:
       operationId: post_v1_auth_reset_password
-      description: 'Completes the password-reset flow started by the forgot-password call by consuming the emailed token and setting the new password. The token is single-use and time-limited, so an expired or already-redeemed token is rejected. The new password is checked against the rules of the organisation the account belongs to (the platform baseline of 8 characters for an account with no organisation), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed and leaves the password and the token unchanged. On success the password is updated and the user can sign in with the new credentials. Every hosted sign-in (browser) session of the person ends too, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey; the audit record counts them (revoked_login_sessions). The completed reset is recorded in the account''s organisation''s audit trail as auth.password_reset_confirmed. A link for an address that must now sign in with single sign-on is refused with 403 auth.sso_required; the password and the link stay as they were (see the SSORequired response).'
+      description: 'Completes the password-reset flow started by the forgot-password call by consuming the emailed token and setting the new password. The token is single-use and time-limited, so an expired or already-redeemed token is rejected. The new password is checked against the rules of the organisation the account belongs to (the platform baseline of 8 characters for an account with no organisation), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed and leaves the password and the token unchanged. On success the password is updated and the user can sign in with the new credentials. Every hosted sign-in (browser) session of the person ends too, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey; the audit record counts them (revoked_login_sessions). The completed reset is recorded in the account''s organisation''s audit trail as auth.password_reset_confirmed. A link for an address that must now sign in with single sign-on is refused with 403 auth.sso_required; the password and the link stay as they were (see the SSORequired response). The account holder is emailed that it happened, with what to do if it wasn''t them.'
       summary: Reset password
       tags:
         - Auth
@@ -1006,7 +1006,7 @@ paths:
     post:
       operationId: post_v1_auth_password
       summary: Change or set my password
-      description: 'Rotates (or sets) the signed-in user''s password. current_password is required only when one is already set; a social/passkey account may set one by omitting it. It needs a step-up while the caller holds a second factor (403 step_up_required), and otherwise a recent sign-in (403 recent_sign_in_required). Other sessions are revoked. The new password must meet the rules of the organisation the account belongs to (not the session''s tenant; the platform baseline of 8 characters for an account with no organisation), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed. Self-service. Every hosted sign-in (browser) session of the person ends too, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey; the audit record counts them (revoked_login_sessions). The session the change is made from is kept.'
+      description: 'Rotates (or sets) the signed-in user''s password. current_password is required only when one is already set; a social/passkey account may set one by omitting it. It needs a step-up while the caller holds a second factor (403 step_up_required), and otherwise a recent sign-in (403 recent_sign_in_required). Other sessions are revoked. The new password must meet the rules of the organisation the account belongs to (not the session''s tenant; the platform baseline of 8 characters for an account with no organisation), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed. Self-service. Every hosted sign-in (browser) session of the person ends too, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey; the audit record counts them (revoked_login_sessions). The session the change is made from is kept. The account holder is emailed that it happened, with what to do if it wasn''t them.'
       tags:
         - Auth
       security:
@@ -2096,7 +2096,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Removes one of the caller''s SMS or email factors. Needs a recent step-up.'
+      description: 'Removes one of the caller''s SMS or email factors. Needs a recent step-up. The account holder is emailed that it happened, with what to do if it wasn''t them.'
       responses:
         '204':
           description: No Content
@@ -2170,7 +2170,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/verifyInput'
-      description: 'Completes adding an SMS or email factor with the code sent to it.'
+      description: 'Completes adding an SMS or email factor with the code sent to it. The account holder is emailed that it happened, with what to do if it wasn''t them.'
       responses:
         '201':
           description: Created
@@ -2265,7 +2265,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Replaces the caller''s recovery codes; the new ones are shown only in this answer and the old ones stop working. Needs a recent step-up.'
+      description: 'Replaces the caller''s recovery codes; the new ones are shown only in this answer and the old ones stop working. Needs a recent step-up. The account holder is emailed that it happened, with what to do if it wasn''t them.'
       responses:
         '201':
           description: Created
@@ -2483,7 +2483,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Removes the caller''s authenticator app and recovery codes. Needs a recent step-up.'
+      description: 'Removes the caller''s authenticator app and recovery codes. Needs a recent step-up. The account holder is emailed that it happened, with what to do if it wasn''t them.'
       responses:
         '204':
           description: No Content
@@ -2512,7 +2512,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/confirmEnrollInput'
-      description: 'Completes adding an authenticator app with a code from it, and returns the recovery codes.'
+      description: 'Completes adding an authenticator app with a code from it, and returns the recovery codes. The account holder is emailed that it happened, with what to do if it wasn''t them.'
       responses:
         '201':
           description: Created
@@ -2731,7 +2731,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
     post:
       operationId: post_v1_mfa_push_devices
-      description: 'Registers a mobile device for push-based MFA, or rotates the credential of an existing one, from its platform push token. The resulting device token is returned only in this response and cannot be retrieved later, so the device must persist it to answer future challenges. That token is required when responding to a challenge; revoke the device with the corresponding delete call.'
+      description: 'Registers a mobile device for push-based MFA, or rotates the credential of an existing one, from its platform push token. The resulting device token is returned only in this response and cannot be retrieved later, so the device must persist it to answer future challenges. That token is required when responding to a challenge; revoke the device with the corresponding delete call. The account holder is emailed that it happened, with what to do if it wasn''t them.'
       summary: Register or rotate a push-MFA device
       tags: [MFA]
       security:
@@ -2768,7 +2768,7 @@ paths:
   /v1/mfa/push/devices/{id}:
     delete:
       operationId: delete_v1_mfa_push_devices_ById
-      description: 'Revokes a registered push-MFA device by its identifier so it can no longer approve challenges. Its device token is invalidated immediately and any pending challenge to it can no longer be answered. Re-enroll the device with the register-device call if push approval is needed again.'
+      description: 'Revokes a registered push-MFA device by its identifier so it can no longer approve challenges. Its device token is invalidated immediately and any pending challenge to it can no longer be answered. Re-enroll the device with the register-device call if push approval is needed again. The account holder is emailed that it happened, with what to do if it wasn''t them.'
       summary: Revoke a push-MFA device
       tags: [MFA]
       security:
@@ -2796,6 +2796,7 @@ paths:
         expiry, since removing itself grants nothing. 401 mfa.push_unauthorized
         when the device or credential does not match. Audited as
         mfa.push_device_unlinked.
+        The account holder is emailed that it happened, with what to do if it wasn't them.
       tags:
         - MFA
       security: []
@@ -2931,6 +2932,7 @@ paths:
         the account's user_id, the device and its device_token, which is shown only here. A wrong, used or
         expired code, or one whose account is no longer active, answers 401 mfa.pairing_code_invalid, all
         alike. Throttled per address (429). Audited as mfa.push_device_linked.
+        The account holder is emailed that it happened, with what to do if it wasn't them.
       tags: [MFA]
       security: []
       requestBody:

@@ -355,5 +355,6 @@ func (h *Handler) claimPushPairing(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	h.Service.tellPhoneLinked(r.Context(), claim.UserID)
 	httpx.WriteJSON(w, http.StatusCreated, claim)
 }
