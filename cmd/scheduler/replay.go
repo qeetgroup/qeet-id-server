@@ -45,7 +45,7 @@ func replayFilter(args []string) (outbox.ReplayFilter, error) {
 func replayDeadLetters(ctx context.Context, pool *pgxpool.Pool, args []string) int {
 	f, err := replayFilter(args)
 	if err != nil {
-		slog.Error(replayCommand + ": " + err.Error())
+		slog.Error(replayCommand+": invalid arguments", "err", err)
 		return 2
 	}
 	n, err := outbox.ReplayDeadLetters(ctx, pool, f)

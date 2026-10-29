@@ -207,6 +207,7 @@ func (h *Handler) answerTestSignIn(w http.ResponseWriter, r *http.Request, conn 
 		httpx.WriteError(w, r, err)
 		return true
 	}
+	// #nosec G710 -- returnURL is the one BeginTestSignIn stored: the admin portal's own page, from server config
 	http.Redirect(w, r, test.returnURL+"#saml_test="+test.id.String()+"&saml_connection="+conn.ID.String(), http.StatusFound)
 	return true
 }
