@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"time"
 
 	"github.com/google/uuid"
@@ -144,6 +145,13 @@ func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID u
 		ExpiresAt: s.refreshExpiry(sessionExp),
 	}); err != nil {
 		return nil, err
+	}
+	if factor := secondFactorOfMethod(method); factor != "" && auditMeta["second_factor"] == nil {
+		auditMeta = maps.Clone(auditMeta)
+		if auditMeta == nil {
+			auditMeta = map[string]any{}
+		}
+		auditMeta["second_factor"] = factor
 	}
 	if err := audit.Record(ctx, tx, signInEvent(userID, tenantID, "session", sessionID, ip, ua, method, auditMeta)); err != nil {
 		return nil, err

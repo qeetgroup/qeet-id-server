@@ -48,6 +48,10 @@ func TestASignInSaysWhichApplicationItWasFor(t *testing.T) {
 	if n := recorded(byCookie.ID); n != 1 {
 		t.Errorf("a passkey sign-in after the authorization endpoint named the application recorded it %d times, want once", n)
 	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE actor_user_id = $1 AND action = 'auth.login_succeeded'
+		AND metadata->>'second_factor' = 'passkey'`, byCookie.ID); n != 1 {
+		t.Errorf("a passkey sign-in recorded its second factor %d times, want once", n)
+	}
 
 	unknown := dbtest.User(t, tenant, tenant)
 	if _, err := svc.CreatePasskeyLoginSession(WithSignInClient(ctx, "no-such-app"), unknown.ID, freshIP(), testUserAgent); err != nil {

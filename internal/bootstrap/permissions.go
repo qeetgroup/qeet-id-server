@@ -52,6 +52,7 @@ func userPermissionMap() map[string]string {
 		"POST /v1/users/{id}/sessions/revoke-all":                       "session.revoke",
 		"DELETE /v1/tenants/{tenantID}/users/{id}/sessions/{sessionID}": "session.revoke",
 		"GET /v1/tenants/{tenantID}/users/{id}/passkeys":                "user.read",
+		"GET /v1/tenants/{tenantID}/users/{id}/sign-ins":                "audit.read",
 		"DELETE /v1/tenants/{tenantID}/users/{id}/passkeys/{passkeyID}": "user.credentials",
 		"PUT /v1/users/{id}/mfa-required":                               "user.credentials",
 

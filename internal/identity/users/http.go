@@ -146,6 +146,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/users/{id}/sessions/revoke-all", h.revokeAllSessions)
 	r.Delete("/tenants/{tenantID}/users/{id}/sessions/{sessionID}", h.endSession)
 	r.Get("/tenants/{tenantID}/users/{id}/passkeys", h.listPasskeys)
+	r.Get("/tenants/{tenantID}/users/{id}/sign-ins", h.signIns)
 	r.Delete("/tenants/{tenantID}/users/{id}/passkeys/{passkeyID}", h.removePasskey)
 	r.Get("/users/{id}/access", h.getAccess)
 	r.Put("/users/{id}/mfa-required", h.setMfaRequired)
