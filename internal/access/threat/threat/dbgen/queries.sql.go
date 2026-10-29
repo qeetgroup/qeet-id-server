@@ -139,14 +139,15 @@ func (q *Queries) ListTenantsForEmails(ctx context.Context, emails []string) ([]
 
 const resolveSecurityEvent = `-- name: ResolveSecurityEvent :one
 UPDATE auth.security_events
-SET status = 'resolved', resolved_at = NOW()
-WHERE id = $1 AND tenant_id = $2 AND resolved_at IS NULL
+SET status = 'resolved', resolved_at = NOW(), resolved_by = $1
+WHERE id = $2 AND tenant_id = $3 AND resolved_at IS NULL
 RETURNING type, severity, user_id
 `
 
 type ResolveSecurityEventParams struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
+	ResolvedBy pgtype.UUID
+	ID         uuid.UUID
+	TenantID   uuid.UUID
 }
 
 type ResolveSecurityEventRow struct {
@@ -158,7 +159,7 @@ type ResolveSecurityEventRow struct {
 // ResolveSecurityEvent returns what the resolved anomaly was, for its audit
 // record.
 func (q *Queries) ResolveSecurityEvent(ctx context.Context, arg ResolveSecurityEventParams) (ResolveSecurityEventRow, error) {
-	row := q.db.QueryRow(ctx, resolveSecurityEvent, arg.ID, arg.TenantID)
+	row := q.db.QueryRow(ctx, resolveSecurityEvent, arg.ResolvedBy, arg.ID, arg.TenantID)
 	var i ResolveSecurityEventRow
 	err := row.Scan(&i.Type, &i.Severity, &i.UserID)
 	return i, err

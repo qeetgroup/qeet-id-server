@@ -47,6 +47,6 @@ WHERE tenant_id = $1;
 -- record.
 -- name: ResolveSecurityEvent :one
 UPDATE auth.security_events
-SET status = 'resolved', resolved_at = NOW()
-WHERE id = $1 AND tenant_id = $2 AND resolved_at IS NULL
+SET status = 'resolved', resolved_at = NOW(), resolved_by = sqlc.narg('resolved_by')
+WHERE id = @id AND tenant_id = @tenant_id AND resolved_at IS NULL
 RETURNING type, severity, user_id;

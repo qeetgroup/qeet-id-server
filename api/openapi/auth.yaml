@@ -4968,6 +4968,9 @@ paths:
           required: true
           schema:
             type: string
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+        - {name: cursor, in: query, required: false, description: The previous page's next_cursor., schema: {type: string}}
+        - {name: verdict, in: query, required: false, schema: {type: string, enum: [allowed, challenged, blocked]}}
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -4978,14 +4981,23 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [recent, stats]
+                required: [recent, stats, total]
                 properties:
                   recent:
                     type: array
+                    description: A page of detections, newest first.
                     items:
                       $ref: '#/components/schemas/BotEvent'
+                  next_cursor:
+                    type: string
+                    description: Present when there is a next page.
+                  total:
+                    type: integer
+                    description: How many detections match.
                   stats:
                     $ref: '#/components/schemas/Stats'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -5133,21 +5145,33 @@ paths:
           required: true
           schema:
             type: string
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+        - {name: cursor, in: query, required: false, description: The previous page's next_cursor., schema: {type: string}}
+        - {name: status, in: query, required: false, schema: {type: string, enum: [open, resolved]}}
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
         '200':
-          description: Recent anomalies
+          description: A page of anomalies, newest first
           content:
             application/json:
               schema:
                 type: object
+                required: [items, total]
                 properties:
                   items:
                     type: array
                     items:
                       $ref: '#/components/schemas/Anomaly'
+                  next_cursor:
+                    type: string
+                    description: Present when there is a next page.
+                  total:
+                    type: integer
+                    description: How many anomalies match.
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -5848,6 +5872,12 @@ components:
     Anomaly:
       type: object
       properties:
+        resolved_by:
+          type: string
+          format: uuid
+          description: The person who resolved it; absent while open.
+        resolved_by_email:
+          type: string
         id:
           type: string
           format: uuid
@@ -6289,8 +6319,18 @@ components:
           type: string
     BotEvent:
       type: object
-      required: [created_at, id, score, user_agent, verdict]
+      required: [created_at, id, score, user_agent, verdict, outcome]
       properties:
+        user_id:
+          type: string
+          format: uuid
+          description: The account the sign-in attempt was for, when it exists.
+        user_email:
+          type: string
+        outcome:
+          type: string
+          enum: [signed_in, failed, unknown]
+          description: How that account's next sign-in from the same address, within five minutes, ended.
         created_at:
           type: string
           format: date-time

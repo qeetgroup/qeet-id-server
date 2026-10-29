@@ -43,8 +43,12 @@ func TestLockoutsCountAsOpenIncidents(t *testing.T) {
 	if sum.Open != 3 || sum.AffectedAccounts != 1 || sum.HighSeverity24h != 3 || sum.Resolved24h != 0 {
 		t.Errorf("summary %+v, want 3 open (2 rate-limited, 1 open), 1 affected account, 3 high or critical", *sum)
 	}
-	events, err := svc.List(ctx, tenant, 10)
-	if err != nil || len(events) != 3 {
+	page, err := svc.List(ctx, tenant, 10, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := page.Items
+	if len(events) != 3 {
 		t.Fatalf("list: %d events, %v", len(events), err)
 	}
 	for _, e := range events {
@@ -105,8 +109,12 @@ func TestResolvingAnAnomalyIsAudited(t *testing.T) {
 	if err := svc.Record(ctx, Event{TenantID: tenant, UserID: &victim.ID, Type: "credential_stuffing", Severity: "high", Detail: "burst"}); err != nil {
 		t.Fatal(err)
 	}
-	events, err := svc.List(ctx, tenant, 10)
-	if err != nil || len(events) != 1 {
+	page, err := svc.List(ctx, tenant, 10, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := page.Items
+	if len(events) != 1 {
 		t.Fatalf("list: %d events, %v", len(events), err)
 	}
 	id := events[0].ID
@@ -140,5 +148,39 @@ func TestResolvingAnAnomalyIsAudited(t *testing.T) {
 	}
 	if code := resolve(admin.ID, tenant); code != http.StatusNotFound {
 		t.Errorf("resolve again: %d, want 404", code)
+	}
+}
+
+// TestAnomaliesArePagedAndSayWhoResolvedThem checks that anomalies page by
+// cursor with a total, filter by status, and name who resolved one.
+func TestAnomaliesArePagedAndSayWhoResolvedThem(t *testing.T) {
+	ctx := dbtest.Context(t)
+	svc := NewService(dbtest.Pool(t))
+	tenant := dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	for range 3 {
+		if err := svc.Record(ctx, Event{TenantID: tenant, Type: "credential_stuffing", Severity: "high", Detail: "burst"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
+	base := "/tenants/" + tenant.String() + "/security/anomalies"
+	var page Page
+	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, base+"?limit=2", nil), &page)
+	if page.Total != 3 || len(page.Items) != 2 || page.NextCursor == "" {
+		t.Fatalf("first page: %d of %d, cursor %q", len(page.Items), page.Total, page.NextCursor)
+	}
+	id := page.Items[0].ID
+	if rec := dbtest.Do(t, h, http.MethodPost, base+"/"+id.String()+"/resolve", nil); rec.Code/100 != 2 {
+		t.Fatalf("resolve: %d %s", rec.Code, rec.Body.String())
+	}
+	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, base+"?status=resolved", nil), &page)
+	if page.Total != 1 || page.Items[0].ID != id || page.Items[0].ResolvedBy == nil || *page.Items[0].ResolvedBy != admin.ID ||
+		page.Items[0].ResolvedByEmail == nil || *page.Items[0].ResolvedByEmail != admin.Email {
+		t.Errorf("resolved anomalies: %+v, want the one, resolved by the admin", page)
+	}
+	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, base+"?status=open", nil), &page)
+	if page.Total != 2 {
+		t.Errorf("open anomalies: %d, want 2", page.Total)
 	}
 }

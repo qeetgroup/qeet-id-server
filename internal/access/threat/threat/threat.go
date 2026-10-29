@@ -10,11 +10,13 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
@@ -22,6 +24,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // Notifier sends an in-app notification to a user. Satisfied by
@@ -76,6 +79,17 @@ type Anomaly struct {
 	Metadata   map[string]any `json:"metadata"`
 	CreatedAt  time.Time      `json:"created_at"`
 	ResolvedAt *time.Time     `json:"resolved_at,omitempty"`
+	// ResolvedBy is the person who resolved it, and ResolvedByEmail their
+	// email; nil when it is open, or was resolved by no one in particular.
+	ResolvedBy      *uuid.UUID `json:"resolved_by,omitempty"`
+	ResolvedByEmail *string    `json:"resolved_by_email,omitempty"`
+}
+
+// Page is a page of anomalies, newest first, with how many match.
+type Page struct {
+	Items      []Anomaly `json:"items"`
+	NextCursor string    `json:"next_cursor,omitempty"`
+	Total      int       `json:"total"`
 }
 
 // Summary feeds the four KPI cards above the anomaly table.
@@ -202,35 +216,56 @@ func (s *Service) OnSourceThrottled(ctx context.Context, t auth.SourceThrottle) 
 	}
 }
 
-// List returns up to limit of a tenant's most recent anomalies, newest first.
-// Hand-written SQL, not sqlc.
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID, limit int) ([]Anomaly, error) {
+// List returns a page of up to limit of the tenant's anomalies (50 when not
+// in 1..200), newest first, after cursor, of status when given, and how many
+// match.
+func (s *Service) List(ctx context.Context, tenantID uuid.UUID, limit int, cursor, status string) (*Page, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
+	page := &Page{Items: []Anomaly{}}
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM auth.security_events WHERE tenant_id = $1 AND ($2 = '' OR status = $2)`,
+		tenantID, status).Scan(&page.Total); err != nil {
+		return nil, err
+	}
+	afterTs, afterID := time.Now().Add(time.Hour), uuid.Max
+	if cursor != "" {
+		var err error
+		if afterTs, afterID, err = paging.DecodeTimeUUID(cursor); err != nil {
+			return nil, errs.ErrBadRequest.WithDetail("invalid cursor")
+		}
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT e.id, e.type, e.severity, e.detail, e.status, e.user_id, u.email,
-		       host(e.ip), e.metadata, e.created_at, e.resolved_at
+		       host(e.ip), e.metadata, e.created_at, e.resolved_at, e.resolved_by, rb.email
 		FROM auth.security_events e
 		LEFT JOIN "user".users u ON u.id = e.user_id
-		WHERE e.tenant_id = $1
-		ORDER BY e.created_at DESC
-		LIMIT $2
-	`, tenantID, limit)
+		LEFT JOIN "user".users rb ON rb.id = e.resolved_by
+		WHERE e.tenant_id = $1 AND ($2 = '' OR e.status = $2) AND (e.created_at, e.id) < ($3, $4)
+		ORDER BY e.created_at DESC, e.id DESC
+		LIMIT $5
+	`, tenantID, status, afterTs, afterID, limit+1)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := make([]Anomaly, 0)
 	for rows.Next() {
 		var a Anomaly
 		if err := rows.Scan(&a.ID, &a.Type, &a.Severity, &a.Detail, &a.Status,
-			&a.UserID, &a.UserEmail, &a.IP, &a.Metadata, &a.CreatedAt, &a.ResolvedAt); err != nil {
+			&a.UserID, &a.UserEmail, &a.IP, &a.Metadata, &a.CreatedAt, &a.ResolvedAt, &a.ResolvedBy, &a.ResolvedByEmail); err != nil {
 			return nil, err
 		}
-		out = append(out, a)
+		page.Items = append(page.Items, a)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(page.Items) > limit {
+		page.Items = page.Items[:limit]
+		last := page.Items[limit-1]
+		page.NextCursor = paging.EncodeTimeUUID(last.CreatedAt, last.ID)
+	}
+	return page, nil
 }
 
 // Summary computes the KPI counts for a tenant in a single pass.
@@ -255,9 +290,14 @@ func (s *Service) Resolve(ctx context.Context, id, tenantID uuid.UUID, actor aud
 		return err
 	}
 	defer tx.Rollback(ctx)
+	var resolvedBy pgtype.UUID
+	if actor.UserID != nil {
+		resolvedBy = pgtype.UUID{Bytes: *actor.UserID, Valid: true}
+	}
 	row, err := s.q.WithTx(tx).ResolveSecurityEvent(ctx, dbgen.ResolveSecurityEventParams{
-		ID:       id,
-		TenantID: tenantID,
+		ID:         id,
+		TenantID:   tenantID,
+		ResolvedBy: resolvedBy,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrNotFound
@@ -293,12 +333,19 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Service.List(r.Context(), tenantID, 50)
+	query := r.URL.Query()
+	limit, _ := strconv.Atoi(query.Get("limit"))
+	status := query.Get("status")
+	if status != "" && status != "open" && status != "resolved" {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid status"))
+		return
+	}
+	page, err := h.Service.List(r.Context(), tenantID, limit, query.Get("cursor"), status)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, page)
 }
 
 func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
