@@ -53,5 +53,9 @@ func init() {
 		errs.CodeSAMLMetadataInvalid:          http.StatusUnprocessableEntity,
 		errs.CodeSAMLMetadataURLInvalid:       http.StatusUnprocessableEntity,
 		errs.CodeSAMLMetadataUnreachable:      http.StatusUnprocessableEntity,
+		errs.CodeSAMLCertificateUnused:        http.StatusUnprocessableEntity,
+		errs.CodeSAMLCertificateRequired:      http.StatusUnprocessableEntity,
+		errs.CodeSAMLEncryptionKeyUnsupported: http.StatusUnprocessableEntity,
+		errs.CodeSAMLRequestSignatureInvalid:  http.StatusForbidden,
 	})
 }

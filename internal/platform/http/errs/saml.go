@@ -46,6 +46,10 @@ const (
 	CodeSAMLMetadataInvalid          = "saml.metadata_invalid"
 	CodeSAMLMetadataURLInvalid       = "saml.metadata_url_invalid"
 	CodeSAMLMetadataUnreachable      = "saml.metadata_unreachable"
+	CodeSAMLCertificateUnused        = "saml.certificate_unused"
+	CodeSAMLCertificateRequired      = "saml.certificate_required"
+	CodeSAMLEncryptionKeyUnsupported = "saml.encryption_key_unsupported"
+	CodeSAMLRequestSignatureInvalid  = "saml.request_signature_invalid"
 )
 
 // SAML errors. Message is the end-user-facing text; edit wording here. Handlers
@@ -100,4 +104,12 @@ var (
 	ErrSAMLMetadataURLInvalid = New(CodeSAMLMetadataURLInvalid,
 		"The metadata URL must be an absolute https:// URL on a public address, without a user name or password.")
 	ErrSAMLMetadataUnreachable = New(CodeSAMLMetadataUnreachable, "The identity provider's metadata couldn't be fetched from its URL.")
+
+	ErrSAMLCertificateUnused = New(CodeSAMLCertificateUnused,
+		"Say what the app's certificate is for: verifying its signed sign-in requests, encrypting its assertions, or both.")
+	ErrSAMLCertificateRequired = New(CodeSAMLCertificateRequired,
+		"Add the app's certificate to verify its sign-in requests or encrypt its assertions.")
+	ErrSAMLEncryptionKeyUnsupported = New(CodeSAMLEncryptionKeyUnsupported, "Encrypting assertions needs a certificate with an RSA key.")
+	ErrSAMLRequestSignatureInvalid  = New(CodeSAMLRequestSignatureInvalid,
+		"The app's sign-in request isn't signed with the certificate registered for it.")
 )

@@ -165,12 +165,14 @@ func TestSAMLServiceProvidersOverHTTP(t *testing.T) {
 	asOther := dbtest.Serve(dbtest.Principal(otherAdmin.ID, other), h.Mount)
 	base := "/tenants/" + tenant.String() + "/saml-providers"
 	spCert, _ := selfSignedCert(t)
-	provider := map[string]any{"name": " App ", "entity_id": " https://sp.example.test ", "acs_url": "https://sp.example.test/acs", "certificate": spCert}
+	provider := map[string]any{"name": " App ", "entity_id": " https://sp.example.test ", "acs_url": "https://sp.example.test/acs",
+		"certificate": spCert, "require_signed_requests": true}
 
 	for code, change := range map[string]map[string]any{
 		errs.CodeSAMLSPFieldsRequired:   {"entity_id": " "},
 		errs.CodeSAMLACSURLInvalid:      {"acs_url": "http://sp.example.test/acs"},
 		errs.CodeSAMLCertificateInvalid: {"certificate": "not a certificate"},
+		errs.CodeSAMLCertificateUnused:  {"require_signed_requests": false},
 	} {
 		if rec := dbtest.Do(t, asAdmin, http.MethodPost, base, withChanges(provider, change)); rec.Code/100 != 4 || !strings.Contains(rec.Body.String(), code) {
 			t.Errorf("register with %v: %d %s, want %s", change, rec.Code, rec.Body.String(), code)

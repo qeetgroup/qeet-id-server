@@ -384,7 +384,7 @@ func (q *Queries) GetSamlPersistentID(ctx context.Context, arg GetSamlPersistent
 const getSamlSP = `-- name: GetSamlSP :one
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-       attributes, assignment_required
+       attributes, assignment_required, require_signed_requests, encrypt_assertions
 FROM tenant.saml_service_providers WHERE id = $1 AND tenant_id = $2
 `
 
@@ -411,6 +411,8 @@ func (q *Queries) GetSamlSP(ctx context.Context, arg GetSamlSPParams) (TenantSam
 		&i.LastLoginAt,
 		&i.Attributes,
 		&i.AssignmentRequired,
+		&i.RequireSignedRequests,
+		&i.EncryptAssertions,
 	)
 	return i, err
 }
@@ -418,7 +420,7 @@ func (q *Queries) GetSamlSP(ctx context.Context, arg GetSamlSPParams) (TenantSam
 const getSamlSPByEntityID = `-- name: GetSamlSPByEntityID :one
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-       attributes, assignment_required
+       attributes, assignment_required, require_signed_requests, encrypt_assertions
 FROM tenant.saml_service_providers
 WHERE tenant_id = $1 AND entity_id = $2 AND status <> 'disabled'
 `
@@ -446,6 +448,8 @@ func (q *Queries) GetSamlSPByEntityID(ctx context.Context, arg GetSamlSPByEntity
 		&i.LastLoginAt,
 		&i.Attributes,
 		&i.AssignmentRequired,
+		&i.RequireSignedRequests,
+		&i.EncryptAssertions,
 	)
 	return i, err
 }
@@ -453,7 +457,7 @@ func (q *Queries) GetSamlSPByEntityID(ctx context.Context, arg GetSamlSPByEntity
 const getSamlSPForUpdate = `-- name: GetSamlSPForUpdate :one
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-       attributes, assignment_required
+       attributes, assignment_required, require_signed_requests, encrypt_assertions
 FROM tenant.saml_service_providers WHERE id = $1 AND tenant_id = $2
 FOR UPDATE
 `
@@ -483,6 +487,8 @@ func (q *Queries) GetSamlSPForUpdate(ctx context.Context, arg GetSamlSPForUpdate
 		&i.LastLoginAt,
 		&i.Attributes,
 		&i.AssignmentRequired,
+		&i.RequireSignedRequests,
+		&i.EncryptAssertions,
 	)
 	return i, err
 }
@@ -709,25 +715,27 @@ const insertSamlSP = `-- name: InsertSamlSP :one
 
 INSERT INTO tenant.saml_service_providers
     (tenant_id, name, entity_id, acs_url, name_id_format, name_id_attribute, certificate, status,
-     attributes, assignment_required)
+     attributes, assignment_required, require_signed_requests, encrypt_assertions)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
-        $9, $10)
+        $9, $10, $11, $12)
 RETURNING id, tenant_id, name, entity_id, acs_url, name_id_format,
           name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-          attributes, assignment_required
+          attributes, assignment_required, require_signed_requests, encrypt_assertions
 `
 
 type InsertSamlSPParams struct {
-	TenantID           uuid.UUID
-	Name               string
-	EntityID           string
-	AcsUrl             string
-	NameIDFormat       string
-	NameIDAttribute    string
-	Certificate        string
-	Status             string
-	Attributes         []byte
-	AssignmentRequired bool
+	TenantID              uuid.UUID
+	Name                  string
+	EntityID              string
+	AcsUrl                string
+	NameIDFormat          string
+	NameIDAttribute       string
+	Certificate           string
+	Status                string
+	Attributes            []byte
+	AssignmentRequired    bool
+	RequireSignedRequests bool
+	EncryptAssertions     bool
 }
 
 // ==========================================================================
@@ -745,6 +753,8 @@ func (q *Queries) InsertSamlSP(ctx context.Context, arg InsertSamlSPParams) (Ten
 		arg.Status,
 		arg.Attributes,
 		arg.AssignmentRequired,
+		arg.RequireSignedRequests,
+		arg.EncryptAssertions,
 	)
 	var i TenantSamlServiceProvider
 	err := row.Scan(
@@ -762,6 +772,8 @@ func (q *Queries) InsertSamlSP(ctx context.Context, arg InsertSamlSPParams) (Ten
 		&i.LastLoginAt,
 		&i.Attributes,
 		&i.AssignmentRequired,
+		&i.RequireSignedRequests,
+		&i.EncryptAssertions,
 	)
 	return i, err
 }
@@ -1345,7 +1357,7 @@ func (q *Queries) ListSamlSPUserAssignments(ctx context.Context, arg ListSamlSPU
 const listSamlSPs = `-- name: ListSamlSPs :many
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-       attributes, assignment_required
+       attributes, assignment_required, require_signed_requests, encrypt_assertions
 FROM tenant.saml_service_providers WHERE tenant_id = $1 ORDER BY created_at DESC
 `
 
@@ -1373,6 +1385,8 @@ func (q *Queries) ListSamlSPs(ctx context.Context, tenantID uuid.UUID) ([]Tenant
 			&i.LastLoginAt,
 			&i.Attributes,
 			&i.AssignmentRequired,
+			&i.RequireSignedRequests,
+			&i.EncryptAssertions,
 		); err != nil {
 			return nil, err
 		}
@@ -1634,25 +1648,29 @@ UPDATE tenant.saml_service_providers SET
     status              = COALESCE($7, status),
     attributes          = COALESCE($8, attributes),
     assignment_required = COALESCE($9, assignment_required),
+    require_signed_requests = COALESCE($10, require_signed_requests),
+    encrypt_assertions  = COALESCE($11, encrypt_assertions),
     updated_at          = NOW()
-WHERE id = $10 AND tenant_id = $11
+WHERE id = $12 AND tenant_id = $13
 RETURNING id, tenant_id, name, entity_id, acs_url, name_id_format,
           name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-          attributes, assignment_required
+          attributes, assignment_required, require_signed_requests, encrypt_assertions
 `
 
 type UpdateSamlSPParams struct {
-	Name               *string
-	EntityID           *string
-	AcsUrl             *string
-	NameIDFormat       *string
-	NameIDAttribute    *string
-	Certificate        *string
-	Status             *string
-	Attributes         []byte
-	AssignmentRequired *bool
-	ID                 uuid.UUID
-	TenantID           uuid.UUID
+	Name                  *string
+	EntityID              *string
+	AcsUrl                *string
+	NameIDFormat          *string
+	NameIDAttribute       *string
+	Certificate           *string
+	Status                *string
+	Attributes            []byte
+	AssignmentRequired    *bool
+	RequireSignedRequests *bool
+	EncryptAssertions     *bool
+	ID                    uuid.UUID
+	TenantID              uuid.UUID
 }
 
 func (q *Queries) UpdateSamlSP(ctx context.Context, arg UpdateSamlSPParams) (TenantSamlServiceProvider, error) {
@@ -1666,6 +1684,8 @@ func (q *Queries) UpdateSamlSP(ctx context.Context, arg UpdateSamlSPParams) (Ten
 		arg.Status,
 		arg.Attributes,
 		arg.AssignmentRequired,
+		arg.RequireSignedRequests,
+		arg.EncryptAssertions,
 		arg.ID,
 		arg.TenantID,
 	)
@@ -1685,6 +1705,8 @@ func (q *Queries) UpdateSamlSP(ctx context.Context, arg UpdateSamlSPParams) (Ten
 		&i.LastLoginAt,
 		&i.Attributes,
 		&i.AssignmentRequired,
+		&i.RequireSignedRequests,
+		&i.EncryptAssertions,
 	)
 	return i, err
 }

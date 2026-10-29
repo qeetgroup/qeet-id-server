@@ -2339,10 +2339,34 @@ paths:
                 type: string
         '404':
           $ref: '#/components/responses/NotFound'
+  /saml/idp/{tenantID}/certificate:
+    get:
+      operationId: get_saml_idp_ByTenantID_certificate
+      description: 'Returns the certificate the tenant''s SAML Identity Provider signs assertions with, as PEM, the same one its metadata publishes, for Service Providers that ask for the certificate on its own. Mounted at the root, not under /v1, and unauthenticated. An unknown or inactive tenant returns 404.'
+      summary: "[idp] IdP signing certificate"
+      tags:
+        - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security: []
+      responses:
+        '200':
+          description: The signing certificate, PEM
+          content:
+            application/x-pem-file:
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
   /saml/idp/{tenantID}/sso:
     get:
       operationId: get_saml_idp_ByTenantID_sso
-      description: 'The tenant''s SAML SingleSignOnService over the HTTP-Redirect binding, with Qeet acting as the Identity Provider. It handles SP-initiated SSO from the AuthnRequest of a Service Provider registered in that tenant and IdP-initiated SSO by SP reference; only SPs of the tenant in the path are matched. The user is authenticated by the hosted-login SSO cookie, and the browser is bounced to the hosted login when no session exists. On success it returns an auto-submitting HTML form that POSTs a signed SAMLResponse to the SP''s registered ACS URL. Only people whose home is the tenant are signed in (403 saml.user_tenant_mismatch otherwise), and an SP with assignment_required only those assigned to it, themselves or through a group of the tenant they belong to: anyone else is refused with 403 saml.sp_not_assigned, and the refusal is audited as saml.idp_assertion_refused. The assertion''s NameID follows the SP''s name_id_format and name_id_attribute (an emailAddress NameID is the email; a persistent one an opaque value made for this person at this SP the first time they sign in to it, which never changes, or their user id when name_id_attribute is user_id); a NameID from a metadata key the person has no single value for is refused with 403 saml.name_id_unavailable, also audited. The assertion carries the attributes the SP maps, each the person has a value for. A browser asking for HTML gets every error as a page showing its message and code; anything else gets the JSON error. An unknown or inactive tenant, or an unknown SP, returns 404; a disabled SP answers 403 saml.service_provider_disabled, and one still in draft 403 saml.service_provider_draft, whether or not anyone is signed in (a signed-in person''s attempt is audited as saml.idp_assertion_refused, reason draft). The organisation''s plan must include enterprise SSO at every sign-in, not only when the SP was registered (402 billing.upgrade_required). The POST-binding variant is POST /saml/idp/{tenantID}/sso.'
+      description: 'The tenant''s SAML SingleSignOnService over the HTTP-Redirect binding, with Qeet acting as the Identity Provider. It handles SP-initiated SSO from the AuthnRequest of a Service Provider registered in that tenant and IdP-initiated SSO by SP reference; only SPs of the tenant in the path are matched. The user is authenticated by the hosted-login SSO cookie, and the browser is bounced to the hosted login when no session exists. On success it returns an auto-submitting HTML form that POSTs a signed SAMLResponse to the SP''s registered ACS URL. Only people whose home is the tenant are signed in (403 saml.user_tenant_mismatch otherwise), and an SP with assignment_required only those assigned to it, themselves or through a group of the tenant they belong to: anyone else is refused with 403 saml.sp_not_assigned, and the refusal is audited as saml.idp_assertion_refused. The assertion''s NameID follows the SP''s name_id_format and name_id_attribute (an emailAddress NameID is the email; a persistent one an opaque value made for this person at this SP the first time they sign in to it, which never changes, or their user id when name_id_attribute is user_id); a NameID from a metadata key the person has no single value for is refused with 403 saml.name_id_unavailable, also audited. The assertion carries the attributes the SP maps, each the person has a value for. A browser asking for HTML gets every error as a page showing its message and code; anything else gets the JSON error. An unknown or inactive tenant, or an unknown SP, returns 404; a disabled SP answers 403 saml.service_provider_disabled, and one still in draft 403 saml.service_provider_draft, whether or not anyone is signed in (a signed-in person''s attempt is audited as saml.idp_assertion_refused, reason draft). The organisation''s plan must include enterprise SSO at every sign-in, not only when the SP was registered (402 billing.upgrade_required). An SP with require_signed_requests is signed in only by a request signed with its certificate, over the query as the Redirect binding defines (RSA or ECDSA with SHA-256 or SHA-512) or by an enveloped XML signature, and is otherwise refused with 403 saml.request_signature_invalid; IdP-initiated sign-in is unaffected. An SP with encrypt_assertions gets the signed assertion as an EncryptedAssertion to its certificate. The POST-binding variant is POST /saml/idp/{tenantID}/sso.'
       summary: "[idp] IdP SSO (redirect binding)"
       tags:
         - SAML
@@ -7038,6 +7062,22 @@ components:
           description: Where the NameID comes from — email, user_id, persistent_id or metadata.<key>
         certificate:
           type: string
+          description: The app's own certificate (PEM), kept for require_signed_requests, encrypt_assertions or both.
+        require_signed_requests:
+          type: boolean
+          description: The app's sign-in requests must be signed with its certificate; one that isn't is refused with 403 saml.request_signature_invalid. Sign-in the IdP starts has no request and is unaffected.
+        encrypt_assertions:
+          type: boolean
+          description: Each assertion, signed as always, is encrypted to the app's certificate (AES-256-GCM, its key by RSA-OAEP).
+        certificate_details:
+          type: object
+          nullable: true
+          description: What the certificate says about itself; null without one.
+          properties:
+            subject: {type: string}
+            fingerprint_sha256: {type: string}
+            not_before: {type: string, format: date-time}
+            not_after: {type: string, format: date-time}
         status:
           type: string
         attributes:
@@ -7080,6 +7120,13 @@ components:
           description: Where the NameID comes from — email, user_id, persistent_id or metadata.<key>; by default persistent_id for a persistent NameID and email otherwise
         certificate:
           type: string
+          description: The app's own certificate (PEM). It must be kept for require_signed_requests, encrypt_assertions or both (422 saml.certificate_unused otherwise), and either needs one (422 saml.certificate_required); encryption needs an RSA key (422 saml.encryption_key_unsupported).
+        require_signed_requests:
+          type: boolean
+          description: Refuse sign-in requests not signed with the certificate; off by default
+        encrypt_assertions:
+          type: boolean
+          description: Encrypt each assertion to the certificate; off by default
         attributes:
           type: array
           maxItems: 50

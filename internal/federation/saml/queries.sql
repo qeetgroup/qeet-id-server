@@ -200,23 +200,23 @@ ON CONFLICT (tenant_id, provider, connection_id, subject) DO NOTHING;
 -- name: InsertSamlSP :one
 INSERT INTO tenant.saml_service_providers
     (tenant_id, name, entity_id, acs_url, name_id_format, name_id_attribute, certificate, status,
-     attributes, assignment_required)
+     attributes, assignment_required, require_signed_requests, encrypt_assertions)
 VALUES (@tenant_id, @name, @entity_id, @acs_url, @name_id_format, @name_id_attribute, @certificate, @status,
-        @attributes, @assignment_required)
+        @attributes, @assignment_required, @require_signed_requests, @encrypt_assertions)
 RETURNING id, tenant_id, name, entity_id, acs_url, name_id_format,
           name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-          attributes, assignment_required;
+          attributes, assignment_required, require_signed_requests, encrypt_assertions;
 
 -- name: ListSamlSPs :many
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-       attributes, assignment_required
+       attributes, assignment_required, require_signed_requests, encrypt_assertions
 FROM tenant.saml_service_providers WHERE tenant_id = @tenant_id ORDER BY created_at DESC;
 
 -- name: GetSamlSP :one
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-       attributes, assignment_required
+       attributes, assignment_required, require_signed_requests, encrypt_assertions
 FROM tenant.saml_service_providers WHERE id = @id AND tenant_id = @tenant_id;
 
 -- GetSamlSPForUpdate reads a service provider and holds it until the
@@ -224,14 +224,14 @@ FROM tenant.saml_service_providers WHERE id = @id AND tenant_id = @tenant_id;
 -- name: GetSamlSPForUpdate :one
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-       attributes, assignment_required
+       attributes, assignment_required, require_signed_requests, encrypt_assertions
 FROM tenant.saml_service_providers WHERE id = @id AND tenant_id = @tenant_id
 FOR UPDATE;
 
 -- name: GetSamlSPByEntityID :one
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-       attributes, assignment_required
+       attributes, assignment_required, require_signed_requests, encrypt_assertions
 FROM tenant.saml_service_providers
 WHERE tenant_id = @tenant_id AND entity_id = @entity_id AND status <> 'disabled';
 
@@ -251,11 +251,13 @@ UPDATE tenant.saml_service_providers SET
     status              = COALESCE(sqlc.narg('status'), status),
     attributes          = COALESCE(sqlc.narg('attributes'), attributes),
     assignment_required = COALESCE(sqlc.narg('assignment_required'), assignment_required),
+    require_signed_requests = COALESCE(sqlc.narg('require_signed_requests'), require_signed_requests),
+    encrypt_assertions  = COALESCE(sqlc.narg('encrypt_assertions'), encrypt_assertions),
     updated_at          = NOW()
 WHERE id = @id AND tenant_id = @tenant_id
 RETURNING id, tenant_id, name, entity_id, acs_url, name_id_format,
           name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
-          attributes, assignment_required;
+          attributes, assignment_required, require_signed_requests, encrypt_assertions;
 
 -- name: DeleteSamlSP :execrows
 DELETE FROM tenant.saml_service_providers WHERE id = @id AND tenant_id = @tenant_id;

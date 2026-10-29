@@ -166,6 +166,11 @@ type ServiceProvider struct {
 	CreatedAt          time.Time          `json:"created_at"`
 	UpdatedAt          time.Time          `json:"updated_at"`
 	LastLoginAt        *time.Time         `json:"last_login_at"`
+
+	// What Certificate is used for, and what it says about itself.
+	RequireSignedRequests bool                `json:"require_signed_requests"`
+	EncryptAssertions     bool                `json:"encrypt_assertions"`
+	CertificateDetails    *CertificateDetails `json:"certificate_details"`
 }
 
 // SessionResolver resolves the hosted-login SSO cookie to a user id. Satisfied
@@ -235,11 +240,16 @@ func toSP(r dbgen.TenantSamlServiceProvider) *ServiceProvider {
 		CreatedAt:          r.CreatedAt,
 		UpdatedAt:          r.UpdatedAt,
 		LastLoginAt:        lastLogin,
+
+		RequireSignedRequests: r.RequireSignedRequests,
+		EncryptAssertions:     r.EncryptAssertions,
+		CertificateDetails:    certificateDetails(r.Certificate),
 	}
 }
 
 // CreateSPInput is what CreateSP takes. Attributes nil sends the default
-// attributes; an empty list sends none.
+// attributes; an empty list sends none. A certificate is given for
+// RequireSignedRequests, EncryptAssertions or both.
 type CreateSPInput struct {
 	Name               string              `json:"name"`
 	EntityID           string              `json:"entity_id"`
@@ -250,11 +260,14 @@ type CreateSPInput struct {
 	Status             string              `json:"status"`
 	Attributes         *[]AttributeMapping `json:"attributes"`
 	AssignmentRequired bool                `json:"assignment_required"`
+
+	RequireSignedRequests bool `json:"require_signed_requests"`
+	EncryptAssertions     bool `json:"encrypt_assertions"`
 }
 
 // check requires the ACS URL to pass validACSURL, a certificate, if given, to
-// parse, and the NameID settings and attributes to pass checkNameID and
-// checkAttributes.
+// parse and to be kept for a use (checkCertificateUse), and the NameID
+// settings and attributes to pass checkNameID and checkAttributes.
 func (in *CreateSPInput) check() error {
 	if in.Status != "" && !validStatus(in.Status) {
 		return errs.ErrSAMLStatusInvalid
@@ -267,6 +280,9 @@ func (in *CreateSPInput) check() error {
 		if _, err := parseCertificate(in.Certificate); err != nil {
 			return errs.ErrSAMLCertificateInvalid
 		}
+	}
+	if err := checkCertificateUse(in.Certificate, in.RequireSignedRequests, in.EncryptAssertions); err != nil {
+		return err
 	}
 	in.NameIDFormat, in.NameIDAttribute = strings.TrimSpace(in.NameIDFormat), strings.TrimSpace(in.NameIDAttribute)
 	if err := checkNameID(&in.NameIDFormat, &in.NameIDAttribute); err != nil {
@@ -343,6 +359,9 @@ func (i *IdP) CreateSP(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in Cr
 		Status:             status,
 		Attributes:         attributes,
 		AssignmentRequired: in.AssignmentRequired,
+
+		RequireSignedRequests: in.RequireSignedRequests,
+		EncryptAssertions:     in.EncryptAssertions,
 	})
 	if pgxerr.IsUnique(err) {
 		return nil, errs.ErrSAMLSPEntityIDTaken
@@ -389,10 +408,14 @@ type UpdateSPInput struct {
 	Status             *string             `json:"status"`
 	Attributes         *[]AttributeMapping `json:"attributes"`
 	AssignmentRequired *bool               `json:"assignment_required"`
+
+	RequireSignedRequests *bool `json:"require_signed_requests"`
+	EncryptAssertions     *bool `json:"encrypt_assertions"`
 }
 
 // check applies CreateSPInput's checks to the fields being changed; UpdateSP
-// checks the NameID settings against the ones they change.
+// checks the NameID settings and the certificate's use against the ones they
+// change.
 func (in *UpdateSPInput) check() error {
 	if in.ACSURL != nil {
 		acs := strings.TrimSpace(*in.ACSURL)
@@ -433,7 +456,8 @@ func (i *IdP) UpdateSP(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, i
 		return nil, err
 	}
 	q := i.q.WithTx(tx)
-	if in.NameIDFormat != nil || in.NameIDAttribute != nil {
+	certUse := in.Certificate != nil || in.RequireSignedRequests != nil || in.EncryptAssertions != nil
+	if in.NameIDFormat != nil || in.NameIDAttribute != nil || certUse {
 		cur, err := q.GetSamlSPForUpdate(ctx, dbgen.GetSamlSPForUpdateParams{ID: id, TenantID: tenantID})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrNotFound
@@ -441,11 +465,28 @@ func (i *IdP) UpdateSP(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, i
 		if err != nil {
 			return nil, err
 		}
-		format, attribute, err := mergeNameID(cur.NameIDFormat, cur.NameIDAttribute, in.NameIDFormat, in.NameIDAttribute)
-		if err != nil {
-			return nil, err
+		if in.NameIDFormat != nil || in.NameIDAttribute != nil {
+			format, attribute, err := mergeNameID(cur.NameIDFormat, cur.NameIDAttribute, in.NameIDFormat, in.NameIDAttribute)
+			if err != nil {
+				return nil, err
+			}
+			in.NameIDFormat, in.NameIDAttribute = &format, &attribute
 		}
-		in.NameIDFormat, in.NameIDAttribute = &format, &attribute
+		if certUse {
+			cert, signed, encrypt := cur.Certificate, cur.RequireSignedRequests, cur.EncryptAssertions
+			if in.Certificate != nil {
+				cert = *in.Certificate
+			}
+			if in.RequireSignedRequests != nil {
+				signed = *in.RequireSignedRequests
+			}
+			if in.EncryptAssertions != nil {
+				encrypt = *in.EncryptAssertions
+			}
+			if err := checkCertificateUse(cert, signed, encrypt); err != nil {
+				return nil, err
+			}
+		}
 	}
 	var attributes []byte
 	if in.Attributes != nil {
@@ -466,6 +507,9 @@ func (i *IdP) UpdateSP(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, i
 		Status:             in.Status,
 		Attributes:         attributes,
 		AssignmentRequired: in.AssignmentRequired,
+
+		RequireSignedRequests: in.RequireSignedRequests,
+		EncryptAssertions:     in.EncryptAssertions,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
@@ -681,6 +725,17 @@ func (i *IdP) buildSignedResponse(idpEntity string, sp *ServiceProvider, acs str
 	}
 	moveSignatureAfterIssuer(signed)
 	resp.RemoveChild(assertion)
+	// An app that asked for encrypted assertions gets the signed assertion
+	// encrypted to its certificate.
+	if sp.EncryptAssertions {
+		cert, err := parseCertificate(sp.Certificate)
+		if err != nil {
+			return nil, err
+		}
+		if signed, err = sealAssertion(signed, cert); err != nil {
+			return nil, err
+		}
+	}
 	resp.AddChild(signed)
 
 	doc := etree.NewDocument()
@@ -741,6 +796,19 @@ const maxInflatedAuthnRequest = 256 << 10
 // a SAMLRequest. An inflated request over maxInflatedAuthnRequest is refused
 // with ErrSAMLAuthnRequestInvalid.
 func decodeAuthnRequest(encoded, method string) (*authnRequest, error) {
+	raw, err := authnRequestXML(encoded, method)
+	if err != nil {
+		return nil, err
+	}
+	var ar authnRequest
+	if err := xml.Unmarshal(raw, &ar); err != nil { // #nosec G709 -- decodes into a typed struct
+		return nil, err
+	}
+	return &ar, nil
+}
+
+// authnRequestXML is the XML of a SAMLRequest, as decodeAuthnRequest reads it.
+func authnRequestXML(encoded, method string) ([]byte, error) {
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
 	if err != nil {
 		return nil, err
@@ -757,11 +825,7 @@ func decodeAuthnRequest(encoded, method string) (*authnRequest, error) {
 		}
 		raw = inflated
 	}
-	var ar authnRequest
-	if err := xml.Unmarshal(raw, &ar); err != nil { // #nosec G709 -- decodes into a typed struct
-		return nil, err
-	}
-	return &ar, nil
+	return raw, nil
 }
 
 // redirectEncoded re-encodes an HTTP-POST binding SAMLRequest (base64) for the
@@ -977,13 +1041,19 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 		inResponseTo string
 		acsOverride  string
 		lookupErr    error
+		requestXML   []byte
 	)
 	if samlReq := r.FormValue("SAMLRequest"); samlReq != "" {
-		ar, err := decodeAuthnRequest(samlReq, r.Method)
+		raw, err := authnRequestXML(samlReq, r.Method)
+		var ar authnRequest
+		if err == nil {
+			err = xml.Unmarshal(raw, &ar) // #nosec G709 -- decodes into a typed struct
+		}
 		if err != nil {
 			writeSSOError(w, r, errs.ErrSAMLAuthnRequestInvalid)
 			return
 		}
+		requestXML = raw
 		inResponseTo = ar.ID
 		acsOverride = strings.TrimSpace(ar.AssertionConsumerServiceURL)
 		sp, lookupErr = h.IdP.lookupSPByEntityID(r.Context(), tenantID, strings.TrimSpace(ar.Issuer))
@@ -1005,6 +1075,21 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 	if sp.Status == "disabled" {
 		writeSSOError(w, r, errs.ErrSAMLServiceProviderDisabled)
 		return
+	}
+	// An app that signs its requests has them checked before anything else, and
+	// only what its signature covers is read. Sign-in the IdP starts has no
+	// request to sign.
+	if sp.RequireSignedRequests && requestXML != nil {
+		ar, err := verifiedAuthnRequest(r, requestXML, sp.Certificate)
+		if err == nil && strings.TrimSpace(ar.Issuer) != sp.EntityID {
+			err = errs.ErrSAMLRequestSignatureInvalid
+		}
+		if err != nil {
+			writeSSOError(w, r, err)
+			return
+		}
+		inResponseTo = ar.ID
+		acsOverride = strings.TrimSpace(ar.AssertionConsumerServiceURL)
 	}
 	// A draft app is still being set up: it signs no one in, and an attempt by
 	// someone signed in is audited.
@@ -1151,6 +1236,7 @@ func (h *Handler) createSP(w http.ResponseWriter, r *http.Request) {
 	if err := h.recordSPAudit(ctx, tx, r, tenantID, sp.ID, "saml.sp_created", map[string]any{
 		"name": sp.Name, "entity_id": sp.EntityID, "name_id_format": sp.NameIDFormat, "name_id_attribute": sp.NameIDAttribute,
 		"attributes": sp.Attributes, "assignment_required": sp.AssignmentRequired,
+		"require_signed_requests": sp.RequireSignedRequests, "encrypt_assertions": sp.EncryptAssertions,
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1281,6 +1367,8 @@ func spUpdateAudit(in UpdateSPInput, sp *ServiceProvider) map[string]any {
 		{"status", in.Status != nil, nil},
 		{"attributes", in.Attributes != nil, sp.Attributes},
 		{"assignment_required", in.AssignmentRequired != nil, sp.AssignmentRequired},
+		{"require_signed_requests", in.RequireSignedRequests != nil, sp.RequireSignedRequests},
+		{"encrypt_assertions", in.EncryptAssertions != nil, sp.EncryptAssertions},
 	} {
 		if !f.set {
 			continue

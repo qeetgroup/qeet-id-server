@@ -1059,6 +1059,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 	// IdP side (Qeet as IdP), per organisation: metadata + SingleSignOnService
 	// (redirect + POST).
 	r.Get("/saml/idp/{tenantID}/metadata", h.idpMetadata)
+	r.Get("/saml/idp/{tenantID}/certificate", h.idpCertificate)
 	r.Get("/saml/idp/{tenantID}/sso", h.idpSSO)
 	r.Post("/saml/idp/{tenantID}/sso", h.idpSSO) // CSRF-exempt (see router.go); SP-initiated cross-origin POST
 }
