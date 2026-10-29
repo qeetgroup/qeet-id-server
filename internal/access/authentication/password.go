@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/accountnotice"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/dbgen"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
@@ -150,6 +151,9 @@ func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, t
 		}
 		return &LoginSessionResult{UserID: u.ID, MFAChallenge: challenge}, nil
 	}
+	if in.ClientID != "" {
+		ctx = WithSignInClient(ctx, in.ClientID)
+	}
 	raw, err := s.createLoginSession(ctx, u.ID, u.TenantID, in.IP, ua, firstFactorPassword, gate.skippedFactor())
 	if err != nil {
 		return nil, err
@@ -167,6 +171,12 @@ func (s *Service) CheckPassword(ctx context.Context, in SignInAttempt) (*user.Us
 	// account's own organisation decides after verification.
 	signInTenant, err := s.SignInTenant(ctx, in.ClientID)
 	if err != nil {
+		return nil, nil, err
+	}
+	// An address whose organisation requires single sign-on is sent there
+	// before any account is looked up, so the answer is the same for every
+	// address on the domain, and nothing is counted against the lockout.
+	if err := s.refuseCaptured(ctx, in.Email); err != nil {
 		return nil, nil, err
 	}
 	if err := s.passwordAllowed(ctx, signInTenant); err != nil {
@@ -300,8 +310,14 @@ func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) er
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	if currentHash != "" && !password.Verify(currentHash, in.Current) {
-		return errs.ErrAuthInvalidCredentials
+	if currentHash != "" {
+		ok, err := password.VerifyWithin(ctx, currentHash, in.Current)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errs.ErrAuthInvalidCredentials
+		}
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO auth.password_credentials (user_id, password_hash)
@@ -345,7 +361,12 @@ func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) er
 	}); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	accountnotice.Tell(ctx, s.pool, s.sender, in.UserID, "Your password was changed",
+		"A new password was set for your Qeet ID account, and you were signed out everywhere else.")
+	return nil
 }
 
 // HasPassword reports whether the user has a password credential set — lets the
@@ -370,5 +391,9 @@ func (s *Service) ReauthPassword(ctx context.Context, userID uuid.UUID, plain st
 	if hash == "" {
 		return false, false, nil
 	}
-	return true, plain != "" && password.Verify(hash, plain), nil
+	if plain == "" {
+		return true, false, nil
+	}
+	ok, err = password.VerifyWithin(ctx, hash, plain)
+	return true, ok, err
 }

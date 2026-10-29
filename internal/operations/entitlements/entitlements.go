@@ -35,7 +35,7 @@ const (
 
 // Numeric limit keys. Unlimited (-1) = no cap; 0 = none allowed.
 const (
-	LimitSeats              = "seats"                // active members plus pending invites
+	LimitSeats              = "seats"                // people holding a role, plus pending invites
 	LimitApps               = "apps"                 // OIDC relying parties
 	LimitAPIKeys            = "api_keys"             // API keys
 	LimitCustomRoles        = "custom_roles"         // roles beyond the built-in ones

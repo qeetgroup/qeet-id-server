@@ -2,28 +2,12 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"testing"
-)
 
-func TestSourceNetwork(t *testing.T) {
-	for ip, want := range map[string]string{
-		"203.0.113.7":                    "203.0.113.7",
-		" 203.0.113.7 ":                  "203.0.113.7",
-		"::ffff:203.0.113.7":             "203.0.113.7", // IPv4-mapped is the IPv4 source
-		"2001:db8:1:2:aaaa:bbbb:cccc:d":  "2001:db8:1:2::/64",
-		"2001:db8:1:2::9":                "2001:db8:1:2::/64", // same /64: same network
-		"2001:db8:1:3::9":                "2001:db8:1:3::/64",
-		"fe80::1%eth0":                   "fe80::/64",
-		"":                               "",
-		"not-an-address":                 "",
-		"203.0.113.7:4000":               "",
-		"2001:db8:1:2:aaaa:bbbb:cccc:dd": "2001:db8:1:2::/64",
-	} {
-		if got := SourceNetwork(ip); got != want {
-			t.Errorf("SourceNetwork(%q) = %q, want %q", ip, got, want)
-		}
-	}
-}
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+)
 
 func TestVerifyPassword_NoStoredPasswordNeverMatches(t *testing.T) {
 	for _, plain := range []string{"", "anything"} {
@@ -31,7 +15,27 @@ func TestVerifyPassword_NoStoredPasswordNeverMatches(t *testing.T) {
 			t.Errorf("verifyPassword with no stored hash = %v, %v for %q; want false, nil", ok, err, plain)
 		}
 	}
-	if timingHash() == "" {
-		t.Error("no timing hash: an address with no account would answer faster than a wrong password")
+	if h, err := timingHash(); h == "" || err != nil {
+		t.Errorf("timing hash %q, %v: an address with no account would answer faster than a wrong password", h, err)
+	}
+}
+
+// TestVerifyPasswordWhenTheHasherIsFull checks that a full hasher answers
+// server.overloaded, for an account and for an address with none alike,
+// never a wrong password.
+func TestVerifyPasswordWhenTheHasherIsFull(t *testing.T) {
+	stored, err := password.Hash("right")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := timingHash(); err != nil {
+		t.Fatal(err)
+	}
+	release := password.FillForTest()
+	defer release()
+	for _, hash := range []string{stored, ""} {
+		if ok, err := verifyPassword(context.Background(), hash, "right"); ok || !errors.Is(err, errs.ErrServerOverloaded) {
+			t.Errorf("verifyPassword(%.10q) with the hasher full = %v, %v; want false, server.overloaded", hash, ok, err)
+		}
 	}
 }

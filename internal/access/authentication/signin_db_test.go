@@ -7,6 +7,7 @@ import (
 	"errors"
 	"maps"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -407,10 +408,15 @@ func TestChangePasswordEndsSignIns(t *testing.T) {
 		t.Fatalf("application grant: %v", err)
 	}
 
+	mail := &dbtest.Mailbox{}
+	svc.SetSender(mail)
 	if err := svc.ChangePassword(ctx, ChangePasswordInput{
 		UserID: a.ID, KeepSessionID: current.SessionID, Current: testPassword, Next: "Pw4!nKx7mQ2v-new",
 	}); err != nil {
 		t.Fatalf("change password: %v", err)
+	}
+	if m := mail.Last(t); m.To != a.Email || m.Subject != "Your password was changed" || strings.Contains(m.Body, "Pw4!nKx7mQ2v-new") {
+		t.Errorf("notice %q to %s: %q; want the person told, without the password", m.Subject, m.To, m.Body)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM auth.sessions WHERE id = $1 AND revoked_at IS NULL`, current.SessionID); n != 1 {
 		t.Error("the current session ended")

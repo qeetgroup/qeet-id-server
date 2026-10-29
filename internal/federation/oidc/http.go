@@ -97,6 +97,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/oauth/bc-authorize/decision", h.backchannelDecision)
 	r.Get("/tenants/{tenantID}/oauth/grants", h.listGrants)
 	r.Delete("/tenants/{tenantID}/oauth/grants/{id}", h.revokeGrant)
+	r.Post("/tenants/{tenantID}/oauth/grants/revoke", h.revokeGrants)
 
 	// Tenant-scoped OIDC client management (admin UI). Reads/writes are confined
 	// to the path tenant; create + mutate + rotate are audited.

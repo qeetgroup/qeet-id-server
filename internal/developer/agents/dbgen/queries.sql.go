@@ -92,16 +92,18 @@ func (q *Queries) DeleteAgent(ctx context.Context, arg DeleteAgentParams) (int64
 }
 
 const getAgentForToken = `-- name: GetAgentForToken :one
-SELECT tenant_id, secret_hash, scopes, token_ttl_seconds, status
+SELECT tenant_id, secret_hash, scopes, token_ttl_seconds, status, previous_secret_hash, previous_secret_expires_at
 FROM auth.agents WHERE id = $1
 `
 
 type GetAgentForTokenRow struct {
-	TenantID        uuid.UUID
-	SecretHash      string
-	Scopes          []string
-	TokenTtlSeconds int32
-	Status          string
+	TenantID                uuid.UUID
+	SecretHash              string
+	Scopes                  []string
+	TokenTtlSeconds         int32
+	Status                  string
+	PreviousSecretHash      *string
+	PreviousSecretExpiresAt pgtype.Timestamptz
 }
 
 func (q *Queries) GetAgentForToken(ctx context.Context, id uuid.UUID) (GetAgentForTokenRow, error) {
@@ -113,6 +115,8 @@ func (q *Queries) GetAgentForToken(ctx context.Context, id uuid.UUID) (GetAgentF
 		&i.Scopes,
 		&i.TokenTtlSeconds,
 		&i.Status,
+		&i.PreviousSecretHash,
+		&i.PreviousSecretExpiresAt,
 	)
 	return i, err
 }
@@ -162,7 +166,7 @@ func (q *Queries) KillAllAgents(ctx context.Context, tenantID uuid.UUID) (int64,
 }
 
 const listAgents = `-- name: ListAgents :many
-SELECT id, name, scopes, token_ttl_seconds, status, sponsor_user_id, created_at
+SELECT id, name, scopes, token_ttl_seconds, status, sponsor_user_id, created_at, last_used_at, previous_secret_expires_at
 FROM auth.agents
 WHERE tenant_id = $1 AND status <> 'decommissioned'
 ORDER BY created_at DESC
@@ -170,13 +174,15 @@ LIMIT 1001
 `
 
 type ListAgentsRow struct {
-	ID              uuid.UUID
-	Name            string
-	Scopes          []string
-	TokenTtlSeconds int32
-	Status          string
-	SponsorUserID   pgtype.UUID
-	CreatedAt       time.Time
+	ID                      uuid.UUID
+	Name                    string
+	Scopes                  []string
+	TokenTtlSeconds         int32
+	Status                  string
+	SponsorUserID           pgtype.UUID
+	CreatedAt               time.Time
+	LastUsedAt              pgtype.Timestamptz
+	PreviousSecretExpiresAt pgtype.Timestamptz
 }
 
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
@@ -197,6 +203,8 @@ func (q *Queries) ListAgents(ctx context.Context, tenantID uuid.UUID) ([]ListAge
 			&i.Status,
 			&i.SponsorUserID,
 			&i.CreatedAt,
+			&i.LastUsedAt,
+			&i.PreviousSecretExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -278,6 +286,47 @@ func (q *Queries) ResumeAgent(ctx context.Context, arg ResumeAgentParams) error 
 	return err
 }
 
+const resumeAllAgents = `-- name: ResumeAllAgents :execrows
+UPDATE auth.agents SET status = 'active', disabled_at = NULL
+WHERE tenant_id = $1 AND status = 'suspended'
+`
+
+func (q *Queries) ResumeAllAgents(ctx context.Context, tenantID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, resumeAllAgents, tenantID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const rotateAgentSecret = `-- name: RotateAgentSecret :one
+UPDATE auth.agents
+SET previous_secret_hash = secret_hash, previous_secret_expires_at = $1, secret_hash = $2
+WHERE id = $3 AND tenant_id = $4 AND status <> 'decommissioned'
+RETURNING name
+`
+
+type RotateAgentSecretParams struct {
+	PreviousExpiresAt pgtype.Timestamptz
+	SecretHash        string
+	ID                uuid.UUID
+	TenantID          uuid.UUID
+}
+
+// RotateAgentSecret makes the new secret current and keeps the old one
+// working until previous_expires_at.
+func (q *Queries) RotateAgentSecret(ctx context.Context, arg RotateAgentSecretParams) (string, error) {
+	row := q.db.QueryRow(ctx, rotateAgentSecret,
+		arg.PreviousExpiresAt,
+		arg.SecretHash,
+		arg.ID,
+		arg.TenantID,
+	)
+	var name string
+	err := row.Scan(&name)
+	return name, err
+}
+
 const sponsorBelongsToTenant = `-- name: SponsorBelongsToTenant :one
 SELECT EXISTS (
     SELECT 1 FROM "user".users WHERE id = $1 AND tenant_id = $2::uuid AND deleted_at IS NULL
@@ -298,6 +347,22 @@ func (q *Queries) SponsorBelongsToTenant(ctx context.Context, arg SponsorBelongs
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const touchAgent = `-- name: TouchAgent :exec
+UPDATE auth.agents SET last_used_at = NOW()
+WHERE id = $1 AND tenant_id = $2 AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '1 minute')
+`
+
+type TouchAgentParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+// TouchAgent notes a token issued to the agent, at most once a minute.
+func (q *Queries) TouchAgent(ctx context.Context, arg TouchAgentParams) error {
+	_, err := q.db.Exec(ctx, touchAgent, arg.ID, arg.TenantID)
+	return err
 }
 
 const transferAgentSponsor = `-- name: TransferAgentSponsor :execrows

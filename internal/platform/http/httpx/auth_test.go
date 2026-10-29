@@ -266,3 +266,46 @@ func TestRequireUser(t *testing.T) {
 		})
 	}
 }
+
+// TestRequireAuth_PrincipalLiveEnforced checks that a service principal's
+// valid token is refused once PrincipalLive reports it disabled or gone, so
+// disabling one takes effect on its next request.
+func TestRequireAuth_PrincipalLiveEnforced(t *testing.T) {
+	iss := testIssuer(t)
+	principalID := uuid.New()
+	now := time.Now()
+	tok, err := iss.Sign(jwt.MapClaims{
+		"iss": "qeet-test", "aud": "qeet-test", "sub": principalID.String(),
+		"iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(time.Hour).Unix(), "jti": uuid.NewString(),
+		"tenant_id": uuid.NewString(), "scope": "users.read", "actor_type": "service",
+	})
+	if err != nil {
+		t.Fatalf("sign service token: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		live bool
+		err  error
+		want int
+	}{
+		{"a live principal passes", true, nil, http.StatusOK},
+		{"a disabled or deleted principal is refused", false, nil, http.StatusUnauthorized},
+		{"a failed lookup refuses", false, errors.New("db down"), http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := &httpx.AuthVerifier{Tokens: iss, PrincipalLive: func(_ context.Context, id uuid.UUID) (bool, error) {
+				if id != principalID {
+					t.Fatalf("PrincipalLive called with %s, want %s", id, principalID)
+				}
+				return tc.live, tc.err
+			}}
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", "/v1/anything", nil)
+			req.Header.Set("Authorization", "Bearer "+tok)
+			httpx.RequireAuth(v)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })).ServeHTTP(w, req)
+			if w.Code != tc.want {
+				t.Errorf("status = %d, want %d (body: %s)", w.Code, tc.want, w.Body.String())
+			}
+		})
+	}
+}

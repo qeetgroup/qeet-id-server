@@ -1,14 +1,19 @@
 //go:build integration
 
 // Package dbtest runs a package's database tests against a disposable
-// PostgreSQL 16 container migrated with the repository's own migrations. Each
-// test package starts one container from TestMain and shares it across tests.
+// PostgreSQL 16 database migrated with the repository's own migrations, shared
+// across the package's tests. Given a server in DBTEST_SERVER (make test-db
+// starts one), each test package gets its own copy of a database migrated once
+// for the whole run; otherwise the package starts a container of its own.
 package dbtest
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -43,6 +48,9 @@ func Main(m *testing.M) {
 }
 
 func run(m *testing.M) int {
+	if server := os.Getenv("DBTEST_SERVER"); server != "" {
+		return runShared(m, server)
+	}
 	ctx := context.Background()
 	// Ryuk, the testcontainers reaper, hangs on some macOS Docker setups; the
 	// container is terminated explicitly below instead.
@@ -84,6 +92,100 @@ func run(m *testing.M) int {
 	}
 	defer pool.Close()
 	return m.Run()
+}
+
+// runShared runs the package's tests on its own copy of the run's template
+// database on server, a postgres:// URL to its maintenance database, and drops
+// the copy after.
+func runShared(m *testing.M, server string) int {
+	ctx := context.Background()
+	name, err := copyTemplate(ctx, server)
+	if err == nil {
+		dsn, err = withDatabase(server, name)
+	}
+	if err == nil {
+		pool, err = postgres.NewPool(ctx, dsn, 0, maxConns)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "dbtest: %v\n", err)
+		return 1
+	}
+	defer dropDatabase(server, name)
+	defer pool.Close()
+	return m.Run()
+}
+
+// templateLock serialises the packages of a run making their copies, so the
+// first migrates the template while the rest wait.
+const templateLock = 7346001
+
+// copyTemplate creates a database for one package from the run's template,
+// migrating the template first if no package has, and returns its name.
+func copyTemplate(ctx context.Context, server string) (string, error) {
+	conn, err := pgx.Connect(ctx, server)
+	if err != nil {
+		return "", fmt.Errorf("connect to DBTEST_SERVER: %w", err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, templateLock); err != nil {
+		return "", err
+	}
+	defer func() { _, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, templateLock) }()
+
+	latest, err := migrations.Latest()
+	if err != nil {
+		return "", err
+	}
+	template := fmt.Sprintf("dbtest_template_%d", latest)
+	var exists bool
+	if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)`, template).Scan(&exists); err != nil {
+		return "", err
+	}
+	if !exists {
+		if _, err := conn.Exec(ctx, `CREATE DATABASE `+template); err != nil {
+			return "", err
+		}
+		templateDSN, err := withDatabase(server, template)
+		if err != nil {
+			return "", err
+		}
+		if err := migrations.Run(templateDSN); err != nil {
+			_, _ = conn.Exec(ctx, `DROP DATABASE `+template+` WITH (FORCE)`)
+			return "", fmt.Errorf("migrate the template: %w", err)
+		}
+	}
+	suffix := make([]byte, 6)
+	if _, err := rand.Read(suffix); err != nil {
+		return "", err
+	}
+	name := "dbtest_" + hex.EncodeToString(suffix)
+	if _, err := conn.Exec(ctx, `CREATE DATABASE `+name+` TEMPLATE `+template); err != nil {
+		return "", fmt.Errorf("copy the template: %w", err)
+	}
+	return name, nil
+}
+
+// withDatabase is server's URL naming database name instead.
+func withDatabase(server, name string) (string, error) {
+	u, err := url.Parse(server)
+	if err != nil {
+		return "", fmt.Errorf("DBTEST_SERVER: %w", err)
+	}
+	u.Path = "/" + name
+	return u.String(), nil
+}
+
+// dropDatabase drops a package's copy once its tests are done. Best effort:
+// the server goes when the run ends.
+func dropDatabase(server, name string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, server)
+	if err != nil {
+		return
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	_, _ = conn.Exec(ctx, `DROP DATABASE IF EXISTS `+name+` WITH (FORCE)`)
 }
 
 // Pool returns the package's shared pool, skipping t when there is no database.

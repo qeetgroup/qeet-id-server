@@ -1,7 +1,10 @@
 package bootstrap
 
 import (
+	"context"
+	"crypto/subtle"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/abac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authzen"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decisionlog"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/policy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rebac"
@@ -35,9 +39,11 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/directory"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcsso"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/ssosync"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	group "github.com/qeetgroup/qeet-id-server/internal/identity/groups"
 	invite "github.com/qeetgroup/qeet-id-server/internal/identity/invitations"
@@ -59,6 +65,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/sales"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/search"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/servicehealth"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/siem"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
@@ -103,6 +110,7 @@ type Deps struct {
 	Entitlement   *entitlements.Handler
 	Sales         *sales.Handler
 	Analytics     *analytics.Handler
+	ServiceHealth *servicehealth.Handler
 	OIDC          *oidc.Handler
 	Passkey       *passkey.Handler
 	Social        *social.Handler
@@ -113,6 +121,8 @@ type Deps struct {
 	SAML          *saml.Handler
 	AdminPortal   *adminportal.Handler
 	LDAP          *ldap.Handler
+	SSOGroups     *ssosync.Handler
+	OIDCSSO       *oidcsso.Handler
 	Directory     *directory.Handler
 	IPAllow       *ipallow.Handler
 	Threat        *threat.Handler
@@ -127,11 +137,14 @@ type Deps struct {
 	ABAC          *abac.Handler
 	ReBAC         *rebac.Handler
 	AuthZEN       *authzen.Handler
+	DecisionLog   *decisionlog.Handler
 	Agent         *agent.Handler
 	VC            *vc.Handler
 	Search        *search.Handler
 	Activity      *activity.Handler
 	Health        *health.Handler
+	MetricsToken  string // the bearer token /metrics needs ("": see MetricsOpen)
+	MetricsOpen   bool   // with no token, /metrics is open (development only)
 	InFlight      *httpx.InFlight
 
 	AuthVerifier     *httpx.AuthVerifier
@@ -152,6 +165,7 @@ type Deps struct {
 	// an Idempotency-Key.
 	Idempotency *idempotency.Store
 
+	endStreams    []func() // run as shutdown begins, so open event streams end
 	shutdownHooks []func() // run once the HTTP server has drained
 }
 
@@ -161,7 +175,8 @@ func NewRouter(d Deps) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(chimw.RequestID)
-	r.Use(httpx.ClientIPContext) // the client address, for audit records written below a handler
+	r.Use(httpx.ClientIPContext)    // the client address, for audit records written below a handler
+	r.Use(auth.SignInClientContext) // the application a hosted sign-in is for, for its audit record
 	// chimw.RealIP is deliberately not used: it trusts X-Forwarded-For from anyone.
 	// Client IPs come from httpx.ClientIP, governed by TRUSTED_PROXY_HOPS.
 	r.Use(httpx.GeoCountryContext) // the trusted upstream country, for the sessions a request opens
@@ -180,14 +195,11 @@ func NewRouter(d Deps) http.Handler {
 	// CORS first (above CSRF) so that even a rejected request — e.g. a CSRF 403
 	// — still carries Access-Control-* headers; otherwise the browser masks the
 	// real error as a generic "blocked by CORS policy" failure.
-	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   d.AllowedOrigins,
-		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Request-Id", "X-Dev-User", "X-Dev-Tenant", "X-CSRF-Token", idempotency.Header},
-		ExposedHeaders:   []string{"X-Request-Id", "Idempotent-Replayed"},
-		AllowCredentials: true,
-		MaxAge:           300,
-	}))
+	var appOrigin func(ctx context.Context, origin string) bool
+	if d.OIDC != nil && d.OIDC.Service != nil {
+		appOrigin = d.OIDC.Service.AllowsWebOrigin
+	}
+	r.Use(corsPolicy(d.AllowedOrigins, appOrigin))
 	// CSRF applies to cookie-bearing browser requests; bearer tokens and API keys
 	// bypass it. CSRFDisabled is for dev only, and startup refuses it elsewhere.
 	if !d.CSRFDisabled {
@@ -197,25 +209,25 @@ func NewRouter(d Deps) http.Handler {
 	// newLimiter builds an in-process limiter, or a Redis-backed one when a
 	// shared store is configured (so limits hold across replicas). A shared
 	// store keys buckets by scope, so each limiter names its own.
-	newLimiter := func(rate float64, capacity int) *ratelimit.Limiter {
+	newLimiter := func(l ratelimits.BuiltInLimit) *ratelimit.Limiter {
 		if d.RateLimitStore != nil {
-			return ratelimit.NewWithStore(d.RateLimitStore, rate, capacity)
+			return ratelimit.NewWithStore(d.RateLimitStore, l.Rate, l.Capacity)
 		}
-		return ratelimit.New(rate, capacity)
+		return ratelimit.New(l.Rate, l.Capacity)
 	}
 	// Per-IP throttle on auth-burning endpoints.
-	loginLimiter := newLimiter(5, 20)
+	loginLimiter := newLimiter(loginLimit)
 	// The token endpoints serve an application's code exchanges and refreshes
 	// for all its users from one address, and every credential they take is
 	// long and random, so they get a machine-traffic bucket.
-	tokenLimiter := newLimiter(50, 200)
+	tokenLimiter := newLimiter(tokenLimit)
 
 	// Rate limits for root-mounted protocol routes. credentialLimiter matches the /v1
 	// login throttle (LDAP authenticate is a password-spray target, introspect a token
 	// oracle); protocolLimiter is generous, since SCIM and SAML are legitimate machine
 	// traffic.
-	credentialLimiter := newLimiter(5, 20)
-	protocolLimiter := newLimiter(50, 200)
+	credentialLimiter := newLimiter(credentialLimit)
+	protocolLimiter := newLimiter(protocolLimit)
 
 	mountRootPublicRoutes(r, d, credentialLimiter, protocolLimiter)
 
@@ -223,12 +235,12 @@ func NewRouter(d Deps) http.Handler {
 	// caller-supplied address or guess a credential (~6/min sustained, burst 5):
 	// blunts SMS toll-fraud, email-bombing, and online password guessing that the
 	// generous 30 rps/user bucket wouldn't. Applied per-route inside the handlers.
-	sensitiveThrottle := newLimiter(0.1, 5).MiddlewareBy("sensitive", ratelimit.PerUser)
+	sensitiveThrottle := newLimiter(sensitiveLimit).MiddlewareBy("sensitive", ratelimit.PerUser)
 	d.Auth.Throttle = sensitiveThrottle
 	d.Verification.Throttle = sensitiveThrottle
 	// A phone linking with a pairing code: a wrong code is a guess, so the same
 	// pace per address (the code itself is 50 bits and lives five minutes).
-	d.MFA.PairingThrottle = newLimiter(0.1, 5).MiddlewareBy("pairing", ratelimit.PerIP)
+	d.MFA.PairingThrottle = newLimiter(pairingLimit).MiddlewareBy("pairing", ratelimit.PerIP)
 
 	r.Route("/v1", func(r chi.Router) {
 		// Public (no JWT required).
@@ -282,6 +294,28 @@ func NewRouter(d Deps) http.Handler {
 	return r
 }
 
+// metricsGuard serves next only to a caller presenting token as a bearer
+// token, or, with no token, to anyone where open (development). Otherwise it
+// answers 404, as if there were no metrics.
+func metricsGuard(token string, open bool, next http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if token == "" {
+			if open {
+				next.ServeHTTP(w, r)
+				return
+			}
+			http.NotFound(w, r)
+			return
+		}
+		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	}
+}
+
 // mountRootPublicRoutes registers the protocol and operational routes outside
 // /v1. Groups add rate limits without changing route patterns. Health probes are
 // unlimited, so a busy pod isn't killed.
@@ -289,7 +323,7 @@ func mountRootPublicRoutes(r chi.Router, d Deps, credentialLimiter, protocolLimi
 	r.Get("/healthz", d.Health.Liveness)
 	r.Get("/readyz", d.Health.Readiness)
 	r.Get("/version", d.Health.Version)
-	r.Get("/metrics", metrics.Handler().ServeHTTP)
+	r.Get("/metrics", metricsGuard(d.MetricsToken, d.MetricsOpen, metrics.Handler()))
 
 	// Directory credential verification — same throttle as /v1 login.
 	r.Group(func(r chi.Router) {
@@ -320,8 +354,11 @@ func mountV1PublicRoutes(r chi.Router, d Deps) {
 	d.Audit.MountPublic(r)
 	d.Passkey.MountPublic(r)
 	d.AdminPortal.MountPublic(r)
+	d.Branding.MountPublic(r)
 	d.OIDC.MountBrowser(r)
 	d.TokenVault.MountPublic(r)
+	d.OIDCSSO.MountPublic(r)
+	d.DomainVerify.MountPublic(r)
 	d.MFA.MountPublic(r)
 	d.SESWebhook.Mount(r)
 }
@@ -362,6 +399,7 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.Entitlement.Mount(r)
 	d.Sales.Mount(r)
 	d.Analytics.Mount(r)
+	d.ServiceHealth.Mount(r)
 	d.OIDC.Mount(r)
 	d.Passkey.Mount(r)
 	d.Social.Mount(r)
@@ -373,6 +411,8 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.SAML.Mount(r)
 	d.AdminPortal.Mount(r)
 	d.LDAP.Mount(r)
+	d.SSOGroups.Mount(r)
+	d.OIDCSSO.Mount(r)
 	d.Directory.Mount(r)
 	d.IPAllow.Mount(r)
 	d.Threat.Mount(r)
@@ -386,6 +426,7 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.ABAC.Mount(r)
 	d.ReBAC.Mount(r)
 	d.AuthZEN.Mount(r)
+	d.DecisionLog.Mount(r)
 	d.Agent.Mount(r)
 	d.VC.Mount(r)
 	d.Qeetai.Mount(r)
@@ -454,6 +495,7 @@ func IdempotentRoutes() []string {
 		"POST /v1/service-principals",
 		"POST /v1/tenants/{tenantID}/agents",
 		"POST /v1/tenants/{tenantID}/billing/checkout",
+		"POST /v1/tenants/{tenantID}/billing/invoices/{invoiceID}/pay",
 		"POST /v1/users",
 		"POST /v1/webhooks",
 	}
@@ -502,15 +544,19 @@ func NoStoreRoutes() []string {
 		"POST /v1/me/invites/{id}/accept",
 		"POST /v1/social/exchange",
 		"POST /saml/exchange",
+		"POST /v1/oidc-connections/exchange",
 		"POST /v1/tenants",
 
 		// A secret, key, code or credential returned to its holder.
 		"POST /v1/api-keys",
+		"POST /v1/tenants/{tenantID}/api-keys/{id}/rotate",
 		"POST /v1/oidc/clients",
 		"POST /v1/tenants/{tenantID}/oidc/clients",
 		"POST /v1/tenants/{tenantID}/oidc/clients/{id}/rotate-secret",
 		"POST /v1/service-principals",
+		"POST /v1/tenants/{tenantID}/service-principals/{id}/rotate-secret",
 		"POST /v1/tenants/{tenantID}/agents",
+		"POST /v1/tenants/{tenantID}/agents/{id}/rotate-secret",
 		"POST /v1/webhooks",
 		"POST /v1/tenants/{tenantID}/webhooks/{id}/rotate-secret",
 		"POST /v1/mfa/totp/enroll/start",
@@ -520,6 +566,8 @@ func NoStoreRoutes() []string {
 		"POST /v1/mfa/push/pairing",
 		"POST /v1/mfa/push/pairing/claim",
 		"POST /v1/tenants/{tenantID}/scim/token",
+		"POST /v1/tenants/{tenantID}/scim/tokens",
+		"POST /v1/tenants/{tenantID}/scim/tokens/{id}/rotate",
 		"POST /v1/tenants/{tenantID}/admin-portal/links",
 		"POST /v1/tenants/{tenantID}/secrets/{id}/reveal",
 		"POST /v1/tenants/{tenantID}/credentials",
@@ -568,8 +616,75 @@ func csrfExemptPaths() []string {
 		"/v1/billing/sandbox/",          // dev-only mock hosted-checkout page + pay (no cookie session)
 		"/v1/agents/token",              // agent-credential auth (no cookie session)
 		"/v1/credentials/verify",        // public JWT-VC verification (no cookie session)
+		"/v1/sso/discovery",             // read-only lookup by an address's domain (no cookie session)
 		"/v1/mfa/push/challenges/",      // a linked phone answers with its device credential (no cookie session)
 		"/v1/mfa/push/devices/*/unlink", // a linked phone removes itself with its device credential (no cookie session)
 		"/v1/mfa/push/pairing/claim",    // a phone links with a one-time pairing code (no cookie session)
+	}
+}
+
+// publicMetadataPaths answer any origin: the OpenID Connect and OAuth metadata
+// and the signing keys, which hold nothing to protect.
+var publicMetadataPaths = []string{
+	"/.well-known/openid-configuration",
+	"/.well-known/oauth-authorization-server",
+	"/.well-known/oauth-protected-resource",
+	"/.well-known/jwks.json",
+}
+
+// browserAppPaths are the OAuth endpoints a single-page application calls
+// from the browser with its own code or token, never a cookie.
+var browserAppPaths = []string{
+	"/v1/oauth/token-code",
+	"/v1/oauth/userinfo",
+	"/oauth/revoke",
+	"/oauth/introspect",
+}
+
+// corsPolicy answers cross-origin requests. The console and hosted login, the
+// operator's allowed origins, may send credentials anywhere, as before. The
+// metadata and signing keys answer any origin, without credentials. The OAuth
+// endpoints a browser application calls answer an origin one of the
+// applications allows (appOrigin), without credentials, so a page reads only
+// what its own request, holding its own code or token, gets. Nothing is ever
+// allowed for every origin with credentials.
+func corsPolicy(allowed []string, appOrigin func(ctx context.Context, origin string) bool) func(http.Handler) http.Handler {
+	operator := cors.Handler(cors.Options{
+		AllowedOrigins:   allowed,
+		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Request-Id", "X-Dev-User", "X-Dev-Tenant", "X-CSRF-Token", idempotency.Header},
+		ExposedHeaders:   []string{"X-Request-Id", "Idempotent-Replayed"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	})
+	public := cors.Handler(cors.Options{
+		AllowedOrigins: []string{"*"},
+		AllowedMethods: []string{"GET", "OPTIONS"},
+		MaxAge:         300,
+	})
+	app := cors.Handler(cors.Options{
+		AllowOriginFunc: func(r *http.Request, origin string) bool {
+			return appOrigin != nil && appOrigin(r.Context(), origin)
+		},
+		AllowedMethods: []string{"GET", "POST", "OPTIONS"},
+		AllowedHeaders: []string{"Authorization", "Content-Type"},
+		ExposedHeaders: []string{"WWW-Authenticate"},
+		MaxAge:         300,
+	})
+	operatorOrigin := func(origin string) bool {
+		return slices.ContainsFunc(allowed, func(a string) bool { return strings.EqualFold(a, origin) })
+	}
+	return func(next http.Handler) http.Handler {
+		viaOperator, viaPublic, viaApp := operator(next), public(next), app(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case slices.Contains(publicMetadataPaths, r.URL.Path):
+				viaPublic.ServeHTTP(w, r)
+			case slices.Contains(browserAppPaths, r.URL.Path) && !operatorOrigin(r.Header.Get("Origin")):
+				viaApp.ServeHTTP(w, r)
+			default:
+				viaOperator.ServeHTTP(w, r)
+			}
+		})
 	}
 }

@@ -83,7 +83,7 @@ service_test.go     unit
 
 **Purpose** — RBAC *"models permissions, per-tenant roles, role→permission bindings, and user
 assignments. The Check endpoint is the hot path callers use to authorize an action."*
-**Path** `internal/access/authorization/{rbac,abac,rebac,authzen,policy,authpolicy}/`
+**Path** `internal/access/authorization/{rbac,abac,rebac,decide,decisionlog,authzen,policy,authpolicy}/`
 **Key dependencies** `platform/http/{errs,httpx}` · **`operations/audit`** (cross-context)
 **Security** **Critical** — every access decision
 
@@ -94,10 +94,11 @@ rbac/rbac.go          roles, permissions, bindings
 rbac/service.go       decision service
 rbac/enforce.go       router middleware — consumes bootstrap/permissions.go
 rbac/http.go          /check, /roles, /permissions
-abac/abac.go          13 operators, deny-overrides, fail-closed
+abac/abac.go          13 operators, role and relation leaves, deny-overrides, fail-closed
 rebac/rebac.go        Zanzibar relation tuples, recursive check
 decide/decide.go      one decision across all three: tenant, ABAC deny, then any allow
 authzen/authzen.go    OpenID AuthZEN PDP/PEP facade
+decisionlog/decisionlog.go   the decisions check, AuthZEN and evaluate answer, kept 30 days
 policy/policy.go      tenant security policy
 authpolicy/authpolicy.go   password rules, permitted login methods
 ```
@@ -199,7 +200,7 @@ integration: `identity_modules_test.go`, `flows_test.go`
 **Purpose** — *"implements Qeet's OpenID Connect provider role: the OAuth2/OIDC grants
 (authorization_code+PKCE, refresh, client_credentials, token-exchange, device, CIBA) plus discovery,
 JWKS, and userinfo endpoints."*
-**Path** `internal/federation/{oidc,saml,scim,ldap,social,adminportal}/`
+**Path** `internal/federation/{oidc,saml,scim,ldap,social,adminportal,oidcsso,ssosync,identitylink}/`
 **Key dependencies** `platform/http/{errs,codes,httpx}` · `platform/crypto/tokens` ·
 **`access/authentication`**, **`identity/users`**, **`operations/audit`**
 **Security** **Critical** — parses untrusted external input (SAML XML, SCIM, LDAP)
@@ -215,7 +216,11 @@ oidc/device.go          RFC 8628 device grant
 oidc/ciba.go            CIBA (poll mode)
 oidc/clients_admin.go   OAuth client administration
 saml/saml.go            SP role — consume a customer IdP
+saml/certificates.go · metadata.go · encryption.go   IdP certificate rollover, metadata import/refresh, encrypted assertions
 saml/idp.go             IdP role — serve a customer SP
+saml/idp_attributes.go · idp_assignment.go   NameID and attributes per app, assigned people and groups
+oidcsso/                an organisation's own OpenID Connect provider as a sign-in connection
+ssosync/                SSO sign-in keeps name, address and groups in step; IdP group mappings
 scim/scim.go · scim/groups.go
 ldap/ldap.go
 social/social.go · apple.go · github.go · platform.go · oauthclient.go
@@ -267,8 +272,10 @@ credentials/vc/vc.go         W3C JWT-VC
 **Purpose** — audit: *"records actor-visible mutations to `audit.events`. Each write happens inside
 the caller's `pgx.Tx`, so the row commits atomically with the business write. Every row carries a
 SHA-256 hash chaining to the previous row in the same tenant; tampering (delete, edit, reorder)
-breaks the chain and is caught by `Verifier.Verify`."*
-**Path** `internal/operations/{audit,billing,gdpr,analytics,retention,siem,activity,notifications,entitlements,ratelimits,search,sales,email,qeetai}/`
+breaks the chain and is caught by `Verifier.Verify`."* Rows with no tenant go on one of 16
+platform chains (`chain_shard`, the writer's database connection's), so their writers don't
+queue on one lock; each is a whole chain with its own tip, lock and checkpoint.
+**Path** `internal/operations/{audit,billing,gdpr,analytics,retention,siem,activity,notifications,entitlements,ratelimits,search,sales,email,qeetai,servicehealth}/`
 **Key dependencies** `platform/http/{errs,httpx}` · `platform/ai` (+`openai`, `anthropic`) — **sole
 consumer** · `platform/cache/ratelimit`
 **Security** **Critical** for `audit/`; **High** for `billing/`, `gdpr/`, `siem/`
@@ -281,8 +288,12 @@ audit/verifier.go     /verify chain-integrity walk
 audit/http.go
 audit/anomaly/anomaly.go   behavioural baselines
 billing/{billing,payments,tax}.go
-gdpr/{gdpr,evidence}.go    erasure, export, SOC2/ISO evidence
-retention/retention.go · siem/siem.go · analytics/analytics.go
+gdpr/{gdpr,evidence}.go    requests, SOC2/ISO evidence
+gdpr/erasure.go · gdpr/export.go   what erasure removes, what an export holds
+gdpr/tenantpurge.go        a deleted organisation's data purged after 30 days
+retention/retention.go · retention/sweeps.go   purge window, sweeps of every growing table
+siem/siem.go · analytics/analytics.go
+servicehealth/servicehealth.go   each component's state, operator-posted incidents
 activity/{domain,http,hub}.go   SSE feed
 qeetai/{qeetai,orchestrator,sse,tools,providercfg,http}.go
 entitlements/ · ratelimits/ · search/ · notifications/ · sales/ · email/
@@ -318,7 +329,8 @@ http/errs/                ~50 files, one per domain
 http/httpx/error_status_*.go   ~40 files, 1:1 mirror of errs/
 crypto/tokens/jwt.go      ES256, RFC 7638 kid, rotation
 crypto/password/          Argon2id hashing, strength rules, machine secrets' SHA-256
-crypto/envelope/          AES-256-GCM encryption under the data key
+crypto/envelope/          AES-256-GCM encryption under the data key, key ids for rotation
+crypto/envelope/reseal/   moves stored values to the current key (secrets-reencrypt job)
 crypto/totp/              TOTP codes
 crypto/hibp/              breached-password k-anonymity
 config/config.go          81 env vars + Config.Validate() boot gate

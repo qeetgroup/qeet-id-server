@@ -11,6 +11,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -29,6 +30,7 @@ func TestUsersStayInTheirTenant(t *testing.T) {
 		Repo:           NewRepository(pool),
 		Validate:       validator.New(validator.WithRequiredStructEnabled()),
 		PasswordPolicy: func(context.Context, uuid.UUID, string, string) error { return nil },
+		ActOnCheck:     rbac.NewRepository(pool).CheckActOn,
 	}
 	asB := dbtest.Serve(dbtest.Principal(adminB.ID, tenantB), h.Mount)
 	path := "/users/" + victim.ID.String()

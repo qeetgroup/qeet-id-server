@@ -5,6 +5,12 @@
 SELECT id FROM "user".users
 WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) AND deleted_at IS NULL;
 
+-- ExpirePasswordResets ends the user's unused reset links, so only the newest
+-- works. Set a minute back, so a clock behind the database's sees them ended.
+-- name: ExpirePasswordResets :exec
+UPDATE auth.password_resets SET expires_at = NOW() - INTERVAL '1 minute'
+WHERE user_id = $1 AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute';
+
 -- name: InsertPasswordReset :exec
 INSERT INTO auth.password_resets (user_id, token_hash, expires_at)
 VALUES ($1, $2, $3);
@@ -39,6 +45,12 @@ RETURNING email;
 -- name: RevokeUserSessions :exec
 UPDATE auth.sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL;
 
+-- ExpireMagicLinks ends the unused sign-in links to an address, so only the
+-- newest works; a minute back, as ExpirePasswordResets.
+-- name: ExpireMagicLinks :exec
+UPDATE auth.magic_links SET expires_at = NOW() - INTERVAL '1 minute'
+WHERE LOWER(email) = LOWER(@email) AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute';
+
 -- InsertMagicLink stores a link (only its token's hash). tenant_id is the
 -- organisation it was asked for from (NULL from the console); app is where it
 -- opens and return_to where the hosted journey continues.
@@ -54,8 +66,9 @@ FOR UPDATE;
 
 -- GetMagicLinkAccount finds the account a magic link signs in to: by its
 -- address, platform-wide (an address is unique), not deleted or suspended.
+-- email is the address as stored, which links are sent to.
 -- name: GetMagicLinkAccount :one
-SELECT id, tenant_id FROM "user".users
+SELECT id, tenant_id, email FROM "user".users
 WHERE LOWER(email) = LOWER(@email) AND deleted_at IS NULL AND status <> 'suspended';
 
 -- name: MarkMagicLinkUsed :exec

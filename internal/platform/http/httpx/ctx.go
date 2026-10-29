@@ -5,6 +5,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -39,6 +40,10 @@ type Principal struct {
 	// authorization server (its client_id claim); empty for the user's own
 	// tokens. See RefuseApplicationTokens.
 	ClientID string
+	// ExpiresAt is when the credential the request was authenticated with is
+	// no longer accepted, if it has an end: the access token's expiry, or the
+	// API key's. A request that outlives it, such as a stream, ends then.
+	ExpiresAt *time.Time
 	// SignedInAt is when a principal authenticated by the hosted login's session
 	// cookie (no API session) proved a second factor, such as a passkey; nil
 	// otherwise. A recent one counts as step-up (see mfa.Service.StepUpGate).
@@ -89,7 +94,9 @@ func ClientIP(r *http.Request) string {
 		return ip
 	}
 	if hops := int(trustedProxyHops.Load()); hops > 0 {
-		if v := r.Header.Get("X-Forwarded-For"); v != "" {
+		// Every line: a proxy may append its own line rather than extend the
+		// caller's, which would leave the caller's value read as the client.
+		if v := strings.Join(r.Header.Values("X-Forwarded-For"), ","); v != "" {
 			parts := strings.Split(v, ",")
 			// The right-most `hops` entries were appended by our proxies; the
 			// client is the entry immediately to their left.
@@ -108,6 +115,25 @@ func ClientIP(r *http.Request) string {
 		return normalizeIP(strings.TrimSpace(r.RemoteAddr))
 	}
 	return normalizeIP(host)
+}
+
+// SourceNetwork is the network an address belongs to: an IPv4 address, or
+// the /64 of an IPv6 one (one subscriber's allocation, so rotating addresses
+// inside it is still one source). "" when ip is not an address.
+func SourceNetwork(ip string) string {
+	addr, err := netip.ParseAddr(strings.TrimSpace(ip))
+	if err != nil {
+		return ""
+	}
+	addr = addr.Unmap().WithZone("")
+	if addr.Is4() {
+		return addr.String()
+	}
+	prefix, err := addr.Prefix(64)
+	if err != nil {
+		return ""
+	}
+	return prefix.String()
 }
 
 // normalizeIP unwraps IPv4-mapped IPv6 addresses and strips CR/LF for logging.

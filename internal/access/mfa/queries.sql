@@ -75,6 +75,16 @@ SELECT
 
 -- OrgStepUpPolicy is how long a step-up lasts in an organisation and whether
 -- it counts every factor type (no organisation, or none set: 5 minutes, yes).
+-- SessionSignedInRecently says whether the user's live session continues a
+-- sign-in made within its organisation's step-up window, and that window.
+-- name: SessionSignedInRecently :one
+SELECT COALESCE(s.signed_in_at > NOW() - COALESCE(sp.step_up_window, INTERVAL '5 minutes'), FALSE)::bool AS recent,
+       EXTRACT(EPOCH FROM COALESCE(sp.step_up_window, INTERVAL '5 minutes'))::bigint AS window_seconds
+FROM (SELECT @session_id::uuid AS id, @user_id::uuid AS user_id) q
+LEFT JOIN auth.sessions s ON s.id = q.id AND s.user_id = q.user_id AND s.revoked_at IS NULL
+  AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
+LEFT JOIN tenant.security_policies sp ON sp.tenant_id = s.tenant_id;
+
 -- name: OrgStepUpPolicy :one
 SELECT EXTRACT(EPOCH FROM COALESCE(sp.step_up_window, INTERVAL '5 minutes'))::bigint AS window_seconds,
        (sp.step_up_methods IS NULL)::bool AS every_factor
@@ -86,8 +96,8 @@ LEFT JOIN tenant.security_policies sp ON sp.tenant_id = q.id;
 DELETE FROM auth.mfa_otp_factors WHERE user_id = $1;
 
 -- name: InsertMFAOTPCode :exec
-INSERT INTO auth.mfa_otp_codes (factor_id, code_hash, expires_at)
-VALUES ($1, $2, $3);
+INSERT INTO auth.mfa_otp_codes (factor_id, code_hash, expires_at, purpose)
+VALUES (@factor_id, @code_hash, @expires_at, @purpose);
 
 -- UpsertMFAOTPFactor adds an email or SMS factor, or returns the one already
 -- held for that address or number untouched: asking for a new code to an
@@ -104,7 +114,7 @@ RETURNING id;
 SELECT c.id
 FROM auth.mfa_otp_codes c
 JOIN auth.mfa_otp_factors f ON f.id = c.factor_id
-WHERE f.id = $1 AND f.user_id = $2 AND c.code_hash = $3
+WHERE f.id = $1 AND f.user_id = $2 AND c.code_hash = $3 AND c.purpose = 'enrollment'
   AND c.used_at IS NULL AND c.expires_at > NOW()
 ORDER BY c.created_at DESC LIMIT 1
 FOR UPDATE;
@@ -149,16 +159,24 @@ SELECT (EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = @user_id AND
 DELETE FROM auth.mfa_push_devices WHERE id = $1 AND user_id = $2;
 
 -- name: InsertPushChallenge :one
-INSERT INTO auth.mfa_push_challenges (user_id, action, context)
-VALUES ($1, $2, $3)
+INSERT INTO auth.mfa_push_challenges (user_id, action, context, match_number)
+VALUES (@user_id, @action, @context, @match_number)
 RETURNING id, user_id, action, context, status, expires_at, created_at;
+
+-- RecentPushChallenges counts the user's push requests of the last ten
+-- minutes, and those denied in the last hour.
+-- name: RecentPushChallenges :one
+SELECT count(*) FILTER (WHERE created_at > NOW() - INTERVAL '10 minutes')::int AS sent,
+       count(*) FILTER (WHERE status = 'denied')::int AS denied
+FROM auth.mfa_push_challenges
+WHERE user_id = @user_id AND created_at > NOW() - INTERVAL '1 hour';
 
 -- name: GetPushChallenge :one
 SELECT id, user_id, action, context, status, expires_at, created_at
 FROM auth.mfa_push_challenges WHERE id = $1;
 
 -- name: GetPushChallengeForUpdate :one
-SELECT id, user_id, status, expires_at
+SELECT id, user_id, status, expires_at, match_number
 FROM auth.mfa_push_challenges WHERE id = $1
 FOR UPDATE;
 
@@ -173,12 +191,14 @@ UPDATE auth.mfa_push_challenges
 SET status = $2, responded_at = NOW()
 WHERE id = $1;
 
+-- GetOTPCodeForVerify finds a live code of the user's sent for purpose
+-- (sign_in or step_up), so one sent for the other never counts.
 -- name: GetOTPCodeForVerify :one
 SELECT c.id
 FROM auth.mfa_otp_codes c
 JOIN auth.mfa_otp_factors f ON f.id = c.factor_id
-WHERE f.user_id = $1 AND f.verified_at IS NOT NULL AND c.code_hash = $2
-  AND c.used_at IS NULL AND c.expires_at > NOW()
+WHERE f.user_id = @user_id AND f.verified_at IS NOT NULL AND c.code_hash = @code_hash
+  AND c.purpose = @purpose AND c.used_at IS NULL AND c.expires_at > NOW()
 ORDER BY c.created_at DESC LIMIT 1
 FOR UPDATE;
 

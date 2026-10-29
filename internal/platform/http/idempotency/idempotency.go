@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -31,8 +32,10 @@ const Header = "Idempotency-Key"
 // Retention is how long a key's answer is kept.
 const Retention = 24 * time.Hour
 
-// abandonedAfter is how long a claimed key may go unanswered before a retry
-// takes it over, as when the instance answering it stopped.
+// abandonedAfter is how long a claimed key may go unanswered before a retry is
+// told the first request's outcome is unknown, as when the instance answering
+// it stopped, rather than that it is still in progress. The request may have
+// taken effect, so it is never run again under the same key.
 const abandonedAfter = time.Minute
 
 // purpose is the encryption context of a stored answer.
@@ -106,7 +109,7 @@ func (s *Store) serve(w http.ResponseWriter, r *http.Request, next http.Handler,
 	hash := hex.EncodeToString(sum[:])
 	scope, sealAs := scopeOf(r)
 
-	claimed, err := s.claim(ctx, scope, key, hash)
+	attempt, claimed, err := s.claim(ctx, scope, key, hash)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -122,36 +125,62 @@ func (s *Store) serve(w http.ResponseWriter, r *http.Request, next http.Handler,
 	done := context.WithoutCancel(ctx)
 	if rec.status >= http.StatusInternalServerError {
 		// A server error may not have acted: the key is free to try again.
-		if _, err := s.pool.Exec(done, `DELETE FROM platform.idempotency_keys WHERE scope = $1 AND key = $2`, scope, key); err != nil {
+		if err := s.release(done, scope, key, attempt); err != nil {
 			slog.Warn("idempotency: release key", "err", err)
 		}
 		return
 	}
-	enc, nonce, err := s.cipher.Seal(sealAs, purpose, scope+"|"+key, rec.body.Bytes())
-	if err == nil {
-		_, err = s.pool.Exec(done, `
-			UPDATE platform.idempotency_keys
-			SET status = $3, content_type = $4, body_enc = $5, body_nonce = $6, completed_at = NOW()
-			WHERE scope = $1 AND key = $2
-		`, scope, key, rec.status, rec.Header().Get("Content-Type"), enc, nonce)
-	}
-	if err != nil {
+	stored, err := s.complete(done, scope, key, attempt, sealAs, rec.status, rec.Header().Get("Content-Type"), rec.body.Bytes())
+	switch {
+	case err != nil:
 		slog.Warn("idempotency: store answer", "err", err)
+	case !stored:
+		slog.Warn("idempotency: the key's claim is no longer this request's; its answer is not stored")
 	}
 }
 
-// claim records key as taken by this request, or takes over one abandoned
-// unanswered. It reports false when the key is someone else's.
-func (s *Store) claim(ctx context.Context, scope, key, hash string) (bool, error) {
+// claim records key as taken by a new attempt of this request and returns the
+// attempt. It reports false when the key is already taken, answered or not: an
+// unanswered claim is never taken over, as its request may have taken effect.
+func (s *Store) claim(ctx context.Context, scope, key, hash string) (uuid.UUID, bool, error) {
+	attempt := uuid.New()
 	tag, err := s.pool.Exec(ctx, `
-		INSERT INTO platform.idempotency_keys (scope, key, request_hash) VALUES ($1, $2, $3)
-		ON CONFLICT (scope, key) DO UPDATE SET request_hash = EXCLUDED.request_hash, created_at = NOW()
-		WHERE idempotency_keys.completed_at IS NULL AND idempotency_keys.created_at < $4
-	`, scope, key, hash, time.Now().Add(-abandonedAfter))
+		INSERT INTO platform.idempotency_keys (scope, key, request_hash, attempt) VALUES ($1, $2, $3, $4)
+		ON CONFLICT (scope, key) DO NOTHING
+	`, scope, key, hash, attempt)
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	return attempt, tag.RowsAffected() == 1, nil
+}
+
+// complete stores the answer to the request that attempt claimed key for, and
+// reports false when the claim is no longer attempt's, so a late attempt never
+// overwrites another's answer.
+func (s *Store) complete(ctx context.Context, scope, key string, attempt, sealAs uuid.UUID, status int, contentType string, body []byte) (bool, error) {
+	enc, nonce, err := s.cipher.Seal(sealAs, purpose, scope+"|"+key, body)
+	if err != nil {
+		return false, err
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE platform.idempotency_keys
+		SET status = $4, content_type = $5, body_enc = $6, body_nonce = $7, completed_at = NOW()
+		WHERE scope = $1 AND key = $2 AND attempt = $3 AND completed_at IS NULL
+	`, scope, key, attempt, status, contentType, enc, nonce)
 	if err != nil {
 		return false, err
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+// release frees key after a server error, but only while attempt's claim of
+// it is unanswered.
+func (s *Store) release(ctx context.Context, scope, key string, attempt uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, `
+		DELETE FROM platform.idempotency_keys
+		WHERE scope = $1 AND key = $2 AND attempt = $3 AND completed_at IS NULL
+	`, scope, key, attempt)
+	return err
 }
 
 // replay answers a request whose key was already taken: with the stored answer
@@ -162,11 +191,13 @@ func (s *Store) replay(w http.ResponseWriter, r *http.Request, scope, key, hash 
 		status      *int
 		contentType *string
 		enc, nonce  []byte
+		abandoned   bool
 	)
 	err := s.pool.QueryRow(r.Context(), `
-		SELECT request_hash, status, content_type, body_enc, body_nonce
+		SELECT request_hash, status, content_type, body_enc, body_nonce,
+		       created_at < NOW() - make_interval(secs => $3)
 		FROM platform.idempotency_keys WHERE scope = $1 AND key = $2
-	`, scope, key).Scan(&storedHash, &status, &contentType, &enc, &nonce)
+	`, scope, key, abandonedAfter.Seconds()).Scan(&storedHash, &status, &contentType, &enc, &nonce, &abandoned)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		// Released by a server error since the claim failed: retry now.
@@ -177,6 +208,10 @@ func (s *Store) replay(w http.ResponseWriter, r *http.Request, scope, key, hash 
 		return
 	case storedHash != hash:
 		httpx.WriteError(w, r, errs.ErrIdempotencyKeyReused)
+		return
+	case status == nil && abandoned:
+		// The first request stopped unanswered and may have taken effect.
+		httpx.WriteError(w, r, errs.ErrIdempotencyOutcomeUnknown)
 		return
 	case status == nil:
 		httpx.WriteError(w, r, errs.ErrIdempotencyKeyInProgress)
@@ -202,20 +237,29 @@ func scopeOf(r *http.Request) (string, uuid.UUID) {
 	if p == nil {
 		return "anonymous", platformScope
 	}
-	sealAs, tenant := platformScope, "-"
+	tenant := "-"
 	if p.TenantID != nil {
-		sealAs, tenant = *p.TenantID, p.TenantID.String()
+		tenant = p.TenantID.String()
 	}
-	return tenant + "|" + p.ActorType + ":" + p.Subject, sealAs
+	scope := tenant + "|" + p.ActorType + ":" + p.Subject
+	return scope, SealedAs(scope)
+}
+
+// SealedAs returns the tenant the answer stored for scope is sealed under: the
+// caller's organisation, or a fixed stand-in for a caller with none.
+func SealedAs(scope string) uuid.UUID {
+	tenant, _, _ := strings.Cut(scope, "|")
+	if id, err := uuid.Parse(tenant); err == nil {
+		return id
+	}
+	return platformScope
 }
 
 // Purge deletes keys older than Retention and returns how many.
 func Purge(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
-	tag, err := pool.Exec(ctx, `DELETE FROM platform.idempotency_keys WHERE created_at < $1`, time.Now().Add(-Retention))
-	if err != nil {
-		return 0, err
-	}
-	return tag.RowsAffected(), nil
+	return postgres.PurgeInBatches(ctx, pool, `DELETE FROM platform.idempotency_keys WHERE ctid = ANY(ARRAY(
+		SELECT k.ctid FROM platform.idempotency_keys k WHERE k.created_at < $1 LIMIT $2))`,
+		time.Now().Add(-Retention))
 }
 
 // recorder copies an answer as it is written.

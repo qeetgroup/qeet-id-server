@@ -317,3 +317,46 @@ func TestMiddleware_BackwardsCompat(t *testing.T) {
 		t.Errorf("second req = %d (want 429)", rec.Code)
 	}
 }
+
+// TestPerIP_KeysAnIPv6AllocationTogether checks that addresses inside one
+// IPv6 /64 share a bucket, so rotating through them buys no fresh limit.
+func TestPerIP_KeysAnIPv6AllocationTogether(t *testing.T) {
+	key := func(addr string) string {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = addr
+		return PerIP(req)
+	}
+	if a, b := key("[2001:db8:1:2::9]:443"), key("[2001:db8:1:2:aaaa:bbbb:cccc:dddd]:443"); a != b || a != "2001:db8:1:2::/64" {
+		t.Errorf("two addresses of one /64 keyed %q and %q, want both 2001:db8:1:2::/64", a, b)
+	}
+	if a, b := key("[2001:db8:1:2::9]:443"), key("[2001:db8:1:3::9]:443"); a == b {
+		t.Errorf("two /64s share the key %q", a)
+	}
+}
+
+// TestMemStore_ForgetsRefilledBucketsAndStaysBounded checks that the
+// in-process store drops buckets that have refilled and never holds more
+// than maxBuckets.
+func TestMemStore_ForgetsRefilledBucketsAndStaysBounded(t *testing.T) {
+	s := newMemStore()
+	if _, _, err := s.Take(ctx, "spent", 1000, 1); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond) // 1000 tokens/sec: refilled long since
+	s.lastSweep = time.Time{}
+	if _, _, err := s.Take(ctx, "new", 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.buckets["spent"]; ok {
+		t.Error("a refilled bucket was kept")
+	}
+
+	for i := range maxBuckets + 10 {
+		if _, _, err := s.Take(ctx, "k"+strconv.Itoa(i), 0.001, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := len(s.buckets); n > maxBuckets {
+		t.Errorf("%d buckets held, want at most %d", n, maxBuckets)
+	}
+}

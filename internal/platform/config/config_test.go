@@ -21,6 +21,8 @@ func prodOK() *Config {
 		AllowedOriginsRaw:            "https://app.acme.com",
 		AppBaseURL:                   "https://app.acme.com",
 		PublicBaseURL:                "https://api.acme.com",
+		SMTPHost:                     "smtp.acme.com",
+		SMTPFrom:                     "Acme <no-reply@acme.com>",
 	}
 }
 
@@ -61,6 +63,11 @@ func TestValidate_ProdRejectsInsecure(t *testing.T) {
 		"public base url query":    func(c *Config) { c.PublicBaseURL = "https://api.acme.com?" },
 		"public base url fragment": func(c *Config) { c.PublicBaseURL = "https://api.acme.com#" },
 		"public base url no host":  func(c *Config) { c.PublicBaseURL = "https://:443" },
+		"no email provider":        func(c *Config) { c.SMTPHost = "" },
+		"smtp without a sender":    func(c *Config) { c.SMTPFrom = "" },
+		"ses without a sender":     func(c *Config) { c.EmailProvider, c.AWSRegion, c.SMTPFrom = "ses-api", "ap-south-2", "" },
+		"ses without a region":     func(c *Config) { c.EmailProvider = "ses-api" },
+		"unknown email provider":   func(c *Config) { c.EmailProvider = "sendgrid" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -70,6 +77,30 @@ func TestValidate_ProdRejectsInsecure(t *testing.T) {
 				t.Errorf("expected %q to fail validation", name)
 			}
 		})
+	}
+}
+
+// TestValidate_EmailProvider checks that outside dev either email provider is
+// accepted once configured, and that dev starts with none.
+func TestValidate_EmailProvider(t *testing.T) {
+	c := prodOK()
+	c.EmailProvider = "smtp"
+	if err := c.Validate(); err != nil {
+		t.Errorf("smtp provider should pass: %v", err)
+	}
+	c = prodOK()
+	c.EmailProvider, c.SMTPHost, c.AWSRegion = "ses-api", "", "ap-south-2"
+	if err := c.Validate(); err != nil {
+		t.Errorf("ses-api provider should pass: %v", err)
+	}
+	c = prodOK()
+	c.SMTPHost = ""
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "email provider") {
+		t.Errorf("prod without an email provider: err = %v, want one naming the email provider", err)
+	}
+	dev := &Config{ServiceEnv: EnvDev, EmailProvider: "smtp"}
+	if err := dev.Validate(); err != nil {
+		t.Errorf("dev must start without an email provider, got: %v", err)
 	}
 }
 
@@ -191,6 +222,7 @@ func TestValidate_LocalRejectsInsecureAndPublicHosts(t *testing.T) {
 		"qa is not a profile":    func(c *Config) { c.ServiceProfile = "qa" },
 		"uat is not a profile":   func(c *Config) { c.ServiceProfile = "uat" },
 		"stage is not a profile": func(c *Config) { c.ServiceProfile = "stage" },
+		"no email provider":      func(c *Config) { c.SMTPHost = "" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -265,6 +297,84 @@ func TestLoad_SignInLockoutDefaults(t *testing.T) {
 	}
 }
 
+// TestLoad_BreachedPasswordCheckOnByDefault checks that a deployment that
+// doesn't set BREACHED_PASSWORD_CHECK checks passwords against known breaches,
+// and that setting it false turns the check off.
+func TestLoad_BreachedPasswordCheckOnByDefault(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("BREACHED_PASSWORD_CHECK", "")
+	if err := os.Unsetenv("BREACHED_PASSWORD_CHECK"); err != nil {
+		t.Fatal(err)
+	}
+	for _, env := range []string{EnvProd, EnvLocal} {
+		t.Setenv("SERVICE_ENV", env)
+		c, err := Load()
+		if err != nil {
+			t.Fatalf("SERVICE_ENV=%s: defaults should load: %v", env, err)
+		}
+		if !c.BreachedPasswordCheck {
+			t.Errorf("SERVICE_ENV=%s: breached-password check is off by default, want on", env)
+		}
+	}
+	t.Setenv("BREACHED_PASSWORD_CHECK", "false")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if c.BreachedPasswordCheck {
+		t.Error("BREACHED_PASSWORD_CHECK=false left the check on")
+	}
+}
+
+// TestLoad_PasswordHashLimits checks the hashing limits' defaults and that a
+// negative limit or a wait out of range is refused.
+func TestLoad_PasswordHashLimits(t *testing.T) {
+	setRequiredEnv(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("defaults should load: %v", err)
+	}
+	if c.PasswordHashConcurrency != 0 || c.PasswordHashQueue != 0 || c.PasswordHashMaxWait != time.Second {
+		t.Errorf("hashing defaults = %d / %d / %v, want 0 / 0 / 1s", c.PasswordHashConcurrency, c.PasswordHashQueue, c.PasswordHashMaxWait)
+	}
+	for _, env := range [][2]string{
+		{"PASSWORD_HASH_CONCURRENCY", "-1"},
+		{"PASSWORD_HASH_QUEUE", "-1"},
+		{"PASSWORD_HASH_MAX_WAIT", "0s"},
+		{"PASSWORD_HASH_MAX_WAIT", "11s"},
+	} {
+		t.Run(env[0]+"="+env[1], func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv(env[0], env[1])
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PASSWORD_HASH_") {
+				t.Errorf("want a hashing limits error, got %v", err)
+			}
+		})
+	}
+}
+
+// TestLoad_QeetaiLimits checks the Qeet AI turn limits' defaults and that a
+// limit that isn't positive is refused.
+func TestLoad_QeetaiLimits(t *testing.T) {
+	setRequiredEnv(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("defaults should load: %v", err)
+	}
+	if c.QeetaiHistoryMessages != 40 || c.QeetaiHistoryBytes != 256<<10 || c.QeetaiMaxOutputBytes != 64<<10 {
+		t.Errorf("Qeet AI limits = %d / %d / %d, want 40 / 262144 / 65536", c.QeetaiHistoryMessages, c.QeetaiHistoryBytes, c.QeetaiMaxOutputBytes)
+	}
+	for _, key := range []string{"QEETAI_HISTORY_MESSAGES", "QEETAI_HISTORY_BYTES", "QEETAI_MAX_OUTPUT_BYTES"} {
+		t.Run(key, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv(key, "0")
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), key) {
+				t.Errorf("%s=0: want a Qeet AI limits error, got %v", key, err)
+			}
+		})
+	}
+}
+
 func TestLoad_RejectsUnsafeSignInLockout(t *testing.T) {
 	for name, env := range map[string][2]string{
 		"default above its maximum":   {"LOGIN_LOCKOUT_THRESHOLD", "50"},
@@ -299,6 +409,9 @@ func TestLoad_SessionLifetimeDefaults(t *testing.T) {
 	if c.RefreshTokenReuseGrace != 30*time.Second {
 		t.Errorf("refresh reuse grace default = %v, want 30s", c.RefreshTokenReuseGrace)
 	}
+	if c.ShutdownTimeout != 20*time.Second || c.ShutdownDrainDelay != 5*time.Second {
+		t.Errorf("shutdown defaults = %v / %v, want 20s / 5s", c.ShutdownTimeout, c.ShutdownDrainDelay)
+	}
 }
 
 func TestLoad_RejectsUnusableSessionLifetime(t *testing.T) {
@@ -311,6 +424,9 @@ func TestLoad_RejectsUnusableSessionLifetime(t *testing.T) {
 		"a refresh reuse grace over a minute": {"REFRESH_TOKEN_REUSE_GRACE", "61s"},
 		"a negative refresh reuse grace":      {"REFRESH_TOKEN_REUSE_GRACE", "-1s"},
 		"a drain delay over 30 seconds":       {"SHUTDOWN_DRAIN_DELAY", "31s"},
+		"a drain delay over half the stop":    {"SHUTDOWN_DRAIN_DELAY", "11s"},
+		"a shutdown timeout under 5 seconds":  {"SHUTDOWN_TIMEOUT", "4s"},
+		"a shutdown timeout over 2 minutes":   {"SHUTDOWN_TIMEOUT", "3m"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			setRequiredEnv(t)

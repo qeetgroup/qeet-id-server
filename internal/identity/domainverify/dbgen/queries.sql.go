@@ -13,6 +13,23 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteBreakGlassMember = `-- name: DeleteBreakGlassMember :execrows
+DELETE FROM tenant.break_glass_members WHERE tenant_id = $1 AND user_id = $2
+`
+
+type DeleteBreakGlassMemberParams struct {
+	TenantID uuid.UUID
+	UserID   uuid.UUID
+}
+
+func (q *Queries) DeleteBreakGlassMember(ctx context.Context, arg DeleteBreakGlassMemberParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteBreakGlassMember, arg.TenantID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteDomain = `-- name: DeleteDomain :execrows
 DELETE FROM tenant.domains WHERE id = $1 AND tenant_id = $2
 `
@@ -28,6 +45,101 @@ func (q *Queries) DeleteDomain(ctx context.Context, arg DeleteDomainParams) (int
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const emailDomainManager = `-- name: EmailDomainManager :one
+SELECT d.tenant_id, d.sso_enabled, d.jit_enabled
+FROM tenant.domains d
+WHERE d.verified_at IS NOT NULL
+  AND (lower(d.domain) = $1::text
+       OR right($1::text, length(d.domain) + 1) = '.' || lower(d.domain))
+ORDER BY length(d.domain) DESC
+LIMIT 1
+`
+
+type EmailDomainManagerRow struct {
+	TenantID   uuid.UUID
+	SsoEnabled bool
+	JitEnabled bool
+}
+
+// EmailDomainManager returns the organisation managing accounts on @domain:
+// the one that verified it, or the closest domain above it, with that
+// domain's switches. @domain is lower-case.
+func (q *Queries) EmailDomainManager(ctx context.Context, domain string) (EmailDomainManagerRow, error) {
+	row := q.db.QueryRow(ctx, emailDomainManager, domain)
+	var i EmailDomainManagerRow
+	err := row.Scan(&i.TenantID, &i.SsoEnabled, &i.JitEnabled)
+	return i, err
+}
+
+const getCaptureExemption = `-- name: GetCaptureExemption :one
+WITH account AS (
+    SELECT u.id, u.tenant_id FROM "user".users u
+    WHERE lower(u.email) = lower($3::text) AND u.deleted_at IS NULL
+      AND (u.tenant_id = $1::uuid OR EXISTS (
+          SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $1::uuid))
+)
+SELECT
+    (EXISTS (SELECT 1 FROM tenant.saml_connections s WHERE s.tenant_id = $1::uuid AND s.status = 'active')
+     OR EXISTS (SELECT 1 FROM tenant.ldap_connections l WHERE l.tenant_id = $1::uuid AND l.status = 'active')
+     OR EXISTS (SELECT 1 FROM tenant.oidc_connections o WHERE o.tenant_id = $1::uuid AND o.status = 'active'))::boolean AS sso,
+    EXISTS (
+        SELECT 1 FROM account a
+        JOIN tenant.break_glass_members b ON b.user_id = a.id AND b.tenant_id = $1::uuid
+    )::boolean AS break_glass,
+    EXISTS (
+        SELECT 1 FROM account a
+        WHERE (EXISTS (
+                  SELECT 1 FROM rbac.user_roles ur
+                  JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.tenant_id = ur.tenant_id
+                  LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
+                  LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
+                  WHERE ur.user_id = a.id AND ur.tenant_id = $1::uuid
+                    AND ((ro.is_system AND ro.name = 'owner') OR p.key = ANY($2::text[])))
+               OR EXISTS (
+                  SELECT 1 FROM tenant.group_members gm
+                  JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+                  JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.tenant_id = gr.tenant_id
+                  LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
+                  LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
+                  WHERE gm.user_id = a.id AND gm.tenant_id = $1::uuid
+                    AND ((ro.is_system AND ro.name = 'owner') OR p.key = ANY($2::text[]))))
+          AND NOT (a.tenant_id IS NOT DISTINCT FROM $1::uuid AND EXISTS (
+                  SELECT 1 FROM "user".external_identities ei
+                  WHERE ei.user_id = a.id AND ei.tenant_id = $1::uuid
+                    AND (EXISTS (SELECT 1 FROM tenant.saml_connections s
+                                 WHERE s.id = ei.connection_id AND s.tenant_id = ei.tenant_id AND ei.provider = 'saml' AND s.status = 'active')
+                         OR EXISTS (SELECT 1 FROM tenant.ldap_connections l
+                                    WHERE l.id = ei.connection_id AND l.tenant_id = ei.tenant_id AND ei.provider = 'ldap' AND l.status = 'active')
+                         OR EXISTS (SELECT 1 FROM tenant.oidc_connections o
+                                    WHERE o.id = ei.connection_id AND o.tenant_id = ei.tenant_id AND ei.provider = 'oidc' AND o.status = 'active'))))
+    )::boolean AS unadoptable_admin
+`
+
+type GetCaptureExemptionParams struct {
+	TenantID         uuid.UUID
+	AdminPermissions []string
+	Email            string
+}
+
+type GetCaptureExemptionRow struct {
+	Sso              bool
+	BreakGlass       bool
+	UnadoptableAdmin bool
+}
+
+// Whether the organisation has an active SAML, LDAP or OpenID Connect
+// connection, and whether
+// the address keeps its own sign-in methods there: its account is a
+// break-glass member, or an administrator single sign-on can't sign in (an
+// administrator is never adopted by address, so only a home account linked to
+// an active connection can). Every branch runs for every address.
+func (q *Queries) GetCaptureExemption(ctx context.Context, arg GetCaptureExemptionParams) (GetCaptureExemptionRow, error) {
+	row := q.db.QueryRow(ctx, getCaptureExemption, arg.TenantID, arg.AdminPermissions, arg.Email)
+	var i GetCaptureExemptionRow
+	err := row.Scan(&i.Sso, &i.BreakGlass, &i.UnadoptableAdmin)
+	return i, err
 }
 
 const getDomainForVerify = `-- name: GetDomainForVerify :one
@@ -59,6 +171,43 @@ func (q *Queries) GetDomainForVerify(ctx context.Context, arg GetDomainForVerify
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const getLoginDomainCheck = `-- name: GetLoginDomainCheck :one
+SELECT host, checked_at, result FROM tenant.login_domain_checks WHERE tenant_id = $1
+`
+
+type GetLoginDomainCheckRow struct {
+	Host      string
+	CheckedAt time.Time
+	Result    []byte
+}
+
+func (q *Queries) GetLoginDomainCheck(ctx context.Context, tenantID uuid.UUID) (GetLoginDomainCheckRow, error) {
+	row := q.db.QueryRow(ctx, getLoginDomainCheck, tenantID)
+	var i GetLoginDomainCheckRow
+	err := row.Scan(&i.Host, &i.CheckedAt, &i.Result)
+	return i, err
+}
+
+const insertBreakGlassMember = `-- name: InsertBreakGlassMember :execrows
+INSERT INTO tenant.break_glass_members (tenant_id, user_id, created_by)
+VALUES ($1, $2, $3)
+ON CONFLICT (tenant_id, user_id) DO NOTHING
+`
+
+type InsertBreakGlassMemberParams struct {
+	TenantID  uuid.UUID
+	UserID    uuid.UUID
+	CreatedBy pgtype.UUID
+}
+
+func (q *Queries) InsertBreakGlassMember(ctx context.Context, arg InsertBreakGlassMemberParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertBreakGlassMember, arg.TenantID, arg.UserID, arg.CreatedBy)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const insertDomain = `-- name: InsertDomain :one
@@ -97,6 +246,109 @@ func (q *Queries) InsertDomain(ctx context.Context, arg InsertDomainParams) (Ins
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const isTenantMember = `-- name: IsTenantMember :one
+SELECT EXISTS (
+    SELECT 1 FROM "user".users u
+    WHERE u.id = $1 AND u.deleted_at IS NULL
+      AND (u.tenant_id = $2::uuid OR EXISTS (
+          SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $2::uuid))
+)::boolean
+`
+
+type IsTenantMemberParams struct {
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+}
+
+// A member: the organisation is the account's home, or the account holds one
+// of its roles.
+func (q *Queries) IsTenantMember(ctx context.Context, arg IsTenantMemberParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isTenantMember, arg.UserID, arg.TenantID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const listActiveSSOConnections = `-- name: ListActiveSSOConnections :many
+SELECT s.id, 'saml'::text AS protocol, s.name FROM tenant.saml_connections s
+WHERE s.tenant_id = $1::uuid AND s.status = 'active'
+UNION ALL
+SELECT l.id, 'ldap'::text AS protocol, l.name FROM tenant.ldap_connections l
+WHERE l.tenant_id = $1::uuid AND l.status = 'active'
+UNION ALL
+SELECT o.id, 'oidc'::text AS protocol, o.name FROM tenant.oidc_connections o
+WHERE o.tenant_id = $1::uuid AND o.status = 'active'
+ORDER BY protocol DESC, name
+`
+
+type ListActiveSSOConnectionsRow struct {
+	ID       uuid.UUID
+	Protocol string
+	Name     string
+}
+
+func (q *Queries) ListActiveSSOConnections(ctx context.Context, tenantID uuid.UUID) ([]ListActiveSSOConnectionsRow, error) {
+	rows, err := q.db.Query(ctx, listActiveSSOConnections, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListActiveSSOConnectionsRow{}
+	for rows.Next() {
+		var i ListActiveSSOConnectionsRow
+		if err := rows.Scan(&i.ID, &i.Protocol, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBreakGlassMembers = `-- name: ListBreakGlassMembers :many
+SELECT b.user_id, u.email, u.display_name, b.created_by, b.created_at
+FROM tenant.break_glass_members b
+JOIN "user".users u ON u.id = b.user_id
+WHERE b.tenant_id = $1
+ORDER BY lower(u.email)
+`
+
+type ListBreakGlassMembersRow struct {
+	UserID      uuid.UUID
+	Email       string
+	DisplayName *string
+	CreatedBy   pgtype.UUID
+	CreatedAt   time.Time
+}
+
+func (q *Queries) ListBreakGlassMembers(ctx context.Context, tenantID uuid.UUID) ([]ListBreakGlassMembersRow, error) {
+	rows, err := q.db.Query(ctx, listBreakGlassMembers, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListBreakGlassMembersRow{}
+	for rows.Next() {
+		var i ListBreakGlassMembersRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.Email,
+			&i.DisplayName,
+			&i.CreatedBy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listDomains = `-- name: ListDomains :many
@@ -168,4 +420,28 @@ func (q *Queries) MarkDomainVerified(ctx context.Context, arg MarkDomainVerified
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const saveLoginDomainCheck = `-- name: SaveLoginDomainCheck :exec
+INSERT INTO tenant.login_domain_checks (tenant_id, host, checked_at, result)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (tenant_id) DO UPDATE
+SET host = EXCLUDED.host, checked_at = EXCLUDED.checked_at, result = EXCLUDED.result
+`
+
+type SaveLoginDomainCheckParams struct {
+	TenantID  uuid.UUID
+	Host      string
+	CheckedAt time.Time
+	Result    []byte
+}
+
+func (q *Queries) SaveLoginDomainCheck(ctx context.Context, arg SaveLoginDomainCheckParams) error {
+	_, err := q.db.Exec(ctx, saveLoginDomainCheck,
+		arg.TenantID,
+		arg.Host,
+		arg.CheckedAt,
+		arg.Result,
+	)
+	return err
 }

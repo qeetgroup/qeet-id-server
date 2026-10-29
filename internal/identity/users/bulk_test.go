@@ -137,6 +137,7 @@ var rowErrorCases = []struct {
 	{"invalid phone", BulkUserInput{Email: "row@example.com", Phone: "555-0100"}, nil, CodeImportFieldInvalid, "phone", "invalid row: phone failed e164"},
 	{"duplicate email", BulkUserInput{Email: "row@example.com"}, errs.ErrAuthEmailExists, errs.CodeAuthEmailExists, "email", "a user with this email already exists"},
 	{"duplicate email with detail", BulkUserInput{Email: "row@example.com"}, errs.ErrAuthEmailExists.WithDetail(dbDetail), errs.CodeAuthEmailExists, "email", "a user with this email already exists"},
+	{"email on another organization's domain", BulkUserInput{Email: "row@example.com"}, errs.ErrUserDomainManaged, errs.CodeUserDomainManaged, "email", errs.ErrUserDomainManaged.Message},
 	{"password too short", BulkUserInput{Email: "row@example.com", Password: "x"}, errs.ErrAuthPolicyPasswordTooShort, errs.CodeAuthPolicyPasswordTooShort, "password", errs.ErrAuthPolicyPasswordTooShort.Message},
 	{"password without uppercase", BulkUserInput{Email: "row@example.com", Password: "x"}, errs.ErrAuthPolicyPasswordNoUppercase, errs.CodeAuthPolicyPasswordNoUppercase, "password", errs.ErrAuthPolicyPasswordNoUppercase.Message},
 	{"password without number", BulkUserInput{Email: "row@example.com", Password: "x"}, errs.ErrAuthPolicyPasswordNoNumber, errs.CodeAuthPolicyPasswordNoNumber, "password", errs.ErrAuthPolicyPasswordNoNumber.Message},

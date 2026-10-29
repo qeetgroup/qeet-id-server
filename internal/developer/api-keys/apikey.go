@@ -40,6 +40,9 @@ type Key struct {
 	LastUsedAt *time.Time `json:"last_used_at"`
 	RevokedAt  *time.Time `json:"revoked_at"`
 	CreatedAt  time.Time  `json:"created_at"`
+	// CreatedBy is who created it, and RotatedFrom the key it replaced.
+	CreatedBy   *uuid.UUID `json:"created_by"`
+	RotatedFrom *uuid.UUID `json:"rotated_from"`
 }
 
 // PlanLimiter returns the numeric cap for a plan-gated resource (a negative
@@ -203,13 +206,14 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Key, string, err
 		KeyHash:   secretHash,
 		Scopes:    in.Scopes,
 		ExpiresAt: pgtTS(in.ExpiresAt),
+		CreatedBy: pgUUID(in.Actor.UserID),
 	})
 	if err != nil {
 		return nil, "", err
 	}
 	k := rowToKey(row.ID, row.TenantID, row.UserID, row.Name, row.Prefix,
 		row.Scopes, row.ExpiresAt, row.LastUsedAt, row.RevokedAt, row.CreatedAt)
-	// The audit row is the record of who created the key; the table has none.
+	k.CreatedBy, k.RotatedFrom = uuidPtr(row.CreatedBy), uuidPtr(row.RotatedFrom)
 	meta := map[string]any{"name": k.Name, "scopes": k.Scopes}
 	if k.UserID != nil {
 		meta["user_id"] = k.UserID.String()
@@ -231,8 +235,10 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Key, error) {
 	}
 	out := make([]Key, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, rowToKey(row.ID, row.TenantID, row.UserID, row.Name, row.Prefix,
-			row.Scopes, row.ExpiresAt, row.LastUsedAt, row.RevokedAt, row.CreatedAt))
+		k := rowToKey(row.ID, row.TenantID, row.UserID, row.Name, row.Prefix,
+			row.Scopes, row.ExpiresAt, row.LastUsedAt, row.RevokedAt, row.CreatedAt)
+		k.CreatedBy, k.RotatedFrom = uuidPtr(row.CreatedBy), uuidPtr(row.RotatedFrom)
+		out = append(out, k)
 	}
 	return out, nil
 }
@@ -298,6 +304,12 @@ func (s *Service) Verify(ctx context.Context, raw string) (*Key, error) {
 	return &k, nil
 }
 
+// Live reports whether tenantID's key id would still authenticate a request:
+// it isn't revoked or expired, and the person it acts for, if any, is active.
+func (s *Service) Live(ctx context.Context, tenantID, id uuid.UUID) (bool, error) {
+	return s.q.APIKeyLive(ctx, dbgen.APIKeyLiveParams{ID: id, TenantID: tenantID})
+}
+
 // Middleware authenticates the request if it carries `Authorization:
 // ApiKey <raw>`. On success the principal is attached and ActorType is
 // "api_key"; on failure we fall through so the next middleware can try.
@@ -315,6 +327,7 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 				ActorType: "api_key",
 				Subject:   k.ID.String(),
 				Scopes:    k.Scopes,
+				ExpiresAt: k.ExpiresAt,
 			}
 			tenant := k.TenantID
 			p.TenantID = &tenant
@@ -342,6 +355,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/api-keys", h.create)
 	r.Get("/tenants/{tenantID}/api-keys", h.list)
 	r.Delete("/api-keys/{id}", h.revoke)
+	r.Post("/tenants/{tenantID}/api-keys/{id}/rotate", h.rotate)
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {

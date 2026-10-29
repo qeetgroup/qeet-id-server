@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/accountnotice"
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
@@ -51,8 +53,10 @@ type Service struct {
 	loginBaseURL    string
 	rules           PasswordRules
 	magicLinks      MagicLinkPolicy
+	capture         auth.DomainCapture
 	magicPerAddress Limiter
 	magicPerCaller  Limiter
+	resetPerAddress Limiter
 	signals         *sessionsignal.Signaller
 	requestRecords  Limiter
 	// deliveries tracks the work requests leave running; see afterAnswer.
@@ -71,6 +75,19 @@ type PasswordRules interface {
 // live. Satisfied by *authpolicy.Service.
 type MagicLinkPolicy interface {
 	MagicLinkPolicy(ctx context.Context, tenantID uuid.UUID) (enabled bool, ttl time.Duration, err error)
+}
+
+// SetDomainCapture sets the check that refuses resets and magic links to an
+// address whose organisation requires single sign-on (nil: none is refused).
+func (s *Service) SetDomainCapture(c auth.DomainCapture) { s.capture = c }
+
+// refuseCaptured returns errs.ErrAuthSSORequired when email's domain is
+// captured.
+func (s *Service) refuseCaptured(ctx context.Context, email string) error {
+	if s.capture == nil {
+		return nil
+	}
+	return s.capture.RefuseCaptured(ctx, email)
 }
 
 // SetSessionSignals sets how ended sessions are announced.
@@ -148,17 +165,33 @@ func (s *Service) resetLink(raw string, from ResetOrigin) string {
 	return fmt.Sprintf("%s/forgot-password?token=%s", s.baseAppURL, raw)
 }
 
+// SetResetLimit bounds password-reset requests per address (nil: unbounded).
+func (s *Service) SetResetLimit(perAddress Limiter) { s.resetPerAddress = perAddress }
+
 // StartPasswordReset emails a reset link to the account with this email, if
 // any (email is globally unique), landing back on the application from names
 // (see resetLink). It answers alike either way, storing and sending the link
 // after it returns (see afterAnswer), and returns the raw token for dev-mode
-// handlers, empty when no account matched.
+// handlers, empty when no account matched. The link goes to the address as
+// stored, and ends the account's earlier ones. Past the per-address bound it
+// returns ErrTooManyRequests, whether or not an account matched; an address
+// whose organisation requires single sign-on is then refused before any
+// account is looked up.
 func (s *Service) StartPasswordReset(ctx context.Context, email string, from ResetOrigin) (string, error) {
+	if s.resetPerAddress != nil {
+		if ok, _ := s.resetPerAddress.Take(ctx, "password-reset:address:"+strings.ToLower(strings.TrimSpace(email))); !ok {
+			return "", errs.ErrTooManyRequests
+		}
+	}
+	if err := s.refuseCaptured(ctx, email); err != nil {
+		return "", err
+	}
 	var userID uuid.UUID
 	var tenantID *uuid.UUID
+	var stored string
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, tenant_id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`, email,
-	).Scan(&userID, &tenantID)
+		`SELECT id, tenant_id, email FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`, email,
+	).Scan(&userID, &tenantID, &stored)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -171,6 +204,9 @@ func (s *Service) StartPasswordReset(ctx context.Context, email string, from Res
 	}
 	resetURL := s.resetLink(raw, from)
 	s.afterAnswer(ctx, "send a password reset link", func(ctx context.Context) error {
+		if err := s.q.ExpirePasswordResets(ctx, userID); err != nil {
+			return err
+		}
 		if err := s.q.InsertPasswordReset(ctx, dbgen.InsertPasswordResetParams{
 			UserID:    userID,
 			TokenHash: hash,
@@ -180,7 +216,7 @@ func (s *Service) StartPasswordReset(ctx context.Context, email string, from Res
 		}
 		if err := s.sender.Send(ctx, notifier.Message{
 			Channel: "email",
-			To:      email,
+			To:      stored,
 			Subject: "Reset your password",
 			Body:    fmt.Sprintf("Reset your Qeet ID password: %s", resetURL),
 			HTML: emailtmpl.Action(
@@ -271,8 +307,9 @@ func (s *Service) recordRequest(ctx context.Context, action string, userID uuid.
 
 // ConfirmPasswordReset sets a new password with a reset link, checked against
 // the rules of the account's organisation once the link is known to be good. A
-// refused password leaves the credential and link untouched. On success the
-// address counts as verified and every sign-in ends (see auth.EndSignIns).
+// refused password, or an address that must now sign in with single sign-on,
+// leaves the credential and link untouched. On success the address counts as
+// verified and every sign-in ends (see auth.EndSignIns).
 func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPassword string, ac AuditCtx) error {
 	if s.rules == nil {
 		return errs.ErrNotImplemented
@@ -287,6 +324,9 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 	}
 	account, err := s.q.GetResetAccount(ctx, row.UserID)
 	if err != nil {
+		return err
+	}
+	if err := s.refuseCaptured(ctx, account.Email); err != nil {
 		return err
 	}
 	var tenantID uuid.UUID // uuid.Nil: the account belongs to no organisation
@@ -373,7 +413,12 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 	}); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	accountnotice.Tell(ctx, s.pool, s.sender, userID, "Your password was reset",
+		"The password for your Qeet ID account was reset with a link sent to this address, and you were signed out everywhere.")
+	return nil
 }
 
 // resetLink reads the reset link hash names through q, refusing one that is

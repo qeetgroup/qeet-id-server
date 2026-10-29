@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -29,12 +30,22 @@ func TestLogPublisher_AlwaysSucceeds(t *testing.T) {
 	}
 }
 
-func TestDefaultMaxAttempts_IsReasonable(t *testing.T) {
-	if DefaultMaxAttempts < 5 {
-		t.Errorf("max attempts too low: %d — transient publisher outages need room to ride out", DefaultMaxAttempts)
+// TestRetriesSpanADay checks that an event is retried for at least
+// DeadLetterAfter, and not much longer, before it is dead-lettered, waiting
+// longer after each failure up to retryCap.
+func TestRetriesSpanADay(t *testing.T) {
+	var waited time.Duration
+	for n := 1; n < DefaultMaxAttempts; n++ {
+		if d := retryDelay(n); d < retryDelay(n-1) || d > retryCap {
+			t.Fatalf("wait after failure %d is %s; want it no shorter than the last and at most %s", n, d, retryCap)
+		}
+		waited += retryDelay(n)
 	}
-	if DefaultMaxAttempts > 30 {
-		t.Errorf("max attempts too high: %d — log spam from permanently-bad events", DefaultMaxAttempts)
+	if waited < DeadLetterAfter || waited >= DeadLetterAfter+retryCap {
+		t.Errorf("%d attempts span %s, want at least %s and under %s more", DefaultMaxAttempts, waited, DeadLetterAfter, retryCap)
+	}
+	if retryDelay(1) != 2*time.Second || retryDelay(1000) != retryCap {
+		t.Errorf("waits %s after one failure and %s after many, want 2s and %s", retryDelay(1), retryDelay(1000), retryCap)
 	}
 }
 

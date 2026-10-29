@@ -25,6 +25,7 @@ const (
 	ReasonOtherSessionsRevoked    = "other_sessions_revoked"    // the user signed out their other sessions
 	ReasonAllSessionsRevoked      = "all_sessions_revoked"      // the user signed out everywhere
 	ReasonAdminRevokedAll         = "admin_revoked_all"         // an administrator signed the user out
+	ReasonAdminRevoked            = "admin_revoked"             // an administrator ended this session
 	ReasonPasswordChanged         = "password_changed"          // other sessions end; the current one stays
 	ReasonPasswordReset           = "password_reset"            // every session ends
 	ReasonAdminPasswordSet        = "admin_password_set"        // an administrator set the password

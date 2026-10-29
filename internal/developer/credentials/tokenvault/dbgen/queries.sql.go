@@ -15,14 +15,15 @@ import (
 
 const deleteConnectState = `-- name: DeleteConnectState :one
 DELETE FROM tenant.token_vault_connect_states WHERE state = $1
-RETURNING tenant_id, user_id, provider, expires_at
+RETURNING tenant_id, user_id, provider, expires_at, COALESCE(code_verifier, '')::text AS code_verifier
 `
 
 type DeleteConnectStateRow struct {
-	TenantID  uuid.UUID
-	UserID    uuid.UUID
-	Provider  string
-	ExpiresAt time.Time
+	TenantID     uuid.UUID
+	UserID       uuid.UUID
+	Provider     string
+	ExpiresAt    time.Time
+	CodeVerifier string
 }
 
 // DeleteConnectState atomically consumes the single-use state for the
@@ -35,6 +36,7 @@ func (q *Queries) DeleteConnectState(ctx context.Context, state string) (DeleteC
 		&i.UserID,
 		&i.Provider,
 		&i.ExpiresAt,
+		&i.CodeVerifier,
 	)
 	return i, err
 }
@@ -109,16 +111,17 @@ func (q *Queries) GetTokenGrant(ctx context.Context, arg GetTokenGrantParams) (G
 }
 
 const insertConnectState = `-- name: InsertConnectState :exec
-INSERT INTO tenant.token_vault_connect_states (state, tenant_id, user_id, provider, expires_at)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO tenant.token_vault_connect_states (state, tenant_id, user_id, provider, expires_at, code_verifier)
+VALUES ($1, $2, $3, $4, $5, $6)
 `
 
 type InsertConnectStateParams struct {
-	State     string
-	TenantID  uuid.UUID
-	UserID    uuid.UUID
-	Provider  string
-	ExpiresAt time.Time
+	State        string
+	TenantID     uuid.UUID
+	UserID       uuid.UUID
+	Provider     string
+	ExpiresAt    time.Time
+	CodeVerifier *string
 }
 
 func (q *Queries) InsertConnectState(ctx context.Context, arg InsertConnectStateParams) error {
@@ -128,6 +131,7 @@ func (q *Queries) InsertConnectState(ctx context.Context, arg InsertConnectState
 		arg.UserID,
 		arg.Provider,
 		arg.ExpiresAt,
+		arg.CodeVerifier,
 	)
 	return err
 }

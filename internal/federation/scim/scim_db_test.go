@@ -3,12 +3,45 @@
 package scim
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
+
+// planGate includes SCIM in the plans of the tenants it holds.
+type planGate map[uuid.UUID]bool
+
+func (g planGate) FeatureAllowed(_ context.Context, tenantID uuid.UUID, _ string) (bool, error) {
+	return g[tenantID], nil
+}
+
+// TestLapsedPlanStopsSCIM checks that a SCIM token issued while the plan
+// included SCIM provisions nothing once the plan has lapsed.
+func TestLapsedPlanStopsSCIM(t *testing.T) {
+	ctx := dbtest.Context(t)
+	f := newSCIMFixture(t, ctx)
+	plans := planGate{f.tenantID: true}
+	f.svc.SetPlanGate(plans)
+	if rec := f.do(t, http.MethodGet, "/scim/v2/Users", nil); rec.Code != http.StatusOK {
+		t.Fatalf("SCIM on a plan with it: status %d", rec.Code)
+	}
+
+	delete(plans, f.tenantID) // the plan lapses
+	rec := f.do(t, http.MethodPost, "/scim/v2/Users", map[string]any{
+		"schemas": []string{"urn:ietf:params:scim:schemas:core:2.0:User"}, "userName": dbtest.Unique("new") + "@example.test",
+	})
+	if rec.Code != http.StatusForbidden || decodeBody(t, rec)["schemas"] == nil {
+		t.Errorf("SCIM after the plan lapsed: status %d %s, want a SCIM 403", rec.Code, rec.Body.String())
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE tenant_id = $1`, f.tenantID); n != 0 {
+		t.Errorf("%d users provisioned after the plan lapsed, want none", n)
+	}
+}
 
 // TestSCIMUserReadsStayInTheirTenant checks that one tenant's SCIM token can
 // neither find, read nor delete another tenant's user.

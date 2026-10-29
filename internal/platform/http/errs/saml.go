@@ -14,6 +14,8 @@ const (
 	CodeSAMLSSOURLInvalid            = "saml.sso_url_invalid"
 	CodeSAMLStatusInvalid            = "saml.status_invalid"
 	CodeSAMLConnectionDisabled       = "saml.connection_disabled"
+	CodeSAMLConnectionDraft          = "saml.connection_draft"
+	CodeSAMLOtherBrowser             = "saml.other_browser"
 	CodeSAMLConnectionMisconfigured  = "saml.connection_misconfigured"
 	CodeSAMLRequestInvalid           = "saml.request_invalid"
 	CodeSAMLResponseMissing          = "saml.response_missing"
@@ -26,12 +28,29 @@ const (
 	CodeSAMLAuthnRequestInvalid      = "saml.authn_request_invalid"
 	CodeSAMLRequestParamMissing      = "saml.request_param_missing"
 	CodeSAMLServiceProviderDisabled  = "saml.service_provider_disabled"
+	CodeSAMLServiceProviderDraft     = "saml.service_provider_draft"
 	CodeSAMLACSMismatch              = "saml.acs_url_mismatch"
 	CodeSAMLACSURLInvalid            = "saml.acs_url_invalid"
 	CodeSAMLSPFieldsRequired         = "saml.sp_fields_required"
 	CodeSAMLUserTenantMismatch       = "saml.user_tenant_mismatch"
 	CodeSAMLAccountUnverified        = "saml.account_unverified"
 	CodeSAMLSPEntityIDTaken          = "saml.sp_entity_id_taken"
+	CodeSAMLEmailDomainUnverified    = "saml.email_domain_unverified"
+	CodeSAMLAccountAdministers       = "saml.account_administers"
+	CodeSAMLTestSignInNotFound       = "saml.test_sign_in_not_found"
+	CodeSAMLJITNotAllowed            = "saml.jit_not_allowed"
+	CodeSAMLCertificateExists        = "saml.certificate_exists"
+	CodeSAMLCertificateLimit         = "saml.certificate_limit"
+	CodeSAMLCertificateLast          = "saml.certificate_last"
+	CodeSAMLMetadataRequired         = "saml.metadata_required"
+	CodeSAMLMetadataInvalid          = "saml.metadata_invalid"
+	CodeSAMLMetadataURLInvalid       = "saml.metadata_url_invalid"
+	CodeSAMLMetadataUnreachable      = "saml.metadata_unreachable"
+	CodeSAMLCertificateUnused        = "saml.certificate_unused"
+	CodeSAMLCertificateRequired      = "saml.certificate_required"
+	CodeSAMLEncryptionKeyUnsupported = "saml.encryption_key_unsupported"
+	CodeSAMLRequestSignatureInvalid  = "saml.request_signature_invalid"
+	CodeSAMLConnectionIncomplete     = "saml.connection_incomplete"
 )
 
 // SAML errors. Message is the end-user-facing text; edit wording here. Handlers
@@ -49,6 +68,8 @@ var (
 	ErrSAMLSSOURLInvalid            = New(CodeSAMLSSOURLInvalid, "The IdP SSO URL must be an absolute https:// URL without a user name or password.")
 	ErrSAMLStatusInvalid            = New(CodeSAMLStatusInvalid, "Status must be draft, active or disabled.")
 	ErrSAMLConnectionDisabled       = New(CodeSAMLConnectionDisabled, "This SAML connection is disabled.")
+	ErrSAMLConnectionDraft          = New(CodeSAMLConnectionDraft, "This SAML connection is still being set up. Ask your administrator to turn it on.")
+	ErrSAMLOtherBrowser             = New(CodeSAMLOtherBrowser, "This sign-in was started in another browser. Sign in again from the browser you are using.")
 	ErrSAMLConnectionMisconfigured  = New(CodeSAMLConnectionMisconfigured, "This SAML connection isn't configured correctly. Contact your administrator.")
 	ErrSAMLRequestInvalid           = New(CodeSAMLRequestInvalid, "The SAML request was malformed.")
 	ErrSAMLResponseMissing          = New(CodeSAMLResponseMissing, "The SAML response is missing.")
@@ -61,11 +82,37 @@ var (
 	ErrSAMLAuthnRequestInvalid      = New(CodeSAMLAuthnRequestInvalid, "The SAMLRequest couldn't be read.")
 	ErrSAMLRequestParamMissing      = New(CodeSAMLRequestParamMissing, "A SAMLRequest or sp parameter is required.")
 	ErrSAMLServiceProviderDisabled  = New(CodeSAMLServiceProviderDisabled, "This service provider is disabled.")
+	ErrSAMLServiceProviderDraft     = New(CodeSAMLServiceProviderDraft, "This app is still being set up, so it can't sign anyone in yet.")
 	ErrSAMLACSMismatch              = New(CodeSAMLACSMismatch, "The assertion consumer service URL doesn't match the registered value.")
 	ErrSAMLACSURLInvalid            = New(CodeSAMLACSURLInvalid, "The ACS URL must be an absolute https:// URL without a user name or password (http only on localhost).")
 	ErrSAMLSPFieldsRequired         = New(CodeSAMLSPFieldsRequired, "Name, entity ID and ACS URL are all required.")
 	ErrSAMLUserTenantMismatch       = New(CodeSAMLUserTenantMismatch, "You aren't a member of this service provider's tenant.")
 	ErrSAMLAccountUnverified        = New(CodeSAMLAccountUnverified,
 		"An account already uses this email address, but the address hasn't been verified. Verify it, or reset the password from the link we email you, then sign in with single sign-on.")
-	ErrSAMLSPEntityIDTaken = New(CodeSAMLSPEntityIDTaken, "A service provider with this entity ID is already registered.")
+	ErrSAMLSPEntityIDTaken       = New(CodeSAMLSPEntityIDTaken, "A service provider with this entity ID is already registered.")
+	ErrSAMLEmailDomainUnverified = New(CodeSAMLEmailDomainUnverified,
+		"Single sign-on can't sign in this address: its domain isn't one this organization has verified. Ask your administrator to verify it.")
+	ErrSAMLAccountAdministers = New(CodeSAMLAccountAdministers,
+		"This account administers the organization, so single sign-on can't take it over by its email address. Sign in with the account's own password or passkey.")
+	ErrSAMLTestSignInNotFound = New(CodeSAMLTestSignInNotFound, "We couldn't find that test sign-in. Start a new one.")
+	ErrSAMLJITNotAllowed      = New(CodeSAMLJITNotAllowed,
+		"There's no account for this address, and your organisation doesn't create one at sign-in for it. Ask your administrator to invite you.")
+	ErrSAMLCertificateExists  = New(CodeSAMLCertificateExists, "This connection already trusts that certificate.")
+	ErrSAMLCertificateLimit   = New(CodeSAMLCertificateLimit, "A connection can trust at most 8 signing certificates. Remove one first.")
+	ErrSAMLCertificateLast    = New(CodeSAMLCertificateLast, "A connection needs at least one signing certificate. Add the new one before removing this one.")
+	ErrSAMLMetadataRequired   = New(CodeSAMLMetadataRequired, "Give either the identity provider's metadata URL or its metadata XML.")
+	ErrSAMLMetadataInvalid    = New(CodeSAMLMetadataInvalid, "The identity provider's metadata couldn't be used.")
+	ErrSAMLMetadataURLInvalid = New(CodeSAMLMetadataURLInvalid,
+		"The metadata URL must be an absolute https:// URL on a public address, without a user name or password.")
+	ErrSAMLMetadataUnreachable = New(CodeSAMLMetadataUnreachable, "The identity provider's metadata couldn't be fetched from its URL.")
+
+	ErrSAMLCertificateUnused = New(CodeSAMLCertificateUnused,
+		"Say what the app's certificate is for: verifying its signed sign-in requests, encrypting its assertions, or both.")
+	ErrSAMLCertificateRequired = New(CodeSAMLCertificateRequired,
+		"Add the app's certificate to verify its sign-in requests or encrypt its assertions.")
+	ErrSAMLEncryptionKeyUnsupported = New(CodeSAMLEncryptionKeyUnsupported, "Encrypting assertions needs a certificate with an RSA key.")
+	ErrSAMLRequestSignatureInvalid  = New(CodeSAMLRequestSignatureInvalid,
+		"The app's sign-in request isn't signed with the certificate registered for it.")
+	ErrSAMLConnectionIncomplete = New(CodeSAMLConnectionIncomplete,
+		"Add the identity provider's entity ID, SSO URL and signing certificate before turning the connection on.")
 )

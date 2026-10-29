@@ -27,16 +27,19 @@ const allowlist = `
 #   pending-review     not shown to be safe; needs a tenant condition or removal
 #   dev-seed           the development seed, which writes every organisation's data by design
 
+cmd/seed/internal/activity/billing.go#numberInvoices  dev-seed: numbers every organisation's invoices in the one GST series
 cmd/seed/internal/world/audit.go#World.Rechain  dev-seed: lists every audit chain to rehash it
 cmd/seed/internal/world/audit.go#World.rechain  dev-seed: reads one chain, the tenant or platform one, to rehash it
 cmd/seed/internal/world/audit.go#World.VerifyChains  dev-seed: lists every audit chain to verify it
 
+internal/access/accountnotice/accountnotice.go#Tell  session-scoped: the account the change was made to, by its owner or on their account, read for its own address
 internal/access/authentication/accountstatus.go#Service.refuseInactiveAccount  pre-tenant: sign-in checks the account it just verified
 internal/access/authentication/mfalogin.go#Service.BeginMFAPasskey  secret-lookup: challenge found by its random MFA token
 internal/access/authentication/mfalogin.go#Service.SendMFACode  secret-lookup: challenge found by its random MFA token
 internal/access/authentication/mfalogin.go#Service.StartMFAPush  secret-lookup: challenge found by its random MFA token
 internal/access/authentication/mfalogin.go#loadMFAChallenge  secret-lookup: challenge found by its random MFA token
 internal/access/authentication/mfapolicy.go#Service.StartMFAEnrollment  secret-lookup: challenge found by its random MFA token
+internal/access/authentication/queries.sql#SignInClientName  global-client: the name of the application a hosted sign-in is for, recorded on that sign-in
 internal/access/authentication/queries.sql#DeleteMFALoginChallenge  pending-review: unused query; delete it or add a tenant condition
 internal/access/authentication/queries.sql#DeleteTrustedDevicesForUser  parent-scoped: EndAllSignIns callers check the user first
 internal/access/authentication/queries.sql#DenyBackchannelRequestsForUser  parent-scoped: EndAllSignIns callers check the user first
@@ -57,6 +60,7 @@ internal/access/authentication/queries.sql#RevokeOtherSessionsForUser  session-s
 internal/access/authentication/queries.sql#RevokeSessionById  session-scoped: the session of the refresh token in use
 internal/access/authentication/queries.sql#RevokeSessionForUser  session-scoped: only a session of the caller's own user
 internal/access/authentication/queries.sql#SessionEnd  session-scoped: the caller's own session and user
+internal/access/authentication/queries.sql#ExpireRecoveryLinksForUser  parent-scoped: EndAllSignIns callers check the user first; an account's links are its own in every organisation
 internal/access/authentication/queries.sql#SpendAuthorizationCodesForUser  parent-scoped: EndAllSignIns callers check the user first
 internal/access/authentication/queries.sql#SupersedeSession  session-scoped: the caller's own session, replaced on tenant switch
 internal/access/authentication/queries.sql#TouchSession  session-scoped: the session of the verified access token
@@ -67,10 +71,12 @@ internal/access/authentication/risksignin.go#Service.sendRiskEmailCode  secret-l
 internal/access/authentication/password.go#Service.ChangePassword  session-scoped: locks the caller's own account
 internal/access/authentication/sessions.go#Service.ListSessionsPageFor  session-scoped: the caller's own sessions
 internal/access/authentication/mfachallenge.go#Service.deferEnrollment  secret-lookup: challenge found by its random MFA token
+internal/access/authentication/mfachallenge.go#Service.noticeMFALocked  pre-tenant: emails the account whose second-factor sign-in just locked
 internal/access/authentication/mfachallenge.go#Service.verifyAndConsumeMFAChallenge  secret-lookup: challenge found by its random MFA token
-internal/access/authentication/switch.go#carrySecondFactor  session-scoped: the session issued in the same transaction
+internal/access/authentication/switch.go#continueSession  session-scoped: the session issued in the same transaction, from one of the same person's
 internal/access/authentication/sessionlimit.go#Service.enforceSessionLimit  parent-scoped: session IDs from the tenant-scoped list above
 internal/access/authentication/signinaudit.go#Service.homeTenant  pre-tenant: files a failed sign-in under the account's home tenant
+internal/access/authorization/rbac/queries.sql#GrantBuiltinRolePermissions  background-sweep: at boot, gives every organisation's built-in roles the permissions their definitions cover
 internal/access/authorization/rbac/queries.sql#GetRoleTenant  parent-scoped: scopedRole compares the role's tenant to httpx.RequireTenant
 internal/access/mfa/totp.go#Service.ResetForUser  parent-scoped: the handler checks the user's home tenant first
 internal/access/mfa/pairing.go#PurgeExpiredPushPairings  background-sweep: cleanup job for expired codes
@@ -81,6 +87,7 @@ internal/access/mfa/pairing.go#Service.WithdrawPushPairing  session-scoped: the 
 internal/access/mfa/queries.sql#RecordStepUp  session-scoped: the caller's own session and user
 internal/access/passkeys/queries.sql#GetUserForWebAuthn  pre-tenant: the caller's own account, or the one a passkey sign-in asserts
 internal/access/passkeys/queries.sql#GetUserIDByEmail  pre-tenant: passkey sign-in finds the account by email
+internal/access/recovery/queries.sql#ExpireMagicLinks  pre-tenant: a new sign-in link ends the earlier ones to the same account's address
 internal/access/recovery/queries.sql#GetMagicLinkAccount  pre-tenant: magic-link sign-in finds the account by email
 internal/access/recovery/queries.sql#GetMagicLinkByToken  secret-lookup: link found by its token hash
 internal/access/recovery/queries.sql#GetResetAccount  secret-lookup: account named by the reset token
@@ -97,6 +104,7 @@ internal/developer/api-keys/queries.sql#VerifyAPIKey  secret-lookup: key found b
 internal/developer/credentials/tokenvault/queries.sql#DeleteConnectState  secret-lookup: single-use random OAuth state
 internal/developer/credentials/vc/queries.sql#GetCredentialRevocation  parent-scoped: ID of a credential whose signature was just verified
 internal/developer/principal/queries.sql#GetServicePrincipalForAuth  secret-lookup: the client secret is verified against this row
+internal/developer/principal/queries.sql#PrincipalLive  session-scoped: principal named by the verified access token
 internal/developer/webhooks/webhook.go#Service.tick  background-sweep: delivery worker for every tenant
 
 internal/federation/adminportal/adminportal.go#Service.Exchange  secret-lookup: link found by its token hash
@@ -104,6 +112,7 @@ internal/federation/adminportal/adminportal.go#Service.ResolveSession  secret-lo
 internal/federation/adminportal/queries.sql#GetAdminPortalLinkByHash  pending-review: unused query; delete it or add a tenant condition
 internal/federation/adminportal/queries.sql#TouchAdminPortalLinkUsed  pending-review: unused query; delete it or add a tenant condition
 internal/federation/identitylink/identitylink.go#AddressVerified  pre-tenant: federated sign-in checks the account it found
+internal/federation/identitylink/identitylink.go#MarkAddressVerified  pre-tenant: federated sign-in marks the home account it just adopted
 internal/federation/ldap/ldap.go#Service.getFull  parent-scoped: re-encrypts the connection row just read
 internal/federation/ldap/queries.sql#GetUserByEmail  pre-tenant: federated sign-in finds the account by email
 internal/federation/ldap/queries.sql#TouchLdapLastLogin  parent-scoped: connection row read for this sign-in
@@ -117,7 +126,6 @@ internal/federation/oidc/queries.sql#DenyCIBARequest  parent-scoped: request loc
 internal/federation/oidc/queries.sql#DenyDevice  secret-lookup: request found by its user code
 internal/federation/oidc/queries.sql#GetAccountStanding  parent-scoped: account named by the grant in use
 internal/federation/oidc/queries.sql#GetClientForAuth  global-client: client_id is unique platform-wide
-internal/federation/oidc/queries.sql#GetClientGrantTypes  global-client: client_id is unique platform-wide
 internal/federation/oidc/queries.sql#GetClientName  global-client: client_id is unique platform-wide
 internal/federation/oidc/queries.sql#GetClientPostLogoutURIs  global-client: client_id is unique platform-wide
 internal/federation/oidc/queries.sql#GetClientRedirectInfo  global-client: client_id is unique platform-wide
@@ -125,6 +133,7 @@ internal/federation/oidc/queries.sql#GetClientTenantAndScopes  global-client: cl
 internal/federation/oidc/queries.sql#GetDeviceByUserCode  secret-lookup: request found by its user code
 internal/federation/oidc/queries.sql#GetRefreshTokenForIntrospect  secret-lookup: token row found by its hash, then bound to the calling client
 internal/federation/oidc/queries.sql#GetUserinfo  session-scoped: account named by the verified access token
+internal/federation/oidc/queries.sql#ListAllWebOrigins  platform-wide: the CORS allow-list of every application's web origins, read before a request names its application; no other column
 internal/federation/oidc/queries.sql#ListPendingCIBA  session-scoped: the caller's own pending requests
 internal/federation/oidc/queries.sql#LockCIBARequest  session-scoped: checked against the caller before any use
 internal/federation/oidc/queries.sql#LockCIBARequestByHash  secret-lookup: request found by its auth_req_id hash
@@ -141,15 +150,18 @@ internal/federation/oidc/queries.sql#RevokeRefreshTokenGrant  secret-lookup: by 
 internal/federation/oidc/queries.sql#SessionClients  session-scoped: clients of the login session being ended
 internal/federation/oidc/queries.sql#TouchCIBAPollTime  secret-lookup: request found by its auth_req_id hash
 internal/federation/oidc/queries.sql#TouchDevicePollTime  secret-lookup: request found by its device code hash
+internal/federation/oidcsso/queries.sql#ConsumeOidcConnectionLoginCode  secret-lookup: by login code hash; the connection it joins names the tenant
+internal/federation/oidcsso/queries.sql#GetOidcConnectionForSignIn  pre-tenant: public sign-in endpoints; the connection in the path names the tenant
+internal/federation/oidcsso/queries.sql#GetUserByEmail  pre-tenant: federated sign-in finds the account by email
 internal/federation/saml/queries.sql#ConsumeSamlLoginCode  secret-lookup: by login code hash
 internal/federation/saml/queries.sql#GetSamlConnectionByID  pre-tenant: public SSO endpoints; the connection in the path names the tenant
 internal/federation/saml/queries.sql#GetUserByEmail  pre-tenant: federated sign-in finds the account by email
 internal/federation/saml/queries.sql#GetUserForIdP  session-scoped: the IdP session's user; its tenant is compared to the SP's
+internal/federation/saml/queries.sql#ListSamlMetadataDue  background-sweep: the metadata refresh job finds every organisation's due connections
 internal/federation/saml/queries.sql#MarkSamlLoginCodeUsed  secret-lookup: by login code hash
 internal/federation/saml/queries.sql#TouchSamlLastLogin  parent-scoped: connection row read for this sign-in
 internal/federation/saml/queries.sql#TouchSamlSPLastLogin  parent-scoped: service provider row read for this sign-in
 internal/federation/saml/saml.go#Service.AllowsIdPInitiated  parent-scoped: connection ID from a read that checked it
-internal/federation/scim/queries.sql#GetScimTokenTenant  secret-lookup: tenant named by the SCIM token hash
 internal/federation/scim/queries.sql#TagProvisionedUser  parent-scoped: account created for the tenant in the same transaction
 internal/federation/social/platform.go#Service.findOrCreatePlatformUser  pre-tenant: platform sign-in finds or creates the account
 internal/federation/social/providers.go#Service.DeleteProvider  parent-scoped: provider ID from the tenant-scoped read above
@@ -162,6 +174,8 @@ internal/federation/social/queries.sql#ListExternalIdentitiesForUser  pending-re
 internal/federation/social/queries.sql#MarkSocialLoginCodeUsed  secret-lookup: by login code hash
 internal/federation/social/social.go#requireVerifiedAddress  pre-tenant: social sign-in checks the account it found
 
+internal/identity/domainverify/queries.sql#EmailDomainManager  platform-wide: a domain is verified by one organisation; callers compare it with their own
+internal/identity/invitations/invite.go#Service.grantAuthedAccept  session-scoped: the caller's own account, accepting an invitation to its address
 internal/identity/invitations/queries.sql#ActivateInvitedAccount  parent-scoped: account created for the invite in the same transaction
 internal/identity/invitations/queries.sql#DeclineInviteForEmail  session-scoped: only invites to the caller's verified email
 internal/identity/invitations/queries.sql#FindUserIDByEmail  pre-tenant: email is unique across all accounts
@@ -183,6 +197,7 @@ internal/identity/users/queries.sql#SoftDeleteUserBy  parent-scoped: the handler
 internal/identity/users/repository.go#Repository.update  parent-scoped: callers pass their own or a tenant-checked account
 internal/identity/users/signinmethods.go#LockSignInMethods  parent-scoped: callers pass their own or a tenant-checked account
 internal/identity/verification/queries.sql#EmailTakenByOther  session-scoped: the caller's email change; email is unique platform-wide
+internal/identity/verification/queries.sql#ExpireRecoveryLinksForUser  session-scoped: the caller's own links, ended as their address changes
 internal/identity/verification/queries.sql#GetUserEmail  session-scoped: the caller's own account
 internal/identity/verification/queries.sql#GetUserPhone  session-scoped: the caller's own account
 internal/identity/verification/queries.sql#MarkUserEmailVerified  session-scoped: the caller's own account
@@ -193,27 +208,38 @@ internal/identity/verification/queries.sql#UpdateUserEmail  session-scoped: the 
 internal/operations/audit/anomaly/anomaly.go#Service.scoreOne  background-sweep: anomaly scoring job
 internal/operations/audit/anomaly/queries.sql#ListUnscoredAuditEvents  background-sweep: anomaly scoring job
 internal/operations/audit/anomaly/queries.sql#MarkAuditEventScored  background-sweep: anomaly scoring job
+internal/operations/audit/queries.sql#ListAuditChainCheckpoints  background-sweep: audit chain verification job, every chain's checkpoint
 internal/operations/billing/checkout.go#Service.StartSignupCheckout  pre-tenant: sign-up checkout runs before the tenant exists
 internal/operations/billing/checkout.go#Service.completeSignupCheckout  pre-tenant: completing the checkout creates the tenant
 internal/operations/billing/queries.sql#CompleteCheckout  parent-scoped: checkout named by a signature-verified payment webhook or callback
 internal/operations/billing/queries.sql#UpdateCheckoutFailed  parent-scoped: checkout inserted for the tenant just before
 internal/operations/billing/queries.sql#UpdateCheckoutProviderRef  parent-scoped: checkout inserted for the tenant just before
+internal/operations/qeetai/queries.sql#ListConversationRetention  background-sweep: the retention job finds every organisation that keeps its Qeet AI conversations for a set time, then deletes each one's scoped to it
+internal/operations/billing/queries.sql#DueSubscriptions  background-sweep: the period-end job finds every organisation whose trial or period has ended
+internal/operations/billing/queries.sql#ClaimInvoiceEmails  background-sweep: the invoice-email job sends every organisation's newly issued invoices to the address each was billed to
+internal/operations/billing/queries.sql#InvoiceTenant  platform-wide: the operator's mark-invoice-paid command finds which organisation an invoice belongs to, then settles it scoped to that one
 internal/operations/email/editor.go#Handler.testEmail  session-scoped: sends to the caller's own verified email
+internal/operations/gdpr/erasure.go#eraseAccountData  parent-scoped: the account being erased (see PurgeUserPII), everywhere it left data
 internal/operations/gdpr/gdpr.go#Service.ExportSelf  session-scoped: the caller's own data export
 internal/operations/gdpr/gdpr.go#Service.buildExport  background-sweep: export worker holding the request lease
 internal/operations/gdpr/gdpr.go#Service.exportSweepTick  background-sweep: export worker holding the request lease
 internal/operations/gdpr/gdpr.go#Service.purgeOne  background-sweep: purge worker holding the request lease
 internal/operations/gdpr/gdpr.go#Service.tick  background-sweep: purge worker claiming due requests
 internal/operations/gdpr/queries.sql#CompletePurgeRequest  pending-review: unused query; delete it or add a tenant condition
-internal/operations/gdpr/queries.sql#PurgeUserPII  session-scoped: the caller erasing their own account
+internal/operations/gdpr/queries.sql#ExpireReadyExports  background-sweep: export retention job
+internal/operations/gdpr/queries.sql#PurgeUserPII  parent-scoped: the caller erasing their own account, or one the erasure worker checked against its request under lock
 internal/operations/gdpr/queries.sql#ReadyExportRequest  pending-review: unused query; delete it or add a tenant condition
 internal/operations/gdpr/queries.sql#RevokeUserSessions  pending-review: unused query; delete it or add a tenant condition
 internal/operations/notifications/queries.sql#CountUnreadNotifications  session-scoped: the caller's own inbox; notifications belong to the account
 internal/operations/notifications/queries.sql#ListNotifications  session-scoped: the caller's own inbox; notifications belong to the account
 internal/operations/notifications/queries.sql#MarkAllNotificationsRead  session-scoped: the caller's own inbox; notifications belong to the account
 internal/operations/retention/queries.sql#ListEnabledRetentionPolicies  background-sweep: retention job
+internal/operations/retention/sweeps.go#RecordSweeps  background-sweep: retention job for every organisation's old records
+internal/operations/retention/sweeps.go#SignInSweeps  background-sweep: retention job for every organisation's spent sign-in state
 internal/operations/siem/queries.sql#AdvanceLogSinkCursor  background-sweep: log forwarding job
 internal/operations/siem/queries.sql#SetLogSinkError  background-sweep: log forwarding job
+internal/operations/siem/queries.sql#ClaimLogSink  background-sweep: log forwarding job, by sink id
+internal/operations/siem/queries.sql#ReleaseLogSink  background-sweep: log forwarding job, by sink id
 internal/operations/siem/siem.go#Service.forwardDue  background-sweep: log forwarding job
 
 internal/platform/cache/ratelimit/tenant.go#TenantLimiter.GetAll  pending-review: unused method; lists every tenant's overrides

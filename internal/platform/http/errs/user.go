@@ -11,6 +11,7 @@ const (
 	CodeUserManagedElsewhere  = "user.managed_elsewhere"
 	CodeUserCredentialsShared = "user.credentials_shared"
 	CodeUserManagedHere       = "user.managed_here"
+	CodeUserDomainManaged     = "user.domain_managed_elsewhere"
 )
 
 // User errors. The Message is what the end user sees — edit wording here, in
@@ -25,4 +26,5 @@ var (
 	ErrUserManagedElsewhere  = New(CodeUserManagedElsewhere, "This person's account is managed outside this organization. Remove them from this organization instead.")
 	ErrUserCredentialsShared = New(CodeUserCredentialsShared, "This person also belongs to another organization, so only they can change their password or two-step verification. Ask them to reset their password from the sign-in page.")
 	ErrUserManagedHere       = New(CodeUserManagedHere, "This organization manages this person's account. Suspend or delete the account instead.")
+	ErrUserDomainManaged     = New(CodeUserDomainManaged, "That address is on a domain another organization has verified, so only that organization can create its account.")
 )

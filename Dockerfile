@@ -33,4 +33,9 @@ COPY --from=build /out/qeet-id-server /qeet-id-server
 COPY --from=build /out/qeet-id-scheduler /qeet-id-scheduler
 EXPOSE 4001
 USER nonroot:nonroot
+# SIGTERM starts a graceful stop that ends within SHUTDOWN_TIMEOUT (20s by
+# default). Give the container longer before it is killed, 30s at the default:
+# docker stop -t 30, compose stop_grace_period: 30s, ECS stopTimeout: 30 or
+# Kubernetes terminationGracePeriodSeconds: 30. Docker's own default is 10s.
+STOPSIGNAL SIGTERM
 ENTRYPOINT ["/qeet-id-server"]

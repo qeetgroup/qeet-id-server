@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"time"
 
 	"github.com/google/uuid"
@@ -117,17 +118,17 @@ func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID u
 	var sessionExp, idleExp time.Time
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, hook_claims, expires_at, idle_timeout, country,
-		                           second_factor)
+		                           second_factor, city)
 		SELECT $1, $2, $3, NULLIF($4,'')::inet, $5, $6,
 		       LEAST(NOW() + COALESCE(sp.session_max_age, make_interval(secs => $7::float8)),
 		             COALESCE($9::timestamptz, 'infinity'::timestamptz)),
 		       COALESCE(sp.session_idle_timeout, make_interval(secs => $8::float8)),
-		       NULLIF($10, ''), NULLIF($11, '')
+		       NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, '')
 		FROM (VALUES (1)) AS one
 		LEFT JOIN tenant.security_policies sp ON sp.tenant_id = $3
 		RETURNING expires_at, LEAST(last_seen_at + idle_timeout, expires_at)
 	`, sessionID, userID, tenantArg, ipArg, ua, hookClaims, maxAge.Seconds(), idle.Seconds(), notAfterArg(notAfter),
-		httpx.GeoCountry(ctx), secondFactorOfMethod(method)).Scan(&sessionExp, &idleExp); err != nil {
+		httpx.GeoCountry(ctx), secondFactorOfMethod(method), httpx.GeoCity(ctx)).Scan(&sessionExp, &idleExp); err != nil {
 		return nil, err
 	}
 	access, exp, err := s.tokens.IssueSessionAccess(userID, tenantID, sessionID, claims, sessionExp)
@@ -144,6 +145,13 @@ func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID u
 		ExpiresAt: s.refreshExpiry(sessionExp),
 	}); err != nil {
 		return nil, err
+	}
+	if factor := secondFactorOfMethod(method); factor != "" && auditMeta["second_factor"] == nil {
+		auditMeta = maps.Clone(auditMeta)
+		if auditMeta == nil {
+			auditMeta = map[string]any{}
+		}
+		auditMeta["second_factor"] = factor
 	}
 	if err := audit.Record(ctx, tx, signInEvent(userID, tenantID, "session", sessionID, ip, ua, method, auditMeta)); err != nil {
 		return nil, err

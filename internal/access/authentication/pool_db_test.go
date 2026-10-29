@@ -129,8 +129,8 @@ func (f *poolFactors) BeginLoginPasskey(ctx context.Context, _ uuid.UUID) (uuid.
 	return uuid.New(), "options", f.pool.QueryRow(ctx, `SELECT 1`).Scan(new(int))
 }
 
-func (f *poolFactors) StartLoginPush(ctx context.Context, _ uuid.UUID, _, _ string) (uuid.UUID, time.Time, error) {
-	return uuid.New(), time.Now().Add(time.Minute), f.pool.QueryRow(ctx, `SELECT 1`).Scan(new(int))
+func (f *poolFactors) StartLoginPush(ctx context.Context, _ uuid.UUID, _, _ string) (LoginPush, error) {
+	return LoginPush{ID: uuid.New(), ExpiresAt: time.Now().Add(time.Minute), Number: 42}, f.pool.QueryRow(ctx, `SELECT 1`).Scan(new(int))
 }
 
 func (f *poolFactors) SendLoginCode(ctx context.Context, _ uuid.UUID, _ *uuid.UUID, _ uuid.UUID) error {
@@ -324,7 +324,7 @@ func TestPasskeyAndPushChallengeWithOneConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin the passkey ceremony: %v", err)
 	}
-	if _, err := svc.StartMFAPush(ctx, res.MFAToken, "", ""); err != nil {
+	if _, _, err := svc.StartMFAPush(ctx, res.MFAToken, "", ""); err != nil {
 		t.Fatalf("start the push request: %v", err)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM auth.mfa_login_challenges WHERE id = $1

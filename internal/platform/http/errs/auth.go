@@ -29,11 +29,14 @@ const (
 	CodeAuthTenantInactive              = "auth.tenant_inactive"
 	CodeAuthSignInUnavailable           = "auth.sign_in_unavailable"
 	CodeAuthAddressNotAllowed           = "auth.address_not_allowed"
+	CodeAuthSSORequired                 = "auth.sso_required"
 )
 
 // Sign-in errors. ErrAuthMethodDisabled, ErrAuthSignInUnavailable and
 // ErrAuthAddressNotAllowed reveal nothing about the account or the rule that
-// matched. ErrAuthPasswordBreached is no longer returned; its code stays reserved.
+// matched. ErrAuthSSORequired depends only on the address's domain, and names the
+// connections to sign in with in its metadata. ErrAuthPasswordBreached is no
+// longer returned; its code stays reserved.
 var (
 	ErrAuthSessionInvalid   = New(CodeAuthSessionInvalid, "Your sign-in session is invalid. Please sign in again.").AsRetryable()
 	ErrAuthAccountInactive  = New(CodeAuthAccountInactive, "Your account isn't active. Contact your administrator.")
@@ -62,4 +65,5 @@ var (
 	ErrAuthTenantInactive      = New(CodeAuthTenantInactive, "This organization isn't active. Contact its administrator.")
 	ErrAuthSignInUnavailable   = New(CodeAuthSignInUnavailable, "Sign-in is temporarily unavailable. Please try again in a moment.").AsRetryable()
 	ErrAuthAddressNotAllowed   = New(CodeAuthAddressNotAllowed, "Your organisation doesn't allow sign-in from this network. Contact your administrator.")
+	ErrAuthSSORequired         = New(CodeAuthSSORequired, "Your organisation requires you to sign in with its single sign-on.")
 )

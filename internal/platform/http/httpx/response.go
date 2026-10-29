@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"mime"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/go-playground/validator/v10"
@@ -42,9 +44,15 @@ func WriteJSON(w http.ResponseWriter, status int, body any) {
 	}
 }
 
+// overloadRetryAfter is the longest Retry-After, in seconds, sent with
+// server.overloaded; each answer picks 1 up to it, so refused clients come
+// back spread out rather than all at once.
+const overloadRetryAfter = 3
+
 // WriteError writes err as the JSON error envelope with its code's HTTP status.
 // An error that is not an *errs.Error is logged and sent as ErrInternalServer,
 // except the database's last-owner guard, which becomes ErrTenantLastOwner.
+// server.overloaded also carries Retry-After, as a header and as metadata.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	e := errs.As(err)
 	if e == nil {
@@ -88,6 +96,11 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 			"req_id", RequestID(r),
 			"client_ip", ClientIP(r),
 		)
+	}
+	if e.Code == errs.CodeServerOverloaded {
+		retry := 1 + rand.IntN(overloadRetryAfter) // #nosec G404 -- spreads retries, not a secret
+		w.Header().Set("Retry-After", strconv.Itoa(retry))
+		e = e.WithMetadata(map[string]any{"retry_after": retry})
 	}
 	body := errorBody{}
 	body.Error.Code = e.Code

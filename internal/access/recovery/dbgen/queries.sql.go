@@ -13,22 +13,48 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const expireMagicLinks = `-- name: ExpireMagicLinks :exec
+UPDATE auth.magic_links SET expires_at = NOW() - INTERVAL '1 minute'
+WHERE LOWER(email) = LOWER($1) AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute'
+`
+
+// ExpireMagicLinks ends the unused sign-in links to an address, so only the
+// newest works; a minute back, as ExpirePasswordResets.
+func (q *Queries) ExpireMagicLinks(ctx context.Context, email string) error {
+	_, err := q.db.Exec(ctx, expireMagicLinks, email)
+	return err
+}
+
+const expirePasswordResets = `-- name: ExpirePasswordResets :exec
+UPDATE auth.password_resets SET expires_at = NOW() - INTERVAL '1 minute'
+WHERE user_id = $1 AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute'
+`
+
+// ExpirePasswordResets ends the user's unused reset links, so only the newest
+// works. Set a minute back, so a clock behind the database's sees them ended.
+func (q *Queries) ExpirePasswordResets(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, expirePasswordResets, userID)
+	return err
+}
+
 const getMagicLinkAccount = `-- name: GetMagicLinkAccount :one
-SELECT id, tenant_id FROM "user".users
+SELECT id, tenant_id, email FROM "user".users
 WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND status <> 'suspended'
 `
 
 type GetMagicLinkAccountRow struct {
 	ID       uuid.UUID
 	TenantID pgtype.UUID
+	Email    string
 }
 
 // GetMagicLinkAccount finds the account a magic link signs in to: by its
 // address, platform-wide (an address is unique), not deleted or suspended.
+// email is the address as stored, which links are sent to.
 func (q *Queries) GetMagicLinkAccount(ctx context.Context, email string) (GetMagicLinkAccountRow, error) {
 	row := q.db.QueryRow(ctx, getMagicLinkAccount, email)
 	var i GetMagicLinkAccountRow
-	err := row.Scan(&i.ID, &i.TenantID)
+	err := row.Scan(&i.ID, &i.TenantID, &i.Email)
 	return i, err
 }
 

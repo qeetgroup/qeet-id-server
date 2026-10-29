@@ -18,7 +18,6 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/dbutil"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // parseUserMetadata decodes the JSONB metadata column. JSONB is guaranteed
@@ -364,148 +363,6 @@ func (r *Repository) GetByEmailGlobal(ctx context.Context, email string) (*User,
 		row.PhoneVerifiedAt, row.DisplayName, row.Status, row.Metadata, row.CreatedAt, row.UpdatedAt), nil
 }
 
-// ListByTenant returns a page of a tenant's members (its home users and those
-// holding a role there) and the next cursor. offset > 0 pages by offset, otherwise
-// by cursor. Hand-written because sqlc types the text[] roles column as any.
-func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit int, cursor string, offset int) ([]User, string, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
-	var (
-		rows pgx.Rows
-		err  error
-	)
-	if offset > 0 {
-		// Offset paging powers the console's numbered pager (jump to page N).
-		// Keyset (cursor) remains the default for forward walks.
-		rows, err = r.pool.Query(ctx, `
-			SELECT `+userCols+`,
-			  COALESCE((
-				SELECT array_agg(r.name ORDER BY r.name)
-				FROM rbac.user_roles ur2
-				JOIN rbac.roles r ON r.id = ur2.role_id
-				WHERE ur2.user_id = "user".users.id AND ur2.tenant_id = $1
-			  ), '{}') AS roles,
-			  (EXISTS(SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = "user".users.id AND t.confirmed_at IS NOT NULL)
-			   OR EXISTS(SELECT 1 FROM auth.mfa_otp_factors o WHERE o.user_id = "user".users.id AND o.verified_at IS NOT NULL)
-			   OR EXISTS(SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = "user".users.id))::boolean AS mfa_enabled,
-			  (SELECT count(*) FROM tenant.group_members gm
-			   WHERE gm.user_id = "user".users.id AND gm.tenant_id = $1)::int AS groups_count,
-			  `+lastSeenCols+`
-			FROM "user".users
-			WHERE deleted_at IS NULL
-			  AND id IN (
-				SELECT u.id FROM "user".users u WHERE u.tenant_id = $1 AND u.deleted_at IS NULL
-				UNION
-				SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1
-			  )
-			ORDER BY created_at DESC, id DESC
-			LIMIT $2 OFFSET $3
-		`, tenantID, limit+1, offset)
-	} else if cursor == "" {
-		rows, err = r.pool.Query(ctx, `
-			SELECT `+userCols+`,
-			  COALESCE((
-				SELECT array_agg(r.name ORDER BY r.name)
-				FROM rbac.user_roles ur2
-				JOIN rbac.roles r ON r.id = ur2.role_id
-				WHERE ur2.user_id = "user".users.id AND ur2.tenant_id = $1
-			  ), '{}') AS roles,
-			  (EXISTS(SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = "user".users.id AND t.confirmed_at IS NOT NULL)
-			   OR EXISTS(SELECT 1 FROM auth.mfa_otp_factors o WHERE o.user_id = "user".users.id AND o.verified_at IS NOT NULL)
-			   OR EXISTS(SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = "user".users.id))::boolean AS mfa_enabled,
-			  (SELECT count(*) FROM tenant.group_members gm
-			   WHERE gm.user_id = "user".users.id AND gm.tenant_id = $1)::int AS groups_count,
-			  `+lastSeenCols+`
-			FROM "user".users
-			WHERE deleted_at IS NULL
-			  AND id IN (
-				SELECT u.id FROM "user".users u WHERE u.tenant_id = $1 AND u.deleted_at IS NULL
-				UNION
-				SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1
-			  )
-			ORDER BY created_at DESC, id DESC
-			LIMIT $2
-		`, tenantID, limit+1)
-	} else {
-		// Cursor: opaque base64(createdAt|id); tuple inequality hits the composite index.
-		curT, curID, perr := paging.DecodeTimeUUID(cursor)
-		if perr != nil {
-			return nil, "", errs.ErrBadRequest.WithDetail("invalid cursor")
-		}
-		rows, err = r.pool.Query(ctx, `
-			SELECT `+userCols+`,
-			  COALESCE((
-				SELECT array_agg(r.name ORDER BY r.name)
-				FROM rbac.user_roles ur2
-				JOIN rbac.roles r ON r.id = ur2.role_id
-				WHERE ur2.user_id = "user".users.id AND ur2.tenant_id = $1
-			  ), '{}') AS roles,
-			  (EXISTS(SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = "user".users.id AND t.confirmed_at IS NOT NULL)
-			   OR EXISTS(SELECT 1 FROM auth.mfa_otp_factors o WHERE o.user_id = "user".users.id AND o.verified_at IS NOT NULL)
-			   OR EXISTS(SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = "user".users.id))::boolean AS mfa_enabled,
-			  (SELECT count(*) FROM tenant.group_members gm
-			   WHERE gm.user_id = "user".users.id AND gm.tenant_id = $1)::int AS groups_count,
-			  `+lastSeenCols+`
-			FROM "user".users
-			WHERE deleted_at IS NULL
-			  AND id IN (
-				SELECT u.id FROM "user".users u WHERE u.tenant_id = $1 AND u.deleted_at IS NULL
-				UNION
-				SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1
-			  )
-			  AND (created_at, id) < ($2, $3)
-			ORDER BY created_at DESC, id DESC
-			LIMIT $4
-		`, tenantID, curT, curID, limit+1)
-	}
-	if err != nil {
-		return nil, "", err
-	}
-	defer rows.Close()
-
-	var out []User
-	for rows.Next() {
-		var u User
-		var meta []byte
-		var tid *uuid.UUID
-		var roles []string
-		var mfaEnabled bool
-		var groupsCount int
-		var lastSeenAt *time.Time
-		var lastSeenIP *string
-		if err := rows.Scan(&u.ID, &tid, &u.Email, &u.EmailVerifiedAt,
-			&u.Phone, &u.PhoneVerifiedAt, &u.DisplayName, &u.Status, &meta,
-			&u.CreatedAt, &u.UpdatedAt, &roles,
-			&mfaEnabled, &groupsCount, &lastSeenAt, &lastSeenIP); err != nil {
-			return nil, "", err
-		}
-		if tid != nil {
-			u.TenantID = *tid
-		}
-		u.Roles = roles
-		u.MfaEnabled = &mfaEnabled
-		u.GroupsCount = &groupsCount
-		u.LastSeenAt = lastSeenAt
-		u.LastSeenIP = lastSeenIP
-		u.Metadata = parseUserMetadata(meta, u.ID)
-		out = append(out, u)
-	}
-	// A mid-stream failure (connection reset, server cancel) stops the loop
-	// without an error from Scan. Unchecked, that returns a SHORT page plus a
-	// next-cursor derived from it — silently skipping users.
-	if err := rows.Err(); err != nil {
-		return nil, "", err
-	}
-	var next string
-	if len(out) > limit {
-		last := out[limit-1]
-		next = paging.EncodeTimeUUID(last.CreatedAt, last.ID)
-		out = out[:limit]
-	}
-	return out, next, nil
-}
-
 // Update applies the non-nil fields of in to user id and returns the result.
 // The SET clause is built at run time, so this is hand-written rather than sqlc.
 func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*User, error) {
@@ -615,11 +472,11 @@ func (r *Repository) ListDeleted(ctx context.Context, tenantID uuid.UUID, limit 
 	return out, nil
 }
 
-// Restore reverses a soft delete. Returns ErrNotFound if the user isn't
-// currently soft-deleted, and ErrAuthEmailExists if their address has since
-// been taken by another account.
-func (r *Repository) Restore(ctx context.Context, id uuid.UUID) error {
-	n, err := r.q.RestoreUser(ctx, id)
+// RestoreTx reverses a soft delete in tx. Returns ErrNotFound if the user
+// isn't currently soft-deleted, and ErrAuthEmailExists if their address has
+// since been taken by another account.
+func (r *Repository) RestoreTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
+	n, err := r.q.WithTx(tx).RestoreUser(ctx, id)
 	if pgxerr.IsUnique(err) {
 		return errs.ErrAuthEmailExists
 	}
@@ -632,10 +489,11 @@ func (r *Repository) Restore(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// Purge permanently removes a soft-deleted user (and, via ON DELETE CASCADE,
-// its sessions/credentials/identities). Only acts on already-soft-deleted rows.
-func (r *Repository) Purge(ctx context.Context, id uuid.UUID) error {
-	n, err := r.q.PurgeUser(ctx, id)
+// PurgeTx permanently removes a soft-deleted user in tx (and, via ON DELETE
+// CASCADE, its sessions/credentials/identities). Only acts on
+// already-soft-deleted rows.
+func (r *Repository) PurgeTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
+	n, err := r.q.WithTx(tx).PurgeUser(ctx, id)
 	if err != nil {
 		return err
 	}

@@ -226,6 +226,38 @@ func TestRestoreWithATakenEmail(t *testing.T) {
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), errs.CodeAuthEmailExists) {
 		t.Errorf("restore an account whose email is taken: %d %s, want 409 %s", rec.Code, rec.Body.String(), errs.CodeAuthEmailExists)
 	}
+	if n := audited(t, tenant, "user.restored", target.ID); n != 0 {
+		t.Errorf("a refused restore was recorded %d times", n)
+	}
+}
+
+// TestRecycleBinActionsAreTheAdministrators checks that a restore and a purge
+// are recorded as the administrator's, with where they came from.
+func TestRecycleBinActionsAreTheAdministrators(t *testing.T) {
+	tenant := dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	target := dbtest.User(t, tenant, tenant)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)
+	path := "/users/" + target.ID.String()
+	byAdmin := func(action string) int {
+		return dbtest.Count(t, `
+			SELECT count(*) FROM audit.events
+			WHERE tenant_id = $1 AND action = $2 AND resource_id = $3 AND actor_user_id = $4 AND actor_type = 'user'
+			  AND user_agent IS NOT NULL`, tenant, action, target.ID, admin.ID)
+	}
+	for _, step := range []struct{ method, path, action string }{
+		{http.MethodDelete, path, "user.deleted"},
+		{http.MethodPost, path + "/restore", "user.restored"},
+		{http.MethodDelete, path, "user.deleted"},
+		{http.MethodDelete, path + "/purge", "user.purged"},
+	} {
+		if rec := dbtest.Do(t, as, step.method, step.path, nil); rec.Code >= 300 {
+			t.Fatalf("%s %s: %d %s", step.method, step.path, rec.Code, rec.Body.String())
+		}
+	}
+	if byAdmin("user.restored") != 1 || byAdmin("user.purged") != 1 {
+		t.Errorf("restore recorded %d, purge %d times as the administrator's; want once each", byAdmin("user.restored"), byAdmin("user.purged"))
+	}
 }
 
 // TestRemovingAMemberLeavesTheirHomeAlone checks that an organisation removing

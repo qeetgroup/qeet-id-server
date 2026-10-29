@@ -35,6 +35,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/tenants/{tenantID}/billing/subscription/cancel", h.cancel)
 	r.Post("/tenants/{tenantID}/billing/checkout", h.checkout)
 	r.Get("/tenants/{tenantID}/billing/invoices", h.listInvoices)
+	r.Post("/tenants/{tenantID}/billing/invoices/{invoiceID}/pay", h.payInvoice)
+	r.Get("/tenants/{tenantID}/billing/payment-method", h.paymentMethod)
 }
 
 // MountPublic registers the payment provider routes. They authenticate by the
@@ -124,7 +126,7 @@ func (h *Handler) sandboxPay(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBillingReturnURLInvalid)
 		return
 	}
-	if err := h.Service.CompleteCheckout(r.Context(), r.PostForm.Get("ref")); err != nil {
+	if err := h.Service.CompleteCheckout(r.Context(), r.PostForm.Get("ref"), SandboxCard()); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -445,4 +447,51 @@ func (h *Handler) listInvoices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+// payInvoice opens a hosted checkout for an open invoice, such as a renewal.
+func (h *Handler) payInvoice(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	invoiceID, err := uuid.Parse(chi.URLParam(r, "invoiceID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBillingInvoiceNotFound)
+		return
+	}
+	var in struct {
+		SuccessURL string `json:"success_url"`
+		CancelURL  string `json:"cancel_url"`
+	}
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if !validReturnURL(in.SuccessURL) || !validReturnURL(in.CancelURL) {
+		httpx.WriteError(w, r, errs.ErrBillingCheckoutURLInvalid)
+		return
+	}
+	res, err := h.Service.PayInvoice(r.Context(), tenantID, invoiceID, in.SuccessURL, in.CancelURL)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// paymentMethod returns what the organisation last paid with, or null.
+func (h *Handler) paymentMethod(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	m, err := h.Service.LastPaymentMethod(r.Context(), tenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"payment_method": m})
 }

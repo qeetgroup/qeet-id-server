@@ -1,6 +1,7 @@
 package abac
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -352,42 +353,64 @@ func TestEvaluateCondition_Nested(t *testing.T) {
 
 // Missing / absent attributes
 
-func TestEvaluateCondition_MissingAttr_FailClosed(t *testing.T) {
-	empty := AttributeBag{"subject": {}}
-
-	// All comparison ops on a missing attribute return false.
-	for _, op := range []string{"eq", "ne", "gt", "gte", "lt", "lte", "contains", "prefix", "suffix", "regex", "in"} {
+// TestEvaluateCondition_MissingAttr_Unknown checks that comparing an absent or
+// null attribute with a literal is unknown for every operator, ne and nin
+// included: an allow never applies, so grants nothing, and a deny always does.
+func TestEvaluateCondition_MissingAttr_Unknown(t *testing.T) {
+	for _, op := range []string{"eq", "ne", "gt", "gte", "lt", "lte", "contains", "prefix", "suffix", "regex", "in", "nin"} {
 		val := `"anything"`
-		if op == "in" {
+		if op == "in" || op == "nin" {
 			val = `["a","b"]`
 		}
-		cond := `{"attr":"subject.missing","op":"` + op + `","value":` + val + `}`
-		if eval(t, cond, empty) {
-			t.Errorf("op %q on absent attr must return false (fail-closed)", op)
+		cond := `{"attr":"subject.x","op":"` + op + `","value":` + val + `}`
+		for name, b := range map[string]AttributeBag{
+			"attribute absent": {"subject": {}},
+			"attribute null":   {"subject": {"x": nil}},
+			"namespace absent": {"resource": {"x": "anything"}},
+		} {
+			if got := truthIn(t, cond, b); got != isUnknown {
+				t.Errorf("%s, %s: got %v, want unknown", op, name, got)
+			}
+			if allow, err := EvaluateCondition(json.RawMessage(cond), "allow", b); allow || err != nil {
+				t.Errorf("%s, %s: an allow applies (%v, %v)", op, name, allow, err)
+			}
+			if deny, err := EvaluateCondition(json.RawMessage(cond), "deny", b); !deny || err != nil {
+				t.Errorf("%s, %s: a deny does not apply (%v, %v)", op, name, deny, err)
+			}
 		}
 	}
 }
 
+// TestEvaluateCondition_MissingAttr_Exists checks that exists, which tests
+// presence, stays known: false for an absent attribute, true for a null one.
 func TestEvaluateCondition_MissingAttr_Exists(t *testing.T) {
-	b := AttributeBag{"subject": {}}
-	if eval(t, `{"attr":"subject.missing","op":"exists"}`, b) {
+	if eval(t, `{"attr":"subject.missing","op":"exists"}`, AttributeBag{"subject": {}}) {
 		t.Error("exists on absent attr must be false")
 	}
-}
-
-func TestEvaluateCondition_MissingAttr_Nin(t *testing.T) {
-	b := AttributeBag{"subject": {}}
-	// An absent attr is not a member of any set → nin returns true.
-	if !eval(t, `{"attr":"subject.missing","op":"nin","value":["a","b"]}`, b) {
-		t.Error("nin on absent attr must be true (absent is not-in any set)")
+	if !eval(t, `{"attr":"subject.x","op":"exists"}`, AttributeBag{"subject": {"x": nil}}) {
+		t.Error("exists on a null attr must be true")
 	}
 }
 
-func TestEvaluateCondition_MissingNamespace(t *testing.T) {
-	// Bag has no "resource" namespace at all.
-	b := subjectBag(map[string]any{"role": "admin"})
-	if eval(t, `{"attr":"resource.type","op":"eq","value":"doc"}`, b) {
-		t.Error("missing namespace must be treated as absent (false)")
+// TestEvaluateCondition_MissingAttr_Negated checks that negating a comparison
+// with a missing attribute still decides nothing, so "not a contractor" grants
+// nothing to someone whose department is unknown, and that exists guards a
+// deny meant only for requests that carry the attribute.
+func TestEvaluateCondition_MissingAttr_Negated(t *testing.T) {
+	b := AttributeBag{"subject": {"id": "u1"}, "resource": {}}
+	notContractor := `{"not":{"attr":"subject.department","op":"eq","value":"contractors"}}`
+	if allow, _ := EvaluateCondition(json.RawMessage(notContractor), "allow", b); allow {
+		t.Error("an allow on a negated comparison applied to an absent attribute")
+	}
+	if deny, _ := EvaluateCondition(json.RawMessage(notContractor), "deny", b); !deny {
+		t.Error("a deny on a negated comparison did not apply to an absent attribute")
+	}
+	guarded := `{"all":[{"attr":"resource.classification","op":"exists"},{"attr":"resource.classification","op":"eq","value":"secret"}]}`
+	if deny, _ := EvaluateCondition(json.RawMessage(guarded), "deny", b); deny {
+		t.Error("a deny guarded by exists applied without the attribute")
+	}
+	if deny, _ := EvaluateCondition(json.RawMessage(guarded), "deny", AttributeBag{"resource": {"classification": "secret"}}); !deny {
+		t.Error("a deny guarded by exists did not apply with the attribute")
 	}
 }
 
@@ -470,6 +493,33 @@ func TestValidateCondition_InvalidChild(t *testing.T) {
 	}
 }
 
+// TestAttributeBag checks that the action's name and attributes form the
+// action namespace, that a reference may name it, and that an attribute named
+// type, id or name never replaces the resource or action decided on.
+func TestAttributeBag(t *testing.T) {
+	b := attributeBag(EvaluationInput{
+		Resource:    EvaluationResource{Type: "document", ID: "d1", Attrs: map[string]any{"type": "invoice", "id": "x", "owner": "u1"}},
+		Action:      "read",
+		ActionAttrs: map[string]any{"name": "delete", "channel": "api"},
+		Subject:     map[string]any{"id": "u1", "channel": "api"},
+	})
+	for cond, want := range map[string]bool{
+		`{"attr":"resource.type","op":"eq","value":"document"}`:                  true,
+		`{"attr":"resource.id","op":"eq","value":"d1"}`:                          true,
+		`{"attr":"resource.owner","op":"eq","value":"u1"}`:                       true,
+		`{"attr":"action.name","op":"eq","value":"read"}`:                        true,
+		`{"attr":"action.channel","op":"eq","value":"api"}`:                      true,
+		`{"attr":"subject.channel","op":"eq","value":{"attr":"action.channel"}}`: true,
+	} {
+		if err := validateCondition(json.RawMessage(cond)); err != nil {
+			t.Errorf("%s: %v", cond, err)
+		}
+		if got := eval(t, cond, b); got != want {
+			t.Errorf("%s: %v, want %v", cond, got, want)
+		}
+	}
+}
+
 // Cross-namespace bag
 
 func TestEvaluateCondition_CrossNamespace(t *testing.T) {
@@ -488,38 +538,68 @@ func TestEvaluateCondition_CrossNamespace(t *testing.T) {
 	}
 }
 
-// TestLocksOutAuthor checks that an enabled deny refusing its own author
-// policy.write is refused at save, since nobody could then remove it, while a
-// deny aimed elsewhere, a disabled one, or an allow is not.
+// TestLocksOutAuthor checks that a deny aimed away from policy.write, a
+// disabled one, an allow, or a save with no user author is never a lock-out,
+// without reading the author's attributes (the service here has no database).
 func TestLocksOutAuthor(t *testing.T) {
-	author, other, tenantID := uuid.New(), uuid.New(), uuid.New()
+	author, tenantID := uuid.New(), uuid.New()
 	actor := audit.Actor{UserID: &author}
-	subjectIs := func(id uuid.UUID) json.RawMessage {
-		return json.RawMessage(`{"attr":"subject.id","op":"eq","value":"` + id.String() + `"}`)
-	}
+	s := &Service{}
 	for _, tc := range []struct {
 		name                         string
 		effect, resourceType, action string
 		enabled                      bool
-		cond                         json.RawMessage
-		want                         bool
+		actor                        audit.Actor
 	}{
-		{"deny everything for everyone", "deny", "*", "*", true, json.RawMessage(`{}`), true},
-		{"deny policy writes for everyone", "deny", "policy", "write", true, json.RawMessage(`{}`), true},
-		{"deny everything for the author", "deny", "*", "*", true, subjectIs(author), true},
-		{"deny everything for someone else", "deny", "*", "*", true, subjectIs(other), false},
-		{"deny everything for a resource's creator", "deny", "*", "*", true, json.RawMessage(creatorMayNotApprove), true},
-		{"deny another resource for everyone", "deny", "doc", "*", true, json.RawMessage(`{}`), false},
-		{"deny policy reads for everyone", "deny", "policy", "read", true, json.RawMessage(`{}`), false},
-		{"disabled deny everything", "deny", "*", "*", false, json.RawMessage(`{}`), false},
-		{"allow everything", "allow", "*", "*", true, json.RawMessage(`{}`), false},
+		{"deny another resource for everyone", "deny", "doc", "*", true, actor},
+		{"deny policy reads for everyone", "deny", "policy", "read", true, actor},
+		{"disabled deny everything", "deny", "*", "*", false, actor},
+		{"allow everything", "allow", "*", "*", true, actor},
+		{"a save with no user author (system)", "deny", "*", "*", true, audit.Actor{}},
 	} {
-		if got := locksOutAuthor(tc.effect, tc.resourceType, tc.action, tc.enabled, tc.cond, tenantID, actor); got != tc.want {
-			t.Errorf("%s: locksOutAuthor = %v, want %v", tc.name, got, tc.want)
+		if locked, err := s.locksOutAuthor(context.Background(), tenantID, tc.effect, tc.resourceType, tc.action, tc.enabled, json.RawMessage(`{}`), tc.actor); locked || err != nil {
+			t.Errorf("%s: locksOutAuthor = %v, %v; want no lock-out", tc.name, locked, err)
 		}
 	}
-	if locksOutAuthor("deny", "*", "*", true, json.RawMessage(`{}`), tenantID, audit.Actor{}) {
-		t.Error("a save with no user author (system) is never a lock-out")
+}
+
+// TestRefusesPolicyWrite checks which deny conditions refuse policy.write to a
+// caller with given attributes: an unconditional one, one naming them, one
+// they meet or one left unknown by an attribute they lack, and not one naming
+// someone else or one they don't meet.
+func TestRefusesPolicyWrite(t *testing.T) {
+	author, other, tenantID := uuid.New(), uuid.New(), uuid.New()
+	subject := SubjectAttributes(author.String(), tenantID)
+	subject["groups"], subject["roles"] = []any{"admins"}, []any{"owner"}
+	withMFA, withoutMFA := map[string]any{"mfa": true, "ip": "203.0.113.7"}, map[string]any{"mfa": false}
+	subjectIs := func(id uuid.UUID) string {
+		return `{"attr":"subject.id","op":"eq","value":"` + id.String() + `"}`
+	}
+	noMFA := `{"attr":"context.mfa","op":"ne","value":true}`
+	for _, tc := range []struct {
+		name     string
+		cond     string
+		ctxAttrs map[string]any
+		want     bool
+	}{
+		{"for everyone", `{}`, withMFA, true},
+		{"for the author", subjectIs(author), withMFA, true},
+		{"for someone else", subjectIs(other), withMFA, false},
+		{"for a resource's creator", creatorMayNotApprove, withMFA, true},
+		{"for an attribute the platform doesn't supply", `{"attr":"subject.department","op":"eq","value":"sales"}`, withMFA, true},
+		{"for a group the author is in", `{"attr":"subject.groups","op":"contains","value":"admins"}`, withMFA, true},
+		{"for a group the author isn't in", `{"attr":"subject.groups","op":"contains","value":"contractors"}`, withMFA, false},
+		{"without MFA, to an author with it", noMFA, withMFA, false},
+		{"without MFA, to an author without it", noMFA, withoutMFA, true},
+		{"without MFA, when it can't be known", noMFA, map[string]any{}, true},
+		{"outside an address range, to an author inside it", `{"not":{"attr":"context.ip","op":"prefix","value":"203.0.113."}}`, withMFA, false},
+	} {
+		bag := attributeBag(EvaluationInput{
+			Subject: subject, Resource: EvaluationResource{Type: policyResourceType}, Action: policyWriteAction, Context: tc.ctxAttrs,
+		})
+		if got := refusesPolicyWrite(json.RawMessage(tc.cond), bag); got != tc.want {
+			t.Errorf("deny %s: refusesPolicyWrite = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
 
@@ -882,6 +962,8 @@ func TestDecisionReasonCodes(t *testing.T) {
 	deny := candidate{id: uuid.New(), name: "deny_prod", effect: "deny", priority: 9, condition: []byte(`{"attr":"resource.name","op":"prefix","value":"prod-"}`)}
 	absent := candidate{id: uuid.New(), name: "deny_owner", effect: "deny", priority: 7, condition: []byte(`{"attr":"resource.owner","op":"eq","value":{"attr":"subject.id"}}`)}
 	broken := candidate{id: uuid.New(), name: "broken", effect: "allow", priority: 3, condition: []byte(`{"attr":"resource.name","op":"bogus","value":"x"}`)}
+	notEng := candidate{id: uuid.New(), name: "deny_outside_eng", effect: "deny", priority: 6, condition: []byte(`{"attr":"subject.department","op":"ne","value":"eng"}`)}
+	allowNotEng := candidate{id: uuid.New(), name: "allow_outside_eng", effect: "allow", priority: 6, condition: notEng.condition}
 	for _, tc := range []struct {
 		name     string
 		policies []candidate
@@ -891,6 +973,8 @@ func TestDecisionReasonCodes(t *testing.T) {
 		{"an allow policy matches", []candidate{allow}, ReasonAllowedByPolicy, &allow},
 		{"a deny policy matches", []candidate{deny, allow}, ReasonDeniedByPolicy, &deny},
 		{"a deny compares an absent attribute", []candidate{absent}, ReasonAttributeAbsent, &absent},
+		{"a deny compares an absent attribute with a literal", []candidate{notEng, allow}, ReasonAttributeAbsent, &notEng},
+		{"an allow compares an absent attribute with a literal", []candidate{allowNotEng}, ReasonNoMatchingAllow, nil},
 		{"a condition fails to evaluate", []candidate{broken}, ReasonConditionError, &broken},
 		{"nothing matches", nil, ReasonNoMatchingAllow, nil},
 	} {
@@ -910,5 +994,43 @@ func TestDecisionReasonCodes(t *testing.T) {
 	dec := combine([]candidate{broken}, b)
 	if shown := dec.Reason + strings.Join(dec.Trace, "\n"); strings.Contains(shown, "unknown operator") || strings.Contains(shown, "bogus") {
 		t.Errorf("a condition error showed its evaluation error: %q", shown)
+	}
+}
+
+// TestRoleAndRelationConditions checks a role condition against the roles the
+// platform supplies, unknown without them, and a relation condition against
+// the relationships resolved into the bag, unknown when unresolved; and that a
+// malformed one is refused.
+func TestRoleAndRelationConditions(t *testing.T) {
+	withRoles := AttributeBag{"subject": {"id": "u1", "roles": []any{"admin", "billing"}}, "resource": {"id": "doc-1"}}
+	withRelations := AttributeBag{"subject": {"id": "u1"}, "resource": {"object": "document:doc-1"},
+		relationsKey: {"document:doc-1#viewer": true, "document:doc-1#owner": false}}
+	for _, tc := range []struct {
+		name, cond string
+		bag        AttributeBag
+		want       truth
+	}{
+		{"a role held", `{"role":"admin"}`, withRoles, isTrue},
+		{"a role not held", `{"role":"auditor"}`, withRoles, isFalse},
+		{"a role without the roles", `{"role":"admin"}`, AttributeBag{"subject": {"id": "u1"}}, isUnknown},
+		{"a relation held", `{"relation":{"relation":"viewer","object":"document:doc-1"}}`, withRelations, isTrue},
+		{"a relation not held", `{"relation":{"relation":"owner","object":"document:doc-1"}}`, withRelations, isFalse},
+		{"a relation by reference", `{"relation":{"relation":"viewer","object":{"attr":"resource.object"}}}`, withRelations, isTrue},
+		{"a relation unresolved", `{"relation":{"relation":"editor","object":"document:doc-1"}}`, withRelations, isUnknown},
+		{"a reference to nothing", `{"relation":{"relation":"viewer","object":{"attr":"resource.missing"}}}`, withRelations, isUnknown},
+		{"a role and a relation", `{"all":[{"role":"admin"},{"relation":{"relation":"viewer","object":"document:doc-1"}}]}`,
+			AttributeBag{"subject": {"id": "u1", "roles": []any{"admin"}}, relationsKey: {"document:doc-1#viewer": true}}, isTrue},
+	} {
+		got, err := evaluateNode(json.RawMessage(tc.cond), tc.bag)
+		if err != nil || got != tc.want {
+			t.Errorf("%s: %v, %v; want %v", tc.name, got, err, tc.want)
+		}
+	}
+	for _, bad := range []string{`{"role":""}`, `{"role":7}`, `{"relation":{"relation":"viewer"}}`,
+		`{"relation":{"relation":"","object":"document:1"}}`, `{"relation":{"relation":"viewer","object":"document"}}`,
+		`{"relation":{"relation":"viewer","object":{"attr":"secrets.key"}}}`} {
+		if validateCondition(json.RawMessage(bad)) == nil {
+			t.Errorf("condition %s was accepted", bad)
+		}
 	}
 }

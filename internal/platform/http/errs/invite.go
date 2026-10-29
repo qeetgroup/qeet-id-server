@@ -8,6 +8,7 @@ const (
 	CodeInviteAccountExists    = "invite.account_exists"
 	CodeInviteEmailMismatch    = "invite.email_mismatch"
 	CodeInviteEmailNotVerified = "invite.email_not_verified"
+	CodeInviteRoleRequired     = "invite.role_required"
 )
 
 var (
@@ -17,4 +18,5 @@ var (
 	ErrInviteAccountExists    = New(CodeInviteAccountExists, "You already have an account. Sign in, then accept the invitation.")
 	ErrInviteEmailMismatch    = New(CodeInviteEmailMismatch, "This invitation was sent to a different email address.")
 	ErrInviteEmailNotVerified = New(CodeInviteEmailNotVerified, "Verify your email address to see and accept your invitations.")
+	ErrInviteRoleRequired     = New(CodeInviteRoleRequired, "This person belongs to another organization, so the invitation needs a role to give them here.")
 )

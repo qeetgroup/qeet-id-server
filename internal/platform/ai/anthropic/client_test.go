@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/ai"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai/anthropic"
 )
 
@@ -171,5 +172,26 @@ func TestStream_HTTPError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "401") {
 		t.Errorf("error %q should mention status 401", err.Error())
+	}
+}
+
+// TestProviderReportsTheTokensUsed checks that the provider reports the
+// prompt's tokens from message_start and the reply's from message_delta.
+func TestProviderReportsTheTokensUsed(t *testing.T) {
+	srv := makeTestServer(cannedToolUseSSE)
+	defer srv.Close()
+	p := anthropic.NewProvider(anthropic.New("test-key", srv.URL, "claude-sonnet-5", 1024, srv.Client()))
+	events, errC := p.Stream(context.Background(), "", []ai.Message{{Role: "user", Content: []ai.ContentBlock{{Type: "text", Text: "hi"}}}}, nil)
+	var in, out int
+	for ev := range events {
+		if ev.Type == ai.EventUsage {
+			in, out = ev.InputTokens, ev.OutputTokens
+		}
+	}
+	if err := <-errC; err != nil {
+		t.Fatal(err)
+	}
+	if in != 20 || out != 15 {
+		t.Errorf("usage %d in, %d out; want 20 and 15", in, out)
 	}
 }

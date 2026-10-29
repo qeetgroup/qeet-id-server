@@ -1,6 +1,7 @@
 // Package domainverify lets a tenant prove it owns an email domain with a DNS
 // TXT record, checked only when an admin asks, and reports the provisioning
-// state of its custom login hostname.
+// state of its custom login hostname. A verified domain with SSO on sends
+// everyone on it to the tenant's identity provider (see capture.go).
 package domainverify
 
 import (
@@ -31,15 +32,19 @@ import (
 // never clobbers a tenant's apex TXT records (SPF, etc.).
 const dnsHostPrefix = "_qeet-verification."
 
-// Service manages the domains. web checks a custom login hostname over HTTPS.
+// Service manages the domains. web checks a custom login hostname over HTTPS;
+// owners decides who may name break-glass members.
 type Service struct {
 	pool     *pgxpool.Pool
 	q        *dbgen.Queries
 	resolver interface {
 		LookupTXT(ctx context.Context, name string) ([]string, error)
 	}
-	web  *http.Client
-	gate PlanGate
+	web    *http.Client
+	gate   PlanGate
+	owners OwnerChecker
+	// adminPermissions make a member an administrator for domain capture.
+	adminPermissions []string
 }
 
 // NewService returns the domain verification service. Its checks of a custom
@@ -58,6 +63,15 @@ type PlanGate interface {
 
 // SetPlanGate sets the plan-feature gate (nil allows all features).
 func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
+
+// Resolver looks up the TXT records at a DNS name.
+type Resolver interface {
+	LookupTXT(ctx context.Context, name string) ([]string, error)
+}
+
+// SetResolver sets where verification looks up TXT records; by default the
+// system resolver.
+func (s *Service) SetResolver(r Resolver) { s.resolver = r }
 
 // Domain is a domain a tenant has claimed, and whether it is verified.
 type Domain struct {
@@ -78,7 +92,6 @@ type Domain struct {
 	// SSO routing or just-in-time provisioning.
 	SSOEnabled bool `json:"sso_enabled"`
 	JITEnabled bool `json:"jit_enabled"`
-	IsDefault  bool `json:"is_default"`
 	// Status is derived, never stored: verified | pending | attention.
 	Status string `json:"status"`
 }
@@ -215,10 +228,10 @@ func (s *Service) Add(ctx context.Context, tenantID uuid.UUID, raw string, actor
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Domain, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, domain, verification_token, verified_at, created_at,
-		       last_checked_at, COALESCE(last_error, ''), sso_enabled, jit_enabled, is_default
+		       last_checked_at, COALESCE(last_error, ''), sso_enabled, jit_enabled
 		FROM tenant.domains
 		WHERE tenant_id = $1
-		ORDER BY is_default DESC, domain
+		ORDER BY domain
 	`, tenantID)
 	if err != nil {
 		return nil, err
@@ -230,7 +243,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Domain, error
 		var d Domain
 		var verifiedAt, lastChecked *time.Time
 		if err := rows.Scan(&d.ID, &d.Domain, &d.VerificationToken, &verifiedAt, &d.CreatedAt,
-			&lastChecked, &d.LastError, &d.SSOEnabled, &d.JITEnabled, &d.IsDefault); err != nil {
+			&lastChecked, &d.LastError, &d.SSOEnabled, &d.JITEnabled); err != nil {
 			return nil, err
 		}
 		d.VerifiedAt, d.LastCheckedAt = verifiedAt, lastChecked
@@ -241,12 +254,10 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Domain, error
 	return out, rows.Err()
 }
 
-// UpdateSettings toggles the per-domain switches. Making a domain the default
-// clears the previous one in the same transaction, so the partial unique index
-// can never be violated by a straight UPDATE.
+// UpdateSettings toggles the per-domain switches.
 func (s *Service) UpdateSettings(
 	ctx context.Context, id, tenantID uuid.UUID,
-	sso, jit, isDefault *bool, actor audit.Actor,
+	sso, jit *bool, actor audit.Actor,
 ) (*Domain, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -254,27 +265,18 @@ func (s *Service) UpdateSettings(
 	}
 	defer tx.Rollback(ctx)
 
-	if isDefault != nil && *isDefault {
-		if _, err := tx.Exec(ctx,
-			`UPDATE tenant.domains SET is_default = FALSE WHERE tenant_id = $1 AND is_default`,
-			tenantID); err != nil {
-			return nil, err
-		}
-	}
-
 	var d Domain
 	var verifiedAt, lastChecked *time.Time
 	err = tx.QueryRow(ctx, `
 		UPDATE tenant.domains SET
 			sso_enabled = COALESCE($3, sso_enabled),
-			jit_enabled = COALESCE($4, jit_enabled),
-			is_default  = COALESCE($5, is_default)
+			jit_enabled = COALESCE($4, jit_enabled)
 		WHERE id = $1 AND tenant_id = $2
 		RETURNING id, domain, verification_token, verified_at, created_at,
-		          last_checked_at, COALESCE(last_error, ''), sso_enabled, jit_enabled, is_default
-	`, id, tenantID, sso, jit, isDefault).
+		          last_checked_at, COALESCE(last_error, ''), sso_enabled, jit_enabled
+	`, id, tenantID, sso, jit).
 		Scan(&d.ID, &d.Domain, &d.VerificationToken, &verifiedAt, &d.CreatedAt,
-			&lastChecked, &d.LastError, &d.SSOEnabled, &d.JITEnabled, &d.IsDefault)
+			&lastChecked, &d.LastError, &d.SSOEnabled, &d.JITEnabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrDomainVerifyNotFound
 	}
@@ -286,8 +288,7 @@ func (s *Service) UpdateSettings(
 	d.deriveStatus()
 
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "domain.settings_updated", "domain", d.ID,
-		map[string]any{"domain": d.Domain, "sso": d.SSOEnabled, "jit": d.JITEnabled,
-			"default": d.IsDefault})); err != nil {
+		map[string]any{"domain": d.Domain, "sso": d.SSOEnabled, "jit": d.JITEnabled})); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -403,8 +404,12 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/tenants/{tenantID}/domains", h.add)
 	r.Post("/tenants/{tenantID}/domains/{id}/verify", h.verify)
 	r.Get("/tenants/{tenantID}/login-domain", h.loginDomain)
+	r.Post("/tenants/{tenantID}/login-domain/check", h.checkLoginDomain)
 	r.Patch("/tenants/{tenantID}/domains/{id}", h.updateSettings)
 	r.Delete("/tenants/{tenantID}/domains/{id}", h.remove)
+	r.Get("/tenants/{tenantID}/break-glass-members", h.listBreakGlass)
+	r.Put("/tenants/{tenantID}/break-glass-members/{userID}", h.addBreakGlass)
+	r.Delete("/tenants/{tenantID}/break-glass-members/{userID}", h.removeBreakGlass)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -484,7 +489,6 @@ func (h *Handler) remove(w http.ResponseWriter, r *http.Request) {
 type updateSettingsInput struct {
 	SSOEnabled *bool `json:"sso_enabled"`
 	JITEnabled *bool `json:"jit_enabled"`
-	IsDefault  *bool `json:"is_default"`
 }
 
 func (h *Handler) updateSettings(w http.ResponseWriter, r *http.Request) {
@@ -503,8 +507,7 @@ func (h *Handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	d, err := h.Service.UpdateSettings(r.Context(), id, tenantID, in.SSOEnabled, in.JITEnabled,
-		in.IsDefault, audit.ActorOf(r))
+	d, err := h.Service.UpdateSettings(r.Context(), id, tenantID, in.SSOEnabled, in.JITEnabled, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

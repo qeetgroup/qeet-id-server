@@ -3,12 +3,68 @@
 package risk
 
 import (
+	"encoding/json"
+	"net/http"
+	"reflect"
 	"testing"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
+
+// TestRiskSettingsChangesAreAudited checks that saving the risk settings is
+// recorded in the organisation, as the administrator's, with each setting that
+// changed from what was in force.
+func TestRiskSettingsChangesAreAudited(t *testing.T) {
+	ctx := dbtest.Context(t)
+	h := &Handler{Service: NewService(dbtest.Pool(t))}
+	tenant := dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount)
+	path := "/tenants/" + tenant.String() + "/security/risk-settings"
+	changes := func() []map[string]map[string]any {
+		t.Helper()
+		rows, err := dbtest.Pool(t).Query(ctx, `
+			SELECT metadata->'changes' FROM audit.events
+			WHERE tenant_id = $1 AND action = 'risk.settings_updated' AND resource_id = $1 AND actor_user_id = $2
+			ORDER BY created_at`, tenant, admin.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []map[string]map[string]any
+		for rows.Next() {
+			var raw []byte
+			var c map[string]map[string]any
+			if err := rows.Scan(&raw); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(raw, &c); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, c)
+		}
+		return out
+	}
+
+	settings := map[string]any{"medium_threshold": 0.5, "high_threshold": 0.8, "force_mfa_at_level": "medium",
+		"impossible_travel_enabled": true, "min_travel_hours": 3, "device_reputation_enabled": false}
+	if rec := dbtest.Do(t, as, http.MethodPut, path, settings); rec.Code != http.StatusOK {
+		t.Fatalf("save settings: %d %s", rec.Code, rec.Body.String())
+	}
+	settings["high_threshold"] = 0.9
+	if rec := dbtest.Do(t, as, http.MethodPut, path, settings); rec.Code != http.StatusOK {
+		t.Fatalf("save settings again: %d %s", rec.Code, rec.Body.String())
+	}
+	want := []map[string]map[string]any{
+		{"force_mfa_at_level": {"from": "high", "to": "medium"}, "impossible_travel_enabled": {"from": false, "to": true}},
+		{"high_threshold": {"from": 0.8, "to": 0.9}},
+	}
+	if got := changes(); !reflect.DeepEqual(got, want) {
+		t.Errorf("recorded changes %v, want %v", got, want)
+	}
+}
 
 // TestAssessDoesNotRecord checks that assessing a sign-in leaves the history
 // unchanged, so a refused or challenged sign-in asked again is assessed the

@@ -34,6 +34,24 @@ func (q *Queries) EmailTakenByOther(ctx context.Context, arg EmailTakenByOtherPa
 	return column_1, err
 }
 
+const expireRecoveryLinksForUser = `-- name: ExpireRecoveryLinksForUser :exec
+WITH resets AS (
+    UPDATE auth.password_resets SET expires_at = NOW() - INTERVAL '1 minute'
+    WHERE user_id = $1 AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute'
+)
+UPDATE auth.magic_links SET expires_at = NOW() - INTERVAL '1 minute'
+WHERE LOWER(email) = (SELECT LOWER(u.email) FROM "user".users u WHERE u.id = $1)
+  AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute'
+`
+
+// ExpireRecoveryLinksForUser ends the user's unused password-reset links and
+// the unused sign-in links to their address, set a minute back so a clock
+// behind the database's sees them ended too.
+func (q *Queries) ExpireRecoveryLinksForUser(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, expireRecoveryLinksForUser, userID)
+	return err
+}
+
 const getLatestEmailChange = `-- name: GetLatestEmailChange :one
 SELECT id, email, expires_at, used_at
 FROM "user".email_verifications

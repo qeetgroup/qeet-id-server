@@ -166,36 +166,62 @@ func (s *Service) RevokePushDevice(ctx context.Context, userID, deviceID uuid.UU
 	return nil
 }
 
+// Push requests are bounded so a person isn't worn down into approving one:
+// a few in ten minutes, and none for the rest of an hour in which they denied
+// several.
+const (
+	maxPushPer10Minutes   = 5
+	maxPushDenialsPerHour = 3
+)
+
 // CreatePushChallenge records a pending challenge, sends it to every phone
-// the user has linked, and returns its ID. It fails with
-// ErrMFAPushDeliveryFailed, closing the challenge, when no phone accepted it.
-func (s *Service) CreatePushChallenge(ctx context.Context, userID uuid.UUID, action string, pctx PushChallengeContext) (uuid.UUID, error) {
+// the user has linked, and returns its ID and the number the phone must send
+// back to approve it, shown where it was asked for. It fails with
+// ErrMFAPushLimited past the bounds above, and with ErrMFAPushDeliveryFailed,
+// closing the challenge, when no phone accepted it.
+func (s *Service) CreatePushChallenge(ctx context.Context, userID uuid.UUID, action string, pctx PushChallengeContext) (uuid.UUID, int, error) {
 	ctxJSON, err := json.Marshal(pctx)
 	if err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, 0, err
+	}
+	number, err := matchNumber()
+	if err != nil {
+		return uuid.Nil, 0, err
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, 0, err
 	}
 	defer tx.Rollback(ctx)
+	// One request at a time per person, so two can't both pass the bounds.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('mfa-push:' || $1::text, 0))`, userID); err != nil {
+		return uuid.Nil, 0, err
+	}
+	recent, err := s.q.WithTx(tx).RecentPushChallenges(ctx, userID)
+	if err != nil {
+		return uuid.Nil, 0, err
+	}
+	if recent.Sent >= maxPushPer10Minutes || recent.Denied >= maxPushDenialsPerHour {
+		return uuid.Nil, 0, errs.ErrMFAPushLimited
+	}
 	ch, err := s.q.WithTx(tx).InsertPushChallenge(ctx, dbgen.InsertPushChallengeParams{
-		UserID:  userID,
-		Action:  action,
-		Context: ctxJSON,
+		UserID:      userID,
+		Action:      action,
+		Context:     ctxJSON,
+		MatchNumber: &number,
 	})
 	if err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, 0, err
 	}
 	tokens, err := s.loadPushTokens(ctx, tx, userID)
 	if err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, 0, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, 0, err
 	}
 	if s.pushURL == "" {
-		return ch.ID, nil // push delivery not configured
+		return ch.ID, int(number), nil // push delivery not configured
 	}
 	delivered := 0
 	for _, tok := range tokens {
@@ -218,9 +244,22 @@ func (s *Service) CreatePushChallenge(ctx context.Context, userID uuid.UUID, act
 			UPDATE auth.mfa_push_challenges SET status = 'expired', expires_at = LEAST(expires_at, NOW())
 			WHERE id = $1 AND status = 'pending'
 		`, ch.ID)
-		return uuid.Nil, errs.ErrMFAPushDeliveryFailed
+		return uuid.Nil, 0, errs.ErrMFAPushDeliveryFailed
 	}
-	return ch.ID, nil
+	return ch.ID, int(number), nil
+}
+
+// matchNumber returns a random two-digit number, 10 to 99.
+func matchNumber() (int16, error) {
+	var b [1]byte
+	for {
+		if _, err := rand.Read(b[:]); err != nil {
+			return 0, err
+		}
+		if b[0] < 180 { // 180 = 2 × 90, so every number is equally likely
+			return 10 + int16(b[0]%90), nil
+		}
+	}
 }
 
 // GetPushChallenge returns the challenge for public polling / display. A
@@ -253,7 +292,9 @@ func (s *Service) GetPushChallenge(ctx context.Context, id uuid.UUID) (*PushChal
 
 // RespondToPushChallenge validates the device_token, checks that the challenge
 // is still pending and not expired, then updates its status to approved/denied.
-func (s *Service) RespondToPushChallenge(ctx context.Context, challengeID, userID uuid.UUID, deviceToken string, approved bool) error {
+// An approval must carry the challenge's number; with another it is denied,
+// with ErrMFAPushNumberMismatch.
+func (s *Service) RespondToPushChallenge(ctx context.Context, challengeID, userID uuid.UUID, deviceToken string, approved bool, number int) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -291,8 +332,9 @@ func (s *Service) RespondToPushChallenge(ctx context.Context, challengeID, userI
 		return errs.ErrMFAPushChallengeExpired
 	}
 
+	mismatch := approved && row.MatchNumber != nil && int(*row.MatchNumber) != number
 	status := "denied"
-	if approved {
+	if approved && !mismatch {
 		status = "approved"
 	}
 	if err := s.q.WithTx(tx).UpdatePushChallengeStatus(ctx, dbgen.UpdatePushChallengeStatusParams{
@@ -301,7 +343,13 @@ func (s *Service) RespondToPushChallenge(ctx context.Context, challengeID, userI
 	}); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if mismatch {
+		return errs.ErrMFAPushNumberMismatch
+	}
+	return nil
 }
 
 type storedPushToken struct {
@@ -526,7 +574,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 }
 
 // MountAdmin mounts an administrator's view of a member's linked phones, in
-// the administrator's own organisation (user.read / user.write).
+// the administrator's own organisation (user.read / user.credentials).
 func (h *Handler) MountAdmin(r chi.Router) {
 	r.Get("/users/{id}/push-devices", h.listMemberPushDevices)
 	r.Delete("/users/{id}/push-devices/{deviceID}", h.revokeMemberPushDevice)
@@ -578,6 +626,7 @@ func (h *Handler) registerPushDevice(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	h.Service.tellPhoneLinked(r.Context(), *p.UserID)
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
 		"device":       device,
 		"device_token": deviceToken,
@@ -601,6 +650,7 @@ func (h *Handler) revokePushDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.Service.auditPushDevice(r, p.TenantID, *p.UserID, deviceID, "mfa.push_device_revoked")
+	h.Service.tellPhoneUnlinked(r.Context(), *p.UserID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -639,6 +689,7 @@ func (h *Handler) unlinkPushDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.Service.auditPushDevice(r, nil, in.UserID, id, "mfa.push_device_unlinked")
+	h.Service.tellPhoneUnlinked(r.Context(), in.UserID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -744,6 +795,7 @@ type respondToPushChallengeInput struct {
 	UserID      uuid.UUID `json:"user_id"`
 	DeviceToken string    `json:"device_token"`
 	Approved    bool      `json:"approved"`
+	Number      int       `json:"number"` // the number shown where the request was asked for
 }
 
 func (h *Handler) respondToPushChallenge(w http.ResponseWriter, r *http.Request) {
@@ -761,7 +813,7 @@ func (h *Handler) respondToPushChallenge(w http.ResponseWriter, r *http.Request)
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("device_token required"))
 		return
 	}
-	if err := h.Service.RespondToPushChallenge(r.Context(), id, in.UserID, in.DeviceToken, in.Approved); err != nil {
+	if err := h.Service.RespondToPushChallenge(r.Context(), id, in.UserID, in.DeviceToken, in.Approved, in.Number); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

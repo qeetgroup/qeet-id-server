@@ -52,6 +52,28 @@ INSERT INTO tenant.tenants (slug, name, plan, region, logo_url, metadata)
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
+-- ScheduleTenantDeletion schedules an organisation's deletion for @due_at,
+-- unless one is already scheduled. No row: it is deleted or already
+-- scheduled.
+-- name: ScheduleTenantDeletion :one
+UPDATE tenant.tenants SET deletion_due_at = @due_at::timestamptz, updated_at = NOW()
+WHERE id = @id AND deleted_at IS NULL AND deletion_due_at IS NULL
+RETURNING deletion_due_at;
+
+-- CancelTenantDeletion calls off an organisation's scheduled deletion. 0
+-- rows: none was scheduled.
+-- name: CancelTenantDeletion :execrows
+UPDATE tenant.tenants SET deletion_due_at = NULL, updated_at = NOW()
+WHERE id = @id AND deleted_at IS NULL AND deletion_due_at IS NOT NULL;
+
+-- ListTenantsDueForDeletion lists organisations whose scheduled deletion is
+-- due, oldest first.
+-- name: ListTenantsDueForDeletion :many
+SELECT id FROM tenant.tenants
+WHERE deleted_at IS NULL AND deletion_due_at IS NOT NULL AND deletion_due_at <= NOW()
+ORDER BY deletion_due_at
+LIMIT @max_rows;
+
 -- name: SoftDeleteTenant :execrows
 UPDATE tenant.tenants
 SET deleted_at = NOW(), status = 'deleted', updated_at = NOW()
@@ -68,7 +90,7 @@ WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: ListTenantsForUser :many
 SELECT t.id, t.slug, t.name, t.status, t.plan, t.region, t.logo_url,
-       t.metadata, t.created_at, t.updated_at,
+       t.metadata, t.created_at, t.updated_at, t.deletion_due_at,
   (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
      WHERE ur.tenant_id = t.id)::bigint AS member_count,
   (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
@@ -85,7 +107,7 @@ LIMIT $2;
 
 -- name: ListTenantsForUserAfter :many
 SELECT t.id, t.slug, t.name, t.status, t.plan, t.region, t.logo_url,
-       t.metadata, t.created_at, t.updated_at,
+       t.metadata, t.created_at, t.updated_at, t.deletion_due_at,
   (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
      WHERE ur.tenant_id = t.id)::bigint AS member_count,
   (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
@@ -115,6 +137,22 @@ RETURNING id;
 -- name: GrantAllPermissionsToRole :exec
 INSERT INTO rbac.role_permissions (role_id, permission_id)
 SELECT $1, id FROM rbac.permissions;
+
+-- name: InsertBuiltinRoles :exec
+-- A new organisation's built-in roles, read-only like owner: admin holds
+-- everything but deleting the organisation, viewer every read but secrets'
+-- (whose read reveals them), member nothing.
+WITH builtin AS (
+    INSERT INTO rbac.roles (tenant_id, name, description, is_system)
+    VALUES (@tenant_id, 'admin', 'Administrator — everything but deleting the organisation', TRUE),
+           (@tenant_id, 'member', 'Member — signs in to the organisation''s apps, no administration', TRUE),
+           (@tenant_id, 'viewer', 'Viewer — reads everything, changes nothing', TRUE)
+    RETURNING id, name
+)
+INSERT INTO rbac.role_permissions (role_id, permission_id)
+SELECT b.id, p.id FROM builtin b
+JOIN rbac.permissions p ON (b.name = 'admin' AND p.key <> 'tenant.delete')
+                        OR (b.name = 'viewer' AND p.key LIKE '%.read' AND p.key <> 'secret.read');
 
 -- name: GrantRoleToUser :exec
 INSERT INTO rbac.user_roles (user_id, tenant_id, role_id, granted_by)

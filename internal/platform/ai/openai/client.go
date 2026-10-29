@@ -70,8 +70,10 @@ func (c *Client) Stream(ctx context.Context, system string, messages []ai.Messag
 			Model:     c.Model,
 			MaxTokens: c.MaxTokens,
 			Stream:    true,
-			Messages:  buildOpenAIMessages(system, messages),
-			Tools:     buildOpenAITools(tools),
+			// Azure's API takes stream_options as OpenAI's does.
+			StreamOptions: &streamOptions{IncludeUsage: true},
+			Messages:      buildOpenAIMessages(system, messages),
+			Tools:         buildOpenAITools(tools),
 		}
 
 		body, err := json.Marshal(reqBody)
@@ -113,11 +115,17 @@ func (c *Client) Stream(ctx context.Context, system string, messages []ai.Messag
 
 // openAIRequest is the body sent to POST /chat/completions.
 type openAIRequest struct {
-	Model     string          `json:"model"`
-	MaxTokens int             `json:"max_tokens"`
-	Stream    bool            `json:"stream"`
-	Messages  []openAIMessage `json:"messages"`
-	Tools     []openAITool    `json:"tools,omitempty"`
+	Model         string          `json:"model"`
+	MaxTokens     int             `json:"max_tokens"`
+	Stream        bool            `json:"stream"`
+	StreamOptions *streamOptions  `json:"stream_options,omitempty"`
+	Messages      []openAIMessage `json:"messages"`
+	Tools         []openAITool    `json:"tools,omitempty"`
+}
+
+// streamOptions asks for the turn's token counts in a last chunk.
+type streamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 // openAIMessage is one entry in the messages array. Content is *string so that
@@ -151,6 +159,11 @@ type openAITool struct {
 // openAIChunk is a parsed streaming delta from the Chat Completions SSE.
 type openAIChunk struct {
 	Choices []openAIChoice `json:"choices"`
+	// Usage is set on the last chunk, which has no choices.
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
 }
 
 type openAIChoice struct {
@@ -277,14 +290,65 @@ func buildOpenAITools(tools []ai.ToolDef) []openAITool {
 	return out
 }
 
+// toolSlots maps the tool-call indices an endpoint sends, which may be sparse
+// or huge, onto dense slots in the order calls start, at most ai.MaxToolCalls,
+// and counts each call's input bytes against ai.MaxToolInputBytes.
+type toolSlots struct {
+	slot  map[int]int // provider index → slot
+	input []int       // input bytes so far, by slot
+}
+
+// start returns the slot for a call at index that names its id: a new one
+// unless the index has started already (fresh reports which). It refuses a
+// negative index and a call beyond ai.MaxToolCalls.
+func (t *toolSlots) start(index int) (slot int, fresh bool, err error) {
+	if index < 0 {
+		return 0, false, fmt.Errorf("openai: tool call index %d is negative", index)
+	}
+	if slot, ok := t.slot[index]; ok {
+		return slot, false, nil
+	}
+	if len(t.input) >= ai.MaxToolCalls {
+		return 0, false, fmt.Errorf("openai: more than %d tool calls in one turn", ai.MaxToolCalls)
+	}
+	t.slot[index] = len(t.input)
+	t.input = append(t.input, 0)
+	return len(t.input) - 1, true, nil
+}
+
+// arguments returns the slot a fragment of n input bytes for the call at index
+// goes to: ok is false for a call never started, whose fragment is dropped. It
+// refuses a negative index and an input beyond ai.MaxToolInputBytes.
+func (t *toolSlots) arguments(index, n int) (slot int, ok bool, err error) {
+	if index < 0 {
+		return 0, false, fmt.Errorf("openai: tool call index %d is negative", index)
+	}
+	slot, ok = t.slot[index]
+	if !ok {
+		return 0, false, nil
+	}
+	if t.input[slot] += n; t.input[slot] > ai.MaxToolInputBytes {
+		return 0, false, fmt.Errorf("openai: tool call input over %d bytes", ai.MaxToolInputBytes)
+	}
+	return slot, true, nil
+}
+
 // parseOpenAISSE reads the OpenAI Chat Completions SSE stream, emitting
 // normalized ai.Event values to out until "data: [DONE]" or ctx cancellation.
-// OpenAI SSE: one "data: <json>" line per event (no "event:" prefix).
+// OpenAI SSE: one "data: <json>" line per event (no "event:" prefix). Tool
+// calls go out on dense slots (see toolSlots); a call out of bounds ends the
+// stream with an error, the event not sent.
 func parseOpenAISSE(ctx context.Context, r io.Reader, out chan<- ai.Event) error {
 	scanner := bufio.NewScanner(r)
-	// Track which tool indices have been started so we only emit
-	// EventToolCallStart once per index.
-	startedTools := make(map[int]bool)
+	tools := toolSlots{slot: map[int]int{}}
+	emit := func(ev ai.Event) error {
+		select {
+		case out <- ev:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 
 	for scanner.Scan() {
 		select {
@@ -311,27 +375,50 @@ func parseOpenAISSE(ctx context.Context, r io.Reader, out chan<- ai.Event) error
 			// Malformed chunk — skip; don't abort the stream.
 			continue
 		}
+		if chunk.Usage != nil {
+			if err := emit(ai.Event{Type: ai.EventUsage, InputTokens: chunk.Usage.PromptTokens, OutputTokens: chunk.Usage.CompletionTokens}); err != nil {
+				return err
+			}
+		}
 
 		for _, choice := range chunk.Choices {
 			if choice.Delta.Content != nil && *choice.Delta.Content != "" {
-				out <- ai.Event{Type: ai.EventTextDelta, TextDelta: *choice.Delta.Content}
+				if err := emit(ai.Event{Type: ai.EventTextDelta, TextDelta: *choice.Delta.Content}); err != nil {
+					return err
+				}
 			}
 
 			for _, tc := range choice.Delta.ToolCalls {
-				if !startedTools[tc.Index] && tc.ID != "" {
-					startedTools[tc.Index] = true
-					out <- ai.Event{
-						Type:      ai.EventToolCallStart,
-						ToolIndex: tc.Index,
-						ToolID:    tc.ID,
-						ToolName:  tc.Function.Name,
+				if tc.ID != "" {
+					slot, fresh, err := tools.start(tc.Index)
+					if err != nil {
+						return err
+					}
+					if fresh {
+						if err := emit(ai.Event{
+							Type:      ai.EventToolCallStart,
+							ToolIndex: slot,
+							ToolID:    tc.ID,
+							ToolName:  tc.Function.Name,
+						}); err != nil {
+							return err
+						}
 					}
 				}
 				if tc.Function.Arguments != "" {
-					out <- ai.Event{
+					slot, ok, err := tools.arguments(tc.Index, len(tc.Function.Arguments))
+					if err != nil {
+						return err
+					}
+					if !ok {
+						continue
+					}
+					if err := emit(ai.Event{
 						Type:           ai.EventToolCallDelta,
-						ToolIndex:      tc.Index,
+						ToolIndex:      slot,
 						ToolInputDelta: tc.Function.Arguments,
+					}); err != nil {
+						return err
 					}
 				}
 			}
@@ -345,7 +432,9 @@ func parseOpenAISSE(ctx context.Context, r io.Reader, out chan<- ai.Event) error
 				case "stop", "length", "content_filter":
 					reason = "end_turn"
 				}
-				out <- ai.Event{Type: ai.EventStop, StopReason: reason}
+				if err := emit(ai.Event{Type: ai.EventStop, StopReason: reason}); err != nil {
+					return err
+				}
 			}
 		}
 	}

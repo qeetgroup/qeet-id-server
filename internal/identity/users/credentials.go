@@ -42,12 +42,13 @@ type credentialChange int
 const (
 	credentialPasswordSet credentialChange = iota
 	credentialFactorsReset
+	credentialPasskeyRemoved
 )
 
 // tellCredentialChange emails the person that an administrator of tenantID
-// changed their credentials. Best effort, after the change has committed: a
-// failure is logged, the change stands.
-func (h *Handler) tellCredentialChange(ctx context.Context, tenantID uuid.UUID, email string, change credentialChange) {
+// changed their credentials; passkey names the passkey removed, if any. Best
+// effort, after the change has committed: a failure is logged, the change stands.
+func (h *Handler) tellCredentialChange(ctx context.Context, tenantID uuid.UUID, email string, change credentialChange, passkey string) {
 	if h.Mailer == nil || email == "" {
 		return
 	}
@@ -58,9 +59,16 @@ func (h *Handler) tellCredentialChange(ctx context.Context, tenantID uuid.UUID, 
 	}
 	subject, intro := "An administrator set a new password for your account",
 		fmt.Sprintf("An administrator of %s set a new password for your Qeet ID account, and signed you out everywhere.", org)
-	if change == credentialFactorsReset {
+	switch change {
+	case credentialFactorsReset:
 		subject, intro = "An administrator reset your two-step verification",
 			fmt.Sprintf("An administrator of %s removed the two-step verification from your Qeet ID account. You'll be asked to set it up again at your next sign-in.", org)
+	case credentialPasskeyRemoved:
+		subject, intro = "An administrator removed a passkey from your account",
+			fmt.Sprintf("An administrator of %s removed a passkey from your Qeet ID account, so it no longer signs you in.", org)
+		if passkey != "" {
+			intro = fmt.Sprintf("An administrator of %s removed the passkey %q from your Qeet ID account, so it no longer signs you in.", org, passkey)
+		}
 	}
 	const note = "If you didn't expect this, contact that organization's administrator."
 	if err := h.Mailer.Send(ctx, notifier.Message{

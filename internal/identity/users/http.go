@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
@@ -57,6 +58,30 @@ type Handler struct {
 	Signals        *sessionsignal.Signaller
 	SignIns        signInEnder
 	Mailer         notifier.Sender
+	// ActOnCheck refuses changing the account of someone who outranks the
+	// caller (rbac.Repository.CheckActOn). Without it every change is refused.
+	ActOnCheck func(ctx context.Context, caller *httpx.Principal, tenantID, targetID uuid.UUID) error
+	// Roles gives a role to the people a bulk import makes. Without it an
+	// import can't give one.
+	Roles RoleGranter
+}
+
+// RoleGranter checks and gives a tenant's role to a new member.
+type RoleGranter interface {
+	// CheckGrant refuses r's caller giving roleID of tenantID to anyone, and
+	// returns the tenant's seat cap for Assign (negative for none); it reads
+	// before any transaction.
+	CheckGrant(r *http.Request, tenantID, roleID uuid.UUID) (seats int, err error)
+	// Assign gives roleID to userID in tenantID, on tx, refusing it with
+	// errs.ErrPlanLimit when it takes a seat beyond seats.
+	Assign(ctx context.Context, tx pgx.Tx, userID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID, seats int) error
+}
+
+// importRole is the role a bulk import gives everyone, with the tenant's seat
+// cap read before the import.
+type importRole struct {
+	ID    uuid.UUID
+	Seats int
 }
 
 // endEverySignIn ends, inside tx, every way userID is signed in: sessions,
@@ -119,6 +144,10 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/users/{id}/security", h.getSecurity)
 	r.Get("/users/{id}/sessions", h.getSessions)
 	r.Post("/users/{id}/sessions/revoke-all", h.revokeAllSessions)
+	r.Delete("/tenants/{tenantID}/users/{id}/sessions/{sessionID}", h.endSession)
+	r.Get("/tenants/{tenantID}/users/{id}/passkeys", h.listPasskeys)
+	r.Get("/tenants/{tenantID}/users/{id}/sign-ins", h.signIns)
+	r.Delete("/tenants/{tenantID}/users/{id}/passkeys/{passkeyID}", h.removePasskey)
 	r.Get("/users/{id}/access", h.getAccess)
 	r.Put("/users/{id}/mfa-required", h.setMfaRequired)
 }
@@ -175,6 +204,28 @@ func (h *Handler) scopedID(r *http.Request) (id, tenantID uuid.UUID, err error) 
 	}
 }
 
+// actOnID is scopedID for a change to the account, refused when the person
+// outranks the caller: only an owner changes an owner, and nobody changes
+// someone holding a permission they don't.
+func (h *Handler) actOnID(r *http.Request) (id, tenantID uuid.UUID, err error) {
+	id, tenantID, err = h.scopedID(r)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	if err := h.checkActOn(r, tenantID, id); err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	return id, tenantID, nil
+}
+
+// checkActOn applies ActOnCheck to the caller of r acting on id in tenantID.
+func (h *Handler) checkActOn(r *http.Request, tenantID, id uuid.UUID) error {
+	if h.ActOnCheck == nil {
+		return errs.ErrNotImplemented
+	}
+	return h.ActOnCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, id)
+}
+
 // removeMembership removes a member whose home is another tenant from the
 // caller's tenant: their roles, groups, sessions, app grants and API keys here,
 // with an audit row and event, in one transaction. A home account gets
@@ -191,6 +242,10 @@ func (h *Handler) removeMembership(w http.ResponseWriter, r *http.Request) {
 		return
 	case !member:
 		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	if err := h.checkActOn(r, tenantID, id); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	out, err := h.removeMembershipWithEvidence(r, tenantID, id)
@@ -236,7 +291,7 @@ func (h *Handler) removeMembershipWithEvidence(r *http.Request, tenantID, userID
 // resetMFA clears a user's MFA factors so a locked-out user can enrol again.
 // It is audited and the user is emailed.
 func (h *Handler) resetMFA(w http.ResponseWriter, r *http.Request) {
-	id, tenantID, err := h.scopedID(r)
+	id, tenantID, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -288,7 +343,7 @@ func (h *Handler) resetMFA(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.tellCredentialChange(ctx, tenantID, target.Email, credentialFactorsReset)
+	h.tellCredentialChange(ctx, tenantID, target.Email, credentialFactorsReset, "")
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"message": "The user's multi-factor authentication has been reset. They can re-enroll at next sign-in.",
 	})
@@ -309,48 +364,36 @@ func (h *Handler) listDeleted(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
-// auditUserAction records a best-effort audit row for a recycle-bin action.
-func (h *Handler) auditUserAction(r *http.Request, action string, target uuid.UUID) {
+// withAudit runs change and its audit row, action on target in tenantID as the
+// caller of r, in one transaction: neither commits without the other.
+func (h *Handler) withAudit(r *http.Request, tenantID, target uuid.UUID, action string, metadata map[string]any, change func(ctx context.Context, tx pgx.Tx) error) error {
 	ctx := r.Context()
 	tx, err := h.Repo.Pool().Begin(ctx)
 	if err != nil {
-		return
+		return err
 	}
 	defer tx.Rollback(ctx)
-	p := httpx.PrincipalFromCtx(ctx)
-	var actorID *uuid.UUID
-	var tenantID *uuid.UUID
-	if p != nil {
-		actorID = p.UserID
-		tenantID = p.TenantID
+	if err := change(ctx, tx); err != nil {
+		return err
 	}
-	id := target
-	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     tenantID,
-		ActorUserID:  actorID,
-		Action:       action,
-		ResourceType: "user",
-		ResourceID:   &id,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-	}); err != nil {
-		return
+	if err := audit.Record(ctx, tx, audit.ActorOf(r).Event(tenantID, action, "user", target, metadata)); err != nil {
+		return err
 	}
-	_ = tx.Commit(ctx)
+	return tx.Commit(ctx)
 }
 
 func (h *Handler) restore(w http.ResponseWriter, r *http.Request) {
-	id, _, err := h.scopedID(r)
+	id, tenantID, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Repo.Restore(r.Context(), id); err != nil {
+	if err := h.withAudit(r, tenantID, id, "user.restored", nil, func(ctx context.Context, tx pgx.Tx) error {
+		return h.Repo.RestoreTx(ctx, tx, id)
+	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.auditUserAction(r, "user.restored", id)
 	u, err := h.Repo.Get(r.Context(), id)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -360,16 +403,17 @@ func (h *Handler) restore(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) purge(w http.ResponseWriter, r *http.Request) {
-	id, _, err := h.scopedID(r)
+	id, tenantID, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Repo.Purge(r.Context(), id); err != nil {
+	if err := h.withAudit(r, tenantID, id, "user.purged", nil, func(ctx context.Context, tx pgx.Tx) error {
+		return h.Repo.PurgeTx(ctx, tx, id)
+	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.auditUserAction(r, "user.purged", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -384,7 +428,12 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	if offset < 0 {
 		offset = 0
 	}
-	out, next, err := h.Repo.ListByTenant(r.Context(), *p.TenantID, limit, r.URL.Query().Get("cursor"), offset)
+	filter, err := ParseListFilter(r.URL.Query())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, next, total, err := h.Repo.List(r.Context(), *p.TenantID, filter, limit, r.URL.Query().Get("cursor"), offset)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -392,6 +441,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"items":       out,
 		"next_cursor": next,
+		"total":       total,
 	})
 }
 
@@ -422,7 +472,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		}
 		hash = ph
 	}
-	u, err := h.createWithEvidence(r, in, hash)
+	u, err := h.createWithEvidence(r, in, hash, nil)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -430,8 +480,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, u)
 }
 
-func (h *Handler) createWithEvidence(r *http.Request, in CreateInput, passwordHash string) (*User, error) {
+func (h *Handler) createWithEvidence(r *http.Request, in CreateInput, passwordHash string, role *importRole) (*User, error) {
 	ctx := r.Context()
+	if err := domainverify.CheckNewAccount(ctx, h.Repo.Pool(), in.TenantID, in.Email); err != nil {
+		return nil, err
+	}
 	tx, err := h.Repo.Pool().Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -474,6 +527,16 @@ func (h *Handler) createWithEvidence(r *http.Request, in CreateInput, passwordHa
 	}); err != nil {
 		return nil, err
 	}
+	if role != nil {
+		if err := h.Roles.Assign(ctx, tx, u.ID, tenant, role.ID, actorID, role.Seats); err != nil {
+			return nil, err
+		}
+		if err := audit.Record(ctx, tx, audit.Event{TenantID: &tenant, ActorUserID: actorID, ActorType: actorType,
+			Action: "role.assigned", ResourceType: "user", ResourceID: &id, IP: httpx.ClientIP(r), UserAgent: r.UserAgent(),
+			RequestID: httpx.RequestID(r), Metadata: map[string]any{"role_id": role.ID, "source": "bulk_import"}}); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -481,17 +544,29 @@ func (h *Handler) createWithEvidence(r *http.Request, in CreateInput, passwordHa
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	id, _, err := h.memberID(r)
+	id, tenantID, err := h.memberID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	u, err := h.Repo.Get(r.Context(), id)
+	ctx := r.Context()
+	u, err := h.Repo.Get(ctx, id)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, u)
+	member, err := h.Repo.Member(ctx, tenantID, id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	u.Roles, u.AssignedRoles, u.MfaEnabled, u.GroupsCount = member.Roles, member.AssignedRoles, member.MfaEnabled, member.GroupsCount
+	u.LastSeenAt, u.LastSeenIP, u.HomeTenantName = member.LastSeenAt, member.LastSeenIP, member.HomeTenantName
+	if u.Suspension, err = h.Repo.SuspensionOf(ctx, tenantID, id); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, u.SeenBy(tenantID))
 }
 
 // me returns the caller's own user record, resolved from the principal rather
@@ -554,7 +629,7 @@ func (h *Handler) updateMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	id, tenantID, err := h.scopedID(r)
+	id, tenantID, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -568,12 +643,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	var u *User
-	if in.Status != nil {
-		u, err = h.updateStatusWithEvidence(r, tenantID, id, in)
-	} else {
-		u, err = h.Repo.Update(r.Context(), id, in)
-	}
+	u, err := h.updateWithEvidence(r, tenantID, id, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -582,7 +652,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
-	id, tenantID, err := h.scopedID(r)
+	id, tenantID, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -630,7 +700,7 @@ type setPasswordInput struct {
 }
 
 func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request) {
-	id, tenantID, err := h.scopedID(r)
+	id, tenantID, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -666,7 +736,7 @@ func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.tellCredentialChange(r.Context(), tenantID, target.Email, credentialPasswordSet)
+	h.tellCredentialChange(r.Context(), tenantID, target.Email, credentialPasswordSet, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 

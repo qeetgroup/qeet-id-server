@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -17,12 +16,14 @@ type observerFixture struct {
 	status    int
 	resource  string
 	operation string
+	reason    string
 	calls     int
 	err       error
 }
 
-func (observer *observerFixture) RecordOperation(_ context.Context, tenant uuid.UUID, _ string, operation, resource, _ string, status int, _ time.Time, _ time.Duration) error {
-	observer.tenant, observer.status, observer.resource, observer.operation = tenant, status, resource, operation
+func (observer *observerFixture) RecordSCIMOperation(_ context.Context, op Operation) error {
+	observer.tenant, observer.status, observer.resource, observer.operation = op.TenantID, op.Status, op.Resource, op.Operation
+	observer.reason = op.Reason
 	observer.calls++
 	return observer.err
 }
@@ -65,5 +66,20 @@ func TestObserverDoesNotRecordReadsOrUnauthenticatedRequests(test *testing.T) {
 				test.Fatalf("authenticated=%v method=%s observed=%d", authenticated, method, observer.calls)
 			}
 		}
+	}
+}
+
+// TestObserverKeepsTheSCIMErrorType checks that a change refused with a SCIM
+// error type is recorded with it as its reason.
+func TestObserverKeepsTheSCIMErrorType(test *testing.T) {
+	observer := &observerFixture{}
+	handler := &Handler{Service: &Service{observer: observer}}
+	request := httptest.NewRequest(http.MethodPost, "/scim/v2/Users", nil)
+	request = request.WithContext(context.WithValue(request.Context(), tenantCtxKey, uuid.New()))
+	handler.observeMutations(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		writeSCIMTypedErr(response, http.StatusConflict, "uniqueness", "a user with that userName exists")
+	})).ServeHTTP(httptest.NewRecorder(), request)
+	if observer.status != http.StatusConflict || observer.reason != "scim.uniqueness" {
+		test.Fatalf("a refused change recorded as %d %q; want 409 scim.uniqueness", observer.status, observer.reason)
 	}
 }

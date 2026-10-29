@@ -113,9 +113,58 @@ func (s *Service) SetPlanLimiter(l PlanLimiter) { s.limits = l }
 
 // CountSeats returns the tenant's seats in use (members + pending invites) — the
 // value the plan seat limit is checked against; also surfaced as usage in billing.
+// A member is a person holding a role in the tenant, directly or through a
+// group; an account without one, such as a customer signing in, holds no seat.
 func (s *Service) CountSeats(ctx context.Context, tenantID uuid.UUID) (int, error) {
 	n, err := s.q.CountSeats(ctx, tenantID)
 	return int(n), err
+}
+
+// SeatLimit returns the tenant's seat cap, negative for none. It reads on the
+// pool, so callers ask before they open the transaction WithinSeats joins.
+func (s *Service) SeatLimit(ctx context.Context, tenantID uuid.UUID) (int, error) {
+	if s.limits == nil {
+		return -1, nil
+	}
+	return s.limits.Limit(ctx, tenantID, "seats")
+}
+
+// WithinSeats runs change in tx and refuses it with errs.ErrPlanLimit when it
+// gives someone their first role in the tenant, so a seat, and leaves more
+// seats in use than limit, from SeatLimit. A person already holding a role
+// takes no other seat. A negative limit checks nothing.
+func (s *Service) WithinSeats(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, limit int, change func() error) error {
+	if limit < 0 {
+		return change()
+	}
+	q := s.q.WithTx(tx)
+	if err := q.LockSeats(ctx, tenantID); err != nil {
+		return err
+	}
+	before, err := q.CountSeatHolders(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	if err := change(); err != nil {
+		return err
+	}
+	after, err := q.CountSeatHolders(ctx, tenantID)
+	if err != nil || after <= before {
+		return err
+	}
+	pending, err := q.CountPendingInvites(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	if int(after+pending) > limit {
+		return seatLimitReached(limit)
+	}
+	return nil
+}
+
+// seatLimitReached is the refusal of a change that needs a seat beyond limit.
+func seatLimitReached(limit int) error {
+	return errs.ErrPlanLimit.WithMetadata(map[string]any{"resource": "seats", "limit": limit})
 }
 
 // uuidPtrToPgtype converts a *uuid.UUID to the pgtype.UUID used by generated code.
@@ -209,24 +258,25 @@ func recordAccepted(ctx context.Context, tx pgx.Tx, actor audit.Actor, userID uu
 }
 
 // Create stores an invitation from actor, recorded as theirs, and emails its
-// link. A role it carries must be the tenant's, or it is errRoleNotFound.
+// link. A role it carries must be the tenant's, or it is errRoleNotFound; one
+// carrying none, to someone at home in another organisation, would join them
+// to nothing and is ErrInviteRoleRequired. The address is kept lower-case.
 func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor) (*Invite, string, error) {
-	// Plan gate: a new invite consumes a seat, so refuse once the tenant's seat
-	// limit (members + pending invites) is reached.
-	if s.limits != nil {
-		lim, err := s.limits.Limit(ctx, in.TenantID, "seats")
+	in.Email = strings.ToLower(strings.TrimSpace(in.Email))
+	if in.RoleID == nil {
+		elsewhere, err := s.q.AccountHomeElsewhere(ctx, dbgen.AccountHomeElsewhereParams{Email: in.Email, TenantID: in.TenantID})
 		if err != nil {
 			return nil, "", err
 		}
-		if lim >= 0 {
-			n, err := s.q.CountSeats(ctx, in.TenantID)
-			if err != nil {
-				return nil, "", err
-			}
-			if int(n) >= lim {
-				return nil, "", errs.ErrPlanLimit.WithMetadata(map[string]any{"resource": "seats", "limit": lim})
-			}
+		if elsewhere {
+			return nil, "", errs.ErrInviteRoleRequired
 		}
+	}
+	// Plan gate: a new invite consumes a seat, so refuse once the tenant's seat
+	// limit (members + pending invites) is reached.
+	lim, err := s.SeatLimit(ctx, in.TenantID)
+	if err != nil {
+		return nil, "", err
 	}
 	raw, hash, err := codes.URLToken()
 	if err != nil {
@@ -238,6 +288,18 @@ func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor)
 		return nil, "", err
 	}
 	defer tx.Rollback(ctx)
+	if lim >= 0 {
+		if err := s.q.WithTx(tx).LockSeats(ctx, in.TenantID); err != nil {
+			return nil, "", err
+		}
+		n, err := s.q.WithTx(tx).CountSeats(ctx, in.TenantID)
+		if err != nil {
+			return nil, "", err
+		}
+		if int(n) >= lim {
+			return nil, "", seatLimitReached(lim)
+		}
+	}
 	row, err := s.q.WithTx(tx).InsertInvite(ctx, dbgen.InsertInviteParams{
 		TenantID:  in.TenantID,
 		Email:     in.Email,
@@ -632,6 +694,16 @@ func (s *Service) grantAuthedAccept(ctx context.Context, tx pgx.Tx, qtx *dbgen.Q
 	}
 	if !strings.EqualFold(strings.TrimSpace(email), strings.TrimSpace(inv.Email)) {
 		return nil, errs.ErrInviteEmailMismatch
+	}
+	// With no role, the invitation joins only someone whose home it is.
+	if !inv.RoleID.Valid {
+		var home bool
+		if err := tx.QueryRow(ctx, `SELECT tenant_id IS NOT DISTINCT FROM $2 FROM "user".users WHERE id = $1`, userID, inv.TenantID).Scan(&home); err != nil {
+			return nil, err
+		}
+		if !home {
+			return nil, errs.ErrInviteRoleRequired
+		}
 	}
 	if roleID := pgtypeToUUIDPtr(inv.RoleID); roleID != nil {
 		if err := qtx.GrantUserRole(ctx, dbgen.GrantUserRoleParams{

@@ -11,17 +11,30 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type TenantSamlConnectionCertificate struct {
+	ID           uuid.UUID
+	TenantID     uuid.UUID
+	ConnectionID uuid.UUID
+	Certificate  string
+	Source       string
+	CreatedAt    time.Time
+}
+
 type TenantSamlServiceProvider struct {
-	ID              uuid.UUID
-	TenantID        uuid.UUID
-	Name            string
-	EntityID        string
-	AcsUrl          string
-	NameIDFormat    string
-	NameIDAttribute string
-	Certificate     string
-	Status          string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	LastLoginAt     pgtype.Timestamptz
+	ID                    uuid.UUID
+	TenantID              uuid.UUID
+	Name                  string
+	EntityID              string
+	AcsUrl                string
+	NameIDFormat          string
+	NameIDAttribute       string
+	Certificate           string
+	Status                string
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
+	LastLoginAt           pgtype.Timestamptz
+	Attributes            []byte
+	AssignmentRequired    bool
+	RequireSignedRequests bool
+	EncryptAssertions     bool
 }

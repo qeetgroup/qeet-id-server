@@ -26,9 +26,12 @@ import (
 // zero on update take the defaults; session settings apply to sessions opened
 // after they are set.
 type Policy struct {
-	TenantID           uuid.UUID `json:"tenant_id"`
-	PasswordMinLength  int       `json:"password_min_length"`
-	PasswordComplexity string    `json:"password_complexity"`
+	TenantID uuid.UUID `json:"tenant_id"`
+
+	// Deprecated: accepted and ignored, and never returned. Password rules are
+	// the auth policy's (PUT /v1/tenants/{tenantID}/auth-policy).
+	PasswordMinLength  int    `json:"password_min_length,omitempty"`
+	PasswordComplexity string `json:"password_complexity,omitempty"`
 
 	// A session ends SessionMaxAge after sign-in however active, which also
 	// bounds an application's grant, or after SessionIdleTimeout unrenewed.
@@ -92,10 +95,9 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 
 // The values the enumerated settings may take.
 var (
-	passwordComplexities = map[string]bool{"relaxed": true, "standard": true, "strict": true}
-	sessionLimitActions  = map[string]bool{"evict_oldest": true, "refuse": true}
-	mfaEnforcements      = map[string]bool{"optional": true, "required": true, "admin_only": true}
-	stepUpMethods        = map[string]bool{"totp": true, "recovery_code": true, "otp": true, "webauthn": true, "push": true}
+	sessionLimitActions = map[string]bool{"evict_oldest": true, "refuse": true}
+	mfaEnforcements     = map[string]bool{"optional": true, "required": true, "admin_only": true}
+	stepUpMethods       = map[string]bool{"totp": true, "recovery_code": true, "otp": true, "webauthn": true, "push": true}
 )
 
 // The bounds of a step-up window, and the window of an organisation that sets
@@ -156,12 +158,6 @@ func (r *Repository) normalize(p *Policy) []errs.FieldError {
 	if idle < config.SessionIdleTimeoutMin || idle > maxAge {
 		field("session_idle_timeout", "Set the idle timeout to at least 15m and no longer than the maximum session age.")
 	}
-	if p.PasswordMinLength < 8 || p.PasswordMinLength > 128 {
-		field("password_min_length", "Set the minimum password length between 8 and 128.")
-	}
-	if !passwordComplexities[p.PasswordComplexity] {
-		field("password_complexity", "Choose relaxed, standard or strict.")
-	}
 	if !mfaEnforcements[p.MFAEnforcement] {
 		field("mfa_enforcement", "Choose optional, required or admin_only.")
 	}
@@ -193,26 +189,39 @@ func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
 // Get returns the tenant's security policy, or the defaults when it has none.
 func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, error) {
+	return r.get(ctx, r.pool, tenantID)
+}
+
+// rowQuerier is a pool or a transaction.
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// lockForChange takes, on tx, the tenant's policy lock, so a change based on
+// the stored policy can't lose one made meanwhile.
+func lockForChange(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('security_policy:' || $1::text, 0))`, tenantID)
+	return err
+}
+
+func (r *Repository) get(ctx context.Context, q rowQuerier, tenantID uuid.UUID) (*Policy, error) {
 	var p Policy
 	var settings []byte
 	var sessionAge, sessionIdle, stepUpWindow int64
-	err := r.pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		SELECT tenant_id,
-		       password_min_length, password_complexity,
 		       EXTRACT(EPOCH FROM session_max_age)::bigint,
 		       EXTRACT(EPOCH FROM session_idle_timeout)::bigint,
 		       max_sessions, session_limit_action,
 		       mfa_enforcement, mfa_grace_days, mfa_enforced_since,
 		       EXTRACT(EPOCH FROM step_up_window)::bigint, step_up_methods, settings
 		FROM tenant.security_policies WHERE tenant_id = $1
-	`, tenantID).Scan(&p.TenantID, &p.PasswordMinLength,
-		&p.PasswordComplexity, &sessionAge, &sessionIdle, &p.MaxSessions, &p.SessionLimitAction, &p.MFAEnforcement,
+	`, tenantID).Scan(&p.TenantID,
+		&sessionAge, &sessionIdle, &p.MaxSessions, &p.SessionLimitAction, &p.MFAEnforcement,
 		&p.MFAGraceDays, &p.MFAEnforcedSince, &stepUpWindow, &p.StepUpMethods, &settings)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return &Policy{
 			TenantID:           tenantID,
-			PasswordMinLength:  8,
-			PasswordComplexity: "standard",
 			SessionMaxAge:      Duration(r.sessionMaxAge),
 			SessionIdleTimeout: Duration(r.sessionIdle),
 			SessionLimitAction: "evict_oldest",
@@ -245,18 +254,15 @@ func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, p Policy) (*time.Tim
 	err := tx.QueryRow(ctx, `
 		INSERT INTO tenant.security_policies (
 			tenant_id,
-			password_min_length, password_complexity,
 			session_max_age, session_idle_timeout, mfa_enforcement, settings,
 			max_sessions, session_limit_action, mfa_grace_days, mfa_enforced_since,
 			step_up_window, step_up_methods
-		) VALUES ($1, $2, $3, make_interval(secs => $4::bigint),
-		         make_interval(secs => $5::bigint), $6,
-		         COALESCE(NULLIF($7::jsonb,'null'::jsonb), '{}'::jsonb), $8, COALESCE(NULLIF($9, ''), 'evict_oldest'),
-		         $10, CASE WHEN $6 = 'optional' THEN NULL ELSE NOW() END,
-		         make_interval(secs => $11::bigint), $12::text[])
+		) VALUES ($1, make_interval(secs => $2::bigint),
+		         make_interval(secs => $3::bigint), $4,
+		         COALESCE(NULLIF($5::jsonb,'null'::jsonb), '{}'::jsonb), $6, COALESCE(NULLIF($7, ''), 'evict_oldest'),
+		         $8, CASE WHEN $4 = 'optional' THEN NULL ELSE NOW() END,
+		         make_interval(secs => $9::bigint), $10::text[])
 		ON CONFLICT (tenant_id) DO UPDATE SET
-			password_min_length = EXCLUDED.password_min_length,
-			password_complexity = EXCLUDED.password_complexity,
 			session_max_age = EXCLUDED.session_max_age,
 			session_idle_timeout = EXCLUDED.session_idle_timeout,
 			max_sessions = EXCLUDED.max_sessions,
@@ -273,8 +279,7 @@ func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, p Policy) (*time.Tim
 			settings = EXCLUDED.settings,
 			updated_at = NOW()
 		RETURNING mfa_enforced_since
-	`, p.TenantID, p.PasswordMinLength,
-		p.PasswordComplexity, int64(time.Duration(p.SessionMaxAge).Seconds()),
+	`, p.TenantID, int64(time.Duration(p.SessionMaxAge).Seconds()),
 		int64(time.Duration(p.SessionIdleTimeout).Seconds()), p.MFAEnforcement, settings,
 		p.MaxSessions, p.SessionLimitAction, p.MFAGraceDays,
 		int64(stepUpWindow.Seconds()), p.StepUpMethods).Scan(&enforcedSince)
@@ -310,6 +315,7 @@ type Handler struct {
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/policy", h.get)
 	r.Put("/tenants/{tenantID}/policy", h.put)
+	r.Patch("/tenants/{tenantID}/policy", h.patch)
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
@@ -337,6 +343,58 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	ctx := r.Context()
+	tx, err := h.Repo.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := lockForChange(ctx, tx, tid); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	h.save(w, r, tx, tid, body)
+}
+
+// patch serves PATCH /tenants/{tenantID}/policy: it changes only the fields
+// sent, over the stored policy, under the policy's lock, so saving one rule
+// keeps another saved meanwhile. A null clears a nullable field.
+func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
+	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		return
+	}
+	ctx := r.Context()
+	tx, err := h.Repo.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := lockForChange(ctx, tx, tid); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	current, err := h.Repo.get(ctx, tx, tid)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	// Decoding over the stored policy changes only the fields the body names.
+	body := policyUpdate{Policy: *current}
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	h.save(w, r, tx, tid, body)
+}
+
+// save validates body, stores it as the tenant's policy on tx, audits it,
+// commits and answers with it.
+func (h *Handler) save(w http.ResponseWriter, r *http.Request, tx pgx.Tx, tid uuid.UUID, body policyUpdate) {
+	ctx := r.Context()
 	if bad := body.retiredFields(); len(bad) > 0 {
 		httpx.WriteError(w, r, errs.ErrValidationFailed.WithFields(bad))
 		return
@@ -347,13 +405,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrValidationFailed.WithFields(bad))
 		return
 	}
-	ctx := r.Context()
-	tx, err := h.Repo.Pool().Begin(ctx)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	defer tx.Rollback(ctx)
+	var err error
 	if in.MFAEnforcedSince, err = h.Repo.Upsert(ctx, tx, in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -373,7 +425,6 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		Metadata: map[string]any{
 			"mfa_enforcement":      in.MFAEnforcement,
 			"mfa_grace_days":       in.MFAGraceDays,
-			"password_min_length":  in.PasswordMinLength,
 			"session_max_age_s":    int64(time.Duration(in.SessionMaxAge).Seconds()),
 			"session_idle_s":       int64(time.Duration(in.SessionIdleTimeout).Seconds()),
 			"max_sessions":         in.MaxSessions,

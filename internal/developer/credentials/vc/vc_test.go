@@ -41,7 +41,7 @@ func TestIssue_RequiresSubjectAndType(t *testing.T) {
 		{"did:example:123", "  "},
 	}
 	for _, c := range cases {
-		res, err := s.Issue(context.Background(), [16]byte{}, c.subject, c.credType, nil, 0, audit.Actor{Type: "system"})
+		res, err := s.Issue(context.Background(), [16]byte{}, IssueInput{Subject: c.subject, Type: c.credType}, audit.Actor{Type: "system"})
 		if res != nil {
 			t.Errorf("subject=%q type=%q: expected nil result", c.subject, c.credType)
 		}

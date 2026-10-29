@@ -2,7 +2,7 @@
 -- All queries are STATIC and compiled by sqlc into ./dbgen.
 
 -- name: ListSocialProviders :many
-SELECT id, tenant_id, provider, client_id, discovery_url, enabled, created_at
+SELECT id, tenant_id, provider, client_id, discovery_url, enabled, created_at, apple_team_id, apple_key_id
 FROM tenant.social_providers WHERE tenant_id = @tenant_id ORDER BY provider;
 
 -- name: ListExternalIdentities :many
@@ -60,12 +60,12 @@ SELECT id FROM tenant.tenants WHERE slug = @slug;
 
 -- name: InsertSocialOAuthState :exec
 INSERT INTO auth.social_oauth_states
-    (state_hash, tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at)
-VALUES (@state_hash, @tenant_id, @provider, @code_verifier, @redirect_uri, @return_to, @expires_at);
+    (state_hash, tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at, nonce_hash)
+VALUES (@state_hash, @tenant_id, @provider, @code_verifier, @redirect_uri, @return_to, @expires_at, sqlc.narg('nonce_hash'));
 
 -- name: ConsumeSocialOAuthState :one
 DELETE FROM auth.social_oauth_states WHERE state_hash = @state_hash
-RETURNING tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at;
+RETURNING tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at, nonce_hash;
 
 -- name: InsertSocialLoginCode :exec
 INSERT INTO auth.social_login_codes (code_hash, user_id, tenant_id, expires_at)
@@ -87,8 +87,11 @@ UPDATE auth.social_login_codes SET used_at = NOW() WHERE code_hash = @code_hash;
 -- ==========================================================================
 
 -- name: GetExternalIdentityUser :one
+-- A social identity names no connection; a single sign-on connection's links,
+-- whose provider a social one could be named after, are not looked at.
 SELECT user_id FROM "user".external_identities
-WHERE tenant_id = @tenant_id AND provider = @provider AND subject = @subject;
+WHERE tenant_id = @tenant_id AND provider = @provider AND subject = @subject
+  AND connection_id IS NULL;
 
 -- name: GetUserByEmail :one
 SELECT id FROM "user".users WHERE LOWER(email) = LOWER(@email) AND deleted_at IS NULL;
@@ -101,4 +104,4 @@ RETURNING id;
 -- name: LinkExternalIdentity :exec
 INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email)
 VALUES (@user_id, @tenant_id, @provider, @subject, @email)
-ON CONFLICT (tenant_id, provider, subject) DO NOTHING;
+ON CONFLICT (tenant_id, provider, connection_id, subject) DO NOTHING;

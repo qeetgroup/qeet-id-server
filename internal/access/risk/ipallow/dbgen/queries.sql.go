@@ -11,8 +11,9 @@ import (
 	"github.com/google/uuid"
 )
 
-const deleteIPRule = `-- name: DeleteIPRule :execrows
+const deleteIPRule = `-- name: DeleteIPRule :one
 DELETE FROM tenant.ip_rules WHERE id = $1 AND tenant_id = $2
+RETURNING id, tenant_id, cidr, label, action, created_at
 `
 
 type DeleteIPRuleParams struct {
@@ -20,12 +21,18 @@ type DeleteIPRuleParams struct {
 	TenantID uuid.UUID
 }
 
-func (q *Queries) DeleteIPRule(ctx context.Context, arg DeleteIPRuleParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteIPRule, arg.ID, arg.TenantID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+func (q *Queries) DeleteIPRule(ctx context.Context, arg DeleteIPRuleParams) (TenantIpRule, error) {
+	row := q.db.QueryRow(ctx, deleteIPRule, arg.ID, arg.TenantID)
+	var i TenantIpRule
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Cidr,
+		&i.Label,
+		&i.Action,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const getIPRulesEnabled = `-- name: GetIPRulesEnabled :one

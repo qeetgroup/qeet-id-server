@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -39,19 +40,21 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 
 	loginSessionID, userID, signedInAt, ok := h.loginSessionAt(r)
 	now := time.Now()
+	loginAfter := h.Service.loginAfter(q)
 	switch {
 	case !ok && silent:
 		h.authorizeError(w, r, clientID, redirect, state, oauthErr("login_required", "no active sign-in"))
 		return
 	case !ok:
+		auth.SetSignInClientCookie(w, clientID, h.CookieSecure)
 		http.Redirect(w, r, h.LoginBaseURL+"/sign-in?return_to="+url.QueryEscape(h.currentURL(r)), http.StatusFound)
 		return
-	case signInRequired(q, signedInAt, now) && silent:
+	case signInRequired(q, loginAfter, signedInAt, now) && silent:
 		h.authorizeError(w, r, clientID, redirect, state, oauthErr("login_required", "a fresh sign-in is required"))
 		return
-	case signInRequired(q, signedInAt, now):
+	case signInRequired(q, loginAfter, signedInAt, now):
 		// prompt=login or max_age: sign in again, then come back to this request.
-		http.Redirect(w, r, h.LoginBaseURL+"/sign-in?prompt=login&return_to="+url.QueryEscape(h.reauthReturnTo(r, now)), http.StatusFound)
+		h.reauth(w, r, now)
 		return
 	}
 
@@ -67,8 +70,8 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	case silent:
 		h.authorizeError(w, r, clientID, redirect, state, oauthErr("interaction_required", "the organisation requires a second factor"))
 		return
-	case !signedInForRequest(q, signedInAt):
-		http.Redirect(w, r, h.LoginBaseURL+"/sign-in?prompt=login&return_to="+url.QueryEscape(h.reauthReturnTo(r, now)), http.StatusFound)
+	case !signedInForRequest(loginAfter, signedInAt):
+		h.reauth(w, r, now)
 		return
 	default:
 		h.authorizeError(w, r, clientID, redirect, state, oauthErr("access_denied", "the organisation requires a second factor"))
@@ -111,7 +114,8 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// RFC 9207: identify the issuer in the authorization response.
-	http.Redirect(w, r, appendQuery(redirect, "code", code, "state", state, "iss", h.Service.issuer.JWTIssuer()), http.StatusFound) // #nosec G710 -- redirect_uri matched exactly against the registered list
+	auth.ClearSignInClientCookie(w, r, h.CookieSecure)
+	http.Redirect(w, r, appendQuery(redirect, "code", code, "state", state, "iss", h.Service.issuer.JWTIssuer()), http.StatusFound) // #nosec G710 -- redirect_uri matched against the registered list (a loopback port aside)
 }
 
 // authorizeError reports a failure before a code was issued. Per RFC 6749
@@ -137,7 +141,6 @@ func (h *Handler) authorizeError(w http.ResponseWriter, r *http.Request, clientI
 	case errors.Is(err, errs.ErrOIDCCodeChallengeRequired),
 		errors.Is(err, errs.ErrOIDCCodeChallengeInvalid),
 		errors.Is(err, errs.ErrOIDCCodeChallengeMethodUnsupported),
-		errors.Is(err, errs.ErrOIDCNonceRequired),
 		errors.Is(err, errs.ErrOIDCNonceInvalid):
 		oauthCode = "invalid_request"
 	case errors.Is(err, errs.ErrOIDCRedirectURIInvalid):
@@ -146,7 +149,7 @@ func (h *Handler) authorizeError(w http.ResponseWriter, r *http.Request, clientI
 		httpx.WriteError(w, r, err)
 		return
 	}
-	http.Redirect(w, r, appendQuery(redirect, // #nosec G710 -- redirect_uri matched exactly against the registered list
+	http.Redirect(w, r, appendQuery(redirect, // #nosec G710 -- redirect_uri matched against the registered list (a loopback port aside)
 		"error", oauthCode, "state", state, "iss", h.Service.issuer.JWTIssuer()), http.StatusFound)
 }
 

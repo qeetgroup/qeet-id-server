@@ -13,6 +13,7 @@ func init() {
 		errs.CodeTokenVaultProviderAuthorizeInvalid: http.StatusUnprocessableEntity,
 		errs.CodeTokenVaultConnectStateInvalid:      http.StatusBadRequest,
 		errs.CodeTokenVaultConnectExpired:           http.StatusBadRequest,
+		errs.CodeTokenVaultConnectOtherBrowser:      http.StatusBadRequest,
 		errs.CodeTokenVaultTokenExchangeFailed:      http.StatusInternalServerError,
 		errs.CodeTokenVaultGrantNotFound:            http.StatusNotFound,
 		errs.CodeTokenVaultTokenExpired:             http.StatusUnauthorized,

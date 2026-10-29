@@ -26,21 +26,24 @@ import (
 
 // Branding is a tenant's theming, custom domain and email sender.
 type Branding struct {
-	TenantID         uuid.UUID      `json:"tenant_id"`
-	LogoURL          *string        `json:"logo_url"`
-	PrimaryColor     *string        `json:"primary_color"`
-	SecondaryColor   *string        `json:"secondary_color"`
-	CustomDomain     *string        `json:"custom_domain"`
-	EmailFromName    *string        `json:"email_from_name"`
-	EmailFromAddress *string        `json:"email_from_address"`
+	TenantID       uuid.UUID `json:"tenant_id"`
+	LogoURL        *string   `json:"logo_url"`
+	PrimaryColor   *string   `json:"primary_color"`
+	SecondaryColor *string   `json:"secondary_color"`
+	CustomDomain   *string   `json:"custom_domain"`
+	EmailFromName  *string   `json:"email_from_name"`
+	// Deprecated: accepted and ignored, never returned. Email goes out from
+	// the platform's address; settings.email_reply_to takes replies.
+	EmailFromAddress *string        `json:"email_from_address,omitempty"`
 	Settings         map[string]any `json:"settings"`
 }
 
 // Repository reads and writes tenant branding.
 type Repository struct {
-	pool *pgxpool.Pool
-	q    *dbgen.Queries
-	gate PlanGate
+	pool       *pgxpool.Pool
+	q          *dbgen.Queries
+	gate       PlanGate
+	publicBase string // this API's public origin, for links to an uploaded logo
 }
 
 // NewRepository returns a Repository over pool.
@@ -57,19 +60,28 @@ type PlanGate interface {
 // SetPlanGate sets the plan-feature gate (nil allows all features).
 func (r *Repository) SetPlanGate(g PlanGate) { r.gate = g }
 
+// brandingAllowed reports whether the tenant's plan includes custom branding;
+// a gate that can't answer counts as no, so the default look is shown.
+func (r *Repository) brandingAllowed(ctx context.Context, tenantID uuid.UUID) bool {
+	if r.gate == nil {
+		return true
+	}
+	ok, err := r.gate.FeatureAllowed(ctx, tenantID, "custom_branding")
+	return err == nil && ok
+}
+
 // Pool returns the connection pool, for handlers that run their own transaction.
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
 func toDomain(tenantID uuid.UUID, row dbgen.GetBrandingRow) *Branding {
 	return &Branding{
-		TenantID:         row.TenantID,
-		LogoURL:          row.LogoUrl,
-		PrimaryColor:     row.PrimaryColor,
-		SecondaryColor:   row.SecondaryColor,
-		CustomDomain:     row.CustomDomain,
-		EmailFromName:    row.EmailFromName,
-		EmailFromAddress: row.EmailFromAddress,
-		Settings:         dbutil.Metadata(row.Settings),
+		TenantID:       row.TenantID,
+		LogoURL:        row.LogoUrl,
+		PrimaryColor:   row.PrimaryColor,
+		SecondaryColor: row.SecondaryColor,
+		CustomDomain:   row.CustomDomain,
+		EmailFromName:  row.EmailFromName,
+		Settings:       dbutil.Metadata(row.Settings),
 	}
 }
 
@@ -86,14 +98,20 @@ func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Branding, er
 }
 
 // LoginBranding returns the tenant's hosted-login logo and colors as plain
-// strings, empty when unset or on error. It satisfies oidc.BrandingLister,
-// which takes primitives so federation doesn't depend on this package.
+// strings, empty when unset, on error, or when its plan lacks custom branding
+// (the stored values are kept for an upgrade). It satisfies
+// oidc.BrandingLister, which takes primitives so federation doesn't depend on
+// this package.
 func (r *Repository) LoginBranding(ctx context.Context, tenantID uuid.UUID) (logoURL, primaryColor, secondaryColor, backgroundColor string) {
+	if !r.brandingAllowed(ctx, tenantID) {
+		return "", "", "", ""
+	}
 	b, err := r.Get(ctx, tenantID)
 	if err != nil || b == nil {
 		return "", "", "", ""
 	}
-	return loginAppearance(b)
+	logoURL, primaryColor, secondaryColor, backgroundColor = loginAppearance(b)
+	return r.publicLogo(tenantID, logoURL), primaryColor, secondaryColor, backgroundColor
 }
 
 func loginAppearance(b *Branding) (logoURL, primaryColor, secondaryColor, backgroundColor string) {
@@ -127,7 +145,7 @@ func decodeBranding(r *http.Request) (Branding, error) {
 func normalizeAppearance(b *Branding) error {
 	if b.LogoURL != nil && strings.HasPrefix(*b.LogoURL, "data:") {
 		header, content, found := strings.Cut(*b.LogoURL, ",")
-		if !found || (header != "data:image/png;base64" && header != "data:image/jpeg;base64" && header != "data:image/webp;base64" && header != "data:image/svg+xml;base64") {
+		if _, known := logoTypes[header]; !found || !known {
 			return errs.ErrBadRequest.WithDetail("logo must be a PNG, JPEG, WEBP or SVG image")
 		}
 		if len(content) > base64.StdEncoding.EncodedLen(2<<20) {
@@ -205,7 +223,7 @@ func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, b Branding) error {
 			settings = EXCLUDED.settings,
 			updated_at = NOW()
 	`, b.TenantID, b.LogoURL, b.PrimaryColor, b.SecondaryColor, b.CustomDomain,
-		b.EmailFromName, b.EmailFromAddress, settings)
+		b.EmailFromName, nil, settings) // email_from_address is no longer kept
 	return err
 }
 

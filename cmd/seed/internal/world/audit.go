@@ -56,34 +56,44 @@ type canonicalRow struct {
 	Metadata     json.RawMessage `json:"metadata"`
 	CreatedAt    string          `json:"created_at"`
 	PrevHash     string          `json:"prev_hash"`
+	ChainShard   int16           `json:"chain_shard,omitempty"`
 }
 
 // Rechain rehashes every audit chain in time order, after At moved rows back
-// and Audit wrote history out of order.
+// and Audit wrote history out of order, opens any platform chain with no row
+// yet, as the API does when it starts, and drops the chains' checkpoints, so
+// the next scheduled verification walks each from the start.
 func (w *World) Rechain() {
-	rows, err := w.Admin.Query(w.Ctx, `SELECT DISTINCT tenant_id FROM audit.events`)
+	rows, err := w.Admin.Query(w.Ctx, `SELECT DISTINCT tenant_id, chain_shard FROM audit.events`)
 	Must(err, "list audit chains")
-	var chains []pgtype.UUID
+	type chain struct {
+		tenant pgtype.UUID
+		shard  int16
+	}
+	var chains []chain
 	for rows.Next() {
-		var t pgtype.UUID
-		Must(rows.Scan(&t), "scan audit chain")
-		chains = append(chains, t)
+		var c chain
+		Must(rows.Scan(&c.tenant, &c.shard), "scan audit chain")
+		chains = append(chains, c)
 	}
 	rows.Close()
 	Must(rows.Err(), "list audit chains")
-	for _, t := range chains {
-		w.rechain(t)
+	for _, c := range chains {
+		w.rechain(c.tenant, c.shard)
 	}
+	Must(audit.OpenPlatformChains(w.Ctx, w.Pool), "open the platform audit chains")
+	w.Exec("drop the audit chain checkpoints", `DELETE FROM platform.audit_chain_checkpoints`)
 }
 
-func (w *World) rechain(tenant pgtype.UUID) {
+// rechain rehashes one chain: tenant's, or with no tenant platform chain shard.
+func (w *World) rechain(tenant pgtype.UUID, shard int16) {
 	rows, err := w.Admin.Query(w.Ctx, `
 		SELECT id, COALESCE(tenant_id::text, ''), COALESCE(actor_user_id::text, ''), actor_type, action,
 		       resource_type, COALESCE(resource_id::text, ''), COALESCE(host(ip), ''),
 		       COALESCE(user_agent, ''), COALESCE(request_id, ''), metadata, created_at
 		FROM audit.events
-		WHERE tenant_id IS NOT DISTINCT FROM $1
-		ORDER BY created_at, id`, tenant)
+		WHERE tenant_id IS NOT DISTINCT FROM $1 AND chain_shard = $2
+		ORDER BY created_at, id`, tenant, shard)
 	Must(err, "read audit chain")
 	type link struct {
 		id         uuid.UUID
@@ -107,7 +117,7 @@ func (w *World) rechain(tenant pgtype.UUID) {
 		}
 		norm, err := json.Marshal(m)
 		Must(err, "encode audit metadata")
-		r.ID, r.Metadata, r.CreatedAt, r.PrevHash = id.String(), norm, created.UTC().Format(time.RFC3339Nano), prev
+		r.ID, r.Metadata, r.CreatedAt, r.PrevHash, r.ChainShard = id.String(), norm, created.UTC().Format(time.RFC3339Nano), prev, shard
 		b, err := json.Marshal(r)
 		Must(err, "encode audit row")
 		sum := sha256.Sum256(b)
@@ -126,7 +136,7 @@ func (w *World) rechain(tenant pgtype.UUID) {
 }
 
 // VerifyChains checks every chain with the API's own verifier, so the console's
-// "verify" shows intact chains.
+// "verify" shows intact chains; the platform chains are checked together.
 func (w *World) VerifyChains() int {
 	rows, err := w.Admin.Query(w.Ctx, `SELECT DISTINCT tenant_id FROM audit.events`)
 	Must(err, "list audit chains")

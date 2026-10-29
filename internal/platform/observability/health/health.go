@@ -6,6 +6,7 @@ package health
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -107,7 +108,10 @@ func (h *Handler) Readiness(w http.ResponseWriter, r *http.Request) {
 	allOK := true
 	for _, c := range h.checks {
 		if err := c.fn(ctx); err != nil {
-			results[c.name] = "fail: " + err.Error()
+			// The cause is logged, not answered: a probe is public, and the
+			// error names the database and its addresses.
+			slog.Warn("readiness check failed", "check", c.name, "err", err)
+			results[c.name] = "fail"
 			allOK = false
 		} else {
 			results[c.name] = "ok"

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -54,29 +55,56 @@ type ProviderResolver interface {
 	ProviderFor(ctx context.Context, tenantID uuid.UUID) (ai.Provider, error)
 }
 
+// Limits bounds the work of one turn, whoever pays the provider: the most
+// recent messages of the conversation sent to the model and their total size,
+// and the size of the reply's text.
+type Limits struct {
+	HistoryMessages int // messages sent; 0: DefaultLimits'
+	HistoryBytes    int // their content's bytes; 0: DefaultLimits'
+	OutputBytes     int // the reply's text bytes; 0: DefaultLimits'
+}
+
+// DefaultLimits are the limits a zero Limits field gets.
+var DefaultLimits = Limits{HistoryMessages: 40, HistoryBytes: 256 << 10, OutputBytes: 64 << 10}
+
 // Orchestrator runs streamed model turns and emits SSE frames. It keeps no state
 // between requests: history is reloaded from the database and the provider is
 // resolved per tenant on every turn.
 type Orchestrator struct {
 	resolver ProviderResolver
 	service  *Service
+	limits   Limits
 }
 
 // NewOrchestrator returns an Orchestrator that resolves each tenant's provider
-// through resolver and stores turns through service.
-func NewOrchestrator(resolver ProviderResolver, service *Service) *Orchestrator {
-	return &Orchestrator{resolver: resolver, service: service}
+// through resolver, stores turns through service and bounds each by limits.
+func NewOrchestrator(resolver ProviderResolver, service *Service, limits Limits) *Orchestrator {
+	if limits.HistoryMessages <= 0 {
+		limits.HistoryMessages = DefaultLimits.HistoryMessages
+	}
+	if limits.HistoryBytes <= 0 {
+		limits.HistoryBytes = DefaultLimits.HistoryBytes
+	}
+	if limits.OutputBytes <= 0 {
+		limits.OutputBytes = DefaultLimits.OutputBytes
+	}
+	return &Orchestrator{resolver: resolver, service: service, limits: limits}
 }
 
-// Run executes one turn: it reloads the history, streams the model's reply as
-// SSE frames, stores the assistant message and ends with a done frame. Tool
-// calls are sent to the client as tool_call frames and audited, never run here.
-// The caller must set the SSE headers first.
+// Run executes one turn: it reloads the recent history, streams the model's
+// reply as SSE frames, stores the assistant message and ends with a done
+// frame. Tool calls are sent to the client as tool_call frames and audited,
+// never run here. The caller must set the SSE headers first.
 func (o *Orchestrator) Run(ctx context.Context, tc turnContext, sse *sseWriter) {
-	// Load full conversation history (user turn already persisted by handler).
-	_, msgs, err := o.service.GetConversation(ctx, tc.tenantID, tc.userID, tc.conversationID)
+	// The recent history, the user turn already persisted by the handler.
+	msgs, err := o.service.TurnHistory(ctx, tc.tenantID, tc.userID, tc.conversationID, o.limits.HistoryMessages)
 	if err != nil {
 		sse.send(EventTypeError, errorData{Code: "db_error", Message: "failed to load conversation"})
+		sse.send(EventTypeDone, doneData{Reason: "error"})
+		return
+	}
+	if msgs = recentHistory(msgs, o.limits.HistoryBytes); len(msgs) == 0 {
+		sse.send(EventTypeError, errorData{Code: "history_too_long", Message: "this turn is too long to send to the model; start a new conversation"})
 		sse.send(EventTypeDone, doneData{Reason: "error"})
 		return
 	}
@@ -112,50 +140,117 @@ func (o *Orchestrator) Run(ctx context.Context, tc turnContext, sse *sseWriter) 
 
 	sse.send(EventTypeThinking, thinkingData{Text: "Thinking..."})
 
-	events, errC := provider.Stream(ctx, system, aiMsgs, toolDefs)
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	events, errC := provider.Stream(streamCtx, system, aiMsgs, toolDefs)
+	var used usage
+	text, toolBlocks, ok := collect(events, errC, cancel, sse, o.limits.OutputBytes, &used)
+	// A turn the model answered counts, whether or not it then failed.
+	if err := o.service.RecordUsage(ctx, tc.tenantID, used.input, used.output); err != nil {
+		slog.Warn("qeetai: record usage", "err", err)
+	}
+	if !ok {
+		return
+	}
+	if len(toolBlocks) > 0 {
+		o.handleToolUse(ctx, tc, sse, text, toolBlocks)
+	} else {
+		o.handleEndTurn(ctx, tc, sse, text)
+	}
+}
 
-	// Accumulate response blocks while streaming.
-	var (
-		textBuilder strings.Builder
-		toolBlocks  []*toolUseAccum
-	)
+// recentHistory is the longest tail of msgs within maxBytes of content that
+// begins with a person's message, so every tool call in it comes with its
+// result. It is empty when the latest turn alone is over maxBytes.
+func recentHistory(msgs []Message, maxBytes int) []Message {
+	start, size := len(msgs), 0
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if size += len(msgs[i].Content); size > maxBytes {
+			break
+		}
+		if msgs[i].Role == "user" {
+			start = i
+		}
+	}
+	return msgs[start:]
+}
+
+// usage is the tokens one turn used, as its provider reported them.
+type usage struct{ input, output int }
+
+// collect reads one turn's stream into its text and tool calls, sending the
+// text to sse as it arrives. A tool call must start on the next slot, below
+// ai.MaxToolCalls, and its input stay within ai.MaxToolInputBytes; otherwise
+// the stream is cancelled and the turn refused. ok is false once collect has
+// sent the error and done frames. Text past maxOutput bytes ends the turn
+// there, as the model's own token limit would, without its tool calls.
+func collect(events <-chan ai.Event, errC <-chan error, cancel context.CancelFunc, sse *sseWriter, maxOutput int, used *usage) (text string, tools []*toolUseAccum, ok bool) {
+	var textBuilder strings.Builder
+	fail := func(code, message string) (string, []*toolUseAccum, bool) {
+		cancel()
+		for range events {
+		}
+		<-errC
+		sse.send(EventTypeError, errorData{Code: code, Message: message})
+		sse.send(EventTypeDone, doneData{Reason: "error"})
+		return "", nil, false
+	}
 
 	for ev := range events {
 		switch ev.Type {
 		case ai.EventTextDelta:
-			textBuilder.WriteString(ev.TextDelta)
-			sse.send(EventTypeToken, tokenData{Text: ev.TextDelta})
+			delta, full := ev.TextDelta, false
+			if room := maxOutput - textBuilder.Len(); len(delta) > room {
+				for room > 0 && !utf8.RuneStart(delta[room]) {
+					room--
+				}
+				delta, full = delta[:room], true
+			}
+			if delta != "" {
+				textBuilder.WriteString(delta)
+				sse.send(EventTypeToken, tokenData{Text: delta})
+			}
+			if full {
+				slog.Info("qeetai: reply cut at the output limit", "bytes", textBuilder.Len())
+				cancel()
+				for range events {
+				}
+				<-errC
+				return textBuilder.String(), nil, true
+			}
 
 		case ai.EventToolCallStart:
-			// Grow toolBlocks to accommodate this index (providers assign
-			// indices 0, 1, 2… in order; pre-allocate empty slots if needed).
-			for len(toolBlocks) <= ev.ToolIndex {
-				toolBlocks = append(toolBlocks, &toolUseAccum{})
+			if ev.ToolIndex != len(tools) || len(tools) >= ai.MaxToolCalls {
+				slog.Warn("qeetai: model tool call out of bounds", "slot", ev.ToolIndex, "calls", len(tools))
+				return fail("model_error", "the model asked for more tool calls than one turn allows")
 			}
-			toolBlocks[ev.ToolIndex].ID = ev.ToolID
-			toolBlocks[ev.ToolIndex].Name = ev.ToolName
+			tools = append(tools, &toolUseAccum{ID: ev.ToolID, Name: ev.ToolName})
 
 		case ai.EventToolCallDelta:
-			if ev.ToolIndex < len(toolBlocks) {
-				toolBlocks[ev.ToolIndex].Input.WriteString(ev.ToolInputDelta)
+			if ev.ToolIndex < 0 || ev.ToolIndex >= len(tools) {
+				slog.Warn("qeetai: model tool input for no call", "slot", ev.ToolIndex, "calls", len(tools))
+				return fail("model_error", "the model sent a tool call it had not started")
 			}
+			input := &tools[ev.ToolIndex].Input
+			if input.Len()+len(ev.ToolInputDelta) > ai.MaxToolInputBytes {
+				return fail("model_error", "the model sent a tool call input larger than allowed")
+			}
+			input.WriteString(ev.ToolInputDelta)
 
 		case ai.EventToolCallStop:
 			// No action needed; tool blocks are processed after the loop.
 
 		case ai.EventStop:
 			// StopReason is captured implicitly: the path is chosen by
-			// len(toolBlocks) > 0 after the loop.
+			// len(tools) > 0 after the loop.
+
+		case ai.EventUsage:
+			// Each report is the turn's tokens so far.
+			used.input, used.output = max(used.input, ev.InputTokens), max(used.output, ev.OutputTokens)
 
 		case ai.EventProviderError:
 			slog.Error("qeetai: provider stream error", "msg", ev.ErrorMessage)
-			sse.send(EventTypeError, errorData{Code: "model_error", Message: ev.ErrorMessage})
-			sse.send(EventTypeDone, doneData{Reason: "error"})
-			// Drain remaining events.
-			for range events {
-			}
-			<-errC
-			return
+			return fail("model_error", ev.ErrorMessage)
 		}
 	}
 
@@ -164,14 +259,9 @@ func (o *Orchestrator) Run(ctx context.Context, tc turnContext, sse *sseWriter) 
 		slog.Error("qeetai: stream io error", "err", streamErr)
 		sse.send(EventTypeError, errorData{Code: "stream_error", Message: "model stream failed"})
 		sse.send(EventTypeDone, doneData{Reason: "error"})
-		return
+		return "", nil, false
 	}
-
-	if len(toolBlocks) > 0 {
-		o.handleToolUse(ctx, tc, sse, textBuilder.String(), toolBlocks)
-	} else {
-		o.handleEndTurn(ctx, tc, sse, textBuilder.String())
-	}
+	return textBuilder.String(), tools, true
 }
 
 // handleEndTurn persists the assistant text reply and emits done{end_turn}.

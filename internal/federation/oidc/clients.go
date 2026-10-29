@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,7 +33,7 @@ type Client struct {
 	Scopes         []string  `json:"scopes"`
 	CreatedAt      time.Time `json:"created_at"`
 	// PKCEExemptUntil is when this confidential application's exemption from
-	// sending a PKCE code_challenge (and a nonce) ends; nil: no exemption.
+	// sending a PKCE code_challenge ends; nil: no exemption.
 	PKCEExemptUntil *time.Time `json:"pkce_exempt_until"`
 	// BackchannelLogoutURI receives a signed logout token, server to server,
 	// when someone it signed in signs out; FrontchannelLogoutURI is loaded by
@@ -43,6 +44,9 @@ type Client struct {
 	// the hosted sign-in page shows. "" for none.
 	LogoURI   string `json:"logo_uri"`
 	ClientURI string `json:"client_uri"`
+	// WebOrigins are the origins a browser application calls the OAuth
+	// endpoints from: those it set, else its redirect URIs' origins.
+	WebOrigins []string `json:"web_origins"`
 }
 
 // CreateClientInput is what RegisterClient takes.
@@ -60,6 +64,8 @@ type CreateClientInput struct {
 	// The application's logo and home page (see Client).
 	LogoURI   string `json:"logo_uri"`
 	ClientURI string `json:"client_uri"`
+	// WebOrigins, left out or null, are its redirect URIs' origins (see Client).
+	WebOrigins []string `json:"web_origins"`
 }
 
 // PlanLimiter returns the numeric cap for a plan-gated resource (negative =
@@ -167,6 +173,18 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 		BackchannelLogoutURI: derefStr(row.BackchannelLogoutUri), FrontchannelLogoutURI: derefStr(row.FrontchannelLogoutUri),
 		LogoURI: derefStr(row.LogoUri), ClientURI: derefStr(row.ClientUri),
 	}
+	if in.WebOrigins != nil {
+		if err := s.setWebOrigins(ctx, tx, row.TenantID, row.ID, in.WebOrigins); err != nil {
+			return nil, "", err
+		}
+	} else {
+		s.webOrigins.forget()
+	}
+	stored, err := s.q.WithTx(tx).GetClientWebOrigins(ctx, dbgen.GetClientWebOriginsParams{ID: row.ID, TenantID: row.TenantID})
+	if err != nil {
+		return nil, "", err
+	}
+	c.WebOrigins = effectiveWebOrigins(c.RedirectURIs, stored)
 	return &c, raw, nil
 }
 
@@ -329,9 +347,9 @@ func (s *Service) ReviewShadowAIClient(ctx context.Context, tenantID, id, review
 	return nil
 }
 
-// RegisteredRedirect reports whether redirectURI is registered for the client.
-// The authorize endpoint uses it to decide whether a failure can be reported to
-// the relying party or has to be rendered here.
+// RegisteredRedirect reports whether redirectURI is registered for the client
+// (see redirectRegistered). The authorize endpoint uses it to decide whether a
+// failure can be reported to the relying party or has to be rendered here.
 func (s *Service) RegisteredRedirect(ctx context.Context, clientID, redirectURI string) bool {
 	if clientID == "" || redirectURI == "" {
 		return false
@@ -340,7 +358,59 @@ func (s *Service) RegisteredRedirect(ctx context.Context, clientID, redirectURI 
 	if err != nil {
 		return false
 	}
-	return contains(info.RedirectUris, redirectURI)
+	return redirectRegistered(info.RedirectUris, redirectURI)
+}
+
+// redirectRegistered reports whether redirectURI is one of registered: the same
+// string or, for an http redirect to a loopback IP literal, the same but for
+// its port, as a native app listens on whatever port it is given (RFC 8252
+// §7.3). "localhost" is not a literal and must match exactly.
+func redirectRegistered(registered []string, redirectURI string) bool {
+	if contains(registered, redirectURI) {
+		return true
+	}
+	want, ok := withoutLoopbackPort(redirectURI)
+	if !ok {
+		return false
+	}
+	for _, r := range registered {
+		if got, ok := withoutLoopbackPort(r); ok && got == want {
+			return true
+		}
+	}
+	return false
+}
+
+// withoutLoopbackPort is raw without its port when raw is an http URI whose
+// host is a loopback IP literal, such as 127.0.0.1 or [::1]; everything else
+// stays as written. ok is false for any other URI.
+func withoutLoopbackPort(raw string) (string, bool) {
+	rest, ok := strings.CutPrefix(raw, "http://")
+	if !ok {
+		return "", false
+	}
+	end := strings.IndexAny(rest, "/?#")
+	if end < 0 {
+		end = len(rest)
+	}
+	host, tail := rest[:end], rest[end:]
+	if i := strings.LastIndexByte(host, ':'); i >= 0 && !strings.Contains(host[i:], "]") {
+		port := host[i+1:]
+		if n, err := strconv.Atoi(port); err != nil || n > 65535 || strings.Trim(port, "0123456789") != "" {
+			return "", false
+		}
+		host = host[:i]
+	}
+	literal := host
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		literal = host[1 : len(host)-1]
+	} else if strings.Contains(host, ":") {
+		return "", false
+	}
+	if ip := net.ParseIP(literal); ip == nil || !ip.IsLoopback() {
+		return "", false
+	}
+	return "http://" + host + tail, true
 }
 
 // ClientName resolves a client's display name and tenant from its client_id —

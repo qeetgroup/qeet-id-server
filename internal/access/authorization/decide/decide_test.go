@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -41,17 +44,35 @@ type fakeAttributes struct {
 	deny, allow map[string]bool
 	evalErr     error
 	presenceErr error
+	platformErr error
 	evals       int
 	lastSubject map[string]any
+	lastContext map[string]any
+	lastRequest abac.Request
+	lastInput   abac.EvaluationInput
 }
 
 func (f *fakeAttributes) Presence(context.Context, uuid.UUID) (bool, bool, error) {
 	return len(f.deny) > 0 || f.evalErr != nil, len(f.allow) > 0, f.presenceErr
 }
 
+// PlatformAttributes answers as abac.Service does for a user with no groups
+// or roles: who they are, and the call's address and second factor.
+func (f *fakeAttributes) PlatformAttributes(_ context.Context, r abac.Request) (map[string]any, map[string]any, error) {
+	f.lastRequest = r
+	ctxAttrs := map[string]any{}
+	if r.IP != "" {
+		ctxAttrs["ip"] = r.IP
+	}
+	if r.MFA {
+		ctxAttrs["mfa"] = true
+	}
+	return abac.SubjectAttributes(r.Subject, r.TenantID), ctxAttrs, f.platformErr
+}
+
 func (f *fakeAttributes) Evaluate(_ context.Context, _ uuid.UUID, in abac.EvaluationInput) (*abac.Decision, error) {
 	f.evals++
-	f.lastSubject = in.Subject
+	f.lastSubject, f.lastContext, f.lastInput = in.Subject, in.Context, in
 	if f.evalErr != nil {
 		return nil, f.evalErr
 	}
@@ -220,6 +241,94 @@ func TestSubjectIsWhoTheServerKnows(t *testing.T) {
 	_, _ = d.Permission(ctx, tenant, uma, "doc:write")
 	if attrs.lastSubject["id"] != uma.String() || attrs.lastSubject["type"] != "user" || attrs.lastSubject["tenant_id"] != tenant.String() {
 		t.Fatalf("subject = %v", attrs.lastSubject)
+	}
+}
+
+// callCtx is the context of a request from addr made as p, as the router
+// gives it to the route guard.
+func callCtx(t *testing.T, p *httpx.Principal, addr string) context.Context {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/v1/users", nil)
+	req.RemoteAddr = addr + ":40000"
+	var got context.Context
+	httpx.ClientIPContext(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got = r.Context() })).ServeHTTP(httptest.NewRecorder(), req)
+	return httpx.WithPrincipal(got, p)
+}
+
+// TestRouteGuardSeesTheCall checks that the route guard gives ABAC the
+// caller's own session, second factor and address, while a check about
+// someone else, or a decision that isn't the route guard's, gives none, and
+// that failing to read them refuses.
+func TestRouteGuardSeesTheCall(t *testing.T) {
+	sid, signedIn := uuid.New(), time.Now()
+	own := &httpx.Principal{UserID: &uma, TenantID: &tenant, ActorType: "user", SessionID: &sid}
+	app := &httpx.Principal{UserID: &uma, TenantID: &tenant, ActorType: "user", SessionID: &sid, ClientID: "qci_app"}
+	hosted := &httpx.Principal{UserID: &uma, TenantID: &tenant, ActorType: "user", SignedInAt: &signedIn}
+	other := uuid.New()
+	for _, tc := range []struct {
+		name    string
+		ctx     context.Context
+		guard   bool
+		session uuid.UUID
+		ip      string
+		mfa     bool
+	}{
+		{"the user's own call", callCtx(t, own, "203.0.113.7"), true, sid, "203.0.113.7", false},
+		{"an application's token for the user", callCtx(t, app, "203.0.113.8"), true, uuid.Nil, "203.0.113.8", false},
+		{"a hosted-login call that proved a factor", callCtx(t, hosted, "203.0.113.9"), true, uuid.Nil, "203.0.113.9", true},
+		{"a call by someone else", callCtx(t, &httpx.Principal{UserID: &other, TenantID: &tenant, ActorType: "user", SessionID: &sid}, "203.0.113.7"), true, uuid.Nil, "", false},
+		{"a permission check, not the route guard", callCtx(t, own, "203.0.113.7"), false, uuid.Nil, "", false},
+	} {
+		attrs := &fakeAttributes{deny: map[string]bool{"user/read": true}}
+		d := New(&fakeRoles{grants: map[string]bool{"user.read": true}}, &fakeRelations{}, attrs)
+		if tc.guard {
+			_, _ = d.Check(tc.ctx, uma, tenant, "user.read")
+		} else {
+			_, _ = d.Permission(tc.ctx, tenant, uma, "user.read")
+		}
+		r := attrs.lastRequest
+		if r.UserID != uma || r.TenantID != tenant || r.SessionID != tc.session || r.IP != tc.ip || r.MFA != tc.mfa {
+			t.Errorf("%s: ABAC asked about %+v, want session %s, ip %q, mfa %v", tc.name, r, tc.session, tc.ip, tc.mfa)
+		}
+		if tc.ip != "" && attrs.lastContext["ip"] != tc.ip {
+			t.Errorf("%s: ABAC context %v, want the call's address", tc.name, attrs.lastContext)
+		}
+	}
+
+	attrs := &fakeAttributes{deny: map[string]bool{"user/read": true}, platformErr: errors.New("db down")}
+	d := New(&fakeRoles{grants: map[string]bool{"user.read": true}}, &fakeRelations{}, attrs)
+	if ok, err := d.Check(callCtx(t, own, "203.0.113.7"), uma, tenant, "user.read"); ok || err == nil || attrs.evals != 0 {
+		t.Errorf("attributes unreadable: allowed %v, %v after %d evaluations; want refused with the error", ok, err, attrs.evals)
+	}
+}
+
+// TestPropertiesReachABAC checks that a caller's properties reach ABAC as the
+// subject, resource, action and context attributes of both questions, and
+// that what the platform knows of the user wins over a property of its name.
+func TestPropertiesReachABAC(t *testing.T) {
+	props := Properties{
+		Subject:  map[string]any{"id": "someone-else", "tenant_id": "elsewhere", "department": "sales"},
+		Resource: map[string]any{"classification": "secret"},
+		Action:   map[string]any{"channel": "api"},
+		Context:  map[string]any{"ip": "198.51.100.4", "mfa": true},
+	}
+	attrs := &fakeAttributes{deny: map[string]bool{"doc/write": true}}
+	d := New(&fakeRoles{}, &fakeRelations{}, attrs)
+	for name, ask := range map[string]func(){
+		"a permission check":   func() { _, _ = d.PermissionWith(ctx, tenant, uma, "doc:write", props) },
+		"a relationship check": func() { _, _ = d.RelationWith(ctx, tenant, uma.String(), "doc:42", "write", props) },
+	} {
+		ask()
+		in := attrs.lastInput
+		if in.Subject["id"] != uma.String() || in.Subject["tenant_id"] != tenant.String() || in.Subject["department"] != "sales" {
+			t.Errorf("%s: subject %v, want the user as the platform knows them, with the department", name, in.Subject)
+		}
+		if in.Resource.Attrs["classification"] != "secret" || in.ActionAttrs["channel"] != "api" {
+			t.Errorf("%s: resource %+v, action %v; want the properties", name, in.Resource, in.ActionAttrs)
+		}
+		if in.Context["ip"] != "198.51.100.4" || in.Context["mfa"] != true {
+			t.Errorf("%s: context %v, want the caller's", name, in.Context)
+		}
 	}
 }
 

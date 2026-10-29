@@ -105,7 +105,7 @@ paths:
   /metrics:
     get:
       operationId: get_metrics
-      description: 'Exposes process and request metrics in Prometheus exposition format for scraping by a metrics collector. Requires no authentication and is intended to be reached only from within the deployment network. The payload reflects the instance''s current counters and gauges at the time of the call.'
+      description: 'Exposes process and request metrics in Prometheus exposition format for scraping by a metrics collector. The scraper presents METRICS_TOKEN as `Authorization: Bearer <token>`; without the right token the endpoint answers 404, as it does everywhere but development when no METRICS_TOKEN is set, since its counters (sign-in throttles among them) would tell an attacker how close they are to a limit. The payload reflects the instance''s current counters and gauges at the time of the call.'
       summary: Metrics (Prometheus)
       tags:
         - Health
@@ -120,7 +120,7 @@ paths:
   /readyz:
     get:
       operationId: get_readyz
-      description: 'Runs every registered dependency probe under a short shared timeout and returns 200 only when all pass, otherwise 503 with a per-check breakdown. Requires no authentication. Unlike the liveness probe, a failure here indicates the instance is temporarily unable to serve traffic, so orchestrators route requests away without restarting the process.'
+      description: 'Runs every registered dependency probe under a short shared timeout and returns 200 only when all pass, otherwise 503 with a per-check breakdown (ok or fail; the cause is logged, never answered). Requires no authentication. Unlike the liveness probe, a failure here indicates the instance is temporarily unable to serve traffic, so orchestrators route requests away without restarting the process.'
       summary: Readiness
       tags:
         - Health
@@ -177,10 +177,11 @@ paths:
       summary: Activity history
       description: >-
         Returns a cursor-paginated list of ActivityEvent derived from the
-        tenant-scoped audit log. Severity and category are computed from the
-        event type and applied post-fetch, so with either filter a page can
-        hold fewer events than limit, or none, and still carry next_cursor;
-        follow it until it is absent. Tenant is derived from the JWT
+        tenant-scoped audit log, with total, how many match (counted up to
+        10,000; total_capped says when there are more). Every filter, severity
+        and category included, is applied in the query, so every page but the
+        last is full. An unknown severity or category, or a malformed
+        resource_id or ip, is refused with 400. Tenant is derived from the JWT
         principal only — never from URL or body.
       tags:
         - Activity
@@ -215,8 +216,16 @@ paths:
           in: query
           required: false
           description: >-
-            Minimum severity level. Events below this level are excluded.
-            Severity is derived from the event type, not stored in the DB.
+            Comma-separated severities (info, success, warning, error,
+            critical); events of any of them. Severity is derived from the
+            event type, not stored. For a minimum, use min_severity.
+          schema:
+            type: string
+            example: 'error,critical'
+        - name: min_severity
+          in: query
+          required: false
+          description: Events of at least this severity.
           schema:
             type: string
             enum: [info, success, warning, error, critical]
@@ -224,17 +233,31 @@ paths:
           in: query
           required: false
           description: >-
-            Filter by event category (authentication, authorization, security,
-            directory, developer, system). Derived from the event type prefix.
+            Comma-separated categories (authentication, authorization,
+            security, directory, developer, system); events of any of them.
+            Derived from the event type prefix.
           schema:
             type: string
-            enum:
-              - authentication
-              - authorization
-              - security
-              - directory
-              - developer
-              - system
+            example: 'authentication,security'
+        - name: resource_type
+          in: query
+          required: false
+          description: Comma-separated resource types; events about any of them.
+          schema:
+            type: string
+        - name: resource_id
+          in: query
+          required: false
+          description: Events about this resource.
+          schema:
+            type: string
+            format: uuid
+        - name: ip
+          in: query
+          required: false
+          description: Events from this address.
+          schema:
+            type: string
         - name: actor
           in: query
           required: false
@@ -247,8 +270,10 @@ paths:
           required: false
           description: >-
             Identity timeline filter. When set, returns every event where the
-            given user UUID is either the actor OR the target of a 'user'
-            resource event. Omit to return events for all subjects.
+            given user UUID is the actor, the target of a 'user' resource event,
+            or the person another resource's event names in metadata.user_id
+            (such as being added to or removed from a group). Omit to return
+            events for all subjects.
           schema:
             type: string
             format: uuid
@@ -256,9 +281,12 @@ paths:
           in: query
           required: false
           description: >-
-            Free-text search over action, resource_type, actor_type, user_agent,
-            and metadata. Evaluated as a PostgreSQL websearch_to_tsquery
-            expression — supports quoted phrases, exclusions (-saml), and OR.
+            Finds words of the action, resource type, actor type, user agent,
+            address and metadata, each split into words (auth.login_succeeded is
+            auth, login and succeeded), every plain word as a prefix; or the
+            events of an actor whose name contains it or whose email begins with
+            it. "Quoted phrases", -exclusions and OR are read as
+            websearch_to_tsquery reads them.
           schema:
             type: string
         - name: from
@@ -297,17 +325,36 @@ paths:
       summary: Live activity stream (SSE)
       description: >-
         Opens a Server-Sent Events stream of ActivityEvent frames for the
-        caller's tenant. Each frame is
-        `id: <cursor>\nevent: activity\ndata: <json>\n\n`; periodic
-        `: keep-alive` comments prevent proxy timeouts.
+        caller's tenant: the audit records themselves, every kind (sign-ins
+        and MFA included), each with its own audit id, so a live event can be
+        opened and related like one from the history. The server follows the
+        audit log every two seconds, or at once when the organisation acts.
+        Each frame is `id: <cursor>\nevent: activity\ndata: <json>\n\n`;
+        periodic `: keep-alive` comments prevent proxy timeouts.
 
 
         When `Last-Event-ID` is supplied (the `id` of the last frame received,
-        an opaque cursor, not the event's UUID) the server replays up to 100
-        audit events newer than it (chronological order) before switching to
-        the live stream, covering reconnect gaps. A live frame's id sits ten
-        seconds before its event, to cover events the server had yet to
-        publish, so a reconnect may repeat an event but never skips one.
+        an opaque cursor, not the event's UUID) the server replays every audit
+        event newer than it, in chronological order, before switching to the
+        live stream. One connection replays at most 1,000 audit rows: further
+        behind, it sends the cursor of the last row read and a `retry:` frame
+        and ends, and the client's reconnect carries on from there. A frame
+        may carry only an `id` (no event): the cursor of rows the filters
+        passed over, kept as the client's Last-Event-ID. A live frame's id
+        sits ten seconds before its event, to cover records whose transaction
+        committed late; the stream sends each record once, and a reconnect may
+        repeat one, recognisable by its id. Delivery is at least once: a reconnect may repeat an event
+        but doesn't skip one, and a client too slow for the live stream is
+        sent a `retry:` frame and disconnected, to catch up from the audit log
+        on reconnect.
+
+
+        The stream lasts only as long as the access it was opened with. It
+        ends when the access token or API key expires, and within 30 seconds
+        of the reader losing access: their session ended, audit.read no
+        longer theirs (or no longer the key's), the API key revoked, the
+        service principal or agent disabled. It also ends if that check
+        can't be made. A new request is then refused as any other would be.
 
 
         Server-side filters (`?types`, `?severity`, `?category`) are applied
@@ -370,12 +417,13 @@ paths:
       operationId: get_v1_activity_summary
       summary: Activity summary
       description: >-
-        Aggregate counts over the same filter predicates as the history
-        endpoint (types, actor, subject, from/to, q). The severity and category
-        filters are ignored — this endpoint produces that distribution. Without
-        an explicit `from` the window defaults to the last 24h and is hard-capped
-        at 90 days to bound the per-tenant scan. Tenant is derived from the JWT
-        principal only.
+        Aggregate counts over the same filters as the history endpoint (types,
+        actor, subject, from/to, q, resource_type, resource_id, ip, category,
+        severity and min_severity), so category and severity together total
+        the events of both; by_severity and by_category then show the spread
+        within what the filters match. Without an explicit `from` the window
+        defaults to the last 24h; it is capped at 366 days, with buckets of up
+        to a week. Tenant is derived from the JWT principal only.
       tags:
         - Activity
       parameters:
@@ -395,14 +443,14 @@ paths:
         - name: subject
           in: query
           required: false
-          description: Identity-timeline filter (actor OR user-resource target).
+          description: Identity-timeline filter (actor, user-resource target, or the person named in metadata.user_id).
           schema:
             type: string
             format: uuid
         - name: q
           in: query
           required: false
-          description: Free-text search (websearch_to_tsquery).
+          description: Search, as for the history.
           schema:
             type: string
         - name: from
@@ -419,6 +467,12 @@ paths:
           schema:
             type: string
             format: date-time
+        - {name: category, in: query, required: false, description: 'Comma-separated categories, as for the history.', schema: {type: string}}
+        - {name: severity, in: query, required: false, description: 'Comma-separated severities, as for the history.', schema: {type: string}}
+        - {name: min_severity, in: query, required: false, schema: {type: string, enum: [info, success, warning, error, critical]}}
+        - {name: resource_type, in: query, required: false, schema: {type: string}}
+        - {name: resource_id, in: query, required: false, schema: {type: string, format: uuid}}
+        - {name: ip, in: query, required: false, schema: {type: string}}
         - name: bucket
           in: query
           required: false
@@ -491,6 +545,142 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/activity/{id}:
+    get:
+      operationId: get_v1_tenants_ByTenantID_activity_ById
+      summary: One activity event
+      description: >-
+        One of the organisation's activity events by its id (an audit.events
+        row id), with its metadata, actor name and email, address and browser,
+        as in the history. 404 for an unknown id or another organisation's.
+        Needs audit.read.
+      tags:
+        - Activity
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The event
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityEvent'
+        '400':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/service-health:
+    get:
+      operationId: get_v1_tenants_ByTenantID_service_health
+      summary: Service health
+      tags:
+        - Health
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: >-
+        The state of each part of the service the organisation uses, from its
+        own recent figures, and the incidents operators posted that are open or
+        were resolved in the last 14 days. A component is operational,
+        degraded, outage, maintenance or not_configured (a part the
+        organisation doesn't use); an open incident makes it no better than
+        the incident's impact (reason incident). api is an outage while the
+        database is unreachable (api.database_unreachable); sign_in while
+        tokens can't be signed (sign_in.keys_unavailable); email is degraded
+        when the provider refused at least a quarter of the organisation's
+        emails of the last hour (email.failing); webhooks while a
+        subscription's deliveries are failing or one was disabled for failing
+        (webhooks.failing); directory while a directory operation of the last
+        day failed and is still open (directory.failing). status is the worst
+        state of the components. Requires tenant.read.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, checked_at, components, incidents]
+                properties:
+                  status:
+                    type: string
+                    enum: [operational, maintenance, degraded, outage]
+                  checked_at:
+                    type: string
+                    format: date-time
+                  components:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, state]
+                      properties:
+                        name:
+                          type: string
+                          enum: [api, sign_in, email, webhooks, directory]
+                        state:
+                          type: string
+                          enum: [operational, maintenance, degraded, outage, not_configured]
+                        reason:
+                          type: string
+                          description: Why it isn't operational.
+                        figures:
+                          type: object
+                          additionalProperties:
+                            type: integer
+                          description: 'The counts its state was judged by: email sent_last_hour and failed_last_hour; webhooks active, failing and disabled_failing; directory ldap_connections, scim_tokens and open_failures.'
+                  incidents:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, component, impact, title, started_at, resolved_at]
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        component:
+                          type: string
+                          enum: [api, sign_in, email, webhooks, directory]
+                        impact:
+                          type: string
+                          enum: [maintenance, degraded, outage]
+                        title:
+                          type: string
+                        detail:
+                          type: string
+                        started_at:
+                          type: string
+                          format: date-time
+                        resolved_at:
+                          type: [string, 'null']
+                          format: date-time
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/tenants/{tenantID}/analytics/overview:
     get:
       operationId: get_v1_tenants_ByTenantID_analytics_overview
@@ -503,6 +693,10 @@ paths:
           required: true
           schema:
             type: string
+        - {name: from, in: query, required: false, description: 'Start of a chosen range (RFC 3339), returned as range.', schema: {type: string, format: date-time}}
+        - {name: to, in: query, required: false, description: 'End of the range (RFC 3339); now by default.', schema: {type: string, format: date-time}}
+        - {name: days, in: query, required: false, description: 'The range as days back from to; 30 by default, at most 366.', schema: {type: integer, minimum: 1, maximum: 366}}
+        - {name: method, in: query, required: false, description: 'Count only sign-ins of this first method (password, passkey, magic_link, social, saml, ...).', schema: {type: string}}
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -604,21 +798,52 @@ paths:
           in: query
           required: false
           description: >
-            Free-text search over action, resource_type, actor_type, user_agent,
-            and metadata. Evaluated as a PostgreSQL websearch_to_tsquery expression —
-            supports quoted phrases ("failed login"), exclusions (-saml), and OR.
+            Finds words of the action, resource type, actor type, user agent,
+            address and metadata, each split into words (auth.login_succeeded is
+            auth, login and succeeded), every plain word as a prefix; or the
+            events of an actor whose name contains it or whose email begins with
+            it. "Quoted phrases", -exclusions and OR are read as
+            websearch_to_tsquery reads them.
           schema:
             type: string
         - name: action
           in: query
           required: false
+          description: Comma-separated actions; events of any of them.
           schema:
             type: string
         - name: resource_type
           in: query
           required: false
+          description: Comma-separated resource types; events about any of them.
           schema:
             type: string
+        - name: resource_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: ip
+          in: query
+          required: false
+          description: Events from this address.
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          description: Inclusive lower bound (RFC3339).
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          description: Inclusive upper bound (RFC3339).
+          schema:
+            type: string
+            format: date-time
         - name: actor_user_id
           in: query
           required: false
@@ -664,7 +889,7 @@ paths:
                 next_cursor: 018f2a90-0a1b-7c2d-8e3f-4a5b6c7d8e00
               schema:
                 type: object
-                required: [items, next_cursor]
+                required: [items, next_cursor, total, total_capped]
                 properties:
                   items:
                     type: array
@@ -672,6 +897,14 @@ paths:
                       $ref: '#/components/schemas/Row'
                   next_cursor:
                     type: string
+                  total:
+                    type: integer
+                    description: How many events match, up to 10,000.
+                  total_capped:
+                    type: boolean
+                    description: More than 10,000 events match.
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -683,9 +916,11 @@ paths:
       operationId: get_v1_audit_verify
       summary: Verify platform audit chain (public)
       description: >-
-        Verifies the platform-level audit hash chain (the rows with no tenant)
-        and returns only whether the chain is intact and how many rows were
-        checked. Unauthenticated by design so any external party can
+        Verifies the platform-level audit hash chains (the rows with no tenant,
+        spread over 16 chains so their writers don't queue on one) and returns
+        only whether they are all intact and how many rows were checked. Each
+        chain must have a row, and every platform row must be on one of them.
+        Unauthenticated by design so any external party can
         independently confirm the platform has not tampered with its audit log;
         per-tenant verification is at /v1/tenants/{tenantID}/audit/verify and
         requires auth.
@@ -707,6 +942,48 @@ paths:
                 required:
                   - chain_valid
                   - rows_checked
+  /v1/tenants/{tenantID}/audit/verification:
+    get:
+      operationId: get_v1_tenants_ByTenantID_audit_verification
+      summary: The audit chain's last verification
+      description: >-
+        How the scheduled audit-chain verification (every six hours, going on
+        from where it left each chain, with a full walk at least weekly) last
+        left the organisation's chain, read rather than walked: whether it has
+        reached it yet, when it last verified it and up to which event, whether
+        a break was found and when, and when the latest run finished and its
+        scope. GET /v1/tenants/{tenantID}/audit/verify still walks the whole
+        chain on request. Needs audit.read.
+      tags:
+        - Audit
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The last verification
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [verified, intact, last_verified_at, broken_at, last_verified_event_id, last_run_at, last_run_scope]
+                properties:
+                  verified: {type: boolean, description: Whether the scheduled verification has reached the chain.}
+                  intact: {type: boolean, description: 'No break found; false also while not yet verified.'}
+                  last_verified_at: {type: [string, 'null'], format: date-time}
+                  broken_at: {type: [string, 'null'], format: date-time, description: When a break was found; it stays until resolved.}
+                  last_verified_event_id: {type: [string, 'null'], format: uuid}
+                  last_run_at: {type: [string, 'null'], format: date-time, description: When the latest scheduled run finished.}
+                  last_run_scope: {type: string, description: 'all (a full walk) or incremental; empty before any run.'}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/tenants/{tenantID}/audit/verify:
     get:
       operationId: get_v1_tenants_ByTenantID_audit_verify
@@ -976,6 +1253,172 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/compliance/controls/owners:
+    get:
+      operationId: get_v1_tenants_ByTenantID_compliance_controls_owners
+      summary: List control owners
+      description: 'The person each of the organisation''s compliance controls is owned by, for the controls that have one; evidence runs name the owner on each control too. Requires audit.read.'
+      tags: [Compliance]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Owners
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/ControlOwner'}}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/compliance/controls/{controlID}/owner:
+    put:
+      operationId: put_v1_tenants_ByTenantID_compliance_controls_ByControlID_owner
+      summary: Set a control's owner
+      description: 'Makes one of the organisation''s people (its own, or holding a role there) answer for a control of either framework''s catalog; another organisation''s person is refused with 422, an unknown control with 404. Audited as compliance.control_owner_set. Requires audit.write.'
+      tags: [Compliance]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: controlID, in: path, required: true, schema: {type: string}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id: {type: string, format: uuid}
+      responses:
+        '204':
+          description: Owner set
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_compliance_controls_ByControlID_owner
+      summary: Remove a control's owner
+      description: 'Leaves the control without an owner; 404 when it has none. Audited as compliance.control_owner_removed. Requires audit.write.'
+      tags: [Compliance]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: controlID, in: path, required: true, schema: {type: string}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Owner removed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/compliance/audits:
+    get:
+      operationId: get_v1_tenants_ByTenantID_compliance_audits
+      summary: List external audits
+      description: 'The external audits and certificates recorded for the organisation, latest first, up to 200, of one framework when asked. Requires audit.read.'
+      tags: [Compliance]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: framework, in: query, required: false, schema: {type: string, enum: [soc2, iso27001]}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Audits
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/ExternalAudit'}}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: post_v1_tenants_ByTenantID_compliance_audits
+      summary: Record an external audit or certificate
+      description: 'Records an audit an external body carried out, or a certificate it issued: framework, kind (audit or certificate), body, scope, reference, issued_on and optional expires_on (YYYY-MM-DD, not before issued_on). Invalid fields are refused with 422 naming each. Audited as compliance.audit_recorded. Requires audit.write.'
+      tags: [Compliance]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [framework, kind, body, issued_on]
+              properties:
+                framework: {type: string, enum: [soc2, iso27001]}
+                kind: {type: string, enum: [audit, certificate]}
+                body: {type: string, maxLength: 200}
+                scope: {type: string, maxLength: 2000}
+                reference: {type: string, maxLength: 200}
+                issued_on: {type: string, format: date}
+                expires_on: {type: string, format: date}
+      responses:
+        '201':
+          description: Recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalAudit'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/compliance/audits/{id}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_compliance_audits_ById
+      summary: Delete an external audit
+      description: 'Removes a recorded external audit or certificate of the organisation. Audited as compliance.audit_deleted. Requires audit.write.'
+      tags: [Compliance]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/tenants/{tenantID}/compliance/evidence/{id}:
     get:
       operationId: get_v1_tenants_ByTenantID_compliance_evidence_ById
@@ -1140,7 +1583,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Purges the deleted users the retention policy has made ripe, now rather than at the next scheduled run. Requires policy.write.'
+      description: 'Purges the deleted users the retention policy has made ripe, now rather than at the next scheduled run, one at a time: a user whose deletion fails is skipped, left for the next run, and not counted in purged. Requires policy.write.'
       responses:
         '201':
           description: Created
@@ -1177,7 +1620,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/GdprCreateInput'
-      description: 'Requests erasure of a person''s data in the organisation, carried out after the grace period unless cancelled. Requires gdpr.write.'
+      description: 'Requests erasure of a person''s account, carried out after the grace period unless cancelled. The erasure ends their sessions, redacts the account (email, phone, name, avatar, external ID and metadata) and deletes everything else it left: credentials and second factors, sign-in history, sessions and remembered devices, linked social and single sign-on accounts, application consents and grants, connected accounts and their tokens, personal API keys, role, group and break-glass memberships, application assignments and the persistent identifiers applications know them by, directory profiles, notifications, sign-in links and failed sign-in counters, and the payloads of the person''s data exports; verifiable credentials issued to them are revoked and their claims cleared. The audit trail and the request itself are kept; the request goes on naming the account by user_id after the account is deleted for good. Requires gdpr.write.'
       responses:
         '201':
           description: Created
@@ -1355,7 +1798,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Returns status plus the full data payload once status is "ready"; response carries a Content-Disposition download header in that case.
+      description: Returns status plus the full data payload once status is "ready"; response carries a Content-Disposition download header in that case. The payload is deleted seven days after it was built, or when the person is erased, and the status becomes "expired".
       responses:
         '200':
           description: OK
@@ -1389,20 +1832,26 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [profile, sessions, passkeys, roles, mfa_totp_enabled, generated_at]
+                required: [profile, sessions, passkeys, roles, mfa_totp_enabled, identities, otp_factors, app_consents, app_grants, groups, sign_ins, generated_at]
                 properties:
-                  profile: {type: object, additionalProperties: true}
+                  profile: {type: object, additionalProperties: true, description: 'Email, phone, display name, avatar, metadata, status and verification times.'}
                   sessions: {type: array, items: {type: object, additionalProperties: true}}
                   passkeys: {type: array, items: {type: object, additionalProperties: true}}
                   roles: {type: array, items: {type: object, additionalProperties: true}}
                   mfa_totp_enabled: {type: boolean}
+                  identities: {type: array, description: 'Linked social and single sign-on accounts.', items: {type: object, additionalProperties: true}}
+                  otp_factors: {type: array, description: 'Email and SMS second factors, their destinations masked.', items: {type: object, additionalProperties: true}}
+                  app_consents: {type: array, description: 'Applications consented to and the scopes granted.', items: {type: object, additionalProperties: true}}
+                  app_grants: {type: array, description: 'Live application grants.', items: {type: object, additionalProperties: true}}
+                  groups: {type: array, items: {type: object, additionalProperties: true}}
+                  sign_ins: {type: array, description: 'The latest 1000 sign-ins, made and failed, with address and user agent.', items: {type: object, additionalProperties: true}}
                   generated_at: {type: string, format: date-time}
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/account/delete:
     post:
       operationId: post_v1_account_delete
-      description: 'Immediately erases the authenticated user''s personal data and credentials and revokes all of their sessions, exercising the right to erasure. When the account has a password, the current password must be supplied in the body to re-prove identity before this irreversible action; password-less accounts are authorized by the session alone. Audit references are retained in redacted form so the hash-chained log stays verifiable, and the client should sign the user out afterward.'
+      description: 'Immediately erases the authenticated user''s account and revokes all of their sessions, exercising the right to erasure: the account is redacted and everything else it left is deleted, as POST /v1/gdpr/purge describes. When the account has a password, the current password must be supplied in the body to re-prove identity before this irreversible action; password-less accounts are authorized by the session alone. Audit references are retained in redacted form so the hash-chained log stays verifiable, and the client should sign the user out afterward.'
       summary: Delete the authenticated user's account
       tags: [GDPR]
       security:
@@ -1419,6 +1868,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/tenants/{tenantID}/log-sinks:
     get:
       operationId: get_v1_tenants_ByTenantID_log_sinks
@@ -1453,7 +1904,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_log_sinks
-      description: 'Registers a destination that forwards the tenant''s audit events to an external SIEM (Splunk HEC, Datadog, or a generic HTTP endpoint). The endpoint must be valid and the sink type recognized, otherwise the request is rejected as unprocessable. Any supplied token is encrypted at rest; forwarding starts from creation time with no backfill of historical events, and delivery is at-least-once.'
+      description: 'Registers a destination that forwards the tenant''s audit events to an external SIEM (Splunk HEC, Datadog, or a generic HTTP endpoint). The endpoint must be valid and the sink type recognized, otherwise the request is rejected as unprocessable. Any supplied token is encrypted at rest; forwarding starts from creation time with no backfill of historical events, and delivery is at-least-once. Each event carries its actor, resource, address, user agent, request id and metadata. One instance at a time forwards a sink, in batches until it catches up; a sink that refuses or can''t be reached waits longer after each failure (10 seconds, doubling, up to an hour) and shows last_error until a batch is delivered.'
       summary: Create log sink
       tags:
         - Log Sinks
@@ -1497,6 +1948,99 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/log-sinks/test:
+    post:
+      operationId: post_v1_tenants_ByTenantID_log_sinks_test
+      summary: Send a test event to an unsaved log stream
+      description: >-
+        Sends one test audit event (action siem.test, metadata.test true; no
+        organisation data) to the destination in the body, which takes the
+        fields and checks of creating one and isn't saved, and reports how it
+        answered. Audited as siem.sink_tested. Needs audit.write and a recent
+        step-up, as creating one does.
+      tags:
+        - Log Sinks
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, endpoint]
+              properties:
+                type: {type: string, enum: [splunk_hec, datadog, http]}
+                endpoint: {type: string, format: uri}
+                token: {type: string, writeOnly: true}
+      responses:
+        '200':
+          description: How the destination answered
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [delivered, duration_ms]
+                properties:
+                  delivered: {type: boolean, description: Whether the destination accepted the event (a 2xx answer).}
+                  status: {type: integer, description: The destination's HTTP status; absent when it gave no answer.}
+                  error: {type: string, description: Why it wasn't delivered.}
+                  duration_ms: {type: integer}
+        '400':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/log-sinks/{id}/test:
+    post:
+      operationId: post_v1_tenants_ByTenantID_log_sinks_ById_test
+      summary: Send a test event to a log stream
+      description: >-
+        Sends one test audit event (action siem.test, metadata.test true; no
+        organisation data) to one of the organisation's saved destinations and
+        reports how it answered. It changes nothing on the destination: its
+        cursor, last_error and back-off are untouched. Audited as
+        siem.sink_tested. Needs audit.write and a recent step-up.
+      tags:
+        - Log Sinks
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: How the destination answered
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [delivered, duration_ms]
+                properties:
+                  delivered: {type: boolean, description: Whether the destination accepted the event (a 2xx answer).}
+                  status: {type: integer, description: The destination's HTTP status; absent when it gave no answer.}
+                  error: {type: string, description: Why it wasn't delivered.}
+                  duration_ms: {type: integer}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/tenants/{tenantID}/log-sinks/{id}:
     patch:
       operationId: patch_v1_tenants_ByTenantID_log_sinks_ById
@@ -2092,6 +2636,95 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/qeetai/usage:
+    get:
+      operationId: get_v1_tenants_ByTenantID_qeetai_usage
+      summary: Qeet AI usage
+      description: 'What the organisation''s Qeet AI used: this UTC month''s messages (turns answered) and tokens as its provider reported them, the last use, and the twelve most recent months. Requires secret.read, as the provider configuration does.'
+      tags: [Qeet AI]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Usage
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  this_month: {type: object, properties: {month: {type: string, example: '2026-10'}, messages: {type: integer}, input_tokens: {type: integer, format: int64}, output_tokens: {type: integer, format: int64}, last_used_at: {type: string, format: date-time}}}
+                  last_used_at: {type: [string, 'null'], format: date-time}
+                  months: {type: array, items: {type: object, properties: {month: {type: string, example: '2026-10'}, messages: {type: integer}, input_tokens: {type: integer, format: int64}, output_tokens: {type: integer, format: int64}, last_used_at: {type: string, format: date-time}}}}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/qeetai/settings:
+    get:
+      operationId: get_v1_tenants_ByTenantID_qeetai_settings
+      summary: Qeet AI settings
+      description: 'How long the organisation keeps its Qeet AI conversations, and the last change. Requires secret.read.'
+      tags: [Qeet AI]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conversation_retention_days: {type: [integer, 'null'], minimum: 1, maximum: 3650, description: 'Days an untouched conversation is kept, with its messages; null keeps them.'}
+                  updated_at: {type: string, format: date-time}
+                  updated_by: {type: string, format: uuid}
+                  updated_by_email: {type: string}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    put:
+      operationId: put_v1_tenants_ByTenantID_qeetai_settings
+      summary: Set Qeet AI settings
+      description: 'Sets how many days (1 to 3,650) an untouched conversation is kept, or null to keep them. Every day a job deletes the conversations untouched for longer, with their messages, and audits each organisation''s deletion as qeetai.conversations_purged. The change is audited as qeetai.settings_updated. Requires secret.write.'
+      tags: [Qeet AI]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                conversation_retention_days: {type: [integer, 'null'], minimum: 1, maximum: 3650}
+      responses:
+        '200':
+          description: The settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conversation_retention_days: {type: [integer, 'null'], minimum: 1, maximum: 3650, description: 'Days an untouched conversation is kept, with its messages; null keeps them.'}
+                  updated_at: {type: string, format: date-time}
+                  updated_by: {type: string, format: uuid}
+                  updated_by_email: {type: string}
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/qeetai/status:
     get:
       operationId: get_v1_qeetai_status
@@ -2285,6 +2918,18 @@ paths:
 
         Requires `QEETAI_PROVIDER` configured server-side; returns
         `409 qeetai_unconfigured` otherwise.
+
+
+        A conversation answers one turn at a time: a message while its
+        previous turn is still running, on any instance, is refused with
+        `409 qeetai.turn_in_progress` (retryable) and not stored. A turn sends
+        the model only the conversation's latest messages
+        (`QEETAI_HISTORY_MESSAGES`, within `QEETAI_HISTORY_BYTES`), from a
+        message of the user's, so earlier ones are left out; a turn whose own
+        messages are larger ends with an `error` frame of code
+        `history_too_long` (start a new conversation). A reply longer than
+        `QEETAI_MAX_OUTPUT_BYTES` is cut there and kept, as at the model's own
+        token limit. A turn runs for at most 10 minutes.
       tags:
         - Qeet AI
       parameters:
@@ -2350,7 +2995,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Qeet AI not configured (QEETAI_PROVIDER/QEETAI_API_KEY unset)
+          description: Qeet AI not configured (QEETAI_PROVIDER/QEETAI_API_KEY unset, `qeetai_unconfigured`), or the conversation's previous turn is still running (`qeetai.turn_in_progress`, retryable)
           content:
             application/json:
               schema:
@@ -2376,7 +3021,7 @@ paths:
                   source: {type: string, enum: [tenant, platform, none], description: 'Whose key answers: the organisation''s own, the deployment''s, or none.'}
                   provider: {type: string}
                   model: {type: string}
-                  base_url: {type: string}
+                  base_url: {type: string, description: 'The organisation''s own endpoint; empty for the Qeet-managed provider, whose endpoint is not shown.'}
                   max_tokens: {type: integer}
                   last4: {type: string, description: The key's last four characters.}
                   platform_fallback: {type: boolean, description: Whether the deployment has a key to fall back on.}
@@ -2407,7 +3052,7 @@ paths:
                   source: {type: string, enum: [tenant, platform, none], description: 'Whose key answers: the organisation''s own, the deployment''s, or none.'}
                   provider: {type: string}
                   model: {type: string}
-                  base_url: {type: string}
+                  base_url: {type: string, description: 'The organisation''s own endpoint; empty for the Qeet-managed provider, whose endpoint is not shown.'}
                   max_tokens: {type: integer}
                   last4: {type: string, description: The key's last four characters.}
                   platform_fallback: {type: boolean, description: Whether the deployment has a key to fall back on.}
@@ -2467,7 +3112,8 @@ paths:
       summary: Start checkout
       description: >-
         Returns a hosted-payment URL to redirect the admin to, or {status:"active"} when the plan is free or no card provider serves the request (direct activation). The provider is chosen by billing country (config-driven; an omitted country falls back to currency-based routing: INR → Razorpay, else the default provider). The provider's webhook later activates the subscription.
-        Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, and one still being processed 409 idempotency.in_progress.
+        When invoice tax is configured, it is worked out from the billing profile (or, when the profile names no country, from country) before the payment opens, and the provider charges the total, tax included; the paid invoice shows that charge. A plan activated directly by invoice-only billing gets an open invoice; a free plan a paid zero one.
+        Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key.
       tags:
         - Billing
       parameters:
@@ -2506,7 +3152,7 @@ paths:
                   type: string
                   format: uri
       responses:
-        '409': {description: 'A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly.'}
+        '409': {description: 'A request with this Idempotency-Key is still being processed (idempotency.in_progress); retry shortly. Or the first request stopped before answering and may have taken effect (idempotency.outcome_unknown): check, then retry with a new key.'}
         '200':
           description: Either a checkout URL ({status:"checkout"}) or {status:"active"}
           content:
@@ -2627,7 +3273,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Lists the organisation''s invoices, newest first. Requires billing.read.'
+      description: 'Lists the organisation''s invoices, newest first. Each keeps the billing profile it was issued to (billed_to) and the supplier''s GSTIN and SAC, and is emailed to that profile''s billing email when issued. Requires billing.read.'
       responses:
         '200':
           description: OK
@@ -2651,6 +3297,107 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/billing/invoices/{invoiceID}/pay:
+    post:
+      operationId: post_v1_tenants_ByTenantID_billing_invoices_ByInvoiceID_pay
+      summary: Pay an open invoice
+      description: >-
+        Returns a hosted-payment URL for an open invoice, such as a renewal, charging its total. The provider is chosen by the billing profile's country, else the invoice's currency; with none, it answers 422 and the invoice is paid by bank transfer, quoting its number. When the payment completes, the invoice is paid (billing.invoice_paid) and a renewal starts the period it billed. A paid or void invoice answers 409 billing.invoice_not_open.
+        Send an Idempotency-Key header to retry it safely, as for checkout.
+      tags:
+        - Billing
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: invoiceID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/IdempotencyKey'
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [success_url, cancel_url]
+              properties:
+                success_url:
+                  type: string
+                  format: uri
+                cancel_url:
+                  type: string
+                  format: uri
+      responses:
+        '200':
+          description: The hosted checkout ({status:"checkout"})
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckoutResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 'The invoice is paid or void (billing.invoice_not_open), or a request with this Idempotency-Key is still being processed.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/billing/payment-method:
+    get:
+      operationId: get_v1_tenants_ByTenantID_billing_payment_method
+      summary: Get the payment method
+      description: 'Returns what the organisation''s most recent completed checkout was paid with, as its provider reported it, or null. No card is kept with the provider: each checkout collects its own, so there is nothing to manage between payments. Razorpay reports a card''s network and last four digits but not its expiry. Requires billing.read.'
+      tags:
+        - Billing
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [payment_method]
+                properties:
+                  payment_method:
+                    oneOf:
+                      - $ref: '#/components/schemas/PaymentMethod'
+                      - type: 'null'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/tenants/{tenantID}/billing/subscription:
     get:
       operationId: get_v1_tenants_ByTenantID_billing_subscription
@@ -2666,7 +3413,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Returns the organisation''s subscription. Requires billing.read.'
+      description: 'Returns the organisation''s subscription. A trial grants its plan until trial_end, and a plan marked to cancel until current_period_end. Any other plan renews at current_period_end: a free one starts its next period, and a paid one is billed with an open renewal invoice and turns past_due, keeping its plan for the payment grace (7 days unless configured) while that invoice is paid, through POST /v1/tenants/{tenantID}/billing/invoices/{invoiceID}/pay or by bank transfer. Paid, it is active for the new period; still unpaid after the grace, or ended by a trial or a cancellation, it is canceled, with ended_at, and the organisation is on the free plan. Each change is audited as billing.subscription_renewed, billing.subscription_past_due or billing.subscription_ended. Requires billing.read.'
       responses:
         '200':
           description: OK
@@ -2714,11 +3461,13 @@ paths:
         Puts the tenant on plan_code, priced in currency; no payment is taken here. A free
         plan starts a new period with a zero invoice. A paid plan that costs no more than the
         tenant's active subscription in the same currency and billing interval takes over the
-        period already paid for, with no new invoice; the current plan itself changes nothing.
+        period already paid for, while it lasts, with no new invoice; the current plan itself
+        changes nothing.
         Any other paid plan, such as one that costs more, must go through checkout
         (POST /v1/tenants/{tenantID}/billing/checkout) and is refused with 402
         billing.checkout_required, unless invoice-only billing
-        (BILLING_ALLOW_UNPAID_ACTIVATION) is on and no card provider serves the currency.
+        (BILLING_ALLOW_UNPAID_ACTIVATION) is on and no card provider serves the currency, which
+        activates it with an open invoice.
       responses:
         '200':
           description: OK
@@ -2778,7 +3527,7 @@ paths:
   /v1/signup/checkout:
     post:
       operationId: post_v1_signup_checkout
-      description: 'Begins a hosted payment for a plan chosen during signup, before any organization exists. The organization is created only once payment completes, so an abandoned checkout never leaves a dangling tenant. Scoped to the authenticated user; the organization name and slug are required and the return URLs must be valid absolute URLs. Returns the details needed to redirect the browser to the payment provider.'
+      description: 'Begins a hosted payment for a plan chosen during signup, before any organization exists. The organization is created only once payment completes, so an abandoned checkout never leaves a dangling tenant. Scoped to the authenticated user; the organization name and slug are required and the return URLs must be valid absolute URLs. Returns the details needed to redirect the browser to the payment provider. When invoice tax is configured, the provider charges the total tax included, taxed by the billing country given, and the new organization''s paid invoice shows that charge.'
       summary: Start paid-plan checkout before tenant creation
       tags: [Billing]
       security:
@@ -2942,8 +3691,11 @@ paths:
         Returns the tenant's resolved entitlements: the effective plan code, the
         boolean feature flags, and the numeric limits (-1 = unlimited). Resolved
         from the active subscription (falling back to the tenant's plan label),
-        so an in-app upgrade is reflected immediately. Readable by any
-        authenticated member of the tenant; scoped to the caller's own tenant.
+        so an in-app upgrade is reflected immediately. A subscription grants its
+        plan only until current_period_end (a trial until trial_end): nothing
+        renews it, so after that the tenant has the free plan's entitlements
+        until it pays again. Readable by any authenticated member of the
+        tenant; scoped to the caller's own tenant.
       parameters:
         - name: tenantID
           in: path
@@ -3017,7 +3769,7 @@ paths:
   /v1/tenants/{tenantID}/entitlements/usage:
     get:
       operationId: get_v1_tenants_ByTenantID_entitlements_usage
-      description: 'Returns the tenant''s current consumption for each metered resource, such as seats, applications, and API keys, for display against the plan''s limits. It complements the entitlements endpoint, which resolves the plan''s capability set, by running the underlying count queries only when the usage view needs them. Scoped to the tenant named in the path.'
+      description: 'Returns the tenant''s current consumption for each metered resource, such as seats, applications, and API keys, for display against the plan''s limits. seats counts the people holding a role in the tenant, directly or through a group that carries one, each once, plus its pending invitations; an account holding no role, such as a customer signing in to the tenant''s applications, holds no seat. It complements the entitlements endpoint, which resolves the plan''s capability set, by running the underlying count queries only when the usage view needs them. Scoped to the tenant named in the path.'
       summary: Get tenant resource usage against plan limits
       tags: [Entitlements]
       security:
@@ -3099,6 +3851,17 @@ components:
       name: qe_ls
       description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session and consumed by the OAuth authorize/consent flow.
   responses:
+    Overloaded:
+      description: The server is too busy to check or set a password or code now, so the request was refused and changed nothing (`server.overloaded`, retryable). Try again after the seconds Retry-After gives, also sent as `metadata.retry_after`.
+      headers:
+        Retry-After:
+          description: Seconds to wait before trying again (1 to 3).
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     BadRequest:
       description: Malformed request
       content:
@@ -3297,10 +4060,20 @@ components:
           description: Requester IP address (dot-decimal or IPv6).
         location:
           type: string
-          description: Best-effort geo location derived from IP (optional).
+          description: Where the request came from, approximately ("Pune, IN", or the country alone), from what the trusted proxy reported (GEO_COUNTRY_HEADER, GEO_CITY_HEADER), kept in the event's metadata.geo. Omitted when unknown; there is no GeoIP lookup.
+        country:
+          type: string
+          description: The ISO 3166-1 alpha-2 country of location.
+        city:
+          type: string
+          description: The city of location, when the proxy names one.
         device:
           type: string
-          description: Device label parsed from user-agent (optional).
+          enum: [desktop, mobile, tablet]
+          description: The device type the user agent names; omitted when it names none.
+        os:
+          type: string
+          description: The operating system the user agent names (Windows, macOS, iOS, iPadOS, Android, ChromeOS, Linux).
         browser:
           type: string
           description: Browser label parsed from user-agent (optional).
@@ -3316,7 +4089,13 @@ components:
         metadata:
           type: object
           additionalProperties: true
-          description: Domain-specific supplementary fields (non-normative).
+          description: >-
+            Domain-specific supplementary fields (non-normative). An event about a role, group or ABAC policy
+            carries target_name, its name when the event was recorded, and role_name or group_name beside a
+            role_id or group_id, so one deleted since can still be named. People are named by id only (the
+            audit chain can't be changed, so a name in it would outlive the person's erasure); look the id
+            up for their current name. rebac.tuple_deleted carries the removed tuple's object, relation and
+            subject.
     ActivityResponse:
       type: object
       description: Paginated activity history response.
@@ -3330,15 +4109,19 @@ components:
           type: string
           description: >-
             Opaque cursor for the next page: the time and ID of the last event
-            fetched. Present when more results may exist; omitted on the last
+            returned. Present when more results exist; omitted on the last
             page.
+        total:
+          type: integer
+          description: How many events match, up to 10,000.
+        total_capped:
+          type: boolean
+          description: More than 10,000 events match.
     ActivitySummaryResponse:
       type: object
       description: >-
-        Aggregate counts over the same filter predicates as the history
-        endpoint (types, actor, subject, from/to, q). severity/category filters
-        are ignored — the endpoint produces that distribution. All bucket maps
-        are zero-filled so the console renders a stable legend.
+        Aggregate counts over the same filters as the history endpoint. All
+        bucket maps are zero-filled so the console renders a stable legend.
       required:
         - total
         - unique_actors
@@ -3357,7 +4140,15 @@ components:
         unique_actors:
           type: integer
           format: int64
-          description: Distinct actor_user_id values in the window.
+          description: Distinct people who acted in the window (actors.people).
+        actors:
+          type: object
+          description: Distinct actors of each kind. API keys, agents and service principals are told apart by the metadata.actor_id their events record, from this release on.
+          properties:
+            people: {type: integer, format: int64}
+            api_keys: {type: integer, format: int64}
+            agents: {type: integer, format: int64}
+            services: {type: integer, format: int64}
         security_alerts:
           type: integer
           format: int64
@@ -3645,7 +4436,44 @@ components:
       description: >-
         Per-bucket rate limits for a tenant. On GET these are the effective
         values (defaults merged with overrides); on PUT, any bucket supplied is
-        upserted as an override.
+        upserted as an override. The answer also carries the defaults, the
+        ceiling an override may reach (the defaults themselves: an
+        organisation may tighten its limits, never lift them), the lowest rate
+        an override may set, and the built-in limits every organisation
+        shares; those are read-only and ignored on PUT.
+      properties:
+        tenant:
+          $ref: '#/components/schemas/RateLimitBucket'
+        user:
+          $ref: '#/components/schemas/RateLimitBucket'
+        api_key:
+          $ref: '#/components/schemas/RateLimitBucket'
+        defaults:
+          readOnly: true
+          $ref: '#/components/schemas/RateLimitBuckets'
+        ceiling:
+          readOnly: true
+          $ref: '#/components/schemas/RateLimitBuckets'
+        min_rate:
+          type: number
+          readOnly: true
+          description: The lowest rate, in requests a second, an override may set.
+        built_in:
+          type: array
+          readOnly: true
+          description: The platform's fixed limits, the same for every organisation.
+          items:
+            type: object
+            required: [name, per, applies, rate, capacity]
+            properties:
+              name: {type: string}
+              per: {type: string, enum: [ip, user, address], description: 'Whose requests share a bucket.'}
+              applies: {type: string, description: What the limit covers.}
+              rate: {type: number, description: Requests a second.}
+              capacity: {type: integer, description: The burst.}
+    RateLimitBuckets:
+      type: object
+      required: [tenant, user, api_key]
       properties:
         tenant:
           $ref: '#/components/schemas/RateLimitBucket'
@@ -3666,7 +4494,10 @@ components:
           type: string
         criteria:
           type: string
-          description: Framework reference code (e.g. CC6.1 or A.9.4).
+          description: Framework reference code (e.g. CC6.1, or A.8.5 in ISO/IEC 27001:2022 Annex A).
+        criteria_2013:
+          type: string
+          description: An ISO control's ISO/IEC 27001:2013 Annex A reference (e.g. A.9.4), for audits still on that revision; absent for SOC 2.
         status:
           type: string
           enum: [pass, fail, na]
@@ -3675,7 +4506,46 @@ components:
             na — data not determinable (never a fabricated pass).
         detail:
           type: string
-          description: Human-readable explanation of what was found; always populated.
+          description: Human-readable explanation of what was found, in English; always populated.
+        detail_code:
+          type: string
+          description: What was found as a code, such as password_length.too_short, for a console to word itself with params.
+        params:
+          type: object
+          additionalProperties: true
+          description: The values the finding is about, such as {min_length, required}.
+        remedy:
+          type: string
+          description: On a failing control, what would make it pass, as a code, such as raise_password_min_length.
+        failing_since:
+          type: string
+          format: date-time
+          description: On a failing control, when it started failing, carried from run to run while it keeps failing.
+        owner:
+          $ref: '#/components/schemas/ControlOwner'
+    ControlOwner:
+      type: object
+      description: The person the organisation has made answer for a control, as it is now.
+      properties:
+        control_id: {type: string}
+        user_id: {type: string, format: uuid}
+        email: {type: [string, 'null']}
+        display_name: {type: [string, 'null']}
+        updated_at: {type: string, format: date-time}
+    ExternalAudit:
+      type: object
+      description: An audit an external body carried out on the organisation, or a certificate it issued.
+      properties:
+        id: {type: string, format: uuid}
+        framework: {type: string, enum: [soc2, iso27001]}
+        kind: {type: string, enum: [audit, certificate]}
+        body: {type: string, description: 'The auditor or certification body.'}
+        scope: {type: string}
+        reference: {type: string}
+        issued_on: {type: string, format: date}
+        expires_on: {type: [string, 'null'], format: date}
+        created_by: {type: [string, 'null'], format: uuid}
+        created_at: {type: string, format: date-time}
     EvidenceRun:
       type: object
       description: >-
@@ -3861,17 +4731,20 @@ components:
         payload:
           type: object
           additionalProperties: true
+          description: 'The person''s data in the organisation, while status is ready: profile (with metadata), sessions, passkeys, roles, mfa_totp_enabled, identities (linked social and single sign-on accounts), otp_factors (destinations masked), app_consents, app_grants, groups, sign_ins (the latest 1000) and generated_at.'
         requested_by:
           type: [string, 'null']
           format: uuid
         status:
           type: string
+          description: 'pending, ready, failed, or expired once the payload has been deleted (seven days after it was built, or when the person was erased or their account deleted).'
         tenant_id:
           type: string
           format: uuid
         user_id:
           type: string
           format: uuid
+          description: The account exported; kept after the account itself is deleted.
     GdprCreateInput:
       type: object
       required: [reason, tenant_id, user_id]
@@ -3894,15 +4767,19 @@ components:
           type: string
     Invoice:
       type: object
-      required: [amount_minor, currency, id, issued_at, period_end, period_start, place_of_supply, plan_code, status, tax_amount_minor, tax_rate_bps, tax_type, taxable_amount_minor]
+      required: [amount_minor, currency, id, invoice_number, issued_at, period_end, period_start, place_of_supply, plan_code, status, tax_amount_minor, tax_rate_bps, tax_type, taxable_amount_minor]
       properties:
         amount_minor:
           type: integer
+          description: The total charged, taxable_amount_minor plus tax_amount_minor; for a checkout, what the payment provider charged.
         currency:
           type: string
         id:
           type: string
           format: uuid
+        invoice_number:
+          type: [string, 'null']
+          description: The GST invoice number, one series per Indian financial year (April to March), such as 2026-27/000042. Null on an invoice that charges nothing.
         issued_at:
           type: string
           format: date-time
@@ -3918,6 +4795,34 @@ components:
           type: string
         status:
           type: string
+          enum: [paid, open, void]
+          description: paid when a payment was captured or nothing is owed; open until it is paid, due at due_at, for a plan granted before payment (invoice-only billing) or a renewal; void for a renewal no longer owed, because the subscription ended or a new plan was bought.
+        kind:
+          type: string
+          enum: [purchase, renewal]
+          description: purchase for a plan bought or changed; renewal for the next period of a plan, billed when its period ends.
+        due_at:
+          type: [string, 'null']
+          format: date-time
+          description: When an open invoice falls due; null once it is paid or when nothing was owed.
+        paid_at:
+          type: [string, 'null']
+          format: date-time
+        billed_to:
+          description: The billing profile as it stood when the invoice was issued; null on invoices issued before it was kept.
+          oneOf:
+            - $ref: '#/components/schemas/BillingProfile'
+            - type: 'null'
+        supplier_gstin:
+          type: string
+          description: The seller's GSTIN; empty when the operator has set none.
+        sac:
+          type: string
+          description: The services accounting code of what was sold; empty when the operator has set none.
+        emailed_at:
+          type: [string, 'null']
+          format: date-time
+          description: When the invoice was emailed to its billing email.
         tax_amount_minor:
           type: integer
         tax_rate_bps:
@@ -3926,6 +4831,28 @@ components:
           type: string
         taxable_amount_minor:
           type: integer
+    PaymentMethod:
+      type: object
+      required: [provider, type, last_used_at]
+      properties:
+        provider:
+          type: string
+          description: stripe, razorpay or sandbox.
+        type:
+          type: string
+          description: card, upi, netbanking, wallet, or the provider's own word.
+        brand:
+          type: string
+          description: The card network, bank or wallet.
+        last4:
+          type: string
+        exp_month:
+          type: integer
+        exp_year:
+          type: integer
+        last_used_at:
+          type: string
+          format: date-time
     MethodCount:
       type: object
       required: [method, users]
@@ -3952,6 +4879,7 @@ components:
           type: number
     Overview:
       type: object
+      description: The fixed-window KPIs and trends; with from, to or days, also range, the sign-ins day by day over that range.
       required: [failed_logins_hourly_24h, failed_trend_14d, generated_at, kpis, login_activity_14d, login_methods_mix, login_trend_14d, mfa_methods_adoption, mfa_trend_14d, user_trend_14d, weekly_activity_8w]
       properties:
         failed_logins_hourly_24h:
@@ -4013,6 +4941,22 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WeeklyActivityPoint'
+        range:
+          type: object
+          description: The sign-ins day by day (UTC) over the chosen range, without organisation switches; present when from, to or days was given.
+          properties:
+            from: {type: string, format: date-time}
+            to: {type: string, format: date-time}
+            method: {type: string}
+            days:
+              type: array
+              items:
+                type: object
+                properties:
+                  date: {type: string, example: '2026-10-29'}
+                  sign_ins: {type: integer}
+                  people: {type: integer}
+                  failed: {type: integer}
     Plan:
       type: object
       required: [code, description, features, id, interval, name, prices]
@@ -4065,6 +5009,19 @@ components:
         user_id:
           type: string
           format: uuid
+          description: The account to erase; kept after the account itself is deleted.
+        subject_email:
+          type: [string, 'null']
+          description: The person's email as the request was filed; null once they are erased.
+        subject_name:
+          type: [string, 'null']
+          description: Their display name as the request was filed; null once they are erased.
+        subject_redacted:
+          type: boolean
+          description: The erasure ran, so who it was filed for is no longer kept.
+        grace_period_days:
+          type: integer
+          description: How many days a request waits before the erasure runs.
     RetentionPolicy:
       type: object
       required: [deleted_users_days, deleted_users_enabled]
@@ -4073,6 +5030,16 @@ components:
           type: integer
         deleted_users_enabled:
           type: boolean
+        updated_at:
+          type: string
+          format: date-time
+          description: When the policy was last changed; absent until it is set.
+        updated_by:
+          type: string
+          format: uuid
+          description: Who last changed it.
+        updated_by_email:
+          type: string
     Row:
       type: object
       required: [action, actor_type, actor_user_id, created_at, id, ip, request_id, resource_id, resource_type, tenant_id, user_agent]
@@ -4104,6 +5071,10 @@ components:
           format: uuid
         user_agent:
           type: [string, 'null']
+        metadata:
+          type: object
+          additionalProperties: true
+          description: What the event recorded beside its fields; geo is where the request came from.
     Sink:
       type: object
       required: [created_at, enabled, endpoint, id, type]
@@ -4149,9 +5120,14 @@ components:
           type: string
         status:
           type: string
+          enum: [none, trialing, active, past_due, canceled]
         trial_end:
           type: [string, 'null']
           format: date-time
+        ended_at:
+          type: [string, 'null']
+          format: date-time
+          description: When a canceled subscription ended.
     Summary:
       type: object
       required: [high_score_open, open, resolved_7d]

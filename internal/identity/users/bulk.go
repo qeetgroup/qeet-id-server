@@ -34,7 +34,7 @@ const (
 // importErrorCodes is every code a BulkImportError can carry.
 var importErrorCodes = []string{
 	CodeImportFieldMissing, CodeImportFieldInvalid, CodeImportFieldTooLong, CodeImportRowMalformed,
-	errs.CodeUserImportSourceInvalid, errs.CodeAuthEmailExists,
+	errs.CodeUserImportSourceInvalid, errs.CodeAuthEmailExists, errs.CodeUserDomainManaged,
 	errs.CodeAuthPolicyPasswordTooShort, errs.CodeAuthPolicyPasswordNoUppercase,
 	errs.CodeAuthPolicyPasswordNoNumber, errs.CodeAuthPolicyPasswordNoSymbol,
 	errs.CodeAuthPolicyPasswordBreached, errs.CodeAuthPasswordWeak,
@@ -63,7 +63,7 @@ func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUI
 				continue
 			}
 		}
-		_, err := create(ctx, CreateInput{
+		u, err := create(ctx, CreateInput{
 			TenantID:    tenantID,
 			Email:       row.Email,
 			Password:    row.Password,
@@ -78,6 +78,11 @@ func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUI
 			// stable code rather than identity.
 			if e := errs.As(err); e != nil && e.Code == errs.ErrAuthEmailExists.Code {
 				rowErr.Code, rowErr.Field, rowErr.Message = e.Code, "email", "a user with this email already exists"
+			} else if e != nil && e.Code == errs.CodeUserDomainManaged {
+				rowErr.Code, rowErr.Field, rowErr.Message = e.Code, "email", e.Message
+			} else if e != nil && (e.Code == errs.CodePlanLimit || e.Code == errs.CodeServerOverloaded) {
+				// No seat left for the role, or no room to hash the password now.
+				rowErr.Code, rowErr.Message = e.Code, e.Message
 			} else if e != nil && isPasswordRefusal(e.Code) {
 				// Name the rule the row's password broke, so the operator can
 				// fix that row and resubmit it alone.
@@ -87,6 +92,10 @@ func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUI
 			continue
 		}
 		res.Succeeded++
+		res.Created = append(res.Created, BulkCreatedUser{Line: line, Email: u.Email, ID: u.ID})
+	}
+	if res.Created == nil {
+		res.Created = []BulkCreatedUser{}
 	}
 	return res
 }
@@ -157,6 +166,15 @@ func (h *Handler) bulkCreate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
+	var role *importRole
+	if in.RoleID != nil {
+		seats, err := h.checkImportRole(r, tenantID, *in.RoleID)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		role = &importRole{ID: *in.RoleID, Seats: seats}
+	}
 
 	// Each row's password is checked against the tenant's rules before its
 	// user is written; a refused row is reported and the batch carries on.
@@ -169,7 +187,7 @@ func (h *Handler) bulkCreate(w http.ResponseWriter, r *http.Request) {
 			}
 			hash = ph
 		}
-		return h.createWithEvidence(r, ci, hash)
+		return h.createWithEvidence(r, ci, hash, role)
 	}
 
 	res := runBulkImport(r.Context(), h.Validate, tenantID, in.Users, create)
@@ -178,6 +196,24 @@ func (h *Handler) bulkCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// checkImportRole refuses giving roleID to an import's users unless it is one
+// of the tenant's roles and the caller may give it: they hold role.write and
+// the authority the role carries, as when assigning it to one person. It
+// returns the tenant's seat cap, which each user's role then counts against.
+func (h *Handler) checkImportRole(r *http.Request, tenantID, roleID uuid.UUID) (int, error) {
+	if h.Roles == nil {
+		return 0, errs.ErrForbidden.WithDetail("roles can't be given here")
+	}
+	var exists bool
+	if err := h.Repo.Pool().QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM rbac.roles WHERE id = $1 AND tenant_id = $2)`, roleID, tenantID).Scan(&exists); err != nil {
+		return 0, err
+	}
+	if !exists {
+		return 0, errs.ErrRBACUserOrRoleNotFound
+	}
+	return h.Roles.CheckGrant(r, tenantID, roleID)
 }
 
 // bulkImportFromVendor handles POST /v1/users/bulk/import?source=auth0|cognito|azure_b2c.
@@ -216,7 +252,7 @@ func (h *Handler) bulkImportFromVendor(w http.ResponseWriter, r *http.Request) {
 	}
 
 	create := func(ctx context.Context, ci CreateInput) (*User, error) {
-		return h.createWithEvidence(r, ci, "")
+		return h.createWithEvidence(r, ci, "", nil)
 	}
 	res := runBulkImport(r.Context(), h.Validate, tenantID, rows, create)
 	// Parse-level failures (rows that never reached validation) count toward

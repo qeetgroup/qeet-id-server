@@ -13,6 +13,7 @@ const (
 	CodeMFANotEnrolled         = "mfa.not_enrolled"
 	CodeMFAFactorNotConfirmed  = "mfa.factor_not_confirmed"
 	CodeMFAAttemptsExceeded    = "mfa.attempts_exceeded"
+	CodeMFALocked              = "mfa.locked"
 	CodeMFAEnrollmentRequired  = "mfa.enrollment_required"
 	CodeMFACodeSendLimited     = "mfa.code_send_limited"
 	CodeMFADeliveryUnavailable = "mfa.delivery_unavailable"
@@ -27,6 +28,8 @@ const (
 	CodeMFAPushPending          = "mfa.push_pending"
 	CodeMFAPairingCodeInvalid   = "mfa.pairing_code_invalid"
 	CodeMFAPushDeliveryFailed   = "mfa.push_delivery_failed"
+	CodeMFAPushLimited          = "mfa.push_limited"
+	CodeMFAPushNumberMismatch   = "mfa.push_number_mismatch"
 )
 
 // MFA errors. ErrMFACodeSendLimited carries retry_after (seconds) in its
@@ -43,6 +46,7 @@ var (
 	ErrMFANotEnrolled         = New(CodeMFANotEnrolled, "Set up multi-factor authentication first.")
 	ErrMFAFactorNotConfirmed  = New(CodeMFAFactorNotConfirmed, "Confirm this factor before requesting a code.")
 	ErrMFAAttemptsExceeded    = New(CodeMFAAttemptsExceeded, "Too many verification attempts. Start again or wait before retrying.").AsRetryable()
+	ErrMFALocked              = New(CodeMFALocked, "Too many wrong codes were entered for this account, so signing in with a second factor is locked. Reset your password to unlock it.")
 	ErrMFAEnrollmentRequired  = New(CodeMFAEnrollmentRequired, "Your organisation requires two-step verification. Set up an authenticator app to continue.")
 	ErrMFACodeSendLimited     = New(CodeMFACodeSendLimited, "A code was sent recently. Wait a moment before asking for another.").AsRetryable()
 	ErrMFADeliveryUnavailable = New(CodeMFADeliveryUnavailable, "Codes can't be sent this way right now. Use another way to verify, or ask your administrator.")
@@ -57,4 +61,6 @@ var (
 	ErrMFAPushPending          = New(CodeMFAPushPending, "Approve the sign-in on your phone to continue.").AsRetryable()
 	ErrMFAPairingCodeInvalid   = New(CodeMFAPairingCodeInvalid, "That pairing code is wrong, already used or expired. Ask for a new one on your account's security page.")
 	ErrMFAPushDeliveryFailed   = New(CodeMFAPushDeliveryFailed, "We couldn't reach your phone. Try again, or use another way to verify.").AsRetryable()
+	ErrMFAPushLimited          = New(CodeMFAPushLimited, "Too many approval requests were sent to your phone. Wait a while, or use another way to verify.")
+	ErrMFAPushNumberMismatch   = New(CodeMFAPushNumberMismatch, "That number doesn't match the one on the sign-in screen, so the request was denied.")
 )

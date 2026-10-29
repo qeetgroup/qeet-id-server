@@ -15,5 +15,7 @@ func init() {
 		errs.CodeSecretValueRequired:     http.StatusUnprocessableEntity,
 		errs.CodeSecretDecryptFailed:     http.StatusInternalServerError,
 		errs.CodeSecretScopeRequired:     http.StatusForbidden,
+
+		errs.CodeSecretRotationIntervalOutOfRange: http.StatusUnprocessableEntity,
 	})
 }

@@ -75,12 +75,12 @@ contracts:
 data:
   database: postgresql
   driver: pgx/v5
-  query_codegen: sqlc      # 48 queries.sql + sqlc.yaml pairs -> dbgen packages
+  query_codegen: sqlc      # 52 queries.sql + sqlc.yaml pairs -> dbgen packages
   migrations:
     path: internal/platform/database/migrations/
     tool: golang-migrate
     embedded: true         # //go:embed *.sql in runner.go
-    range: "0001..0164"    # 163 pairs; 0082 absent
+    range: "0001..0229"    # 228 pairs; 0082 absent
     schemas: [auth, tenant, "user", rbac, audit, platform, qeetai]
 
 http:

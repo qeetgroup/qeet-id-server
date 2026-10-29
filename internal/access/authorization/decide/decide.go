@@ -29,6 +29,7 @@ type Relations interface {
 type Attributes interface {
 	Presence(ctx context.Context, tenantID uuid.UUID) (hasDeny, hasAllow bool, err error)
 	Evaluate(ctx context.Context, tenantID uuid.UUID, in abac.EvaluationInput) (*abac.Decision, error)
+	PlatformAttributes(ctx context.Context, r abac.Request) (subject, ctxAttrs map[string]any, err error)
 }
 
 // The engine that decided.
@@ -104,6 +105,15 @@ type question struct {
 	permissions                      []string // RBAC permission keys, any one of which allows
 	object, relation                 string   // the ReBAC question; object "" for none
 	abacAllows                       bool     // whether an ABAC allow permits (only deny binds at the route guard)
+	own                              bool     // the user's own call, whose session and address ABAC sees
+	props                            Properties
+}
+
+// Properties is what a caller says of a decision's subject, resource, action
+// and context (AuthZEN's properties). ABAC policies see them beside what the
+// platform knows, which wins where both name an attribute.
+type Properties struct {
+	Subject, Resource, Action, Context map[string]any
 }
 
 // Permission decides whether userID may use permission in tenantID: an ABAC
@@ -111,12 +121,18 @@ type question struct {
 // sees the permission as resource type and action ("doc:write" is resource
 // doc, action write; "user.read" is user, read).
 func (d *Decider) Permission(ctx context.Context, tenantID, userID uuid.UUID, permission string) (Decision, error) {
+	return d.PermissionWith(ctx, tenantID, userID, permission, Properties{})
+}
+
+// PermissionWith is Permission with the caller's properties for ABAC.
+func (d *Decider) PermissionWith(ctx context.Context, tenantID, userID uuid.UUID, permission string, props Properties) (Decision, error) {
 	resourceType, action := SplitPermission(permission)
 	return d.decide(ctx, question{
 		tenantID: tenantID, subject: userID.String(), userID: userID,
 		resourceType: resourceType, action: action,
 		permissions: []string{permission},
 		abacAllows:  true,
+		props:       props,
 	})
 }
 
@@ -125,12 +141,18 @@ func (d *Decider) Permission(ctx context.Context, tenantID, userID uuid.UUID, pe
 // tuple, a role granting "type:relation" or "type.relation", or an ABAC allow
 // permits. Roles and relationships are a union: a role grant needs no tuple.
 func (d *Decider) Relation(ctx context.Context, tenantID uuid.UUID, user, object, relation string) (Decision, error) {
+	return d.RelationWith(ctx, tenantID, user, object, relation, Properties{})
+}
+
+// RelationWith is Relation with the caller's properties for ABAC.
+func (d *Decider) RelationWith(ctx context.Context, tenantID uuid.UUID, user, object, relation string, props Properties) (Decision, error) {
 	objType, objID, _ := strings.Cut(object, ":")
 	q := question{
 		tenantID: tenantID, subject: user,
 		resourceType: objType, resourceID: objID, action: relation,
 		object: object, relation: relation,
 		abacAllows: true,
+		props:      props,
 	}
 	if uid, err := uuid.Parse(user); err == nil {
 		q.userID = uid
@@ -148,6 +170,7 @@ func (d *Decider) Check(ctx context.Context, userID, tenantID uuid.UUID, permiss
 		tenantID: tenantID, subject: userID.String(), userID: userID,
 		resourceType: resourceType, action: action,
 		permissions: []string{permission},
+		own:         true,
 	})
 	return dec.Allow && err == nil, err
 }
@@ -169,10 +192,20 @@ func (d *Decider) decide(ctx context.Context, q question) (Decision, error) {
 	}
 	var abacAllow *abac.Decision
 	if hasDeny || (q.abacAllows && hasAllow) {
+		request := abac.Request{Subject: q.subject, UserID: q.userID, TenantID: q.tenantID}
+		if q.own {
+			request = abac.OwnRequest(ctx, q.userID, q.tenantID)
+		}
+		subject, ctxAttrs, err := d.attributes.PlatformAttributes(ctx, request)
+		if err != nil {
+			return refuse(ModelABAC, err)
+		}
 		res, err := d.attributes.Evaluate(ctx, q.tenantID, abac.EvaluationInput{
-			Subject:  abac.SubjectAttributes(q.subject, q.tenantID),
-			Resource: abac.EvaluationResource{Type: q.resourceType, ID: q.resourceID},
-			Action:   q.action,
+			Subject:     overlay(q.props.Subject, subject),
+			Resource:    abac.EvaluationResource{Type: q.resourceType, ID: q.resourceID, Attrs: q.props.Resource},
+			Action:      q.action,
+			ActionAttrs: q.props.Action,
+			Context:     overlay(q.props.Context, ctxAttrs),
 		})
 		if err != nil {
 			return refuse(ModelABAC, err)
@@ -226,6 +259,19 @@ func (d *Decider) decide(ctx context.Context, q question) (Decision, error) {
 	}
 	trace = append(trace, "none: nothing allows it, refused")
 	return Decision{Model: ModelNone, Rule: "nothing allows it", ReasonCode: ReasonNothingAllows, Trace: trace}, nil
+}
+
+// overlay is what the caller said with what the platform knows set on top, so
+// a caller can't override an attribute the platform supplies.
+func overlay(said, known map[string]any) map[string]any {
+	out := make(map[string]any, len(said)+len(known))
+	for k, v := range said {
+		out[k] = v
+	}
+	for k, v := range known {
+		out[k] = v
+	}
+	return out
 }
 
 // SplitPermission reads a permission key as ABAC's resource type and action,

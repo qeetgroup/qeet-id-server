@@ -22,8 +22,11 @@ type Sender struct {
 }
 
 // EmailAppearance returns the name, logo and primary colour of the tenant's
-// email.
+// email, all empty (the default look) when its plan lacks custom branding.
 func (r *Repository) EmailAppearance(ctx context.Context, tenantID uuid.UUID) (name, logo, primary string, err error) {
+	if !r.brandingAllowed(ctx, tenantID) {
+		return "", "", "", nil
+	}
 	brand, err := r.Get(ctx, tenantID)
 	if err != nil {
 		return "", "", "", err
@@ -32,7 +35,7 @@ func (r *Repository) EmailAppearance(ctx context.Context, tenantID uuid.UUID) (n
 		name = *brand.EmailFromName
 	}
 	if brand.LogoURL != nil {
-		logo = *brand.LogoURL
+		logo = r.publicLogo(tenantID, *brand.LogoURL)
 	}
 	if brand.PrimaryColor != nil {
 		primary = *brand.PrimaryColor

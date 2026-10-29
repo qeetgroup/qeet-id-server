@@ -8,6 +8,7 @@ const (
 	CodeDomainVerifyDNSRecordMissing = "domainverify.dns_record_missing"
 	CodeDomainVerifyClaimedByOther   = "domainverify.claimed_by_other"
 	CodeDomainVerifyNotFound         = "domainverify.not_found"
+	CodeDomainVerifyNotMember        = "domainverify.not_member"
 )
 
 // Domain-verification errors. The Message is what the end user sees — edit
@@ -19,4 +20,5 @@ var (
 	ErrDomainVerifyDNSRecordMissing = New(CodeDomainVerifyDNSRecordMissing, "We couldn't find the verification record yet. DNS changes can take a few minutes to propagate — add the TXT record and try again.").AsRetryable()
 	ErrDomainVerifyClaimedByOther   = New(CodeDomainVerifyClaimedByOther, "This domain is already verified by another organization.")
 	ErrDomainVerifyNotFound         = New(CodeDomainVerifyNotFound, "That domain doesn't exist.")
+	ErrDomainVerifyNotMember        = New(CodeDomainVerifyNotMember, "That person isn't a member of this organisation.")
 )

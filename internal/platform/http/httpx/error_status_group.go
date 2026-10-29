@@ -22,5 +22,8 @@ func init() {
 		errs.CodeGroupTemplateTooLarge:    http.StatusUnprocessableEntity,
 		errs.CodeGroupImportEmpty:         http.StatusUnprocessableEntity,
 		errs.CodeGroupImportTooLarge:      http.StatusUnprocessableEntity,
+		errs.CodeGroupMappingPrivileged:   http.StatusUnprocessableEntity,
+		errs.CodeGroupMappingExists:       http.StatusConflict,
+		errs.CodeGroupMappingTooMany:      http.StatusUnprocessableEntity,
 	})
 }

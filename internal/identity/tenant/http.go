@@ -2,8 +2,13 @@ package tenant
 
 import (
 	"context"
+	"errors"
+	"maps"
 	"net/http"
+	"reflect"
+	"slices"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
@@ -22,17 +27,42 @@ import (
 
 // tokenIssuer is the part of auth.Service this handler needs.
 type tokenIssuer interface {
-	IssuePair(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, method string) (*auth.TokenPair, error)
+	EnterCreatedTenant(ctx context.Context, userID, tenantID, fromSessionID uuid.UUID, ip, ua string) (*auth.TokenPair, error)
 }
 
 // Handler serves the /tenants routes and /me/organizations. AuthService, if
 // set, issues a token pair for a newly created tenant so the client can switch
-// in; a nil Signals announces no ended sessions.
+// in, continuing the caller's session; a nil Signals announces no ended
+// sessions.
 type Handler struct {
 	Repo        *Repository
 	Validate    *validator.Validate
 	AuthService tokenIssuer
 	Signals     *sessionsignal.Signaller
+	// OwnerCheck reports whether a person owns an organisation
+	// (rbac.Repository.IsOwner). Only an owner deletes one, calls off its
+	// deletion or changes its status; without it those are refused.
+	OwnerCheck func(ctx context.Context, userID, tenantID uuid.UUID) (bool, error)
+}
+
+// requireOwner refuses, with ErrTenantOwnerOnly, a caller who isn't a person
+// owning tenant id.
+func (h *Handler) requireOwner(r *http.Request, id uuid.UUID) error {
+	if h.OwnerCheck == nil {
+		return errs.ErrNotImplemented
+	}
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil || (p.ActorType != "" && p.ActorType != "user") {
+		return errs.ErrTenantOwnerOnly
+	}
+	owner, err := h.OwnerCheck(r.Context(), *p.UserID, id)
+	if err != nil {
+		return err
+	}
+	if !owner {
+		return errs.ErrTenantOwnerOnly
+	}
+	return nil
 }
 
 // Mount registers the organisation routes on r.
@@ -45,6 +75,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}", h.get)
 	r.Patch("/tenants/{tenantID}", h.update)
 	r.Delete("/tenants/{tenantID}", h.delete)
+	r.Post("/tenants/{tenantID}/deletion/cancel", h.cancelDeletion)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -80,6 +111,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.Validate.Struct(in); err != nil {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
+		return
+	}
+	if in.Region != "" && in.Region != h.Repo.HostingRegion() {
+		httpx.WriteError(w, r, errs.ErrTenantRegionUnavailable.WithMetadata(map[string]any{"available": []string{h.Repo.HostingRegion()}}))
 		return
 	}
 	// Only the free plan may be self-provisioned here: paid plans go through
@@ -136,14 +171,16 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Mint a pair scoped to the new tenant so the caller switches in; tenant still returned if it fails.
+	// Mint a pair scoped to the new tenant so the caller switches in; tenant
+	// still returned if it fails. It continues the caller's session, so
+	// creating an organisation never lengthens a sign-in.
 	resp := map[string]any{
 		"tenant":    t,
 		"tenant_id": t.ID,
 		"roles":     []string{"owner"},
 	}
-	if h.AuthService != nil {
-		if pair, err := h.AuthService.IssuePair(r.Context(), *p.UserID, t.ID, httpx.ClientIP(r), r.UserAgent(), "tenant_create"); err == nil {
+	if h.AuthService != nil && p.SessionID != nil {
+		if pair, err := h.AuthService.EnterCreatedTenant(r.Context(), *p.UserID, t.ID, *p.SessionID, httpx.ClientIP(r), r.UserAgent()); err == nil {
 			resp["access_token"] = pair.AccessToken
 			resp["token_type"] = pair.TokenType
 			resp["expires_at"] = pair.ExpiresAt
@@ -184,7 +221,19 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	t, err := h.Repo.Update(r.Context(), id, in, h.lifecycle(r))
+	// Changing an organisation's status is an owner's. Suspending it would
+	// lock out every member, its owners too, with nobody left to undo it.
+	if in.Status != nil {
+		if err := h.requireOwner(r, id); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		if *in.Status == "suspended" {
+			httpx.WriteError(w, r, errs.ErrTenantSelfSuspend)
+			return
+		}
+	}
+	t, err := h.Repo.Update(r.Context(), id, in, h.lifecycle(r), recordUpdate(audit.ActorOf(r)))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -192,24 +241,128 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, t)
 }
 
+// recordUpdate returns the Changed that audits, as actor's, an update to the
+// organisation's profile: tenant.updated naming every field that changed, the
+// name and region with their old and new values (the logo and metadata by name
+// alone: they can be large). A status change is audited by its StatusChange.
+func recordUpdate(actor audit.Actor) Changed {
+	return func(ctx context.Context, tx pgx.Tx, before, after *Tenant) error {
+		changes := audit.Changes(
+			map[string]any{"name": before.Name, "region": before.Region},
+			map[string]any{"name": after.Name, "region": after.Region})
+		changed := slices.Sorted(maps.Keys(changes))
+		if before.LogoURL != after.LogoURL {
+			changed = append(changed, "logo_url")
+		}
+		if !reflect.DeepEqual(before.Metadata, after.Metadata) {
+			changed = append(changed, "metadata")
+		}
+		if len(changed) == 0 {
+			return nil
+		}
+		return audit.Record(ctx, tx, actor.Event(after.ID, "tenant.updated", "tenant", after.ID,
+			map[string]any{"changed": changed, "changes": changes}))
+	}
+}
+
+// delete schedules the organisation's deletion, which an owner can call off
+// until it is due; the background job deletes it then (DeleteDue).
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
 		return
 	}
-	if err := h.Repo.SoftDelete(r.Context(), id, h.lifecycle(r)); err != nil {
+	if err := h.requireOwner(r, id); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	actor := audit.ActorOf(r)
+	due, err := h.Repo.ScheduleDeletion(r.Context(), id, func(ctx context.Context, tx pgx.Tx, due time.Time) error {
+		return recordDeletion(ctx, tx, actor, id, "tenant.deletion_scheduled", map[string]any{"deletion_due_at": due})
+	})
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"tenant_id": id, "deletion_due_at": due})
 }
 
-// lifecycle returns the StatusChange run when an organisation's status changes.
-// Suspending or deleting it ends and announces every session in it;
-// reactivating restores none, and the ended sessions' access tokens are refused
-// from then on. Each change is audited and queued as an event.
+// cancelDeletion calls off the organisation's scheduled deletion.
+func (h *Handler) cancelDeletion(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		return
+	}
+	if err := h.requireOwner(r, id); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	actor := audit.ActorOf(r)
+	if err := h.Repo.CancelDeletion(r.Context(), id, func(ctx context.Context, tx pgx.Tx) error {
+		return recordDeletion(ctx, tx, actor, id, "tenant.deletion_cancelled", nil)
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	t, err := h.Repo.Get(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, t)
+}
+
+// recordDeletion audits and queues a change to an organisation's scheduled
+// deletion, inside its transaction.
+func recordDeletion(ctx context.Context, tx pgx.Tx, actor audit.Actor, id uuid.UUID, action string, meta map[string]any) error {
+	if err := audit.Record(ctx, tx, actor.Event(id, action, "tenant", id, meta)); err != nil {
+		return err
+	}
+	return outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "tenant.events", EventType: action,
+		Payload: map[string]any{"tenant_id": id, "deletion_due_at": meta["deletion_due_at"]}})
+}
+
+// DeleteDue deletes every organisation whose scheduled deletion is due, as
+// the system, ending and announcing its sessions through signals (nil: none).
+func DeleteDue(ctx context.Context, repo *Repository, signals *sessionsignal.Signaller) (int, error) {
+	ids, err := repo.DueForDeletion(ctx, 100)
+	if err != nil {
+		return 0, err
+	}
+	deleted := 0
+	for _, id := range ids {
+		err := repo.SoftDelete(ctx, id, statusChange(signals, id, audit.Actor{Type: "system"}))
+		if errors.Is(err, errs.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return deleted, err
+		}
+		deleted++
+	}
+	return deleted, nil
+}
+
+// lifecycle returns the StatusChange run when an organisation's status
+// changes in r.
 func (h *Handler) lifecycle(r *http.Request) StatusChange {
+	id, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	if err != nil {
+		return func(context.Context, pgx.Tx, string, string) error {
+			return errs.ErrBadRequest.WithDetail("invalid tenantID")
+		}
+	}
+	return statusChange(h.Signals, id, audit.ActorOf(r))
+}
+
+// statusChange returns the StatusChange run when organisation id's status
+// changes, by actor. Suspending or deleting it ends and announces every
+// session in it; reactivating restores none, and the ended sessions' access
+// tokens are refused from then on. Each change is audited and queued as an
+// event.
+func statusChange(signals *sessionsignal.Signaller, id uuid.UUID, actor audit.Actor) StatusChange {
 	return func(ctx context.Context, tx pgx.Tx, from, to string) error {
 		var action, reason string
 		switch to {
@@ -222,31 +375,17 @@ func (h *Handler) lifecycle(r *http.Request) StatusChange {
 		default:
 			return nil
 		}
-		id, err := uuid.Parse(chi.URLParam(r, "tenantID"))
-		if err != nil {
-			return errs.ErrBadRequest.WithDetail("invalid tenantID")
-		}
 		ended := 0
 		if reason != "" {
 			sessions, err := sessionsignal.EndTenantSessions(ctx, tx, id)
 			if err != nil {
 				return err
 			}
-			h.Signals.Revoked(ctx, tx, reason, sessions...)
+			signals.Revoked(ctx, tx, reason, sessions...)
 			ended = len(sessions)
 		}
-		var actor *uuid.UUID
-		actorType := "system"
-		if p := httpx.PrincipalFromCtx(ctx); p != nil {
-			actor = p.UserID
-			if p.ActorType != "" {
-				actorType = p.ActorType
-			}
-		}
 		meta := map[string]any{"from": from, "status": to, "sessions_ended": ended}
-		if err := audit.Record(ctx, tx, audit.Event{TenantID: &id, ActorUserID: actor, ActorType: actorType, Action: action,
-			ResourceType: "tenant", ResourceID: &id, IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
-			Metadata: meta}); err != nil {
+		if err := audit.Record(ctx, tx, actor.Event(id, action, "tenant", id, meta)); err != nil {
 			return err
 		}
 		return outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "tenant.events", EventType: action,

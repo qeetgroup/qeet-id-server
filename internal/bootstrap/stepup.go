@@ -4,8 +4,9 @@ import "github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 
 // StepUpRoutes lists the authenticated routes that need a recent step-up, so a
 // stolen access token alone can't change factors, credentials, secrets, policy or
-// authority. StepUpWhenFactorHeld applies to a person's own factors; everything
-// else is StepUpAlways, which machine principals can never meet.
+// authority. StepUpOrRecentSignIn applies to a person's own factors and sign-in
+// methods; everything else is StepUpAlways, which machine principals can never
+// meet.
 func StepUpRoutes() map[string]mfa.StepUpRule {
 	routes := map[string]mfa.StepUpRule{}
 	for _, route := range []string{
@@ -19,11 +20,12 @@ func StepUpRoutes() map[string]mfa.StepUpRule {
 		"POST /v1/passkeys/register/begin",
 		"DELETE /v1/passkeys/{id}",
 		"POST /v1/social/{provider}/link/start",
+		"POST /v1/auth/password",
 		"POST /v1/account/delete",
 		// The address password resets and invitations go to.
 		"POST /v1/me/email/change/start",
 	} {
-		routes[route] = mfa.StepUpWhenFactorHeld
+		routes[route] = mfa.StepUpOrRecentSignIn
 	}
 	for _, route := range []string{
 		// Switching the authenticator app off, or replacing its recovery codes.
@@ -35,6 +37,11 @@ func StepUpRoutes() map[string]mfa.StepUpRule {
 		"DELETE /v1/api-keys/{id}",
 		"POST /v1/service-principals",
 		"DELETE /v1/service-principals/{id}",
+		"POST /v1/tenants/{tenantID}/api-keys/{id}/rotate",
+		"POST /v1/tenants/{tenantID}/service-principals/{id}/rotate-secret",
+		"POST /v1/tenants/{tenantID}/service-principals/{id}/enable",
+		"POST /v1/tenants/{tenantID}/agents/resume-all",
+		"POST /v1/tenants/{tenantID}/agents/{id}/rotate-secret",
 		"POST /v1/tenants/{tenantID}/agents",
 		"PATCH /v1/tenants/{tenantID}/agents/{id}",
 		"DELETE /v1/tenants/{tenantID}/agents/{id}",
@@ -48,12 +55,16 @@ func StepUpRoutes() map[string]mfa.StepUpRule {
 		"POST /v1/tenants/{tenantID}/oidc/clients/{id}/rotate-secret",
 		"POST /v1/tenants/{tenantID}/scim/token",
 		"DELETE /v1/tenants/{tenantID}/scim/token",
+		"POST /v1/tenants/{tenantID}/scim/tokens",
+		"POST /v1/tenants/{tenantID}/scim/tokens/{id}/rotate",
+		"DELETE /v1/tenants/{tenantID}/scim/tokens/{id}",
 		"POST /v1/tenants/{tenantID}/credentials",
 		"POST /v1/tenants/{tenantID}/credentials/{id}/revoke",
 		"POST /v1/webhooks",
 		"DELETE /v1/webhooks/{id}",
 		"POST /v1/tenants/{tenantID}/webhooks/{id}/enable",
 		"POST /v1/tenants/{tenantID}/webhooks/{id}/rotate-secret",
+		"PATCH /v1/tenants/{tenantID}/webhooks/{id}",
 		"POST /v1/tenants/{tenantID}/auth-hooks",
 		"PATCH /v1/tenants/{tenantID}/auth-hooks/{id}",
 		"DELETE /v1/tenants/{tenantID}/auth-hooks/{id}",
@@ -70,6 +81,7 @@ func StepUpRoutes() map[string]mfa.StepUpRule {
 
 		// Sign-in and security policy.
 		"PUT /v1/tenants/{tenantID}/policy",
+		"PATCH /v1/tenants/{tenantID}/policy",
 		"PUT /v1/tenants/{tenantID}/auth-policy",
 		"PUT /v1/tenants/{tenantID}/security/risk-settings",
 		"PUT /v1/tenants/{tenantID}/security/bots/settings",
@@ -80,24 +92,42 @@ func StepUpRoutes() map[string]mfa.StepUpRule {
 		"DELETE /v1/tenants/{tenantID}/rate-limits",
 		"PUT /v1/users/{id}/mfa-required",
 		"DELETE /v1/users/{id}/mfa",
+		"DELETE /v1/tenants/{tenantID}/users/{id}/passkeys/{passkeyID}",
 		"POST /v1/users/{id}/password",
 
 		// Single sign-on, directories and the domains that route to them.
 		"POST /v1/tenants/{tenantID}/saml",
 		"PATCH /v1/tenants/{tenantID}/saml/{id}",
 		"DELETE /v1/tenants/{tenantID}/saml/{id}",
+		"POST /v1/tenants/{tenantID}/saml/import",
+		"POST /v1/tenants/{tenantID}/saml/{id}/metadata",
+		"POST /v1/tenants/{tenantID}/saml/{id}/certificates",
+		"DELETE /v1/tenants/{tenantID}/saml/{id}/certificates/{certificateID}",
 		"POST /v1/tenants/{tenantID}/saml-providers",
 		"PATCH /v1/tenants/{tenantID}/saml-providers/{id}",
 		"DELETE /v1/tenants/{tenantID}/saml-providers/{id}",
+		"POST /v1/tenants/{tenantID}/saml-providers/{id}/assignments/users/{userID}",
+		"DELETE /v1/tenants/{tenantID}/saml-providers/{id}/assignments/users/{userID}",
+		"POST /v1/tenants/{tenantID}/saml-providers/{id}/assignments/groups/{groupID}",
+		"DELETE /v1/tenants/{tenantID}/saml-providers/{id}/assignments/groups/{groupID}",
 		"POST /v1/tenants/{tenantID}/ldap",
 		"PATCH /v1/tenants/{tenantID}/ldap/{id}",
 		"DELETE /v1/tenants/{tenantID}/ldap/{id}",
+		"POST /v1/tenants/{tenantID}/saml/{id}/group-mappings",
+		"DELETE /v1/tenants/{tenantID}/saml/{id}/group-mappings/{mappingID}",
+		"POST /v1/tenants/{tenantID}/ldap/{id}/group-mappings",
+		"DELETE /v1/tenants/{tenantID}/ldap/{id}/group-mappings/{mappingID}",
+		"POST /v1/tenants/{tenantID}/oidc-connections",
+		"PATCH /v1/tenants/{tenantID}/oidc-connections/{id}",
+		"DELETE /v1/tenants/{tenantID}/oidc-connections/{id}",
 		"POST /v1/social/providers",
 		"PATCH /v1/social/providers/{provider}",
 		"DELETE /v1/social/providers/{provider}",
 		"POST /v1/tenants/{tenantID}/domains",
 		"PATCH /v1/tenants/{tenantID}/domains/{id}",
 		"DELETE /v1/tenants/{tenantID}/domains/{id}",
+		"PUT /v1/tenants/{tenantID}/break-glass-members/{userID}",
+		"DELETE /v1/tenants/{tenantID}/break-glass-members/{userID}",
 		"POST /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings",
 		"PUT /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings/{mappingID}",
 		"DELETE /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings/{mappingID}",
@@ -115,6 +145,8 @@ func StepUpRoutes() map[string]mfa.StepUpRule {
 		"POST /v1/tenants/{tenantID}/log-sinks",
 		"PATCH /v1/tenants/{tenantID}/log-sinks/{id}",
 		"DELETE /v1/tenants/{tenantID}/log-sinks/{id}",
+		"POST /v1/tenants/{tenantID}/log-sinks/test",
+		"POST /v1/tenants/{tenantID}/log-sinks/{id}/test",
 
 		// Handing out authority: what a role can do, who holds it, who is invited
 		// to hold it, and the relationship and attribute rules that decide access.
@@ -124,12 +156,17 @@ func StepUpRoutes() map[string]mfa.StepUpRule {
 		"DELETE /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}",
 		"POST /v1/tenants/{tenantID}/groups/{groupID}/roles/{roleID}",
 		"DELETE /v1/tenants/{tenantID}/groups/{groupID}/roles/{roleID}",
+		"POST /v1/groups/{id}/members/{userID}",
 		"POST /v1/invites",
 		"POST /v1/tenants/{tenantID}/relation-tuples",
 		"DELETE /v1/tenants/{tenantID}/relation-tuples/{id}",
+		"PATCH /v1/tenants/{tenantID}/roles/{roleID}",
+		"DELETE /v1/tenants/{tenantID}/roles/{roleID}",
+		"PUT /v1/tenants/{tenantID}/roles/{roleID}/permissions",
 		"POST /v1/tenants/{tenantID}/abac/policies",
 		"PATCH /v1/tenants/{tenantID}/abac/policies/{id}",
 		"DELETE /v1/tenants/{tenantID}/abac/policies/{id}",
+		"POST /v1/tenants/{tenantID}/abac/policies/{id}/versions/{version}/restore",
 
 		// Bringing an account back.
 		"POST /v1/users/{id}/reactivate",

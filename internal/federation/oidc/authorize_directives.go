@@ -8,6 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
@@ -20,9 +23,44 @@ var (
 )
 
 // loginAfterParam marks a request sent back from a forced sign-in: a hosted
-// sign-in at or after this Unix time satisfies prompt=login and max_age, so
-// the round trip ends.
+// sign-in at or after the time it names satisfies prompt=login and max_age, so
+// the round trip ends. It is a short-lived token the server signs, so it can't
+// be added by hand to skip the sign-in.
 const loginAfterParam = "login_after"
+
+// loginAfterTTL is how long a forced sign-in may take before its marker no
+// longer ends the round trip.
+const loginAfterTTL = 30 * time.Minute
+
+// loginAfterMarker is the signed login_after value for a forced sign-in sent
+// at now.
+func (s *Service) loginAfterMarker(now time.Time) (string, error) {
+	return s.issuer.Sign(jwt.MapClaims{
+		"iss": s.issuer.JWTIssuer(),
+		"typ": loginAfterParam,
+		"la":  now.Unix(),
+		"iat": now.Unix(),
+		"exp": now.Add(loginAfterTTL).Unix(),
+	})
+}
+
+// loginAfter is the time q's login_after marker names, or zero when it has
+// none this server signed and still lives.
+func (s *Service) loginAfter(q url.Values) time.Time {
+	raw := q.Get(loginAfterParam)
+	if raw == "" {
+		return time.Time{}
+	}
+	claims, err := s.issuer.VerifySigned(raw)
+	if err != nil || claims["typ"] != loginAfterParam {
+		return time.Time{}
+	}
+	la, ok := claims["la"].(float64)
+	if !ok {
+		return time.Time{}
+	}
+	return time.Unix(int64(la), 0)
+}
 
 // checkAuthorizeRequest refuses what the endpoint doesn't do, instead of
 // silently ignoring it: a missing or unsupported response_type, request
@@ -56,10 +94,10 @@ func prompts(q url.Values) []string { return strings.Fields(q.Get("prompt")) }
 
 // signInRequired reports whether the request needs a fresh sign-in although a
 // hosted-login session exists: prompt=login, or a session older than max_age.
-// A sign-in at or after the login_after marker (set when we sent the browser
-// to sign in for this request) satisfies both.
-func signInRequired(q url.Values, signedInAt, now time.Time) bool {
-	if signedInForRequest(q, signedInAt) {
+// A sign-in at or after loginAfter (the verified marker set when we sent the
+// browser to sign in for this request; zero: none) satisfies both.
+func signInRequired(q url.Values, loginAfter, signedInAt, now time.Time) bool {
+	if signedInForRequest(loginAfter, signedInAt) {
 		return false
 	}
 	if slices.Contains(prompts(q), "login") {
@@ -72,19 +110,33 @@ func signInRequired(q url.Values, signedInAt, now time.Time) bool {
 }
 
 // signedInForRequest reports whether the hosted sign-in happened at or after
-// the login_after marker: the browser was sent to sign in for this request and
-// has.
-func signedInForRequest(q url.Values, signedInAt time.Time) bool {
-	la, err := strconv.ParseInt(q.Get(loginAfterParam), 10, 64)
-	return err == nil && !signedInAt.Before(time.Unix(la, 0))
+// loginAfter (zero: no marker): the browser was sent to sign in for this
+// request and has.
+func signedInForRequest(loginAfter, signedInAt time.Time) bool {
+	return !loginAfter.IsZero() && !signedInAt.Before(loginAfter)
 }
 
 // reauthReturnTo is the authorize URL to come back to after a forced sign-in:
 // the same request, marked so the fresh sign-in ends the round trip.
-func (h *Handler) reauthReturnTo(r *http.Request, now time.Time) string {
+func (h *Handler) reauthReturnTo(r *http.Request, now time.Time) (string, error) {
+	marker, err := h.Service.loginAfterMarker(now)
+	if err != nil {
+		return "", err
+	}
 	u := *r.URL
 	q := u.Query()
-	q.Set(loginAfterParam, strconv.FormatInt(now.Unix(), 10))
+	q.Set(loginAfterParam, marker)
 	u.RawQuery = q.Encode()
-	return httpx.PublicOrigin(r, h.PublicBaseURL) + u.RequestURI()
+	return httpx.PublicOrigin(r, h.PublicBaseURL) + u.RequestURI(), nil
+}
+
+// reauth sends the browser to sign in again for this request.
+func (h *Handler) reauth(w http.ResponseWriter, r *http.Request, now time.Time) {
+	back, err := h.reauthReturnTo(r, now)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	auth.SetSignInClientCookie(w, r.URL.Query().Get("client_id"), h.CookieSecure)
+	http.Redirect(w, r, h.LoginBaseURL+"/sign-in?prompt=login&return_to="+url.QueryEscape(back), http.StatusFound)
 }

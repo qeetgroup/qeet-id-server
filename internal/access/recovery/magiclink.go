@@ -16,6 +16,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
@@ -60,7 +61,11 @@ func (s *Service) magicLinkAllowed(ctx context.Context, req MagicLinkRequest) bo
 		}
 	}
 	if s.magicPerCaller != nil && req.Caller != "" {
-		if ok, _ := s.magicPerCaller.Take(ctx, "magic-link:caller:"+req.Caller); !ok {
+		caller := req.Caller
+		if network := httpx.SourceNetwork(caller); network != "" {
+			caller = network
+		}
+		if ok, _ := s.magicPerCaller.Take(ctx, "magic-link:caller:"+caller); !ok {
 			return false
 		}
 	}
@@ -69,8 +74,9 @@ func (s *Service) magicLinkAllowed(ctx context.Context, req MagicLinkRequest) bo
 
 // RequestMagicLink emails a sign-in link to the account holding req.Email, if
 // any, storing and sending it after it returns (see afterAnswer), so it answers
-// alike either way. It returns ErrTooManyRequests past the bounds, and
-// ErrAuthMethodDisabled when the asking organisation has magic links off.
+// alike either way. It returns ErrTooManyRequests past the bounds,
+// ErrAuthMethodDisabled when the asking organisation has magic links off, and
+// ErrAuthSSORequired for an address whose organisation requires single sign-on.
 func (s *Service) RequestMagicLink(ctx context.Context, req MagicLinkRequest) error {
 	req.Email = strings.TrimSpace(req.Email)
 	if req.Email == "" {
@@ -87,6 +93,11 @@ func (s *Service) RequestMagicLink(ctx context.Context, req MagicLinkRequest) er
 	}
 	if !s.magicLinkAllowed(ctx, req) {
 		return errs.ErrTooManyRequests
+	}
+	// Counted first, so asking about addresses on a captured domain is bounded
+	// like any request; decided before the account is looked up.
+	if err := s.refuseCaptured(ctx, req.Email); err != nil {
+		return err
 	}
 	account, err := s.q.GetMagicLinkAccount(ctx, req.Email)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -129,9 +140,14 @@ func (s *Service) sendMagicLink(ctx context.Context, req MagicLinkRequest, accou
 	if req.ReturnTo != "" {
 		returnTo = &req.ReturnTo
 	}
+	// The address as stored, not as typed: an address that only folds to the
+	// account's under lower-casing belongs to someone else.
+	if err := s.q.ExpireMagicLinks(ctx, account.Email); err != nil {
+		return err
+	}
 	if err := s.q.InsertMagicLink(ctx, dbgen.InsertMagicLinkParams{
 		TenantID:  pgtype.UUID{Bytes: req.TenantID, Valid: req.TenantID != uuid.Nil},
-		Email:     req.Email,
+		Email:     account.Email,
 		TokenHash: hash,
 		ExpiresAt: time.Now().UTC().Add(ttl),
 		App:       app,
@@ -149,7 +165,7 @@ func (s *Service) sendMagicLink(ctx context.Context, req MagicLinkRequest, accou
 		TemplateVariables: map[string]string{"magic_url": magicURL},
 		TenantID:          tenant,
 		Channel:           "email",
-		To:                req.Email,
+		To:                account.Email,
 		Subject:           "Your sign-in link",
 		Body:              fmt.Sprintf("Sign in to Qeet ID: %s", magicURL),
 		HTML: emailtmpl.Action(
@@ -249,6 +265,11 @@ func (s *Service) consumeMagicLink(ctx context.Context, rawToken, app string, ac
 		policyTenant = uuid.UUID(account.TenantID.Bytes)
 	}
 	if _, err := s.magicLinkTTL(ctx, policyTenant); err != nil {
+		return nil, err
+	}
+	// So does a link to an address whose organisation now requires single
+	// sign-on.
+	if err := s.refuseCaptured(ctx, ml.Email); err != nil {
 		return nil, err
 	}
 	tx, err := s.pool.Begin(ctx)

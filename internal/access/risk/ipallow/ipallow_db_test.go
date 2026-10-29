@@ -59,8 +59,17 @@ func TestCheckNamesItsReason(t *testing.T) {
 	} {
 		res, err := svc.Check(ctx, tenant, tc.ip)
 		if err != nil || !res.Enabled || res.Allowed != tc.allowed || res.ReasonCode != tc.code || res.Reason == "" ||
-			fmt.Sprint(res.ReasonParams) != fmt.Sprint(tc.params) {
+			fmt.Sprint(res.ReasonParams) != fmt.Sprint(tc.params) || res.Rules.Allowed != tc.allowed || res.Rules.ReasonCode != tc.code {
 			t.Errorf("%s: %+v, %v; want allowed %v as %s %v", tc.ip, res, err, tc.allowed, tc.code, tc.params)
 		}
+	}
+
+	// With the rules off, the address is let in, and the rules still say what
+	// they would decide.
+	inTx(func(tx pgx.Tx) error { return svc.SetEnabled(ctx, tx, tenant, false) })
+	res, err := svc.Check(ctx, tenant, "10.6.6.6")
+	if err != nil || res.Enabled || !res.Allowed || res.ReasonCode != CodeEnforcementOff ||
+		res.Rules.Allowed || res.Rules.ReasonCode != "ip.deny_rule" || fmt.Sprint(res.Rules.ReasonParams) != fmt.Sprint(map[string]any{"cidr": "10.6.0.0/16"}) {
+		t.Errorf("rules off: %+v, %v; want allowed now, and the deny rule named as what the rules decide", res, err)
 	}
 }

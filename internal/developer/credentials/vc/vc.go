@@ -41,7 +41,8 @@ func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer}
 }
 
-// Credential is an issued verifiable credential, as recorded.
+// Credential is an issued verifiable credential, as recorded. User is the
+// person it was issued to, when the issuer named one.
 type Credential struct {
 	ID        uuid.UUID  `json:"id"`
 	Subject   string     `json:"subject"`
@@ -49,6 +50,25 @@ type Credential struct {
 	IssuedAt  time.Time  `json:"issued_at"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	Revoked   bool       `json:"revoked"`
+	User      *Holder    `json:"user"`
+}
+
+// Holder is the person a credential was issued to.
+type Holder struct {
+	ID          uuid.UUID `json:"id"`
+	Email       string    `json:"email"`
+	DisplayName string    `json:"display_name"`
+}
+
+// IssueInput is a credential to issue. TTLSeconds <= 0 issues one that never
+// expires. UserID, optional, is the person it is for, a member of the
+// organisation; the signed credential doesn't carry it.
+type IssueInput struct {
+	Subject    string         `json:"subject"`
+	Type       string         `json:"type"`
+	Claims     map[string]any `json:"claims"`
+	TTLSeconds int            `json:"ttl_seconds"`
+	UserID     *uuid.UUID     `json:"user_id"`
 }
 
 // IssueResult is an issued credential and its signed JWT-VC.
@@ -76,12 +96,24 @@ func tsPtr(p pgtype.Timestamptz) *time.Time {
 }
 
 // Issue records a credential and returns its signed JWT-VC, recorded as
-// actor's. ttlSeconds <= 0 issues a non-expiring credential.
-func (s *Service) Issue(ctx context.Context, tenantID uuid.UUID, subject, credType string, claims map[string]any, ttlSeconds int, actor audit.Actor) (*IssueResult, error) {
-	subject = strings.TrimSpace(subject)
-	credType = strings.TrimSpace(credType)
+// actor's.
+func (s *Service) Issue(ctx context.Context, tenantID uuid.UUID, in IssueInput, actor audit.Actor) (*IssueResult, error) {
+	subject := strings.TrimSpace(in.Subject)
+	credType := strings.TrimSpace(in.Type)
+	claims, ttlSeconds := in.Claims, in.TTLSeconds
 	if subject == "" || credType == "" {
 		return nil, errs.ErrVCSubjectTypeRequired
+	}
+	holder := pgtype.UUID{}
+	if in.UserID != nil {
+		member, err := s.q.IsOrganisationMember(ctx, dbgen.IsOrganisationMemberParams{UserID: *in.UserID, TenantID: tenantID})
+		if err != nil {
+			return nil, err
+		}
+		if !member {
+			return nil, errs.ErrVCUserNotMember
+		}
+		holder = pgtype.UUID{Bytes: *in.UserID, Valid: true}
 	}
 	if claims == nil {
 		claims = map[string]any{}
@@ -108,6 +140,7 @@ func (s *Service) Issue(ctx context.Context, tenantID uuid.UUID, subject, credTy
 		Type:      credType,
 		Claims:    claimsJSON,
 		ExpiresAt: pgtTS(expiresAt),
+		UserID:    holder,
 	})
 	if err != nil {
 		return nil, err
@@ -149,6 +182,9 @@ func (s *Service) Issue(ctx context.Context, tenantID uuid.UUID, subject, credTy
 	}
 	result := &IssueResult{CredentialID: id, JWT: signed, ExpiresAt: expiresAt}
 	metadata := map[string]any{"subject": subject, "type": credType, "expires_at": expiresAt}
+	if in.UserID != nil {
+		metadata["user_id"] = *in.UserID
+	}
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "credential.issued", "credential", id, metadata)); err != nil {
 		return nil, err
 	}
@@ -245,9 +281,25 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Credential, e
 			IssuedAt:  row.IssuedAt,
 			ExpiresAt: tsPtr(row.ExpiresAt),
 			Revoked:   row.RevokedAt.Valid,
+			User:      holderOf(row),
 		})
 	}
 	return out, nil
+}
+
+// holderOf is the person row's credential was issued to, or nil.
+func holderOf(row dbgen.ListCredentialsRow) *Holder {
+	if !row.UserID.Valid {
+		return nil
+	}
+	h := &Holder{ID: row.UserID.Bytes}
+	if row.UserEmail != nil {
+		h.Email = *row.UserEmail
+	}
+	if row.UserDisplayName != nil {
+		h.DisplayName = *row.UserDisplayName
+	}
+	return h
 }
 
 // Revoke marks one of the tenant's credentials revoked, so Verify refuses it,
@@ -312,17 +364,12 @@ func (h *Handler) issue(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	var in struct {
-		Subject    string         `json:"subject"`
-		Type       string         `json:"type"`
-		Claims     map[string]any `json:"claims"`
-		TTLSeconds int            `json:"ttl_seconds"`
-	}
+	var in IssueInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	res, err := h.Service.Issue(r.Context(), tenantID, in.Subject, in.Type, in.Claims, in.TTLSeconds, audit.ActorOf(r))
+	res, err := h.Service.Issue(r.Context(), tenantID, in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

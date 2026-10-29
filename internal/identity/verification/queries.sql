@@ -98,3 +98,15 @@ WHERE id = $1;
 UPDATE "user".users
 SET phone = @phone, phone_verified_at = NOW(), updated_at = NOW()
 WHERE id = @user_id;
+
+-- ExpireRecoveryLinksForUser ends the user's unused password-reset links and
+-- the unused sign-in links to their address, set a minute back so a clock
+-- behind the database's sees them ended too.
+-- name: ExpireRecoveryLinksForUser :exec
+WITH resets AS (
+    UPDATE auth.password_resets SET expires_at = NOW() - INTERVAL '1 minute'
+    WHERE user_id = @user_id AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute'
+)
+UPDATE auth.magic_links SET expires_at = NOW() - INTERVAL '1 minute'
+WHERE LOWER(email) = (SELECT LOWER(u.email) FROM "user".users u WHERE u.id = @user_id)
+  AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute';

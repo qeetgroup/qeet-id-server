@@ -55,6 +55,11 @@ type Config struct {
 	// they forward trusted (see httpx.SetRelayKeys); several allow rotation.
 	// Empty: no relay is trusted.
 	RelayKeysRaw string `envconfig:"RELAY_KEYS" default:""`
+	// MetricsToken is the bearer token a scraper presents for /metrics. Empty:
+	// /metrics is open in development and off everywhere else, as its counters
+	// (sign-in throttles among them) tell an attacker how close they are to a
+	// limit.
+	MetricsToken string `envconfig:"METRICS_TOKEN" default:""`
 	LogLevel     string `envconfig:"LOG_LEVEL" default:"info"`
 	// LogFormat controls the log output format. "json" forces JSON lines (good
 	// for structured log ingestion and dev with jq). "text" forces the colored
@@ -124,11 +129,28 @@ type Config struct {
 	SAMLIdPKey  string `envconfig:"SAML_IDP_KEY" default:""`
 	SAMLIdPCert string `envconfig:"SAML_IDP_CERT" default:""`
 
-	// SecretsKey is the base64-encoded AES key (16/24/32 bytes) for the
-	// per-tenant secrets vault — independent of JWT_SECRET. Required outside dev
+	// SecretsKey is the base64-encoded AES key (16/24/32 bytes) that encrypts
+	// every stored secret — independent of JWT_SECRET. Required outside dev
 	// when SECRETS_PROVIDER=static; in dev an ephemeral key is generated if
 	// unset. Generate with `openssl rand -base64 32`.
+	//
+	// Every stored value names the key that sealed it, so the key can be
+	// rotated without making anything unreadable:
+	//  1. With several instances, first add the new key to SECRETS_PREVIOUS_KEYS
+	//     on all of them, so each can read what the others will seal with it.
+	//  2. Make the new key SECRETS_KEY and move the old one to
+	//     SECRETS_PREVIOUS_KEYS. New values are sealed with the new key, and the
+	//     secrets-reencrypt job re-seals the stored ones in the background.
+	//  3. When envelope_rows_on_old_keys is 0 for every column, remove the old
+	//     key from SECRETS_PREVIOUS_KEYS.
+	//
+	// With aws-kms the steps are the same with SECRETS_WRAPPED_DEK and
+	// SECRETS_PREVIOUS_WRAPPED_DEKS; a key moved from static to aws-kms stays
+	// readable in SECRETS_PREVIOUS_KEYS.
 	SecretsKey string `envconfig:"SECRETS_KEY" default:""`
+	// SecretsPreviousKeysRaw lists earlier data keys, base64 and comma-separated:
+	// they decrypt what they sealed but never encrypt (see SecretsKey).
+	SecretsPreviousKeysRaw string `envconfig:"SECRETS_PREVIOUS_KEYS" default:""`
 
 	// SecretsProvider selects how the vault data-encryption key is sourced:
 	//   static  — from SECRETS_KEY (default)
@@ -139,15 +161,22 @@ type Config struct {
 	// SecretsWrappedDEK is the base64 KMS CiphertextBlob of the wrapped data key
 	// (output of `aws kms generate-data-key`), unwrapped at boot (aws-kms only).
 	SecretsWrappedDEK string `envconfig:"SECRETS_WRAPPED_DEK" default:""`
+	// SecretsPreviousWrappedDEKsRaw lists earlier SECRETS_WRAPPED_DEK values,
+	// comma-separated, unwrapped with KMS_KEY_ID to decrypt only (aws-kms only).
+	SecretsPreviousWrappedDEKsRaw string `envconfig:"SECRETS_PREVIOUS_WRAPPED_DEKS" default:""`
 
 	HTTPReadTimeout       time.Duration `envconfig:"HTTP_READ_TIMEOUT" default:"15s"`
 	HTTPWriteTimeout      time.Duration `envconfig:"HTTP_WRITE_TIMEOUT" default:"30s"`
 	HTTPReadHeaderTimeout time.Duration `envconfig:"HTTP_READ_HEADER_TIMEOUT" default:"5s"`
 	HTTPIdleTimeout       time.Duration `envconfig:"HTTP_IDLE_TIMEOUT" default:"60s"`
 	HTTPMaxHeaderBytes    int           `envconfig:"HTTP_MAX_HEADER_BYTES" default:"65536"`
+	// ShutdownTimeout bounds a stop, from the signal to exit; its phases share
+	// it. Give the container longer to stop (30s at the default). 5s..2m.
+	ShutdownTimeout time.Duration `envconfig:"SHUTDOWN_TIMEOUT" default:"20s"`
 	// ShutdownDrainDelay is how long a stopping server answers /readyz 503
 	// before it stops taking requests, so a load balancer sends no new ones
-	// first. 0..30s; 0 suits a server with no load balancer in front.
+	// first. 0..30s and at most half of ShutdownTimeout; 0 suits a server with
+	// no load balancer in front.
 	ShutdownDrainDelay time.Duration `envconfig:"SHUTDOWN_DRAIN_DELAY" default:"5s"`
 
 	// EgressProxyURL routes tenant-configured outbound HTTP (webhooks, auth
@@ -203,18 +232,27 @@ type Config struct {
 	// only geo signal, for risk checks and sessions; there is no server-side GeoIP.
 	// Empty, or a header the proxy doesn't set, means no country.
 	GeoCountryHeader string `envconfig:"GEO_COUNTRY_HEADER" default:""`
+	// GeoCityHeader names the header the same proxy sets to the client's city
+	// (e.g. CloudFront-Viewer-City), recorded on audit events and sessions.
+	GeoCityHeader string `envconfig:"GEO_CITY_HEADER" default:""`
 
 	// EmailProvider selects the email transport: "smtp" (default) or "ses-api".
 	// Use "ses-api" in regions that offer the SES API but no SMTP endpoint
 	// (e.g. ap-south-2). The SES API path uses the AWS credential chain +
 	// AWS_REGION and only needs SMTP_FROM (SMTP host/creds are ignored).
+	// Outside dev one of the two must be configured (see Validate).
 	EmailProvider string `envconfig:"EMAIL_PROVIDER" default:"smtp"`
 	// AWSRegion is used by the SES-API email provider (and any other AWS SDK
 	// client) so endpoint resolution never fails on a missing region.
 	AWSRegion string `envconfig:"AWS_REGION" default:""`
+	// HostingRegion is the region this deployment runs in, which every
+	// organisation is created in and shows as its region; empty means
+	// AWS_REGION, else us-east-1. One deployment holds its data in one region,
+	// so an organisation can't choose another.
+	HostingRegion string `envconfig:"HOSTING_REGION" default:""`
 
 	// Email (SMTP) — provider-agnostic (Amazon SES, SendGrid, Mailgun, Postmark).
-	// Empty SMTPHost leaves email on the log-only fallback (dev).
+	// In dev, an empty SMTPHost logs emails instead of sending them.
 	SMTPHost     string `envconfig:"SMTP_HOST" default:""`
 	SMTPPort     string `envconfig:"SMTP_PORT" default:"587"`
 	SMTPUsername string `envconfig:"SMTP_USERNAME" default:""`
@@ -274,6 +312,13 @@ type Config struct {
 	BillingSellerCountry string `envconfig:"BILLING_SELLER_COUNTRY" default:"IN"`
 	BillingSellerState   string `envconfig:"BILLING_SELLER_STATE" default:""`
 	BillingGSTRateBps    int    `envconfig:"BILLING_GST_RATE_BPS" default:"1800"`
+	// BillingSupplierGSTIN and BillingSAC are printed on every invoice: the
+	// seller's GSTIN and the services accounting code of what it sells.
+	BillingSupplierGSTIN string `envconfig:"BILLING_SUPPLIER_GSTIN" default:""`
+	BillingSAC           string `envconfig:"BILLING_SAC" default:""`
+	// BillingPaymentGrace is how long an open invoice may go unpaid: a renewal
+	// still unpaid that long after its period ends ends the subscription.
+	BillingPaymentGrace time.Duration `envconfig:"BILLING_PAYMENT_GRACE" default:"168h"`
 
 	// PaymentSandbox enables a dev-only fake provider that serves a local mock
 	// hosted-checkout page and completes payment on click — the full
@@ -284,11 +329,11 @@ type Config struct {
 	// sandbox mock-checkout URL the browser is redirected to.
 	PaymentSandboxBaseURL string `envconfig:"PAYMENT_SANDBOX_BASE_URL" default:"http://localhost:4001"`
 
-	// BreachedPasswordCheck turns on breached-password detection (the Have I Been
-	// Pwned k-anonymity range API) in every password-setting flow. It is off by
-	// default and fails open, so a HIBP outage never blocks sign-up (see
-	// internal/platform/crypto/hibp).
-	BreachedPasswordCheck bool `envconfig:"BREACHED_PASSWORD_CHECK" default:"false"`
+	// BreachedPasswordCheck checks every new password against known breaches (the
+	// Have I Been Pwned k-anonymity range API). It is on by default; the
+	// development .env template turns it off. It fails open, so a HIBP outage
+	// never blocks sign-up (see internal/platform/crypto/hibp).
+	BreachedPasswordCheck bool `envconfig:"BREACHED_PASSWORD_CHECK" default:"true"`
 	// BreachedPasswordMinCount is the breach-sighting threshold at or above
 	// which a password is rejected (1 = reject anything seen even once).
 	BreachedPasswordMinCount int `envconfig:"BREACHED_PASSWORD_MIN_COUNT" default:"1"`
@@ -333,6 +378,14 @@ type Config struct {
 	LoginSprayWindow   time.Duration `envconfig:"LOGIN_SPRAY_WINDOW" default:"15m"`
 	LoginSprayBlock    time.Duration `envconfig:"LOGIN_SPRAY_BLOCK" default:"15m"`
 
+	// Password hashing, the server's costliest work, is bounded so an overload
+	// is turned away rather than slowing everyone: so many hashes at once (0:
+	// GOMAXPROCS), so many more waiting (0: twice that), each at most
+	// PasswordHashMaxWait. Beyond that a request is answered 503 server.overloaded.
+	PasswordHashConcurrency int           `envconfig:"PASSWORD_HASH_CONCURRENCY" default:"0"`
+	PasswordHashQueue       int           `envconfig:"PASSWORD_HASH_QUEUE" default:"0"`
+	PasswordHashMaxWait     time.Duration `envconfig:"PASSWORD_HASH_MAX_WAIT" default:"1s"`
+
 	// WebAuthn Relying Party config. Empty values default from AppBaseURL /
 	// ServiceName (see WebAuthnRP). RP_ID is the effective domain (no scheme/
 	// port); RP_ORIGINS is a comma-separated allow-list of full origins.
@@ -356,10 +409,18 @@ type Config struct {
 	QeetaiModel     string `envconfig:"QEETAI_MODEL" default:"claude-sonnet-5"`
 	QeetaiMaxTokens int    `envconfig:"QEETAI_MAX_TOKENS" default:"4096"`
 	QeetaiBaseURL   string `envconfig:"QEETAI_BASE_URL" default:""`
+	// Bounds on one Qeet AI turn, whoever pays the provider: the most recent
+	// messages of the conversation sent to the model and their total size (a
+	// turn whose own messages are larger is refused), and the reply's text, cut
+	// there as at the model's own token limit.
+	QeetaiHistoryMessages int `envconfig:"QEETAI_HISTORY_MESSAGES" default:"40"`
+	QeetaiHistoryBytes    int `envconfig:"QEETAI_HISTORY_BYTES" default:"262144"`
+	QeetaiMaxOutputBytes  int `envconfig:"QEETAI_MAX_OUTPUT_BYTES" default:"65536"`
 }
 
 // Load reads the Config from the environment and rejects an unknown SERVICE_ENV
-// or SERVICE_PROFILE and unsafe sign-in lockout or session lifetime settings.
+// or SERVICE_PROFILE and unsafe sign-in lockout, session lifetime, password
+// hashing or Qeet AI limits.
 // Validate applies the production gates.
 func Load() (*Config, error) {
 	var c Config
@@ -375,7 +436,22 @@ func Load() (*Config, error) {
 	if err := c.checkSessionLifetime(); err != nil {
 		return nil, err
 	}
+	if err := c.checkPasswordHashing(); err != nil {
+		return nil, err
+	}
+	if c.QeetaiHistoryMessages < 1 || c.QeetaiHistoryBytes < 1 || c.QeetaiMaxOutputBytes < 1 {
+		return nil, fmt.Errorf("invalid Qeet AI limits: QEETAI_HISTORY_MESSAGES, QEETAI_HISTORY_BYTES and QEETAI_MAX_OUTPUT_BYTES must be positive")
+	}
 	return &c, nil
+}
+
+// checkPasswordHashing rejects a negative hashing limit, and a longest wait
+// for a hashing slot that is not positive or above PasswordHashMaxWaitMax.
+func (c *Config) checkPasswordHashing() error {
+	if c.PasswordHashConcurrency < 0 || c.PasswordHashQueue < 0 || c.PasswordHashMaxWait <= 0 || c.PasswordHashMaxWait > PasswordHashMaxWaitMax {
+		return fmt.Errorf("invalid password hashing limits: PASSWORD_HASH_CONCURRENCY and PASSWORD_HASH_QUEUE must not be negative, and PASSWORD_HASH_MAX_WAIT must lie within (0, %v]", PasswordHashMaxWaitMax)
+	}
+	return nil
 }
 
 // Session lifetime limits, for the platform defaults here and for an
@@ -388,14 +464,18 @@ const (
 	SessionIdleTimeoutMin = 15 * time.Minute
 )
 
+// PasswordHashMaxWaitMax bounds PASSWORD_HASH_MAX_WAIT: a longer wait for a
+// hashing slot is the queueing the limit is there to stop.
+const PasswordHashMaxWaitMax = 10 * time.Second
+
 // RefreshTokenReuseGraceMax bounds the refresh reuse grace: a token used again
 // later than this is treated as stolen.
 const RefreshTokenReuseGraceMax = time.Minute
 
 // checkSessionLifetime rejects session bounds outside the limits above, an
 // idle timeout longer than the maximum age, access tokens that outlive the
-// shortest idle timeout an organisation may set, and a refresh reuse grace or
-// shutdown drain delay out of range.
+// shortest idle timeout an organisation may set, and a refresh reuse grace,
+// shutdown timeout or shutdown drain delay out of range.
 func (c *Config) checkSessionLifetime() error {
 	var problems []string
 	if c.SessionMaxAge < SessionMaxAgeMin || c.SessionMaxAge > SessionMaxAgeMax {
@@ -410,8 +490,11 @@ func (c *Config) checkSessionLifetime() error {
 	if c.RefreshTokenReuseGrace < 0 || c.RefreshTokenReuseGrace > RefreshTokenReuseGraceMax {
 		problems = append(problems, "REFRESH_TOKEN_REUSE_GRACE must lie within 0..1m")
 	}
-	if c.ShutdownDrainDelay < 0 || c.ShutdownDrainDelay > 30*time.Second {
-		problems = append(problems, "SHUTDOWN_DRAIN_DELAY must lie within 0..30s")
+	if c.ShutdownTimeout < 5*time.Second || c.ShutdownTimeout > 2*time.Minute {
+		problems = append(problems, "SHUTDOWN_TIMEOUT must lie within 5s..2m")
+	}
+	if c.ShutdownDrainDelay < 0 || c.ShutdownDrainDelay > 30*time.Second || c.ShutdownDrainDelay > c.ShutdownTimeout/2 {
+		problems = append(problems, "SHUTDOWN_DRAIN_DELAY must lie within 0..30s and be at most half of SHUTDOWN_TIMEOUT")
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("invalid session and timing configuration:\n  - %s", strings.Join(problems, "\n  - "))
@@ -491,8 +574,9 @@ func (c *Config) checkEnvironment() error {
 
 // Validate refuses, outside SERVICE_ENV=dev, any dev-only convenience or
 // insecure default still in place, such as CSRF off, dev trust headers, the
-// payment sandbox, weak or missing keys, wildcard origins, or hosts wrong for
-// the environment. In dev it only checks SERVICE_ENV and SERVICE_PROFILE.
+// payment sandbox, weak or missing keys, wildcard origins, hosts wrong for
+// the environment, or no email provider. In dev it only checks SERVICE_ENV and
+// SERVICE_PROFILE.
 func (c *Config) Validate() error {
 	if err := c.checkEnvironment(); err != nil {
 		return err
@@ -548,6 +632,20 @@ func (c *Config) Validate() error {
 			problems = append(problems, "RELAY_KEYS: every key must be at least 32 characters and not a placeholder (`openssl rand -base64 32`)")
 			break
 		}
+	}
+	// Without an email provider, password resets, invitations and verification
+	// codes reach nobody.
+	switch c.EmailProvider {
+	case "", "smtp":
+		if strings.TrimSpace(c.SMTPHost) == "" || strings.TrimSpace(c.SMTPFrom) == "" {
+			problems = append(problems, "an email provider is required: set SMTP_HOST and SMTP_FROM, or EMAIL_PROVIDER=ses-api with SMTP_FROM and AWS_REGION")
+		}
+	case "ses-api":
+		if strings.TrimSpace(c.SMTPFrom) == "" || strings.TrimSpace(c.AWSRegion) == "" {
+			problems = append(problems, "SMTP_FROM and AWS_REGION are required with EMAIL_PROVIDER=ses-api")
+		}
+	default:
+		problems = append(problems, fmt.Sprintf("EMAIL_PROVIDER %q is invalid (want \"smtp\" or \"ses-api\")", c.EmailProvider))
 	}
 	if o := strings.TrimSpace(c.AllowedOriginsRaw); o == "" || o == "*" {
 		problems = append(problems, "ALLOWED_ORIGINS must list explicit origins (a wildcard is unsafe with credentialed CORS)")
@@ -662,6 +760,28 @@ func (c *Config) RelayKeys() []string {
 	for _, k := range strings.Split(c.RelayKeysRaw, ",") {
 		if k = strings.TrimSpace(k); k != "" {
 			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// SecretsPreviousKeys returns the SECRETS_PREVIOUS_KEYS entries, trimmed,
+// empty ones dropped.
+func (c *Config) SecretsPreviousKeys() []string { return commaList(c.SecretsPreviousKeysRaw) }
+
+// SecretsPreviousWrappedDEKs returns the SECRETS_PREVIOUS_WRAPPED_DEKS
+// entries, trimmed, empty ones dropped.
+func (c *Config) SecretsPreviousWrappedDEKs() []string {
+	return commaList(c.SecretsPreviousWrappedDEKsRaw)
+}
+
+// commaList splits a comma-separated variable into its trimmed, non-empty
+// entries.
+func commaList(raw string) []string {
+	var out []string
+	for _, v := range strings.Split(raw, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
 		}
 	}
 	return out

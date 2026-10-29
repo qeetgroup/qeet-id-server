@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -256,12 +257,9 @@ func (s *Service) ClaimPushPairing(ctx context.Context, code, name, pushToken, p
 // PurgeExpiredPushPairings deletes pairing codes that expired longer ago than
 // retention, used or not, and returns how many. Run on a schedule.
 func PurgeExpiredPushPairings(ctx context.Context, pool *pgxpool.Pool, retention time.Duration) (int64, error) {
-	tag, err := pool.Exec(ctx, `DELETE FROM auth.mfa_push_pairings WHERE expires_at < $1`,
+	return postgres.PurgeInBatches(ctx, pool, `DELETE FROM auth.mfa_push_pairings WHERE ctid = ANY(ARRAY(
+		SELECT p.ctid FROM auth.mfa_push_pairings p WHERE p.expires_at < $1 LIMIT $2))`,
 		time.Now().UTC().Add(-retention))
-	if err != nil {
-		return 0, err
-	}
-	return tag.RowsAffected(), nil
 }
 
 // --- HTTP: the signed-in person (authenticated) ---
@@ -357,5 +355,6 @@ func (h *Handler) claimPushPairing(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	h.Service.tellPhoneLinked(r.Context(), claim.UserID)
 	httpx.WriteJSON(w, http.StatusCreated, claim)
 }

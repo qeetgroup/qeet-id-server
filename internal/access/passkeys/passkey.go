@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -26,10 +27,13 @@ import (
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/passkeys/dbgen"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
 const sessionTTL = 5 * time.Minute
@@ -46,7 +50,10 @@ type Credential struct {
 
 // Service runs passkey ceremonies and manages stored passkeys. policy says
 // whether an organization permits passkeys (nil: no restriction); invitations
-// lets an invited person found an account on a passkey (nil: that path is off).
+// lets an invited person found an account on a passkey (nil: that path is off);
+// sender emails the account holder when one is added or removed (nil: no one);
+// capture refuses passkey sign-in and sign-up to an address whose organisation
+// requires single sign-on (nil: none is refused).
 type Service struct {
 	pool        *pgxpool.Pool
 	q           *dbgen.Queries
@@ -54,12 +61,18 @@ type Service struct {
 	auth        *auth.Service
 	policy      MethodPolicy
 	invitations InvitationAcceptor
+	sender      notifier.Sender
+	capture     auth.DomainCapture
 }
 
 // NewService returns the passkey service.
 func NewService(pool *pgxpool.Pool, wa *webauthn.WebAuthn, authSvc *auth.Service) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), wa: wa, auth: authSvc}
 }
+
+// SetSender sets how the account holder is emailed when a passkey is added to
+// or removed from their account.
+func (s *Service) SetSender(sender notifier.Sender) { s.sender = sender }
 
 // MethodPolicy says whether an organization permits passkeys. It is satisfied
 // by *authpolicy.Service without this package importing it.
@@ -69,6 +82,18 @@ type MethodPolicy interface {
 
 // SetMethodPolicy wires the tenant's passkey on/off setting.
 func (s *Service) SetMethodPolicy(p MethodPolicy) { s.policy = p }
+
+// SetDomainCapture wires domain capture into passkey sign-in and sign-up.
+func (s *Service) SetDomainCapture(c auth.DomainCapture) { s.capture = c }
+
+// refuseCaptured returns errs.ErrAuthSSORequired when email's domain is
+// captured.
+func (s *Service) refuseCaptured(ctx context.Context, email string) error {
+	if s.capture == nil {
+		return nil
+	}
+	return s.capture.RefuseCaptured(ctx, email)
+}
 
 // passkeysAllowed returns ErrPasskeyDisabled if tenantID's policy switches
 // passkeys off. uuid.Nil (a user without an organization) is not restricted.
@@ -136,33 +161,74 @@ func credentialFromRow(m dbgen.ListPasskeyCredentialsRow) Credential {
 	}
 }
 
-// Rename sets the name of one of the user's passkeys. The name is cleaned and
-// checked (see validName). Like Delete it is scoped to the owner: another
-// user's passkey is not found, and is left unchanged.
-func (s *Service) Rename(ctx context.Context, id, userID uuid.UUID, name string) (*Credential, error) {
+// Requester is who changes a passkey, for its audit record: the account
+// holder's request, and the organisation their session is in (nil: none).
+type Requester struct {
+	Actor    audit.Actor
+	TenantID *uuid.UUID
+}
+
+// event returns the audit event of action on userID's account.
+func (r Requester) event(action string, userID uuid.UUID, metadata map[string]any) audit.Event {
+	e := r.Actor.PlatformEvent(action, "user", userID, metadata)
+	e.TenantID = r.TenantID
+	return e
+}
+
+// requesterOf is the signed-in caller of r.
+func requesterOf(r *http.Request) Requester {
+	who := Requester{Actor: audit.ActorOf(r)}
+	if p := httpx.PrincipalFromCtx(r.Context()); p != nil && p.TenantID != nil && *p.TenantID != uuid.Nil {
+		who.TenantID = p.TenantID
+	}
+	return who
+}
+
+// Rename sets the name of one of the user's passkeys, recorded as who's. The
+// name is cleaned and checked (see validName). Like Delete it is scoped to the
+// owner: another user's passkey is not found, and is left unchanged.
+func (s *Service) Rename(ctx context.Context, id, userID uuid.UUID, name string, who Requester) (*Credential, error) {
 	name, err := validName(name)
 	if err != nil {
 		return nil, err
 	}
-	row, err := s.q.RenamePasskeyCredential(ctx, dbgen.RenamePasskeyCredentialParams{
-		Name:   &name,
-		ID:     id,
-		UserID: userID,
-	})
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	q := s.q.WithTx(tx)
+	previous, err := q.LockPasskeyCredentialName(ctx, dbgen.LockPasskeyCredentialNameParams{ID: id, UserID: userID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	row, err := q.RenamePasskeyCredential(ctx, dbgen.RenamePasskeyCredentialParams{
+		Name:   &name,
+		ID:     id,
+		UserID: userID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := audit.Record(ctx, tx, who.event("passkey.renamed", userID,
+		map[string]any{"passkey_id": id, "name": name, "previous_name": nameOf(previous)})); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	c := credentialFromRow(dbgen.ListPasskeyCredentialsRow(row))
 	return &c, nil
 }
 
-// Delete removes one of the user's own passkeys. Another user's passkey is
-// ErrNotFound and nothing is deleted; removing the account's only way to sign
-// in is refused with ErrAuthLastSignInMethod, and the refusal recorded.
-func (s *Service) Delete(ctx context.Context, id, userID uuid.UUID, by user.Remover) error {
+// Delete removes one of the user's own passkeys, recorded as who's, and tells
+// the account holder. Another user's passkey is ErrNotFound and nothing is
+// deleted; removing the account's only way to sign in is refused with
+// ErrAuthLastSignInMethod, and the refusal recorded.
+func (s *Service) Delete(ctx context.Context, id, userID uuid.UUID, who Requester) error {
 	// The account's other ways to sign in span its organisations.
 	ctx = postgres.AcrossTenants(ctx)
 	tx, err := s.pool.Begin(ctx)
@@ -174,21 +240,75 @@ func (s *Service) Delete(ctx context.Context, id, userID uuid.UUID, by user.Remo
 	if err != nil {
 		return err
 	}
-	n, err := s.q.WithTx(tx).DeletePasskeyCredential(ctx, dbgen.DeletePasskeyCredentialParams{
+	name, err := s.q.WithTx(tx).DeletePasskeyCredential(ctx, dbgen.DeletePasskeyCredentialParams{
 		ID:     id,
 		UserID: userID,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errs.ErrNotFound
+	}
 	if err != nil {
 		return err
 	}
-	if n == 0 {
-		return errs.ErrNotFound
-	}
 	if methods.Total() <= 1 {
 		_ = tx.Rollback(ctx)
-		return user.RefuseLastMethodRemoval(ctx, s.pool, userID, nil, "passkey", id, by)
+		by := user.Remover{UserID: who.Actor.UserID, IP: who.Actor.IP, UserAgent: who.Actor.UserAgent, RequestID: who.Actor.RequestID}
+		return user.RefuseLastMethodRemoval(ctx, s.pool, userID, who.TenantID, "passkey", id, by)
 	}
-	return tx.Commit(ctx)
+	if err := audit.Record(ctx, tx, who.event("passkey.deleted", userID,
+		map[string]any{"passkey_id": id, "name": nameOf(name)})); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	s.tellPasskeyChange(ctx, userID, passkeyRemoved, nameOf(name))
+	return nil
+}
+
+// nameOf is a stored passkey name, "" for none.
+func nameOf(name *string) string {
+	if name == nil {
+		return ""
+	}
+	return *name
+}
+
+// passkeyChange is what happened to one of a person's passkeys.
+type passkeyChange int
+
+const (
+	passkeyAdded passkeyChange = iota
+	passkeyRemoved
+)
+
+// tellPasskeyChange emails the account holder that a passkey was added to or
+// removed from their account, so one they didn't add is noticed. Best effort,
+// after the change has committed: a failure is logged, the change stands.
+func (s *Service) tellPasskeyChange(ctx context.Context, userID uuid.UUID, change passkeyChange, name string) {
+	if s.sender == nil {
+		return
+	}
+	account, err := s.q.GetUserForWebAuthn(ctx, userID)
+	if err != nil || account.Email == "" {
+		slog.Warn("passkey change notice not sent: no address", "err", err, "user_id", userID)
+		return
+	}
+	subject, intro := "A passkey was added to your account",
+		fmt.Sprintf("A passkey named “%s” was added to your Qeet ID account and can now be used to sign in.", name)
+	note := "If you didn't add it, remove it from your account's security settings and contact your organization's administrator right away."
+	if change == passkeyRemoved {
+		subject, intro = "A passkey was removed from your account",
+			fmt.Sprintf("The passkey named “%s” was removed from your Qeet ID account and can no longer be used to sign in.", name)
+		note = "If you didn't remove it, contact your organization's administrator right away."
+	}
+	msg := notifier.Message{Channel: "email", To: account.Email, Subject: subject, Body: intro + " " + note, HTML: emailtmpl.Notice(subject, intro, note)}
+	if account.TenantID.Valid {
+		msg.TenantID = uuid.UUID(account.TenantID.Bytes).String()
+	}
+	if err := s.sender.Send(ctx, msg); err != nil {
+		slog.Warn("passkey change notice not sent", "err", err, "user_id", userID)
+	}
 }
 
 // --- WebAuthn ceremony ---
@@ -332,11 +452,12 @@ func (s *Service) BeginRegister(ctx context.Context, userID uuid.UUID) (uuid.UUI
 }
 
 // FinishRegister verifies the attestation and stores the new credential, named
-// name or, if empty, after userAgent's browser. The name is checked before the
-// ceremony is spent, so a refused name can be corrected and retried; the
-// organization's passkey setting is checked again in case it was switched off.
-func (s *Service) FinishRegister(ctx context.Context, userID, sessionID uuid.UUID, credential json.RawMessage, name, userAgent string) error {
-	name, err := enrolmentName(name, userAgent)
+// name or, if empty, after who's browser; the addition is recorded as who's and
+// the account holder told. The name is checked before the ceremony is spent,
+// so a refused name can be corrected and retried; the organization's passkey
+// setting is checked again in case it was switched off.
+func (s *Service) FinishRegister(ctx context.Context, userID, sessionID uuid.UUID, credential json.RawMessage, name string, who Requester) error {
+	name, err := enrolmentName(name, who.Actor.UserAgent)
 	if err != nil {
 		return err
 	}
@@ -362,10 +483,12 @@ func (s *Service) FinishRegister(ctx context.Context, userID, sessionID uuid.UUI
 	if err != nil {
 		return errs.ErrPasskeyAttestationInvalid.Wrap(err)
 	}
-	return s.insertCredential(ctx, userID, cred, name)
+	return s.insertCredential(ctx, userID, cred, name, who)
 }
 
-func (s *Service) insertCredential(ctx context.Context, userID uuid.UUID, cred *webauthn.Credential, name string) error {
+// insertCredential stores a verified credential for userID with its audit
+// record, then tells the account holder.
+func (s *Service) insertCredential(ctx context.Context, userID uuid.UUID, cred *webauthn.Credential, name string, who Requester) error {
 	var aaguidPG pgtype.UUID
 	if len(cred.Authenticator.AAGUID) == 16 {
 		if g, err := uuid.FromBytes(cred.Authenticator.AAGUID); err == nil && g != uuid.Nil {
@@ -376,7 +499,12 @@ func (s *Service) insertCredential(ctx context.Context, userID uuid.UUID, cred *
 	for _, t := range cred.Transport {
 		transports = append(transports, string(t))
 	}
-	err := s.q.InsertPasskeyCredential(ctx, dbgen.InsertPasskeyCredentialParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	id, err := s.q.WithTx(tx).InsertPasskeyCredential(ctx, dbgen.InsertPasskeyCredentialParams{
 		UserID:         userID,
 		CredentialID:   cred.ID,
 		PublicKey:      cred.PublicKey,
@@ -393,6 +521,14 @@ func (s *Service) insertCredential(ctx context.Context, userID uuid.UUID, cred *
 		}
 		return err
 	}
+	if err := audit.Record(ctx, tx, who.event("passkey.registered", userID,
+		map[string]any{"passkey_id": id, "name": name})); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	s.tellPasskeyChange(ctx, userID, passkeyAdded, name)
 	return nil
 }
 
@@ -508,6 +644,13 @@ func (s *Service) beginSignupFor(ctx context.Context, tenantID, inviteID uuid.UU
 	email = strings.TrimSpace(email)
 	if email == "" {
 		return uuid.Nil, nil, errs.ErrAuthEmailRequired
+	}
+	// An address whose organisation requires single sign-on gets its account
+	// from the identity provider; an invitation is accepted as before.
+	if inviteID == uuid.Nil {
+		if err := s.refuseCaptured(ctx, email); err != nil {
+			return uuid.Nil, nil, err
+		}
 	}
 	// Refuse an email a user holds or a live signup ceremony is claiming: no user
 	// row exists until a ceremony finishes, so a rival signup could otherwise race
@@ -684,7 +827,7 @@ func (s *Service) createUserFromSignup(ctx context.Context, sess *signupSession,
 	for _, t := range cred.Transport {
 		transports = append(transports, string(t))
 	}
-	if err := qtx.InsertPasskeyCredential(ctx, dbgen.InsertPasskeyCredentialParams{
+	if _, err := qtx.InsertPasskeyCredential(ctx, dbgen.InsertPasskeyCredentialParams{
 		UserID:         userID,
 		CredentialID:   cred.ID,
 		PublicKey:      cred.PublicKey,
@@ -714,10 +857,15 @@ func (s *Service) createUserFromSignup(ctx context.Context, sess *signupSession,
 
 // BeginLogin starts a login ceremony. Every ceremony is discoverable, so the
 // answer is the same whether or not email has an account or a passkey; with an
-// email, only a passkey of that account can finish it.
+// email, only a passkey of that account can finish it. An email whose
+// organisation requires single sign-on is refused before it is looked up; a
+// passkey of such an account is refused when it finishes (verifyLogin).
 func (s *Service) BeginLogin(ctx context.Context, email string) (uuid.UUID, *protocol.CredentialAssertion, error) {
 	kind, owner := "login_discoverable", (*uuid.UUID)(nil)
 	if email != "" {
+		if err := s.refuseCaptured(ctx, email); err != nil {
+			return uuid.Nil, nil, err
+		}
 		// A "login" ceremony with no owner is for an address with no account:
 		// no passkey can finish it.
 		kind = "login"
@@ -817,6 +965,9 @@ func (s *Service) verifyLogin(ctx context.Context, sessionID uuid.UUID, credenti
 		}
 		resolved, resolvedTenant = u, tid
 		if refused = s.passkeysAllowed(ctx, tid); refused != nil {
+			return nil, refused
+		}
+		if refused = s.refuseCaptured(ctx, u.name); refused != nil {
 			return nil, refused
 		}
 		return u, nil
@@ -1014,7 +1165,7 @@ func (h *Handler) rename(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	cred, err := h.Service.Rename(r.Context(), id, userID, in.Name)
+	cred, err := h.Service.Rename(r.Context(), id, userID, in.Name, requesterOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1033,8 +1184,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	by := user.Remover{UserID: &userID, IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
-	if err := h.Service.Delete(r.Context(), id, userID, by); err != nil {
+	if err := h.Service.Delete(r.Context(), id, userID, requesterOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1075,7 +1225,7 @@ func (h *Handler) registerFinish(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.FinishRegister(r.Context(), userID, in.SessionID, in.Credential, in.Name, r.UserAgent()); err != nil {
+	if err := h.Service.FinishRegister(r.Context(), userID, in.SessionID, in.Credential, in.Name, requesterOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

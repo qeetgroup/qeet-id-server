@@ -9,8 +9,24 @@ VALUES (@key, @description)
 ON CONFLICT (key) DO UPDATE SET description = EXCLUDED.description
 RETURNING id, key, description;
 
+-- name: GrantBuiltinRolePermissions :exec
+-- Every organisation's built-in roles hold what their definitions cover of the
+-- catalogue as it is now: owner everything, admin everything but deleting the
+-- organisation, viewer every read but secrets' (whose read reveals them).
+INSERT INTO rbac.role_permissions (role_id, permission_id)
+SELECT ro.id, p.id
+FROM rbac.roles ro
+JOIN rbac.permissions p ON ro.name = 'owner'
+                        OR (ro.name = 'admin' AND p.key <> 'tenant.delete')
+                        OR (ro.name = 'viewer' AND p.key LIKE '%.read' AND p.key <> 'secret.read')
+WHERE ro.is_system
+ON CONFLICT DO NOTHING;
+
 -- name: ListPermissions :many
 SELECT id, key, description FROM rbac.permissions ORDER BY key;
+
+-- name: GetPermissionKey :one
+SELECT key FROM rbac.permissions WHERE id = @id;
 
 -- name: CreateRole :one
 INSERT INTO rbac.roles (tenant_id, name, description, is_system)
@@ -38,6 +54,41 @@ FROM rbac.permissions p
 JOIN rbac.role_permissions rp ON rp.permission_id = p.id
 WHERE rp.role_id = @role_id
 ORDER BY p.key;
+
+-- LockRole reads a role of the tenant for a change, held until it commits, so
+-- nobody gives the role to anyone or edits it meanwhile.
+-- name: LockRole :one
+SELECT id, tenant_id, name, description, is_system, created_at
+FROM rbac.roles WHERE id = @id AND tenant_id = @tenant_id
+FOR UPDATE;
+
+-- name: PermissionsByID :many
+SELECT id, key, description FROM rbac.permissions WHERE id = ANY(@ids::uuid[]) ORDER BY key;
+
+-- name: GrantPermissions :exec
+INSERT INTO rbac.role_permissions (role_id, permission_id)
+SELECT @role_id, unnest(@permission_ids::uuid[])
+ON CONFLICT DO NOTHING;
+
+-- name: RevokePermissions :exec
+DELETE FROM rbac.role_permissions WHERE role_id = @role_id AND permission_id = ANY(@permission_ids::uuid[]);
+
+-- name: UpdateRole :one
+UPDATE rbac.roles SET name = @name, description = @description
+WHERE id = @id AND tenant_id = @tenant_id
+RETURNING id, tenant_id, name, description, is_system, created_at;
+
+-- RoleUse counts who would lose the role with it: the people holding it, the
+-- groups holding it, and the invitations to it that can still be accepted or
+-- resent.
+-- name: RoleUse :one
+SELECT
+    (SELECT count(*) FROM rbac.user_roles ur WHERE ur.role_id = @role_id AND ur.tenant_id = @tenant_id) AS people,
+    (SELECT count(*) FROM rbac.group_roles gr WHERE gr.role_id = @role_id AND gr.tenant_id = @tenant_id) AS groups,
+    (SELECT count(*) FROM tenant.invites i WHERE i.role_id = @role_id AND i.tenant_id = @tenant_id AND i.status IN ('pending', 'expired')) AS invitations;
+
+-- name: DeleteRole :exec
+DELETE FROM rbac.roles WHERE id = @id AND tenant_id = @tenant_id;
 
 -- name: GrantPermission :exec
 INSERT INTO rbac.role_permissions (role_id, permission_id)
@@ -163,3 +214,67 @@ JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
 JOIN rbac.permissions p ON p.id = rp.permission_id
 WHERE gm.user_id = @user_id AND gm.tenant_id = @tenant_id AND p.key = @perm_key
 ORDER BY via, group_name NULLS FIRST;
+
+-- name: ExplainAllGrants :many
+-- Every grant behind a person's permissions in the tenant: each permission
+-- with the role granting it, held directly or through which group.
+SELECT p.key AS permission, 'direct'::text AS via, NULL::uuid AS group_id, NULL::text AS group_name, ro.id AS role_id, ro.name AS role_name
+FROM rbac.user_roles ur
+JOIN rbac.roles ro ON ro.id = ur.role_id
+JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
+JOIN rbac.permissions p ON p.id = rp.permission_id
+WHERE ur.user_id = @user_id AND ur.tenant_id = @tenant_id
+UNION ALL
+SELECT p.key AS permission, 'group'::text AS via, g.id AS group_id, g.name AS group_name, ro.id AS role_id, ro.name AS role_name
+FROM tenant.group_members gm
+JOIN tenant.groups g ON g.id = gm.group_id AND g.tenant_id = gm.tenant_id
+JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+JOIN rbac.roles ro ON ro.id = gr.role_id
+JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
+JOIN rbac.permissions p ON p.id = rp.permission_id
+WHERE gm.user_id = @user_id AND gm.tenant_id = @tenant_id
+ORDER BY permission, via, group_name NULLS FIRST, role_name;
+
+-- name: RoleHolderCounts :many
+-- Per role of the tenant: the live people holding it directly, those holding
+-- it only through a group, and the groups granted it.
+SELECT ro.id AS role_id,
+       (SELECT count(DISTINCT ur.user_id) FROM rbac.user_roles ur
+          JOIN "user".users u ON u.id = ur.user_id AND u.deleted_at IS NULL
+         WHERE ur.tenant_id = ro.tenant_id AND ur.role_id = ro.id)::int AS people_direct,
+       (SELECT count(DISTINCT gm.user_id) FROM rbac.group_roles gr
+          JOIN tenant.group_members gm ON gm.group_id = gr.group_id AND gm.tenant_id = gr.tenant_id
+          JOIN "user".users u ON u.id = gm.user_id AND u.deleted_at IS NULL
+         WHERE gr.tenant_id = ro.tenant_id AND gr.role_id = ro.id
+           AND NOT EXISTS (SELECT 1 FROM rbac.user_roles ur
+                            WHERE ur.user_id = gm.user_id AND ur.tenant_id = ro.tenant_id AND ur.role_id = ro.id))::int AS people_through_groups,
+       (SELECT count(*) FROM rbac.group_roles gr WHERE gr.tenant_id = ro.tenant_id AND gr.role_id = ro.id)::int AS groups
+FROM rbac.roles ro
+WHERE ro.tenant_id = @tenant_id;
+
+-- name: ListRoleHolderPeople :many
+-- One page of the live people holding a role of the tenant, by email: whether
+-- directly, and the groups they hold it through.
+SELECT u.id, u.email, COALESCE(u.display_name, '')::text AS display_name,
+       EXISTS (SELECT 1 FROM rbac.user_roles ur
+                WHERE ur.user_id = u.id AND ur.tenant_id = @tenant_id AND ur.role_id = @role_id) AS direct,
+       COALESCE((SELECT array_agg(gr.group_id ORDER BY gr.group_id) FROM rbac.group_roles gr
+                   JOIN tenant.group_members gm ON gm.group_id = gr.group_id AND gm.tenant_id = gr.tenant_id
+                  WHERE gr.tenant_id = @tenant_id AND gr.role_id = @role_id AND gm.user_id = u.id), '{}')::uuid[] AS via_groups
+FROM "user".users u
+WHERE u.deleted_at IS NULL
+  AND (EXISTS (SELECT 1 FROM rbac.user_roles ur
+                WHERE ur.user_id = u.id AND ur.tenant_id = @tenant_id AND ur.role_id = @role_id)
+       OR EXISTS (SELECT 1 FROM rbac.group_roles gr
+                    JOIN tenant.group_members gm ON gm.group_id = gr.group_id AND gm.tenant_id = gr.tenant_id
+                   WHERE gr.tenant_id = @tenant_id AND gr.role_id = @role_id AND gm.user_id = u.id))
+ORDER BY u.email, u.id
+LIMIT @row_limit OFFSET @row_offset;
+
+-- name: ListRoleHolderGroups :many
+-- The groups of the tenant granted a role, by name.
+SELECT g.id, g.name
+FROM rbac.group_roles gr
+JOIN tenant.groups g ON g.id = gr.group_id AND g.tenant_id = gr.tenant_id
+WHERE gr.tenant_id = @tenant_id AND gr.role_id = @role_id
+ORDER BY g.name, g.id;

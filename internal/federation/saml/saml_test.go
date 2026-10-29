@@ -79,11 +79,12 @@ func TestBuildSP_URLsAndIssuer(t *testing.T) {
 		IdpSSOURL:      "https://idp.example.com/sso",
 		IdpCertificate: pemStr,
 	}
-	s := &Service{}
-	sp, err := s.buildSP("https://auth.acme.com", conn)
+	cert, err := parseCertificate(pemStr)
 	if err != nil {
-		t.Fatalf("buildSP: %v", err)
+		t.Fatal(err)
 	}
+	s := &Service{}
+	sp := s.buildSP("https://auth.acme.com", conn, []*x509.Certificate{cert})
 	wantACS := "https://auth.acme.com/saml/acs/" + id.String()
 	wantEntity := "https://auth.acme.com/saml/metadata/" + id.String()
 	if sp.AssertionConsumerServiceURL != wantACS {
@@ -98,8 +99,8 @@ func TestBuildSP_URLsAndIssuer(t *testing.T) {
 	if sp.SignAuthnRequests {
 		t.Error("SignAuthnRequests should be false (no SP key configured)")
 	}
-	if sp.IDPCertificateStore == nil {
-		t.Error("IDP certificate store must be set")
+	if roots, err := sp.IDPCertificateStore.Certificates(); err != nil || len(roots) != 1 || !roots[0].Equal(cert) {
+		t.Errorf("IdP certificate store holds %v, %v; want the connection's certificate", roots, err)
 	}
 }
 
@@ -114,10 +115,7 @@ func TestPublicBaseUsesConfiguredOrigin(t *testing.T) {
 
 	other := httptest.NewRequest("GET", "https://other.example/saml/login/"+id.String(), nil)
 	other.Host = "other.example"
-	sp, err := configured.Service.buildSP(configured.publicBase(other), conn)
-	if err != nil {
-		t.Fatalf("buildSP: %v", err)
-	}
+	sp := configured.Service.buildSP(configured.publicBase(other), conn, nil)
 	wantEntity := "https://api.id.qeet.in/saml/metadata/" + id.String()
 	if sp.AudienceURI != wantEntity || sp.ServiceProviderIssuer != wantEntity {
 		t.Errorf("audience/issuer = %q/%q, want %q", sp.AudienceURI, sp.ServiceProviderIssuer, wantEntity)
@@ -223,6 +221,37 @@ func TestServiceRefusesInvalidConnections(t *testing.T) {
 	}
 	if _, err := svc.Update(ctx, nil, uuid.New(), tenant, UpdateInput{IdpCertificate: &cert}); !errors.Is(err, errs.ErrSAMLCertificateInvalid) {
 		t.Errorf("update with a bad certificate: %v", err)
+	}
+}
+
+// TestWithinValidityAllowsClockSkew checks that an assertion's Conditions are
+// met up to assertionClockSkew before NotBefore and after NotOnOrAfter, and
+// that one without readable Conditions is not.
+func TestWithinValidityAllowsClockSkew(t *testing.T) {
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	window := func(notBefore, notOnOrAfter time.Duration) []samltypes.Assertion {
+		return []samltypes.Assertion{{Conditions: &samltypes.Conditions{
+			NotBefore: now.Add(notBefore).Format(time.RFC3339), NotOnOrAfter: now.Add(notOnOrAfter).Format(time.RFC3339),
+		}}}
+	}
+	for _, c := range []struct {
+		name       string
+		assertions []samltypes.Assertion
+		want       bool
+	}{
+		{"current", window(-time.Minute, 5*time.Minute), true},
+		{"two minutes early", window(2*time.Minute, 10*time.Minute), true},
+		{"five minutes early", window(5*time.Minute, 10*time.Minute), false},
+		{"expired two minutes ago", window(-10*time.Minute, -2*time.Minute), true},
+		{"expired five minutes ago", window(-10*time.Minute, -5*time.Minute), false},
+		{"one current, one expired", append(window(-time.Minute, 5*time.Minute), window(-10*time.Minute, -5*time.Minute)...), false},
+		{"no conditions", []samltypes.Assertion{{}}, false},
+		{"unreadable times", []samltypes.Assertion{{Conditions: &samltypes.Conditions{NotBefore: "soon", NotOnOrAfter: "later"}}}, false},
+		{"no assertions", nil, false},
+	} {
+		if got := withinValidity(c.assertions, now); got != c.want {
+			t.Errorf("%s: withinValidity = %t, want %t", c.name, got, c.want)
+		}
 	}
 }
 

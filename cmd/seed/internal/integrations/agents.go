@@ -9,6 +9,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/cmd/seed/internal/world"
 	agent "github.com/qeetgroup/qeet-id-server/internal/developer/agents"
+	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/vc"
 )
 
 // agentSpec is an AI agent: the person accountable for it, who registered it,
@@ -203,12 +204,27 @@ func (d *dev) credentials(o *world.Org) {
 	}
 }
 
-// issue issues s's credential to p and returns its id.
+// issue issues s's credential to p and returns its id. Someone who has left
+// since is no longer a member the service would name, so the credential is
+// linked to them directly, as it was when it was issued.
 func (d *dev) issue(o *world.Org, p *world.Person, s credentialSpec, issuer *world.Person) uuid.UUID {
 	w := d.w
-	subject := "did:web:" + o.Spec.Domain + ":people:" + strings.ToLower(p.EmployeeID)
-	res, err := w.Deps.VC.Service.Issue(w.Ctx, o.ID, subject, s.typ, s.claims(p), int(s.ttl*86400), d.as(issuer))
+	in := vc.IssueInput{
+		Subject:    "did:web:" + o.Spec.Domain + ":people:" + strings.ToLower(p.EmployeeID),
+		Type:       s.typ,
+		Claims:     s.claims(p),
+		TTLSeconds: int(s.ttl * 86400),
+	}
+	left := p.Status == world.StatusDeleted
+	if !left {
+		in.UserID = &p.ID
+	}
+	res, err := w.Deps.VC.Service.Issue(w.Ctx, o.ID, in, d.as(issuer))
 	w.Check(err, "credential "+s.typ)
+	if left {
+		_, err := w.Admin.Exec(w.Ctx, `UPDATE auth.credentials SET user_id = $3 WHERE id = $1 AND tenant_id = $2`, res.CredentialID, o.ID, p.ID)
+		w.Check(err, "link credential "+s.typ)
+	}
 	return res.CredentialID
 }
 

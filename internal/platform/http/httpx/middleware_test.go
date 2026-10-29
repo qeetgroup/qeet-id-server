@@ -223,3 +223,40 @@ func TestClientIP_TrustedProxyHops(t *testing.T) {
 		})
 	}
 }
+
+// TestClientIP_ReadsEveryForwardedLine checks that a proxy appending its own
+// X-Forwarded-For line, rather than extending the caller's, still has the
+// client read from its entry, not the caller's forged one.
+func TestClientIP_ReadsEveryForwardedLine(t *testing.T) {
+	SetTrustedProxyHops(1)
+	t.Cleanup(func() { SetTrustedProxyHops(0) })
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "10.0.0.1:80"
+	r.Header.Add("X-Forwarded-For", "9.9.9.9")
+	r.Header.Add("X-Forwarded-For", "198.51.100.4")
+	if got := ClientIP(r); got != "198.51.100.4" {
+		t.Errorf("ClientIP = %q, want the proxy's entry 198.51.100.4", got)
+	}
+}
+
+// TestSourceNetwork checks that an IPv4 address is its own network and an
+// IPv6 one is its /64.
+func TestSourceNetwork(t *testing.T) {
+	for ip, want := range map[string]string{
+		"203.0.113.7":                    "203.0.113.7",
+		" 203.0.113.7 ":                  "203.0.113.7",
+		"::ffff:203.0.113.7":             "203.0.113.7", // IPv4-mapped is the IPv4 source
+		"2001:db8:1:2:aaaa:bbbb:cccc:d":  "2001:db8:1:2::/64",
+		"2001:db8:1:2::9":                "2001:db8:1:2::/64", // same /64: same network
+		"2001:db8:1:3::9":                "2001:db8:1:3::/64",
+		"fe80::1%eth0":                   "fe80::/64",
+		"":                               "",
+		"not-an-address":                 "",
+		"203.0.113.7:4000":               "",
+		"2001:db8:1:2:aaaa:bbbb:cccc:dd": "2001:db8:1:2::/64",
+	} {
+		if got := SourceNetwork(ip); got != want {
+			t.Errorf("SourceNetwork(%q) = %q, want %q", ip, got, want)
+		}
+	}
+}

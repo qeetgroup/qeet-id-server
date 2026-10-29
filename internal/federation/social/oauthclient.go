@@ -49,6 +49,8 @@ type oauthClient struct {
 	appleKeys     cachedAppleKeys
 	appleTokenURL string
 	appleJWKSURL  string
+	// endpoints are the OAuth 2.0 adapters' endpoints (adapters.go).
+	endpoints map[string]oauth2Endpoints
 }
 
 func newOAuthClient(policy *egress.Policy) *oauthClient {
@@ -57,6 +59,7 @@ func newOAuthClient(policy *egress.Policy) *oauthClient {
 		cache:         map[string]cachedDoc{},
 		appleTokenURL: appleTokenURL,
 		appleJWKSURL:  appleJWKSURL,
+		endpoints:     defaultEndpoints,
 	}
 }
 

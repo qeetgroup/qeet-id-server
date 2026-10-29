@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -167,7 +168,8 @@ func TestDisablingTheApp(t *testing.T) {
 
 // TestEmailCodes checks that an email factor is confirmed only by the code
 // sent to it, shown masked, completes a sign-in with a code sent then, and
-// can be removed.
+// can be removed; and that a step-up code never completes a sign-in, nor a
+// sign-in code a step-up.
 func TestEmailCodes(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mail := &dbtest.Mailbox{}
@@ -207,14 +209,36 @@ func TestEmailCodes(t *testing.T) {
 	}
 
 	// The resend wait is per factor: let it pass.
-	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE auth.mfa_otp_codes SET created_at = created_at - interval '1 minute' WHERE factor_id = $1`, factor); err != nil {
-		t.Fatal(err)
+	pastWait := func() {
+		t.Helper()
+		if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE auth.mfa_otp_codes SET created_at = created_at - interval '1 minute' WHERE factor_id = $1`, factor); err != nil {
+			t.Fatal(err)
+		}
 	}
+	pastWait()
 	token := challenge(t, authSvc, a)
+	if err := mfaSvc.ChallengeOTP(ctx, a.ID, &tenant, factor); err != nil {
+		t.Fatalf("send step-up code: %v", err)
+	}
+	stepUp := mail.Last(t)
+	if !strings.Contains(stepUp.Body, "confirm a change") {
+		t.Errorf("step-up mail %q; want it to say what the code is for", stepUp.Body)
+	}
+	if _, err := authSvc.CompleteMFALogin(ctx, token, sixDigits.FindString(stepUp.Body), "", ""); err == nil {
+		t.Error("a step-up code completed a sign-in")
+	}
+	pastWait()
 	if err := authSvc.SendMFACode(ctx, token, factor); err != nil {
 		t.Fatalf("send sign-in code: %v", err)
 	}
 	signInCode := sixDigits.FindString(mail.Last(t).Body)
+	attempt, err := mfaSvc.ReserveAttempt(ctx, a.ID, PurposeOTPVerify)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := inTx(t, func(tx pgx.Tx) error { _, err := mfaSvc.VerifyOTP(ctx, tx, attempt, signInCode); return err }); !errors.Is(err, errs.ErrMFACodeInvalid) {
+		t.Errorf("a sign-in code as a step-up: %v, want %v", err, errs.ErrMFACodeInvalid)
+	}
 	if pair, err := authSvc.CompleteMFALogin(ctx, token, signInCode, "", ""); err != nil || pair.UserID != a.ID {
 		t.Fatalf("sign in with the emailed code: %+v, %v", pair, err)
 	}
@@ -268,8 +292,8 @@ func TestAttemptsAreLimited(t *testing.T) {
 
 // TestStepUpGate checks that a route always needing a step-up refuses a
 // session until it meets a second factor, that one needing it while a factor
-// is held asks it only of someone holding one, and that a step-up belongs to
-// its session alone.
+// is held asks it only of someone holding one and a recent sign-in of anyone
+// else, and that a step-up belongs to its session alone.
 func TestStepUpGate(t *testing.T) {
 	ctx := dbtest.Context(t)
 	mfaSvc, authSvc := services(t, notifier.LogSender{})
@@ -282,7 +306,7 @@ func TestStepUpGate(t *testing.T) {
 		}
 		return pair
 	}
-	gate := mfaSvc.StepUpGate(map[string]StepUpRule{"POST /always": StepUpAlways, "POST /when-held": StepUpWhenFactorHeld})
+	gate := mfaSvc.StepUpGate(map[string]StepUpRule{"POST /always": StepUpAlways, "POST /when-held": StepUpOrRecentSignIn})
 	ok := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
 	serve := func(session uuid.UUID) http.Handler {
 		p := dbtest.Principal(a.ID, tenant)
@@ -306,6 +330,13 @@ func TestStepUpGate(t *testing.T) {
 	expect(h, "/open", http.StatusOK)
 	expect(h, "/always", http.StatusForbidden)
 	expect(h, "/when-held", http.StatusOK)
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE auth.sessions SET signed_in_at = NOW() - INTERVAL '1 hour' WHERE id = $1`, session); err != nil {
+		t.Fatal(err)
+	}
+	if rec := dbtest.Do(t, h, http.MethodPost, "/when-held", nil); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeRecentSignIn) {
+		t.Errorf("a sign-in an hour old with no factor: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeRecentSignIn)
+	}
+	expect(serve(signIn().SessionID), "/when-held", http.StatusOK)
 
 	enrolTOTP(t, mfaSvc, a)
 	expect(h, "/when-held", http.StatusForbidden)
@@ -315,4 +346,63 @@ func TestStepUpGate(t *testing.T) {
 	expect(h, "/always", http.StatusOK)
 	expect(h, "/when-held", http.StatusOK)
 	expect(serve(signIn().SessionID), "/always", http.StatusForbidden)
+}
+
+// TestWrongCodesInARowLockSignIn checks that a long run of wrong second
+// factors locks second-factor sign-in, even with the right code after, tells
+// the person, and that ending their sign-ins, as a password reset does, lifts
+// the lock while a right code ends a shorter run.
+func TestWrongCodesInARowLockSignIn(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	mail := &dbtest.Mailbox{}
+	mfaSvc, authSvc := services(t, notifier.LogSender{})
+	authSvc.SetSender(mail)
+	a, _ := member(t)
+	secret, recovery := enrolTOTP(t, mfaSvc, a)
+	run := func(failures int) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO auth.mfa_failure_streaks (user_id, failures) VALUES ($1, $2)
+			ON CONFLICT (user_id) DO UPDATE SET failures = EXCLUDED.failures, locked_at = NULL
+		`, a.ID, failures); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wrong := "000000"
+	if wrong == codeAt(t, secret, 1) {
+		wrong = "111111"
+	}
+
+	run(10)
+	if pair, err := authSvc.CompleteMFALogin(ctx, challenge(t, authSvc, a), codeAt(t, secret, 1), "", ""); err != nil || pair == nil {
+		t.Fatalf("the right code after ten wrong: %v", err)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.mfa_failure_streaks WHERE user_id = $1`, a.ID); n != 0 {
+		t.Error("a right code did not end the run")
+	}
+
+	run(49)
+	if _, err := authSvc.CompleteMFALogin(ctx, challenge(t, authSvc, a), wrong, "", ""); !errors.Is(err, errs.ErrMFALocked) {
+		t.Fatalf("the fiftieth wrong code in a row: %v, want %v", err, errs.ErrMFALocked)
+	}
+	if msg := mail.Last(t); msg.To != a.Email || !strings.Contains(msg.Subject, "locked") {
+		t.Errorf("mail %q to %s; want the person told of the lock", msg.Subject, msg.To)
+	}
+	if _, err := authSvc.CompleteMFALogin(ctx, challenge(t, authSvc, a), recovery[0], "", ""); !errors.Is(err, errs.ErrMFALocked) {
+		t.Errorf("the right code once locked: %v, want %v", err, errs.ErrMFALocked)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.mfa_locked' AND resource_id = $1`, a.ID); n != 1 {
+		t.Errorf("%d auth.mfa_locked records, want 1", n)
+	}
+
+	if err := inTx(t, func(tx pgx.Tx) error {
+		_, err := auth.EndSignIns(ctx, tx, nil, a.ID, "password_reset")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if pair, err := authSvc.CompleteMFALogin(ctx, challenge(t, authSvc, a), recovery[0], "", ""); err != nil || pair == nil {
+		t.Errorf("the right code after the sign-ins were ended: %v", err)
+	}
 }

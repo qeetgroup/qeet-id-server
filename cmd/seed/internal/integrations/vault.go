@@ -25,6 +25,7 @@ type secretSpec struct {
 	created     float64
 	rotated     []float64 // days ago, oldest first
 	revealed    float64   // days ago someone revealed it; 0 never
+	rotateEvery int32     // rotation interval in days; 0 none
 }
 
 func prefixed(prefix string, n int) func(w *world.World) string {
@@ -44,8 +45,8 @@ func pem(w *world.World) string {
 // secretSpecs are each organisation's vault secrets.
 var secretSpecs = map[string][]secretSpec{
 	"qeet": {
-		{name: "RAZORPAY_KEY_SECRET", scope: "payments", value: prefixed("", 24), by: []who{email("diego@qeet.in")}, created: 300, rotated: []float64{120}},
-		{name: "STRIPE_SECRET_KEY", scope: "payments", value: prefixed("sk_live_51P", 96), by: []who{email("diego@qeet.in")}, created: 280, rotated: []float64{150, 21}, revealed: 21},
+		{name: "RAZORPAY_KEY_SECRET", scope: "payments", value: prefixed("", 24), by: []who{email("diego@qeet.in")}, created: 300, rotated: []float64{120}, rotateEvery: 90},
+		{name: "STRIPE_SECRET_KEY", scope: "payments", value: prefixed("sk_live_51P", 96), by: []who{email("diego@qeet.in")}, created: 280, rotated: []float64{150, 21}, revealed: 21, rotateEvery: 90},
 		{name: "MSG91_AUTH_KEY", scope: "sms", value: prefixed("", 26), by: []who{email("rohan@qeet.in")}, created: 260},
 		{name: "SLACK_BOT_TOKEN", scope: "alerts", value: prefixed("xoxb-5512398172-", 40), by: []who{both(team("Site Reliability"), builders)}, created: 240},
 		{name: "PAGERDUTY_ROUTING_KEY", scope: "on-call", value: hexed(32), by: []who{both(team("Site Reliability"), builders)}, created: 238},
@@ -53,10 +54,10 @@ var secretSpecs = map[string][]secretSpec{
 		{name: "ANTHROPIC_API_KEY", scope: "qeet-ai", value: prefixed("sk-ant-api03-", 80), by: []who{email("rohan@qeet.in")}, created: 90, revealed: 4},
 	},
 	"northwind": {
-		{name: "CIBIL_API_KEY", scope: "credit-bureau", value: prefixed("", 32), by: []who{both(team("Platform Engineering"), builders)}, created: 320, rotated: []float64{140}},
+		{name: "CIBIL_API_KEY", scope: "credit-bureau", value: prefixed("", 32), by: []who{both(team("Platform Engineering"), builders)}, created: 320, rotated: []float64{140}, rotateEvery: 180},
 		{name: "EXPERIAN_CLIENT_SECRET", scope: "credit-bureau", value: prefixed("", 40), by: []who{both(team("Platform Engineering"), builders)}, created: 310},
 		{name: "NSDL_PAN_VERIFY_TOKEN", scope: "kyc", value: hexed(40), by: []who{both(team("Platform Engineering"), builders)}, created: 290},
-		{name: "SPLUNK_HEC_TOKEN", scope: "siem", value: func(w *world.World) string { return uuid.NewSHA1(uuid.NameSpaceURL, []byte(token(w, 12))).String() }, by: []who{both(dept("Information Security"), builders)}, created: 300, rotated: []float64{30}},
+		{name: "SPLUNK_HEC_TOKEN", scope: "siem", value: func(w *world.World) string { return uuid.NewSHA1(uuid.NameSpaceURL, []byte(token(w, 12))).String() }, by: []who{both(dept("Information Security"), builders)}, created: 300, rotated: []float64{30}, rotateEvery: 90},
 		{name: "OKTA_API_TOKEN", scope: "identity", value: prefixed("00", 40), by: []who{both(team("IT Operations"), builders), both(dept("Technology"), builders)}, created: 280, revealed: 2},
 		{name: "KARIX_SMS_API_KEY", scope: "sms", value: prefixed("", 28), by: []who{both(team("Platform Engineering"), builders)}, created: 200},
 	},
@@ -97,7 +98,11 @@ func (d *dev) secrets(o *world.Org) {
 		var sec *secret.Secret
 		w.At(at, func() {
 			var err error
-			sec, err = w.Deps.Secret.Service.Create(w.Ctx, o.ID, s.name, s.scope, s.value(w))
+			var every *int32
+			if s.rotateEvery > 0 {
+				every = &s.rotateEvery
+			}
+			sec, err = w.Deps.Secret.Service.Create(w.Ctx, o.ID, s.name, s.scope, s.value(w), every)
 			w.Check(err, "secret "+s.name)
 			d.recordSecret(o, by, sec, "secret.created")
 		})
@@ -118,11 +123,18 @@ func (d *dev) secrets(o *world.Org) {
 	}
 }
 
-// recordSecret writes the audit row the secrets handler writes for action.
+// recordSecret writes the audit row the secrets handler writes for action,
+// and for a reveal notes the person on the secret as the handler does.
 func (d *dev) recordSecret(o *world.Org, by *world.Person, s *secret.Secret, action string) {
 	w := d.w
 	w.Tx("audit "+action, func(tx pgx.Tx) error {
-		return audit.Record(w.Ctx, tx, d.as(by).Event(o.ID, action, "secret", s.ID, map[string]any{"name": s.Name}))
+		if err := audit.Record(w.Ctx, tx, d.as(by).Event(o.ID, action, "secret", s.ID, map[string]any{"name": s.Name})); err != nil {
+			return err
+		}
+		if action != "secret.revealed" {
+			return nil
+		}
+		return w.Deps.Secret.Service.MarkRevealed(w.Ctx, tx, o.ID, s.ID, &by.ID, "")
 	})
 }
 

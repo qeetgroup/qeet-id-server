@@ -65,11 +65,19 @@ func (q *Queries) ClearSuppression(ctx context.Context, arg ClearSuppressionPara
 }
 
 const deleteMessagesBefore = `-- name: DeleteMessagesBefore :execrows
-DELETE FROM platform.email_messages WHERE sent_at < $1
+DELETE FROM platform.email_messages WHERE ctid = ANY(ARRAY(
+    SELECT m.ctid FROM platform.email_messages m WHERE m.sent_at < $1 LIMIT $2))
 `
 
-func (q *Queries) DeleteMessagesBefore(ctx context.Context, before time.Time) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteMessagesBefore, before)
+type DeleteMessagesBeforeParams struct {
+	Before  time.Time
+	MaxRows int32
+}
+
+// DeleteMessagesBefore deletes at most @max_rows message records sent before
+// @before.
+func (q *Queries) DeleteMessagesBefore(ctx context.Context, arg DeleteMessagesBeforeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteMessagesBefore, arg.Before, arg.MaxRows)
 	if err != nil {
 		return 0, err
 	}

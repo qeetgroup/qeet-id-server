@@ -157,7 +157,7 @@ const getOTPCodeForConfirm = `-- name: GetOTPCodeForConfirm :one
 SELECT c.id
 FROM auth.mfa_otp_codes c
 JOIN auth.mfa_otp_factors f ON f.id = c.factor_id
-WHERE f.id = $1 AND f.user_id = $2 AND c.code_hash = $3
+WHERE f.id = $1 AND f.user_id = $2 AND c.code_hash = $3 AND c.purpose = 'enrollment'
   AND c.used_at IS NULL AND c.expires_at > NOW()
 ORDER BY c.created_at DESC LIMIT 1
 FOR UPDATE
@@ -182,7 +182,7 @@ SELECT c.id
 FROM auth.mfa_otp_codes c
 JOIN auth.mfa_otp_factors f ON f.id = c.factor_id
 WHERE f.user_id = $1 AND f.verified_at IS NOT NULL AND c.code_hash = $2
-  AND c.used_at IS NULL AND c.expires_at > NOW()
+  AND c.purpose = $3 AND c.used_at IS NULL AND c.expires_at > NOW()
 ORDER BY c.created_at DESC LIMIT 1
 FOR UPDATE
 `
@@ -190,10 +190,13 @@ FOR UPDATE
 type GetOTPCodeForVerifyParams struct {
 	UserID   uuid.UUID
 	CodeHash string
+	Purpose  string
 }
 
+// GetOTPCodeForVerify finds a live code of the user's sent for purpose
+// (sign_in or step_up), so one sent for the other never counts.
 func (q *Queries) GetOTPCodeForVerify(ctx context.Context, arg GetOTPCodeForVerifyParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getOTPCodeForVerify, arg.UserID, arg.CodeHash)
+	row := q.db.QueryRow(ctx, getOTPCodeForVerify, arg.UserID, arg.CodeHash, arg.Purpose)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
@@ -253,16 +256,17 @@ func (q *Queries) GetPushChallenge(ctx context.Context, id uuid.UUID) (GetPushCh
 }
 
 const getPushChallengeForUpdate = `-- name: GetPushChallengeForUpdate :one
-SELECT id, user_id, status, expires_at
+SELECT id, user_id, status, expires_at, match_number
 FROM auth.mfa_push_challenges WHERE id = $1
 FOR UPDATE
 `
 
 type GetPushChallengeForUpdateRow struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	Status    string
-	ExpiresAt time.Time
+	ID          uuid.UUID
+	UserID      uuid.UUID
+	Status      string
+	ExpiresAt   time.Time
+	MatchNumber *int16
 }
 
 func (q *Queries) GetPushChallengeForUpdate(ctx context.Context, id uuid.UUID) (GetPushChallengeForUpdateRow, error) {
@@ -273,23 +277,30 @@ func (q *Queries) GetPushChallengeForUpdate(ctx context.Context, id uuid.UUID) (
 		&i.UserID,
 		&i.Status,
 		&i.ExpiresAt,
+		&i.MatchNumber,
 	)
 	return i, err
 }
 
 const insertMFAOTPCode = `-- name: InsertMFAOTPCode :exec
-INSERT INTO auth.mfa_otp_codes (factor_id, code_hash, expires_at)
-VALUES ($1, $2, $3)
+INSERT INTO auth.mfa_otp_codes (factor_id, code_hash, expires_at, purpose)
+VALUES ($1, $2, $3, $4)
 `
 
 type InsertMFAOTPCodeParams struct {
 	FactorID  uuid.UUID
 	CodeHash  string
 	ExpiresAt time.Time
+	Purpose   string
 }
 
 func (q *Queries) InsertMFAOTPCode(ctx context.Context, arg InsertMFAOTPCodeParams) error {
-	_, err := q.db.Exec(ctx, insertMFAOTPCode, arg.FactorID, arg.CodeHash, arg.ExpiresAt)
+	_, err := q.db.Exec(ctx, insertMFAOTPCode,
+		arg.FactorID,
+		arg.CodeHash,
+		arg.ExpiresAt,
+		arg.Purpose,
+	)
 	return err
 }
 
@@ -308,15 +319,16 @@ func (q *Queries) InsertMFARecoveryCode(ctx context.Context, arg InsertMFARecove
 }
 
 const insertPushChallenge = `-- name: InsertPushChallenge :one
-INSERT INTO auth.mfa_push_challenges (user_id, action, context)
-VALUES ($1, $2, $3)
+INSERT INTO auth.mfa_push_challenges (user_id, action, context, match_number)
+VALUES ($1, $2, $3, $4)
 RETURNING id, user_id, action, context, status, expires_at, created_at
 `
 
 type InsertPushChallengeParams struct {
-	UserID  uuid.UUID
-	Action  string
-	Context []byte
+	UserID      uuid.UUID
+	Action      string
+	Context     []byte
+	MatchNumber *int16
 }
 
 type InsertPushChallengeRow struct {
@@ -330,7 +342,12 @@ type InsertPushChallengeRow struct {
 }
 
 func (q *Queries) InsertPushChallenge(ctx context.Context, arg InsertPushChallengeParams) (InsertPushChallengeRow, error) {
-	row := q.db.QueryRow(ctx, insertPushChallenge, arg.UserID, arg.Action, arg.Context)
+	row := q.db.QueryRow(ctx, insertPushChallenge,
+		arg.UserID,
+		arg.Action,
+		arg.Context,
+		arg.MatchNumber,
+	)
 	var i InsertPushChallengeRow
 	err := row.Scan(
 		&i.ID,
@@ -545,8 +562,6 @@ type OrgStepUpPolicyRow struct {
 	EveryFactor   bool
 }
 
-// OrgStepUpPolicy is how long a step-up lasts in an organisation and whether
-// it counts every factor type (no organisation, or none set: 5 minutes, yes).
 func (q *Queries) OrgStepUpPolicy(ctx context.Context, tenantID uuid.UUID) (OrgStepUpPolicyRow, error) {
 	row := q.db.QueryRow(ctx, orgStepUpPolicy, tenantID)
 	var i OrgStepUpPolicyRow
@@ -612,6 +627,27 @@ func (q *Queries) PushChallengeForStepUp(ctx context.Context, arg PushChallengeF
 	return i, err
 }
 
+const recentPushChallenges = `-- name: RecentPushChallenges :one
+SELECT count(*) FILTER (WHERE created_at > NOW() - INTERVAL '10 minutes')::int AS sent,
+       count(*) FILTER (WHERE status = 'denied')::int AS denied
+FROM auth.mfa_push_challenges
+WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour'
+`
+
+type RecentPushChallengesRow struct {
+	Sent   int32
+	Denied int32
+}
+
+// RecentPushChallenges counts the user's push requests of the last ten
+// minutes, and those denied in the last hour.
+func (q *Queries) RecentPushChallenges(ctx context.Context, userID uuid.UUID) (RecentPushChallengesRow, error) {
+	row := q.db.QueryRow(ctx, recentPushChallenges, userID)
+	var i RecentPushChallengesRow
+	err := row.Scan(&i.Sent, &i.Denied)
+	return i, err
+}
+
 const recordStepUp = `-- name: RecordStepUp :exec
 INSERT INTO auth.mfa_verifications (session_id, user_id, method, verified_at)
 SELECT s.id, s.user_id, $1::text, NOW()
@@ -632,6 +668,36 @@ type RecordStepUpParams struct {
 func (q *Queries) RecordStepUp(ctx context.Context, arg RecordStepUpParams) error {
 	_, err := q.db.Exec(ctx, recordStepUp, arg.Method, arg.SessionID, arg.UserID)
 	return err
+}
+
+const sessionSignedInRecently = `-- name: SessionSignedInRecently :one
+SELECT COALESCE(s.signed_in_at > NOW() - COALESCE(sp.step_up_window, INTERVAL '5 minutes'), FALSE)::bool AS recent,
+       EXTRACT(EPOCH FROM COALESCE(sp.step_up_window, INTERVAL '5 minutes'))::bigint AS window_seconds
+FROM (SELECT $1::uuid AS id, $2::uuid AS user_id) q
+LEFT JOIN auth.sessions s ON s.id = q.id AND s.user_id = q.user_id AND s.revoked_at IS NULL
+  AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
+LEFT JOIN tenant.security_policies sp ON sp.tenant_id = s.tenant_id
+`
+
+type SessionSignedInRecentlyParams struct {
+	SessionID uuid.UUID
+	UserID    uuid.UUID
+}
+
+type SessionSignedInRecentlyRow struct {
+	Recent        bool
+	WindowSeconds int64
+}
+
+// OrgStepUpPolicy is how long a step-up lasts in an organisation and whether
+// it counts every factor type (no organisation, or none set: 5 minutes, yes).
+// SessionSignedInRecently says whether the user's live session continues a
+// sign-in made within its organisation's step-up window, and that window.
+func (q *Queries) SessionSignedInRecently(ctx context.Context, arg SessionSignedInRecentlyParams) (SessionSignedInRecentlyRow, error) {
+	row := q.db.QueryRow(ctx, sessionSignedInRecently, arg.SessionID, arg.UserID)
+	var i SessionSignedInRecentlyRow
+	err := row.Scan(&i.Recent, &i.WindowSeconds)
+	return i, err
 }
 
 const spendPushChallenge = `-- name: SpendPushChallenge :exec

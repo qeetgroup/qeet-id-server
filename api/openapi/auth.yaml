@@ -67,7 +67,7 @@ paths:
   /v1/auth/forgot-password:
     post:
       operationId: post_v1_auth_forgot_password
-      description: 'Sends a password-reset link to the supplied email when it belongs to an account. It always returns a neutral confirmation regardless of whether the address exists, so it cannot be used to enumerate accounts, and it is rate limited. The link is stored and emailed after the answer, so the answer is the same for any address, takes the same minimum time, and does not depend on whether the email could be delivered. Complete the flow with the reset-password call using the token from the emailed link. A request for an account is recorded in its organisation''s audit trail as auth.password_reset_requested (at most ten per account, then one a minute).'
+      description: 'Sends a password-reset link to the supplied email when it belongs to an account. It always returns a neutral confirmation regardless of whether the address exists, so it cannot be used to enumerate accounts, and it is rate limited. The link is stored and emailed after the answer, so the answer is the same for any address, takes the same minimum time, and does not depend on whether the email could be delivered. Complete the flow with the reset-password call using the token from the emailed link. The link goes to the address as the account stores it, not as typed, and ends the account''s earlier reset links. An address may ask three times, then once every five minutes (429 too_many_requests past that, whether or not it has an account). A completed reset, a password change or set, an email change and anything else that ends the person''s sign-ins also ends their unused reset and magic links. A request for an account is recorded in its organisation''s audit trail as auth.password_reset_requested (at most ten per account, then one a minute). On a domain whose organisation requires single sign-on, the request is refused with 403 auth.sso_required once counted against the per-address bound, before any account is looked up, and no link is sent (see the SSORequired response).'
       summary: Forgot password
       tags:
         - Auth
@@ -108,12 +108,14 @@ paths:
                 properties:
                   message:
                     type: string
+        '403':
+          $ref: '#/components/responses/SSORequired'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/auth/login:
     post:
       operationId: post_v1_auth_login
-      description: 'Authenticates a user by email and password and, on success, returns an access and refresh token pair. If the account has a second factor enrolled, tokens are withheld and a short-lived mfa_token with the available methods is returned instead; exchange it for tokens at the complete-MFA call. Passwordless accounts authenticate through passkey login rather than this endpoint, and a registered passkey satisfies MFA on its own. Requests are rate limited to slow credential stuffing. Failed sign-ins are counted per account and source network, per account across networks, and per source network across accounts (see the sign-in lockout on the create-SSO-session call); a locked account answers 429 auth.account_locked whatever the password, a throttled source 429 too_many_requests, and an address with no account answers exactly like a wrong password. A suspended or otherwise inactive account also answers a wrong password with 401 auth.invalid_credentials, counted like any wrong password; only the right password is refused with 403 auth.account_inactive. When the account''s own organisation has switched password sign-in off, a correct password is refused with 403 auth.method_disabled. Every sign-in is assessed for risk (bot-like clients, and impossible travel and new devices where the organisation turns them on), and its country and device are kept 90 days for later sign-ins to be compared against. A risky sign-in by someone with no second factor answers an mfa_token challenge met by a code sent to their verified email address (methods [email], the factor named by the challenge''s own id), or 403 auth.risk_verification_unavailable when they have no verified address. While the organisation''s address rules are on, a sign-in from an address they refuse is refused with 403 auth.address_not_allowed before any session is issued; the same holds on every other way of signing in to the organisation (passkey, magic link, social, SAML, LDAP, invitation, organisation switch, application authorization and the device flow). Each failed attempt is recorded in the audit trail of the organisation the sign-in was for (or the account''s own) as auth.sign_in_failed: the account, or no one for an address with no account, the reason (wrong_password, unknown_account, account_locked or source_throttled) and the source, never what was submitted. The records are bounded per source network and per organisation (sign_in_failures_unrecorded_total counts the rest). A lock a failure sets is recorded as auth.account_locked with locked_until, when it lifts; a source throttle as auth.source_throttled.'
+      description: 'Authenticates a user by email and password and, on success, returns an access and refresh token pair. If the account has a second factor enrolled, tokens are withheld and a short-lived mfa_token with the available methods is returned instead; exchange it for tokens at the complete-MFA call. Passwordless accounts authenticate through passkey login rather than this endpoint, and a registered passkey satisfies MFA on its own. Requests are rate limited to slow credential stuffing. Failed sign-ins are counted per account and source network, per account across networks, and per source network across accounts (see the sign-in lockout on the create-SSO-session call); a locked account answers 429 auth.account_locked whatever the password, a throttled source 429 too_many_requests, and an address with no account answers exactly like a wrong password. A suspended or otherwise inactive account also answers a wrong password with 401 auth.invalid_credentials, counted like any wrong password; only the right password is refused with 403 auth.account_inactive. When the account''s own organisation has switched password sign-in off, a correct password is refused with 403 auth.method_disabled. Every sign-in is assessed for risk (bot-like clients, and impossible travel and new devices where the organisation turns them on), and its country and device are kept 90 days for later sign-ins to be compared against. A risky sign-in by someone with no second factor answers an mfa_token challenge met by a code sent to their verified email address (methods [email], the factor named by the challenge''s own id), or 403 auth.risk_verification_unavailable when they have no verified address. While the organisation''s address rules are on, a sign-in from an address they refuse is refused with 403 auth.address_not_allowed before any session is issued; the same holds on every other way of signing in to the organisation (passkey, magic link, social, SAML, LDAP, invitation, organisation switch, application authorization and the device flow). Each failed attempt is recorded in the audit trail of the organisation the sign-in was for (or the account''s own) as auth.sign_in_failed: the account, or no one for an address with no account, the reason (wrong_password, unknown_account, account_locked or source_throttled) and the source, never what was submitted. The records are bounded per source network and per organisation (sign_in_failures_unrecorded_total counts the rest). A lock a failure sets is recorded as auth.account_locked with locked_until, when it lifts; a source throttle as auth.source_throttled. On a domain whose organisation requires single sign-on, the sign-in is refused with 403 auth.sso_required before any account is looked up or password checked, and nothing is counted against the lockout (see the SSORequired response).'
       summary: Sign in
       tags:
         - Auth
@@ -160,7 +162,7 @@ paths:
         up for it (POST /v1/auth/mfa/enroll) — the response then carries the account's new
         recovery codes, shown once — or skipped while its grace period runs. A wrong proof
         counts against the challenge's and the account's attempt budgets.
-        A wrong proof is recorded in the organisation's audit trail as auth.sign_in_failed (method mfa, reason code_invalid, with the proof kind and the attempts left).
+        A wrong proof is recorded in the organisation's audit trail as auth.sign_in_failed (method mfa, reason code_invalid, with the proof kind and the attempts left). Fifty wrong proofs in a row, however far apart, lock the person's second-factor sign-in: that answer and every later one is 403 mfa.locked, even with the right proof, the lock is audited as auth.mfa_locked and the person is emailed. A right proof ends a shorter run; a password reset, a password change or set, or an administrator's reset of their factors lifts the lock.
       tags:
         - Auth
       security: []
@@ -226,6 +228,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/auth/mfa/send:
     post:
       operationId: post_v1_auth_mfa_send
@@ -235,7 +239,7 @@ paths:
         challenge's factors), to complete the challenge with. At most five per challenge (429).
         Used by both sign-in flows. For a risky sign-in by someone with no second factor, the challenge's
         one factor is their verified email address, named by the challenge's own id: send its code here
-        with factor_id set to the mfa_token, then submit it to complete the challenge. A code to one factor can be sent at most every 30 seconds, ten an hour to one person and five an hour to one address or number over every account; past that the call answers 429 mfa.code_send_limited with retry_after (seconds). A new code makes the factor's earlier unused code stop working. An SMS code needs an organisation whose plan includes SMS (403 upgrade_required). Each code sent is audited as mfa.otp_sent.
+        with factor_id set to the mfa_token, then submit it to complete the challenge. A code to one factor can be sent at most every 30 seconds, ten an hour to one person and five an hour to one address or number over every account; past that the call answers 429 mfa.code_send_limited with retry_after (seconds). A new code makes the factor's earlier unused code stop working. A code sent here only completes a sign-in, never a step-up. An SMS code needs an organisation whose plan includes SMS (403 upgrade_required). Each code sent is audited as mfa.otp_sent.
       tags:
         - Auth
       security: []
@@ -320,7 +324,10 @@ paths:
         sign-in flows. Each phone is sent a high-priority push that lives as long as the request can
         be answered (two minutes); a phone the push service reports as no longer having the app is
         retired. When the request reaches none of the person's phones it is closed and the call
-        answers 502 mfa.push_delivery_failed, so the person can use another way to verify.
+        answers 502 mfa.push_delivery_failed, so the person can use another way to verify. The
+        answer carries a two-digit number to show on the sign-in screen: the phone must send it back
+        to approve. A person is sent at most five requests in ten minutes, and none for the rest of
+        an hour in which they denied three; past that the call answers 429 mfa.push_limited.
       tags:
         - Auth
       security: []
@@ -346,6 +353,9 @@ paths:
                   expires_at:
                     type: string
                     format: date-time
+                  number:
+                    type: integer
+                    description: Show it on the sign-in screen; the phone sends it back to approve.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -399,6 +409,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/auth/logout:
     post:
       operationId: post_v1_auth_logout
@@ -424,7 +436,7 @@ paths:
   /v1/auth/magic-link/consume:
     post:
       operationId: post_v1_auth_magic_link_consume
-      description: 'Completes passwordless email sign-in by redeeming the single-use token delivered by the magic-link start call. On success it returns an access and refresh token pair; the token is invalidated once consumed and cannot be replayed. Tokens are short-lived, so an expired or already-used link must be re-requested from the start call. A link from an organisation that has since switched magic links off is refused with 403 auth.method_disabled and stays unused. The link proves the first factor only: when the account holds a second factor, or must have one, the answer is an MFA challenge instead of tokens, completed at POST /v1/auth/mfa (the session then records the method magic_link_mfa). The link is spent either way, so an abandoned or failed challenge leaves no tokens and no link to use again; an expired or used link is refused before any challenge is raised.'
+      description: 'Completes passwordless email sign-in by redeeming the single-use token delivered by the magic-link start call. On success it returns an access and refresh token pair; the token is invalidated once consumed and cannot be replayed. Tokens are short-lived, so an expired or already-used link must be re-requested from the start call. A link from an organisation that has since switched magic links off is refused with 403 auth.method_disabled and stays unused. The link proves the first factor only: when the account holds a second factor, or must have one, the answer is an MFA challenge instead of tokens, completed at POST /v1/auth/mfa (the session then records the method magic_link_mfa). The link is spent either way, so an abandoned or failed challenge leaves no tokens and no link to use again; an expired or used link is refused before any challenge is raised. A link to an address that must now sign in with single sign-on is refused with 403 auth.sso_required and stays unused (see the SSORequired response).'
       summary: Magic link consume
       tags:
         - Auth
@@ -453,12 +465,14 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/SSORequired'
         '422':
           $ref: '#/components/responses/Unprocessable'
   /v1/auth/magic-link/start:
     post:
       operationId: post_v1_auth_magic_link_start
-      description: 'Begins passwordless email sign-in by emailing a single-use link to the account holding the address. It answers the same whether or not the address has an account, takes the same minimum time, and sends nothing when it has none. The link is stored and emailed after the answer, so whether the email could be delivered does not change the answer either. An empty email is refused with 422 auth.email_required. Asked for from an organisation''s sign-in page (tenant_id), it is refused with 403 auth.method_disabled when that organisation has magic links off; from the console (no tenant_id) the account''s own organisation decides, and nothing is sent when it has them off. A link lives for the organisation''s magic_link_ttl_minutes and works once. With app hosted_login the link opens the hosted login''s magic page and, once exchanged at the magic-link session call, continues the sign-in journey at return_to (kept only if it is this service''s authorize endpoint); otherwise it opens the console''s, exchanged at the consume call. Requests are bounded to three per address (then one every five minutes) and ten per caller (then one a minute), counted whether or not the address has an account: 429 past either. A link sent is recorded as auth.magic_link_requested in the audit trail of the organisation that asked, or the account''s own.'
+      description: 'Begins passwordless email sign-in by emailing a single-use link to the account holding the address. It answers the same whether or not the address has an account, takes the same minimum time, and sends nothing when it has none. The link is stored and emailed after the answer, so whether the email could be delivered does not change the answer either. An empty email is refused with 422 auth.email_required. Asked for from an organisation''s sign-in page (tenant_id), it is refused with 403 auth.method_disabled when that organisation has magic links off; from the console (no tenant_id) the account''s own organisation decides, and nothing is sent when it has them off. A link lives for the organisation''s magic_link_ttl_minutes and works once; it goes to the address as the account stores it, and ends the earlier links to that address. With app hosted_login the link opens the hosted login''s magic page and, once exchanged at the magic-link session call, continues the sign-in journey at return_to (kept only if it is this service''s authorize endpoint); otherwise it opens the console''s, exchanged at the consume call. Requests are bounded to three per address (then one every five minutes) and ten per caller (then one a minute), counted whether or not the address has an account: 429 past either. A link sent is recorded as auth.magic_link_requested in the audit trail of the organisation that asked, or the account''s own. On a domain whose organisation requires single sign-on, the request is refused with 403 auth.sso_required once counted against the bounds, before any account is looked up, and no link is sent (see the SSORequired response).'
       summary: Magic link start
       tags:
         - Auth
@@ -496,6 +510,8 @@ paths:
                 properties:
                   message:
                     type: string
+        '403':
+          $ref: '#/components/responses/SSORequired'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -520,6 +536,9 @@ paths:
         A link for an organisation whose address rules refuse the browser's
         address answers 403 auth.address_not_allowed and opens no session.
         It is protected against cross-site requests as POST /v1/auth/session is (an allowed Origin, and the qe_csrf token echoed in X-CSRF-Token), and a body not sent as JSON is refused (415 unsupported_media_type).
+        A link to an address that must now sign in with single sign-on is
+        refused with 403 auth.sso_required and stays unused (see the SSORequired
+        response).
       tags:
         - Auth
       security: []
@@ -575,6 +594,9 @@ paths:
         again. Answers the same whatever the token names, and is bounded like
         the start call (429). As there, the link is stored and emailed after the
         answer, so whether the email could be delivered does not change it.
+        On a domain whose organisation requires single sign-on, the resend is
+        refused with 403 auth.sso_required and no link is sent (see the
+        SSORequired response).
       tags:
         - Auth
       security: []
@@ -599,6 +621,8 @@ paths:
                 properties:
                   message:
                     type: string
+        '403':
+          $ref: '#/components/responses/SSORequired'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/auth/me:
@@ -651,7 +675,7 @@ paths:
   /v1/auth/reset-password:
     post:
       operationId: post_v1_auth_reset_password
-      description: 'Completes the password-reset flow started by the forgot-password call by consuming the emailed token and setting the new password. The token is single-use and time-limited, so an expired or already-redeemed token is rejected. The new password is checked against the rules of the organisation the account belongs to (the platform baseline of 8 characters for an account with no organisation), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed and leaves the password and the token unchanged. On success the password is updated and the user can sign in with the new credentials. Every hosted sign-in (browser) session of the person ends too, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey; the audit record counts them (revoked_login_sessions). The completed reset is recorded in the account''s organisation''s audit trail as auth.password_reset_confirmed.'
+      description: 'Completes the password-reset flow started by the forgot-password call by consuming the emailed token and setting the new password. The token is single-use and time-limited, so an expired or already-redeemed token is rejected. The new password is checked against the rules of the organisation the account belongs to (the platform baseline of 8 characters for an account with no organisation), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed and leaves the password and the token unchanged. On success the password is updated and the user can sign in with the new credentials. Every hosted sign-in (browser) session of the person ends too, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey; the audit record counts them (revoked_login_sessions). The completed reset is recorded in the account''s organisation''s audit trail as auth.password_reset_confirmed. A link for an address that must now sign in with single sign-on is refused with 403 auth.sso_required; the password and the link stay as they were (see the SSORequired response). The account holder is emailed that it happened, with what to do if it wasn''t them.'
       summary: Reset password
       tags:
         - Auth
@@ -686,8 +710,12 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/SSORequired'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/auth/session:
     delete:
       operationId: delete_v1_auth_session
@@ -704,7 +732,7 @@ paths:
       description: 'Establishes a hosted-login SSO session and sets the HttpOnly qe_ls cookie so the browser can continue into the OAuth authorize and consent flow. When the account has a second factor enrolled, no cookie is set yet and a short-lived mfa_token is returned; complete it at the session-MFA call before the cookie is issued. Because this is a cookie session, later state-changing calls made with it are subject to CSRF protection. End the session with the corresponding destroy-session call.
 
 
-        Sign-in lockout: failed password sign-ins are counted per account and source network (the client IP behind the trusted proxies; an IPv4 address or an IPv6 /64). Reaching the threshold within the window locks the account for that network for the lock duration, so a stranger on another network cannot lock the owner out. The threshold, window and duration are those of the tenant of the OAuth client named by `client_id` (its authentication policy), or the platform defaults when no client is named. Failures from any mix of networks also lock the account everywhere at a looser cap (the threshold times LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER), and a source network that fails against too many distinct accounts (LOGIN_SPRAY_ACCOUNTS within LOGIN_SPRAY_WINDOW) is refused password sign-in for LOGIN_SPRAY_BLOCK. An address with no account is counted and answered exactly like a wrong password, and so is a wrong password for a suspended or otherwise inactive account (401 auth.invalid_credentials); only the right password is refused with 403 auth.account_inactive. When the counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable (fail closed). When the organisation of the named client_id has switched password sign-in off, the request is refused with 403 auth.method_disabled before any password is checked (the same answer for any account or none); without a client_id, the account''s own organisation decides once the password is verified. While the address rules of that client''s organisation are on, an address they refuse is answered 403 auth.address_not_allowed before any password is checked, and no cookie is set. A body not sent as JSON is refused (415 unsupported_media_type). Failed attempts are recorded as for POST /v1/auth/login.'
+        Sign-in lockout: failed password sign-ins are counted per account and source network (the client IP behind the trusted proxies; an IPv4 address or an IPv6 /64). Reaching the threshold within the window locks the account for that network for the lock duration, so a stranger on another network cannot lock the owner out. The threshold, window and duration are those of the tenant of the OAuth client named by `client_id` (its authentication policy), or the platform defaults when no client is named. Failures from any mix of networks also lock the account everywhere at a looser cap (the threshold times LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER), and a source network that fails against too many distinct accounts (LOGIN_SPRAY_ACCOUNTS within LOGIN_SPRAY_WINDOW) is refused password sign-in for LOGIN_SPRAY_BLOCK. An address with no account is counted and answered exactly like a wrong password, and so is a wrong password for a suspended or otherwise inactive account (401 auth.invalid_credentials); only the right password is refused with 403 auth.account_inactive. When the counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable (fail closed). When the organisation of the named client_id has switched password sign-in off, the request is refused with 403 auth.method_disabled before any password is checked (the same answer for any account or none); without a client_id, the account''s own organisation decides once the password is verified. While the address rules of that client''s organisation are on, an address they refuse is answered 403 auth.address_not_allowed before any password is checked, and no cookie is set. A body not sent as JSON is refused (415 unsupported_media_type). Failed attempts are recorded as for POST /v1/auth/login. On a domain whose organisation requires single sign-on, the sign-in is refused with 403 auth.sso_required before any account is looked up or password checked, and nothing is counted against the lockout (see the SSORequired response).'
       summary: Create SSO session
       tags:
         - Auth
@@ -759,7 +787,7 @@ paths:
         a code from the authenticator app set up for it, or skipped while its grace period
         runs, as for POST /v1/auth/mfa; a skipped setup never remembers the device.
         A body not sent as JSON is refused (415 unsupported_media_type).
-        A wrong proof is recorded in the organisation's audit trail as auth.sign_in_failed (method mfa, reason code_invalid, with the proof kind and the attempts left).
+        A wrong proof is recorded in the organisation's audit trail as auth.sign_in_failed (method mfa, reason code_invalid, with the proof kind and the attempts left). Fifty wrong proofs in a row, however far apart, lock the person's second-factor sign-in: that answer and every later one is 403 mfa.locked, even with the right proof, the lock is audited as auth.mfa_locked and the person is emailed. A right proof ends a shorter run; a password reset, a password change or set, or an administrator's reset of their factors lifts the lock.
       tags:
         - Auth
       security: []
@@ -832,6 +860,8 @@ paths:
           $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/auth/register:
     post:
       operationId: post_v1_auth_register
@@ -852,6 +882,11 @@ paths:
         auth.address_not_allowed, and no account is created.
         A body not sent as JSON is refused (415 unsupported_media_type).
         Where the organisation has password sign-in switched off, it is refused with 403 auth.method_disabled (the answer password sign-in gives) and nothing is created.
+
+        On a domain whose organisation requires single sign-on, the registration
+        is refused with 403 auth.sso_required before anything else is checked,
+        and nothing is created: the identity provider creates the account (see
+        the SSORequired response).
       tags:
         - Auth
       security: []
@@ -903,6 +938,8 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/auth/sign-in-methods:
     get:
       operationId: get_v1_auth_sign_in_methods
@@ -969,7 +1006,7 @@ paths:
     post:
       operationId: post_v1_auth_password
       summary: Change or set my password
-      description: 'Rotates (or sets) the signed-in user''s password. current_password is required only when one is already set; a social/passkey account may set one by omitting it. Other sessions are revoked. The new password must meet the rules of the organisation the account belongs to (not the session''s tenant; the platform baseline of 8 characters for an account with no organisation), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed. Self-service. Every hosted sign-in (browser) session of the person ends too, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey; the audit record counts them (revoked_login_sessions). The session the change is made from is kept.'
+      description: 'Rotates (or sets) the signed-in user''s password. current_password is required only when one is already set; a social/passkey account may set one by omitting it. It needs a step-up while the caller holds a second factor (403 step_up_required), and otherwise a recent sign-in (403 recent_sign_in_required). Other sessions are revoked. The new password must meet the rules of the organisation the account belongs to (not the session''s tenant; the platform baseline of 8 characters for an account with no organisation), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed. Self-service. Every hosted sign-in (browser) session of the person ends too, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey; the audit record counts them (revoked_login_sessions). The session the change is made from is kept. The account holder is emailed that it happened, with what to do if it wasn''t them.'
       tags:
         - Auth
       security:
@@ -1008,6 +1045,8 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/auth/trusted-devices:
     get:
       operationId: get_v1_auth_trusted_devices
@@ -1365,7 +1404,7 @@ paths:
   /v1/auth/signup:
     post:
       operationId: post_v1_auth_signup
-      description: 'Registers a new user from an email and password and returns a token pair alongside the created user record. The password must meet the platform baseline (8 characters), the offline strength baseline and, when enabled, the breached-password check (422 naming the rule that failed). The new user is tenant-less: no tenant is created here, so the returned token carries no tenant scope. Create a tenant through the Identity Management API before any tenant-scoped call, after which the creator becomes the tenant owner. An address that already has an account is refused with a neutral 422 unprocessable that does not name the reason (it suggests signing in or resetting the password), every attempt takes at least the same minimum time, and the endpoint is rate limited.'
+      description: 'Registers a new user from an email and password and returns a token pair alongside the created user record. The password must meet the platform baseline (8 characters), the offline strength baseline and, when enabled, the breached-password check (422 naming the rule that failed). The new user is tenant-less: no tenant is created here, so the returned token carries no tenant scope. Create a tenant through the Identity Management API before any tenant-scoped call, after which the creator becomes the tenant owner. An address that already has an account is refused with a neutral 422 unprocessable that does not name the reason (it suggests signing in or resetting the password), every attempt takes at least the same minimum time, and the endpoint is rate limited. On a domain whose organisation requires single sign-on, the sign-up is refused with 403 auth.sso_required before anything else is checked, and nothing is created: the identity provider creates the account (see the SSORequired response).'
       summary: Sign up
       tags:
         - Auth
@@ -1394,10 +1433,14 @@ paths:
                 user_id: 018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f
               schema:
                 $ref: '#/components/schemas/SignupResponse'
+        '403':
+          $ref: '#/components/responses/SSORequired'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/auth/switch-tenant:
     post:
       operationId: post_v1_auth_switch_tenant
@@ -1496,7 +1539,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/loginBeginInput'
-      description: 'Begins a passkey sign-in ceremony and returns its session_id and the WebAuthn request options. Every ceremony is discoverable: the options carry no allowCredentials, and the answer is the same whether or not the email (optional; an empty body is allowed) has an account or a passkey. With an email, only a passkey of that account can finish the ceremony. The browser that begins it is given an HttpOnly binding cookie (qe_passkey, __Host- prefixed outside dev) naming the ceremony; only that browser can finish it at POST /v1/passkeys/login/session. A body not sent as JSON is refused (415 unsupported_media_type).'
+      description: 'Begins a passkey sign-in ceremony and returns its session_id and the WebAuthn request options. Every ceremony is discoverable: the options carry no allowCredentials, and the answer is the same whether or not the email (optional; an empty body is allowed) has an account or a passkey. With an email, only a passkey of that account can finish the ceremony. The browser that begins it is given an HttpOnly binding cookie (qe_passkey, __Host- prefixed outside dev) naming the ceremony; only that browser can finish it at POST /v1/passkeys/login/session. A body not sent as JSON is refused (415 unsupported_media_type). On a domain whose organisation requires single sign-on, a ceremony begun with that email is refused with 403 auth.sso_required before the address is looked up (see the SSORequired response).'
       responses:
         '200':
           description: The ceremony's session_id and the WebAuthn request options (publicKey), without allowCredentials
@@ -1511,6 +1554,8 @@ paths:
                   session_id:
                     type: string
                     format: uuid
+        '403':
+          $ref: '#/components/responses/SSORequired'
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
         '422':
@@ -1530,7 +1575,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/loginFinishInput'
-      description: 'The token form of passkey sign-in: completes the ceremony with the assertion and returns the token pair, setting no cookie, for a caller that keeps tokens on a server (such as the console''s). A browser signs in to the hosted login with POST /v1/passkeys/login/session instead, so no token pair reaches its script. A body not sent as JSON is refused (415 unsupported_media_type). When the account''s organisation has switched passkeys off, the sign-in is refused with 403 passkey.disabled before the assertion is verified. A refused ceremony or assertion is recorded in the organisation''s audit trail as auth.sign_in_failed (method passkey, reason the error code), naming the account when it was identified.'
+      description: 'The token form of passkey sign-in: completes the ceremony with the assertion and returns the token pair, setting no cookie, for a caller that keeps tokens on a server (such as the console''s). A browser signs in to the hosted login with POST /v1/passkeys/login/session instead, so no token pair reaches its script. A body not sent as JSON is refused (415 unsupported_media_type). When the account''s organisation has switched passkeys off, the sign-in is refused with 403 passkey.disabled before the assertion is verified. A refused ceremony or assertion is recorded in the organisation''s audit trail as auth.sign_in_failed (method passkey, reason the error code), naming the account when it was identified. A passkey of an account on a domain whose organisation requires single sign-on is refused with 403 auth.sso_required (see the SSORequired response).'
       responses:
         '201':
           description: Created
@@ -1538,6 +1583,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TokenPair'
+        '403':
+          $ref: '#/components/responses/SSORequired'
         '404':
           $ref: '#/components/responses/NotFound'
         '415':
@@ -1550,7 +1597,7 @@ paths:
     post:
       operationId: post_v1_passkeys_login_session
       summary: Login finish (hosted)
-      description: 'The hosted form of passkey sign-in: completes the ceremony with the assertion and sets the hosted-login SSO cookie (qe_ls), so the browser continues into the OAuth authorize flow, answering with the user id only: no token reaches the page''s script. Only the browser that began the ceremony, holding the binding cookie from POST /v1/passkeys/login/begin, finishes it here; any other is refused with 403 passkey.browser_mismatch and the ceremony is left untouched. It is protected against cross-site requests as POST /v1/auth/session is, and a body not sent as JSON is refused (415 unsupported_media_type). When the account''s organisation has switched passkeys off, the sign-in is refused with 403 passkey.disabled before the assertion is verified. A refused ceremony or assertion is recorded in the organisation''s audit trail as auth.sign_in_failed (method passkey, reason the error code), naming the account when it was identified.'
+      description: 'The hosted form of passkey sign-in: completes the ceremony with the assertion and sets the hosted-login SSO cookie (qe_ls), so the browser continues into the OAuth authorize flow, answering with the user id only: no token reaches the page''s script. Only the browser that began the ceremony, holding the binding cookie from POST /v1/passkeys/login/begin, finishes it here; any other is refused with 403 passkey.browser_mismatch and the ceremony is left untouched. It is protected against cross-site requests as POST /v1/auth/session is, and a body not sent as JSON is refused (415 unsupported_media_type). When the account''s organisation has switched passkeys off, the sign-in is refused with 403 passkey.disabled before the assertion is verified. A refused ceremony or assertion is recorded in the organisation''s audit trail as auth.sign_in_failed (method passkey, reason the error code), naming the account when it was identified. A passkey of an account on a domain whose organisation requires single sign-on is refused with 403 auth.sso_required, and no cookie is set (see the SSORequired response).'
       tags:
         - Passkeys
       security: []
@@ -1662,7 +1709,10 @@ paths:
         user's with 400 passkey.session_mismatch. Refused with 403
         passkey.disabled when the user's organization has switched passkeys off
         since the ceremony began. Accepts the hosted-login session cookie like
-        Register begin, with the same CSRF requirement.
+        Register begin, with the same CSRF requirement. The new passkey is
+        audited as passkey.registered (its id and name) in the audit trail of
+        the organization the session is in, and the account holder is emailed
+        that a passkey was added.
       responses:
         '204':
           description: 'Created'
@@ -1679,7 +1729,7 @@ paths:
   /v1/signup/passkey/begin:
     post:
       operationId: post_v1_signup_passkey_begin
-      description: 'Starts the passwordless counterpart to email/password signup, returning the WebAuthn credential-creation options the authenticator needs to mint a passkey. No password is created and no user exists yet; the account is materialized only when the ceremony completes. Finish registration by returning the signed attestation to the passkey-signup finish call. An address already taken is refused, here or at the finish call, with the neutral 422 unprocessable of POST /v1/auth/signup, which does not name the reason; every attempt here takes at least the same minimum time.'
+      description: 'Starts the passwordless counterpart to email/password signup, returning the WebAuthn credential-creation options the authenticator needs to mint a passkey. No password is created and no user exists yet; the account is materialized only when the ceremony completes. Finish registration by returning the signed attestation to the passkey-signup finish call. An address already taken is refused, here or at the finish call, with the neutral 422 unprocessable of POST /v1/auth/signup, which does not name the reason; every attempt here takes at least the same minimum time. On a domain whose organisation requires single sign-on, the ceremony is refused with 403 auth.sso_required and nothing is created (see the SSORequired response).'
       summary: Passkey-first signup begin (tenant-less)
       tags:
         - Passkeys
@@ -1712,6 +1762,8 @@ paths:
                   session_id:
                     type: string
                     format: uuid
+        '403':
+          $ref: '#/components/responses/SSORequired'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -1773,7 +1825,7 @@ paths:
   /v1/register/passkey/begin:
     post:
       operationId: post_v1_register_passkey_begin
-      description: 'Starts the passwordless counterpart to hosted tenant signup, returning the WebAuthn credential-creation options for a passkey scoped to the supplied tenant. It is gated by the tenant''s self-registration policy and is refused when self-registration is disabled. Finish the ceremony by returning the signed attestation to the tenant-scoped passkey-register finish call. Where the organisation has passkeys switched off, it is refused with 403 passkey.disabled before a ceremony starts. An address already taken is refused, here or at the finish call, with the neutral 422 unprocessable of POST /v1/auth/signup, which does not name the reason; every attempt here takes at least the same minimum time.'
+      description: 'Starts the passwordless counterpart to hosted tenant signup, returning the WebAuthn credential-creation options for a passkey scoped to the supplied tenant. It is gated by the tenant''s self-registration policy and is refused when self-registration is disabled. Finish the ceremony by returning the signed attestation to the tenant-scoped passkey-register finish call. Where the organisation has passkeys switched off, it is refused with 403 passkey.disabled before a ceremony starts. An address already taken is refused, here or at the finish call, with the neutral 422 unprocessable of POST /v1/auth/signup, which does not name the reason; every attempt here takes at least the same minimum time. On a domain whose organisation requires single sign-on, the ceremony is refused with 403 auth.sso_required and nothing is created (see the SSORequired response).'
       summary: Passkey-first signup begin (tenant-scoped hosted signup)
       tags:
         - Passkeys
@@ -1871,7 +1923,8 @@ paths:
         user's passkey, like an unknown id, is not found and is left unchanged.
         Also accepts the hosted-login session cookie (qe_ls), with the CSRF
         token, in place of a bearer token. Delete passkey does not: it takes a
-        bearer token only.
+        bearer token only. Audited as passkey.renamed, with the new and previous
+        name, in the audit trail of the organization the session is in.
       tags:
         - Passkeys
       parameters:
@@ -1932,7 +1985,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Deletes one of the caller''s passkeys. Needs a recent step-up.'
+      description: 'Deletes one of the caller''s passkeys. Needs a recent step-up. Audited as passkey.deleted (its id and name) in the audit trail of the organization the session is in, and the account holder is emailed that a passkey was removed. Removing the account''s only way to sign in is refused with 409 auth.last_sign_in_method and recorded there as auth.sign_in_method_removal_refused.'
       responses:
         '204':
           description: No Content
@@ -2003,7 +2056,7 @@ paths:
       description: >-
         Adds an email or SMS factor (or returns the one already held for that address, untouched) and
         sends a code to confirm it at /v1/mfa/otp/factors/{id}/confirm. A person may hold five email and
-        SMS factors (409 mfa.factor_limit). A code to one factor can be sent at most every 30 seconds, ten an hour to one person and five an hour to one address or number over every account; past that the call answers 429 mfa.code_send_limited with retry_after (seconds). A new code makes the factor's earlier unused code stop working. An SMS code needs an organisation whose plan includes SMS (403 upgrade_required). Each code sent is audited as mfa.otp_sent.
+        SMS factors (409 mfa.factor_limit). A code to one factor can be sent at most every 30 seconds, ten an hour to one person and five an hour to one address or number over every account; past that the call answers 429 mfa.code_send_limited with retry_after (seconds). A new code makes the factor's earlier unused code stop working. A code sent here only confirms the new factor. An SMS code needs an organisation whose plan includes SMS (403 upgrade_required). Each code sent is audited as mfa.otp_sent.
       responses:
         '201':
           description: Created
@@ -2043,7 +2096,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Removes one of the caller''s SMS or email factors. Needs a recent step-up.'
+      description: 'Removes one of the caller''s SMS or email factors. Needs a recent step-up. The account holder is emailed that it happened, with what to do if it wasn''t them.'
       responses:
         '204':
           description: No Content
@@ -2074,7 +2127,7 @@ paths:
         - apiKeyAuth: []
       description: >-
         Sends a step-up code to one of the caller's confirmed email or SMS factors, to verify at
-        /v1/mfa/otp/verify. A code to one factor can be sent at most every 30 seconds, ten an hour to one person and five an hour to one address or number over every account; past that the call answers 429 mfa.code_send_limited with retry_after (seconds). A new code makes the factor's earlier unused code stop working. An SMS code needs an organisation whose plan includes SMS (403 upgrade_required). Each code sent is audited as mfa.otp_sent.
+        /v1/mfa/otp/verify. A code to one factor can be sent at most every 30 seconds, ten an hour to one person and five an hour to one address or number over every account; past that the call answers 429 mfa.code_send_limited with retry_after (seconds). A new code makes the factor's earlier unused code stop working. A step-up code works only for a step-up, and a code sent for a sign-in or to confirm a new factor never counts here; its message says what it is for. An SMS code needs an organisation whose plan includes SMS (403 upgrade_required). Each code sent is audited as mfa.otp_sent.
       responses:
         '201':
           description: Created
@@ -2117,7 +2170,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/verifyInput'
-      description: 'Completes adding an SMS or email factor with the code sent to it.'
+      description: 'Completes adding an SMS or email factor with the code sent to it. The account holder is emailed that it happened, with what to do if it wasn''t them.'
       responses:
         '201':
           description: Created
@@ -2212,7 +2265,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Replaces the caller''s recovery codes; the new ones are shown only in this answer and the old ones stop working. Needs a recent step-up.'
+      description: 'Replaces the caller''s recovery codes; the new ones are shown only in this answer and the old ones stop working. Needs a recent step-up. The account holder is emailed that it happened, with what to do if it wasn''t them.'
       responses:
         '201':
           description: Created
@@ -2238,6 +2291,8 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/mfa/step-up/status:
     get:
       operationId: get_v1_mfa_step_up_status
@@ -2258,7 +2313,9 @@ paths:
         These need a step-up, and answer 403 step_up_required without one
         (with window_seconds and, when the organisation limits them,
         allowed_methods): adding or removing the caller's own factors and
-        sign-in methods while they hold a factor their organisation counts;
+        sign-in methods, setting or changing their password, starting a
+        change of their email address and deleting their account, while they
+        hold a factor their organisation counts;
         switching the authenticator app off or replacing recovery codes;
         creating, changing or revoking API keys, service principals, agents,
         OAuth clients and their secrets, SCIM tokens, credentials, webhooks
@@ -2271,10 +2328,14 @@ paths:
         retention, anomaly settings and log streaming; granting or revoking a
         role's permissions, assigning or removing user and group roles,
         creating invitations, and writing relationship tuples and attribute
-        policies; reactivating or restoring a user; starting a change of the
-        caller's own email address while they hold a factor; and updating or
-        deleting the organisation, deleting or purging a user, or deleting
-        one's own account. An API key, service principal or agent holds no
+        policies; reactivating or restoring a user; and updating or deleting
+        the organisation, or deleting or purging a user. A caller holding no
+        such factor has nothing to step up with, so the changes to their own
+        account need a sign-in within the organisation's step-up window
+        instead, and answer 403 recent_sign_in_required (with window_seconds)
+        otherwise: sign in again, then retry. A session opened by switching
+        to, joining or creating an organisation continues the sign-in it came
+        from. An API key, service principal or agent holds no
         session, so it cannot perform these. The hosted login's own sign-in
         counts as a step-up for the organisation's window after it happens,
         when that sign-in proved a second factor itself (a met challenge or a
@@ -2324,7 +2385,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Sends a step-up request for the calling session to every phone the caller has linked, and answers 202 with its challenge_id and expires_at. Once the request is approved on a phone, complete the step-up with the complete call. A caller with no linked phone gets 404 mfa.push_device_not_found; a principal without a session (an API key, agent) cannot step up.'
+      description: 'Sends a step-up request for the calling session to every phone the caller has linked, and answers 202 with its challenge_id, expires_at and the number to show for the phone to send back when approving. Once the request is approved on a phone, complete the step-up with the complete call. A caller with no linked phone gets 404 mfa.push_device_not_found; a principal without a session (an API key, agent) cannot step up. Requests are bounded as at sign-in (429 mfa.push_limited).'
       responses:
         '202':
           description: Request sent
@@ -2339,10 +2400,14 @@ paths:
                   expires_at:
                     type: string
                     format: date-time
+                  number:
+                    type: integer
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/mfa/push/step-up/{id}/complete:
     post:
       operationId: post_v1_mfa_push_step_up_complete
@@ -2418,7 +2483,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Removes the caller''s authenticator app and recovery codes. Needs a recent step-up.'
+      description: 'Removes the caller''s authenticator app and recovery codes. Needs a recent step-up. The account holder is emailed that it happened, with what to do if it wasn''t them.'
       responses:
         '204':
           description: No Content
@@ -2447,7 +2512,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/confirmEnrollInput'
-      description: 'Completes adding an authenticator app with a code from it, and returns the recovery codes.'
+      description: 'Completes adding an authenticator app with a code from it, and returns the recovery codes. The account holder is emailed that it happened, with what to do if it wasn''t them.'
       responses:
         '201':
           description: Created
@@ -2473,6 +2538,8 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/mfa/totp/enroll/start:
     post:
       operationId: post_v1_mfa_totp_enroll_start
@@ -2561,6 +2628,8 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Overloaded'
   /v1/mfa/webauthn/challenge:
     post:
       operationId: post_v1_mfa_webauthn_challenge
@@ -2662,7 +2731,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
     post:
       operationId: post_v1_mfa_push_devices
-      description: 'Registers a mobile device for push-based MFA, or rotates the credential of an existing one, from its platform push token. The resulting device token is returned only in this response and cannot be retrieved later, so the device must persist it to answer future challenges. That token is required when responding to a challenge; revoke the device with the corresponding delete call.'
+      description: 'Registers a mobile device for push-based MFA, or rotates the credential of an existing one, from its platform push token. The resulting device token is returned only in this response and cannot be retrieved later, so the device must persist it to answer future challenges. That token is required when responding to a challenge; revoke the device with the corresponding delete call. The account holder is emailed that it happened, with what to do if it wasn''t them.'
       summary: Register or rotate a push-MFA device
       tags: [MFA]
       security:
@@ -2699,7 +2768,7 @@ paths:
   /v1/mfa/push/devices/{id}:
     delete:
       operationId: delete_v1_mfa_push_devices_ById
-      description: 'Revokes a registered push-MFA device by its identifier so it can no longer approve challenges. Its device token is invalidated immediately and any pending challenge to it can no longer be answered. Re-enroll the device with the register-device call if push approval is needed again.'
+      description: 'Revokes a registered push-MFA device by its identifier so it can no longer approve challenges. Its device token is invalidated immediately and any pending challenge to it can no longer be answered. Re-enroll the device with the register-device call if push approval is needed again. The account holder is emailed that it happened, with what to do if it wasn''t them.'
       summary: Revoke a push-MFA device
       tags: [MFA]
       security:
@@ -2727,6 +2796,7 @@ paths:
         expiry, since removing itself grants nothing. 401 mfa.push_unauthorized
         when the device or credential does not match. Audited as
         mfa.push_device_unlinked.
+        The account holder is emailed that it happened, with what to do if it wasn't them.
       tags:
         - MFA
       security: []
@@ -2768,7 +2838,8 @@ paths:
         nobody copies an access token. The code is returned only in this response, shown grouped for
         reading (ABCDE-FGHJK); it links one phone, once, within five minutes, and asking for a new one
         stops the caller's earlier unused codes working. Needs a recent step-up when the caller already
-        holds a second factor (403 step_up_required). At most ten an hour (429 with retry_after).
+        holds a second factor (403 step_up_required), and otherwise a recent sign-in (403
+        recent_sign_in_required). At most ten an hour (429 with retry_after).
         Audited as mfa.push_pairing_created. The phone exchanges the code with the claim call; the
         status call tells the screen showing it when it has been used.
       tags: [MFA]
@@ -2861,6 +2932,7 @@ paths:
         the account's user_id, the device and its device_token, which is shown only here. A wrong, used or
         expired code, or one whose account is no longer active, answers 401 mfa.pairing_code_invalid, all
         alike. Throttled per address (429). Audited as mfa.push_device_linked.
+        The account holder is emailed that it happened, with what to do if it wasn't them.
       tags: [MFA]
       security: []
       requestBody:
@@ -2918,7 +2990,7 @@ paths:
   /v1/mfa/push/challenges/{id}/respond:
     post:
       operationId: post_v1_mfa_push_challenges_ById_respond
-      description: 'Records the user''s approval or denial of a push-MFA challenge, called by the enrolled device rather than the browser. It is authenticated by the device_token issued at registration together with the matching user_id, not a session credential, which is why no bearer token is required. Once recorded, the polling sign-in surface observes the outcome through the challenge-status call and proceeds or fails accordingly.'
+      description: 'Records the user''s approval or denial of a push-MFA challenge, called by the enrolled device rather than the browser. It is authenticated by the device_token issued at registration together with the matching user_id, not a session credential, which is why no bearer token is required. Once recorded, the polling sign-in surface observes the outcome through the challenge-status call and proceeds or fails accordingly. An approval must carry the number shown where the request was asked for (the sign-in screen, or the step-up prompt); with another number the request is denied and the call answers 403 mfa.push_number_mismatch.'
       summary: Approve or deny a push-MFA challenge
       tags: [MFA]
       security: []
@@ -2938,10 +3010,20 @@ paths:
                 user_id: { type: string, format: uuid }
                 device_token: { type: string }
                 approved: { type: boolean }
+                number: { type: integer, minimum: 10, maximum: 99, description: The number shown where the request was asked for; required to approve. }
       responses:
-        '204': { description: Challenge response recorded }
+        '200':
+          description: Challenge response recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [approved, denied] }
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
   /v1/check:
@@ -3045,7 +3127,7 @@ paths:
   /v1/roles/{roleID}/permissions:
     get:
       operationId: get_v1_roles_ByRoleID_permissions
-      description: 'Lists the permissions currently granted to a role, resolving what any holder of that role can do. Use it to review a role before changing its grants. Add a permission with the grant-permission-to-role call and remove one with the revoke-permission-from-role call.'
+      description: 'Lists the permissions currently granted to a role, resolving what any holder of that role can do. Use it to review a role before changing its grants. Add a permission with the grant-permission-to-role call and remove one with the revoke-permission-from-role call, or set them all at once with PUT /v1/tenants/{tenantID}/roles/{roleID}/permissions.'
       summary: List permissions granted to a role
       tags:
         - RBAC
@@ -3079,7 +3161,7 @@ paths:
   /v1/roles/{roleID}/permissions/{permID}:
     delete:
       operationId: delete_v1_roles_ByRoleID_permissions_ByPermID
-      description: 'Revokes a permission from a role; holders lose it from their effective permissions as soon as this returns, unless another role still grants it. This is the counterpart to the grant-permission-to-role call. Confirm the resulting grants with the list-role-permissions call.'
+      description: 'Revokes a permission from a role; holders lose it from their effective permissions as soon as this returns, unless another role still grants it. This is the counterpart to the grant-permission-to-role call. Confirm the resulting grants with the list-role-permissions call. A built-in role (owner, every permission; admin, all but tenant.delete; viewer, every read but secret.read; member, none) holds what its definition says, so it can''t be changed (403 rbac.system_role_fixed), and nobody takes away a permission they don''t hold (403 rbac.grant_exceeds_caller). Audited in the organization''s audit log as role.permission_revoked, naming the role, the permission (permission_id, permission) and the caller.'
       summary: Revoke permission from role
       tags:
         - RBAC
@@ -3110,7 +3192,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     post:
       operationId: post_v1_roles_ByRoleID_permissions_ByPermID
-      description: 'Grants a permission to a role, so every current and future holder of the role gains it through their effective permissions. The role and permission must both exist, and the grant is idempotent. Reverse it with the revoke-permission-from-role call, and inspect the role''s grants with the list-role-permissions call. The caller must hold the permission in this organization, unless they are an owner (403 rbac.grant_exceeds_caller otherwise).'
+      description: 'Grants a permission to a role, so every current and future holder of the role gains it through their effective permissions. The role and permission must both exist, and the grant is idempotent. Reverse it with the revoke-permission-from-role call, and inspect the role''s grants with the list-role-permissions call. The caller must hold the permission in this organization, unless they are an owner (403 rbac.grant_exceeds_caller otherwise). A built-in role (owner, every permission; admin, all but tenant.delete; viewer, every read but secret.read; member, none) holds what its definition says, so it can''t be changed (403 rbac.system_role_fixed). Audited in the organization''s audit log as role.permission_granted, naming the role, the permission (permission_id, permission) and the caller.'
       summary: Grant permission to role
       tags:
         - RBAC
@@ -3187,6 +3269,8 @@ paths:
         The caller must hold every permission the role carries in this organization
         (403 rbac.grant_exceeds_caller, naming one it lacks), and only an owner gives the
         owner role (403 rbac.owner_only); an owner may give any role.
+        A member holding no role until now takes a seat; when that leaves more seats in use
+        than the plan has, nothing is granted (402 billing.plan_limit, metadata resource seats).
       tags:
         - RBAC
       parameters:
@@ -3215,6 +3299,7 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '402': {description: 'The plan has no seat left for a member holding no role (billing.plan_limit).'}
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -3249,6 +3334,225 @@ paths:
           description: Revoked
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/roles/{roleID}:
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_roles_ByRoleID
+      summary: Rename a role
+      description: >-
+        Renames a custom role or changes its description; a field left out
+        stays as it is. A built-in role (owner, admin, member, viewer) can't be
+        changed (403 rbac.system_role_fixed), a name another role of the
+        organisation has is refused with 409 rbac.role_name_exists, and a role
+        of another organisation answers 404. Audited as role.updated with the
+        old and new value of each field that changed; a request that changes
+        nothing records nothing. Needs role.write and a recent sign-in
+        (step-up).
+      tags:
+        - RBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: roleID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoleUpdate'
+      responses:
+        '200':
+          description: The role
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Role'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_roles_ByRoleID
+      summary: Delete a role
+      description: >-
+        Deletes a custom role. It is refused with 409 rbac.role_in_use while
+        anyone holds it, any group is granted it, or an invitation that can
+        still be accepted or resent offers it, with how many of each (metadata
+        people, groups, invitations): give them another role first, since
+        someone whose only role it is would leave the organisation with it. A
+        built-in role (owner, admin, member, viewer) can't be deleted (403
+        rbac.system_role_fixed), and a role of another organisation answers 404.
+        Audited as role.deleted with its name. Needs role.write and a recent
+        sign-in (step-up).
+      tags:
+        - RBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: roleID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/tenants/{tenantID}/roles/{roleID}/permissions:
+    put:
+      operationId: put_v1_tenants_ByTenantID_roles_ByRoleID_permissions
+      summary: Set a role's permissions
+      description: >-
+        Makes the listed permissions the whole of a custom role's permissions,
+        in one transaction: the ones not listed are taken away, and the response
+        lists the role's permissions as they now are. The caller must hold every
+        permission added or taken away, unless they are an owner (403
+        rbac.grant_exceeds_caller naming the first one; nothing changes). A
+        built-in role (owner, admin, member, viewer) can't be changed (403
+        rbac.system_role_fixed); a role of another organisation, or a permission
+        ID that doesn't exist, answers 404. Send [] to take every permission
+        away. Audited as one role.permissions_set listing the permissions added
+        and removed; a request that changes nothing records nothing. Needs
+        role.write and a recent sign-in (step-up).
+      tags:
+        - RBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: roleID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - permission_ids
+              properties:
+                permission_ids:
+                  type: array
+                  maxItems: 500
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        '200':
+          description: The role's permissions as they now are
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Permission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/roles/{roleID}/holders:
+    get:
+      operationId: get_v1_tenants_ByTenantID_roles_ByRoleID_holders
+      summary: Who holds a role
+      description: >-
+        One page of the people holding one of the organisation's roles, by
+        email, with whether they hold it directly and the groups they hold it
+        through, and every group granted the role. Needs role.read. 404 for a
+        role of another organisation.
+      tags:
+        - RBAC
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: roleID, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 500, default: 100}}
+        - {name: cursor, in: query, required: false, description: The next_cursor of the previous page., schema: {type: string}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The role's holders
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [people, groups]
+                properties:
+                  people:
+                    type: array
+                    items:
+                      type: object
+                      required: [user_id, email, display_name, direct, via_groups]
+                      properties:
+                        user_id: {type: string, format: uuid}
+                        email: {type: string}
+                        display_name: {type: string}
+                        direct: {type: boolean}
+                        via_groups:
+                          type: array
+                          items: {type: object, required: [id, name], properties: {id: {type: string, format: uuid}, name: {type: string}}}
+                  groups:
+                    type: array
+                    items: {type: object, required: [id, name], properties: {id: {type: string, format: uuid}, name: {type: string}}}
+                  next_cursor: {type: string}
+        '400':
+          $ref: '#/components/responses/Unprocessable'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3326,7 +3630,7 @@ paths:
   /v1/users/{userID}/tenants/{tenantID}/permissions:
     get:
       operationId: get_v1_users_ByUserID_tenants_ByTenantID_permissions
-      description: 'Returns the flattened set of permission keys a user effectively holds in a tenant, combining direct role assignments with roles inherited through group membership. Use it to explain why a user can or cannot perform an action, complementing the single-permission decision from the permission-check call. It is read-only and reflects the grants in force at call time.'
+      description: 'Returns the flattened set of permission keys a user effectively holds in a tenant, combining direct role assignments with roles inherited through group membership, and in grants every grant behind them: each permission with the role granting it, held directly or through which group (one entry per role and group, so a permission granted twice appears twice). Use it to explain why a user can or cannot perform an action, complementing the single-permission decision from the permission-check call. It is read-only and reflects the grants in force at call time. Needs role.read.'
       summary: Effective permissions
       tags:
         - RBAC
@@ -3352,10 +3656,14 @@ paths:
               schema:
                 type: object
                 properties:
-                  items:
+                  permissions:
                     type: array
                     items:
                       type: string
+                  grants:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuthzGrantStep'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3365,7 +3673,7 @@ paths:
   /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}:
     delete:
       operationId: delete_v1_users_ByUserID_tenants_ByTenantID_roles_ByRoleID
-      description: 'Removes a directly assigned role from a user within the tenant; the user loses that role''s permissions unless a group still confers it. This is the counterpart to the assign-role-to-user call. Confirm the remaining grants with the effective-permissions call. Removing the owner role is refused with 409 tenant.last_owner, and nothing changes, when it would leave an organization with no active owner: make someone else an owner first.'
+      description: 'Removes a directly assigned role from a user within the tenant; the user loses that role''s permissions unless a group still confers it. This is the counterpart to the assign-role-to-user call. Confirm the remaining grants with the effective-permissions call. Removing the owner role is refused with 409 tenant.last_owner, and nothing changes, when it would leave an organization with no active owner: make someone else an owner first. Removing a role is held to the rule for giving it (403 rbac.grant_exceeds_caller, or rbac.owner_only for the owner role), and the person must not outrank the caller (403 rbac.target_is_owner / rbac.target_outranks_caller).'
       summary: Unassign role from user
       tags:
         - RBAC
@@ -3401,7 +3709,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     post:
       operationId: post_v1_users_ByUserID_tenants_ByTenantID_roles_ByRoleID
-      description: 'Assigns a role to a user within the tenant, adding the role''s permissions to that user''s effective permissions. The role must belong to the tenant and the user must already be a member of it, or have it as their home tenant; otherwise the call answers 404 rbac.user_or_role_not_found, the same for a missing id as for another tenant''s. The assignment is idempotent. Reverse it with the unassign-role-from-user call, and verify the outcome with the effective-permissions call. The caller must hold every permission the role carries in this organization (403 rbac.grant_exceeds_caller, naming one it lacks), and only an owner gives the owner role (403 rbac.owner_only); an owner may give any role.'
+      description: 'Assigns a role to a user within the tenant, adding the role''s permissions to that user''s effective permissions. The role must belong to the tenant and the user must already be a member of it, or have it as their home tenant; otherwise the call answers 404 rbac.user_or_role_not_found, the same for a missing id as for another tenant''s. The assignment is idempotent. Reverse it with the unassign-role-from-user call, and verify the outcome with the effective-permissions call. The caller must hold every permission the role carries in this organization (403 rbac.grant_exceeds_caller, naming one it lacks), and only an owner gives the owner role (403 rbac.owner_only); an owner may give any role. A person''s first role in the organization takes a seat (people holding a role, directly or through a group, plus pending invitations); when the plan''s seats are all taken it is refused with 402 billing.plan_limit (metadata resource seats, limit). Another role for someone who holds one takes no seat.'
       summary: Assign role to user
       tags:
         - RBAC
@@ -3431,6 +3739,7 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '402': {description: 'The plan has no seat left for a person''s first role (billing.plan_limit).'}
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -3471,7 +3780,7 @@ paths:
     post:
       operationId: post_v1_tenants_ByTenantID_abac_policies
       summary: Create ABAC policy
-      description: Creates a new ABAC policy for the tenant.
+      description: Creates a new ABAC policy for the tenant. An enabled deny for policy writes (resource type policy or *, action write or *) that would refuse its own author, judged on the attributes the route guard sees for the author's call now (their groups, roles, address and whether their session met a second factor), is refused with abac.policy_locks_out, as nobody could then remove it.
       tags:
         - ABAC
       parameters:
@@ -3544,7 +3853,7 @@ paths:
     patch:
       operationId: patch_v1_tenants_ByTenantID_abac_policies_ById
       summary: Update ABAC policy
-      description: Replaces all mutable fields of a policy. Send the full desired state.
+      description: Replaces all mutable fields of a policy. Send the full desired state. A deny that would refuse its author policy writes is refused with abac.policy_locks_out, as on create.
       tags:
         - ABAC
       parameters:
@@ -3617,6 +3926,108 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/abac/policies/{id}/versions:
+    get:
+      operationId: get_v1_tenants_ByTenantID_abac_policies_ById_versions
+      summary: List ABAC policy versions
+      description: 'Returns the policy''s saves, newest first (the last 200): each whole, as it left the policy, with who made it (saved_by, null for a machine caller) and when. A policy from before versions were kept starts with its state then as version 1. Restore one with the restore call. Requires policy.read.'
+      tags:
+        - ABAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The policy's versions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        version: {type: integer}
+                        name: {type: string}
+                        description: {type: string}
+                        effect: {type: string, enum: [allow, deny]}
+                        resource_type: {type: string}
+                        action: {type: string}
+                        condition: {type: object, additionalProperties: true}
+                        priority: {type: integer}
+                        enabled: {type: boolean}
+                        saved_by: {type: [string, 'null'], format: uuid}
+                        saved_at: {type: string, format: date-time}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/abac/policies/{id}/versions/{version}/restore:
+    post:
+      operationId: post_v1_tenants_ByTenantID_abac_policies_ById_versions_ByVersion_restore
+      summary: Restore an ABAC policy version
+      description: 'Saves one of the policy''s earlier versions as its next one, checked as any change is: a version whose name another policy has taken answers 409 abac.policy_name_exists, and one that would lock the caller out 422 abac.policy_locks_out. Returns the policy. Audited as abac_policy.restored, naming the version restored; webhooks receive abac_policy.updated. Requires policy.write. Needs a recent step-up.'
+      tags:
+        - ABAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The policy, as restored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ABACPolicy'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
   /v1/tenants/{tenantID}/abac/evaluate:
     post:
       operationId: post_v1_tenants_ByTenantID_abac_evaluate
@@ -3627,9 +4038,21 @@ paths:
         when ?explain=true, a trace of every policy evaluated.
         A deny policy whose condition compares an attribute the request doesn't
         supply applies (fail closed); an allow policy doesn't match. Supply the
-        resource's attributes (such as created_by) for policies that compare them:
-        the route guard and the permission checks supply only subject.id,
-        subject.type, subject.tenant_id, resource.type and resource.id.
+        resource's attributes (such as created_by) for policies that compare them.
+        The platform's own decisions (the route guard, the permission and
+        relationship checks, AuthZEN) supply what it knows of the user, which a
+        caller can't override: subject.id, subject.type, subject.tenant_id,
+        subject.groups and subject.roles (names in the organisation; roles held
+        directly or through a group), resource.type and resource.id. The route
+        guard, deciding on the person's own call, also supplies context.ip (the
+        client address) and context.mfa: true when the session's sign-in met a
+        second factor as the organisation's MFA requirement counts one (a
+        challenge, a passkey or a remembered device) or the session holds a step-up
+        still inside its window, false otherwise, and left out, so unknown, for an
+        application's token, whose session the platform doesn't hold.
+        With a draft, the unsaved policy is evaluated among the stored ones, new or
+        in place of the stored policy it replaces, and nothing is saved; an invalid
+        draft is refused with 422 as a save would be.
       tags:
         - ABAC
       parameters:
@@ -3665,6 +4088,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/Unprocessable'
   /v1/tenants/{tenantID}/relation-tuples:
@@ -3869,6 +4294,92 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/relation-tuples/types:
+    get:
+      operationId: get_v1_tenants_ByTenantID_relation_tuples_types
+      summary: List relationship object types
+      description: 'Lists the types of object the organisation''s relationship tuples name, with how many objects of each and how many tuples. Requires role.read.'
+      tags:
+        - ReBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Object types
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [type, objects, tuples]
+                      properties:
+                        type: {type: string}
+                        objects: {type: integer}
+                        tuples: {type: integer}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/relation-tuples/objects:
+    get:
+      operationId: get_v1_tenants_ByTenantID_relation_tuples_objects
+      summary: List relationship objects
+      description: 'Lists, a page at a time by id, the objects of one type the organisation''s relationship tuples name, each with how many tuples it has; next_cursor fetches the next page and total counts them all. Requires role.read.'
+      tags:
+        - ReBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - {name: type, in: query, required: true, description: 'The type of object, such as document.', schema: {type: string}}
+        - {name: limit, in: query, required: false, description: 'Page size, 1 to 500; 100 by default.', schema: {type: integer, minimum: 1, maximum: 500}}
+        - {name: cursor, in: query, required: false, description: 'The next_cursor of the previous page.', schema: {type: string}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Objects
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [object, id, tuples]
+                      properties:
+                        object: {type: string, description: '"type:id"'}
+                        id: {type: string}
+                        tuples: {type: integer}
+                  next_cursor:
+                    type: string
+                    description: Present when there is another page.
+                  total:
+                    type: integer
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/tenants/{tenantID}/relation-tuples/graph:
     get:
       operationId: get_v1_tenants_ByTenantID_relation_tuples_graph
@@ -3941,6 +4452,9 @@ paths:
                           type: string
                         label:
                           type: string
+                        name:
+                          type: string
+                          description: A user node's person, by display name or address, when they belong to the organisation.
                   edges:
                     type: array
                     items:
@@ -3960,11 +4474,81 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/authorization/decisions:
+    get:
+      operationId: get_v1_tenants_ByTenantID_authorization_decisions
+      summary: List access decisions
+      description: >-
+        The access decisions the organisation asked of GET /v1/check (source
+        check), the relationship check (relation_check), AuthZEN evaluation and
+        evaluations (authzen) and ABAC evaluate (abac_evaluate, or abac_draft
+        with an unsaved policy), newest first, a page at a time: who asked
+        (caller_type, caller_id and, for an application's token,
+        caller_client), about which subject, resource and action, the answer,
+        and the model, rule and reason that decided it. Decisions the platform
+        makes guarding its own routes are not kept. They are kept for 30 days
+        and written within a second or so of being answered; at a surge too
+        great to keep up with, some may not be kept. Requires policy.read,
+        since rule names the ABAC policy that decided.
+      tags:
+        - AuthZEN
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - {name: subject, in: query, required: false, description: 'Only decisions about this subject (a user id, or type:id).', schema: {type: string}}
+        - {name: source, in: query, required: false, schema: {type: string, enum: [check, relation_check, authzen, abac_evaluate, abac_draft]}}
+        - {name: allowed, in: query, required: false, description: 'Only allowed (true) or refused (false) decisions.', schema: {type: boolean}}
+        - {name: days, in: query, required: false, description: 'Decisions of the last 1 to 30 days; 30 by default.', schema: {type: integer, minimum: 1, maximum: 30}}
+        - {name: limit, in: query, required: false, description: 'Page size, 1 to 200; 50 by default.', schema: {type: integer, minimum: 1, maximum: 200}}
+        - {name: cursor, in: query, required: false, description: 'The next_cursor of the previous page.', schema: {type: string}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Decisions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, decided_at, source, subject, resource, action, allowed, model]
+                      properties:
+                        id: {type: string, format: uuid}
+                        decided_at: {type: string, format: date-time}
+                        source: {type: string, enum: [check, relation_check, authzen, abac_evaluate, abac_draft]}
+                        caller_type: {type: string, description: 'user, api_key, service or agent.'}
+                        caller_id: {type: string, format: uuid}
+                        caller_client: {type: string, description: 'The application whose token asked, when one did.'}
+                        subject: {type: string}
+                        resource: {type: string, description: '"permission" for a permission check, else type:id.'}
+                        action: {type: string, description: 'The permission key, relation or action.'}
+                        allowed: {type: boolean}
+                        model: {type: string, description: 'rbac, rebac, abac or none: the model that decided.'}
+                        rule: {type: string, description: 'The role, relation or ABAC policy that decided.'}
+                        reason_code: {type: string}
+                  next_cursor:
+                    type: string
+                    description: Present when there is another page.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/tenants/{tenantID}/access/v1/evaluation:
     post:
       operationId: post_v1_tenants_ByTenantID_access_v1_evaluation
       summary: AuthZEN evaluation
-      description: OpenID AuthZEN core PDP evaluation request, answered by the same composed decision as the permission and relation checks (an ABAC deny refuses; then roles, relationships and ABAC allow policies are a union). When resource.type is "permission", action.name is the permission key; otherwise resource becomes "type:id" and action.name the relation. The response context always carries decided_by.
+      description: OpenID AuthZEN core PDP evaluation request, answered by the same composed decision as the permission and relation checks (an ABAC deny refuses; then roles, relationships and ABAC allow policies are a union). When resource.type is "permission", action.name is the permission key; otherwise resource becomes "type:id" and action.name the relation. The response context always carries decided_by. ABAC policies see the request's properties, subject.properties as subject.*, resource.properties as resource.*, action.properties as action.*, and context (but for explain) as context.*. What the platform knows of the subject (id, type, tenant_id, and for a person, groups and roles) wins over a property of the same name, as resource.type and resource.id and action.name win over theirs.
       tags:
         - AuthZEN
       parameters:
@@ -3993,6 +4577,10 @@ paths:
                       type: string
                     id:
                       type: string
+                    properties:
+                      type: object
+                      description: The subject's attributes for ABAC policies (subject.*).
+                      additionalProperties: true
                 resource:
                   type: object
                   properties:
@@ -4000,14 +4588,23 @@ paths:
                       type: string
                     id:
                       type: string
+                    properties:
+                      type: object
+                      description: The resource's attributes for ABAC policies (resource.*).
+                      additionalProperties: true
                 action:
                   type: object
                   properties:
                     name:
                       type: string
+                    properties:
+                      type: object
+                      description: The action's attributes for ABAC policies (action.*).
+                      additionalProperties: true
                 context:
                   type: object
-                  description: 'Optional. { explain: true } includes the grant path and the decision''s trace inline in the response context.'
+                  description: 'Optional. The request''s attributes for ABAC policies (context.*), such as ip or mfa. { explain: true } includes the grant path and the decision''s trace inline in the response context, and is not an attribute.'
+                  additionalProperties: true
       responses:
         '200':
           description: '{ decision: bool, context: { decided_by, paths | path, trace } }'
@@ -4026,6 +4623,140 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/access/v1/evaluations:
+    post:
+      operationId: post_v1_tenants_ByTenantID_access_v1_evaluations
+      summary: AuthZEN evaluations
+      description: >-
+        OpenID AuthZEN access evaluations: several evaluations in one call, each answered as the single
+        evaluation endpoint answers one. The top-level subject, resource, action and context are defaults;
+        an evaluation that names one of them replaces it whole. Decisions come back in the request's order.
+        options.evaluations_semantic is execute_all (the default), deny_on_first_deny, which stops after the
+        first deny, or permit_on_first_permit, which stops after the first permit; the response then holds
+        the evaluations up to that one. An evaluation the caller got wrong, such as one without a subject
+        id, is denied with context.error {status, code, message} and counts as a deny. At most 100
+        evaluations (more is 422 authzen.too_many_evaluations); an unknown semantic is 422
+        authzen.evaluations_semantic_invalid. Without evaluations, the request is a single evaluation and
+        the response is a single decision. Requires role.read.
+      tags:
+        - AuthZEN
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                subject:
+                  $ref: '#/components/schemas/AuthZENSubject'
+                resource:
+                  $ref: '#/components/schemas/AuthZENResource'
+                action:
+                  $ref: '#/components/schemas/AuthZENAction'
+                context:
+                  type: object
+                  additionalProperties: true
+                evaluations:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: object
+                    properties:
+                      subject:
+                        $ref: '#/components/schemas/AuthZENSubject'
+                      resource:
+                        $ref: '#/components/schemas/AuthZENResource'
+                      action:
+                        $ref: '#/components/schemas/AuthZENAction'
+                      context:
+                        type: object
+                        additionalProperties: true
+                options:
+                  type: object
+                  properties:
+                    evaluations_semantic:
+                      type: string
+                      enum: [execute_all, deny_on_first_deny, permit_on_first_permit]
+      responses:
+        '200':
+          description: '{ evaluations: [{ decision, context }] }, or a single { decision, context } without evaluations.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  evaluations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        decision:
+                          type: boolean
+                        context:
+                          type: object
+                  decision:
+                    type: boolean
+                  context:
+                    type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/auth-policy/usage:
+    get:
+      operationId: get_v1_tenants_ByTenantID_auth_policy_usage
+      summary: How the organisation's people sign in
+      description: >-
+        Counts of the organisation's live accounts by way of signing in: with a
+        password, with a passkey, and per social provider it set up (linked
+        accounts); for each, only is how many have no other way in (no other
+        credential and no linked identity), so would be left out were it turned
+        off. Magic links and email codes aren't counted as a way in;
+        magic_link_enabled says whether they are one. Needs policy.read.
+      tags:
+        - Auth Policy
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The counts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [people, password, passkey, social, magic_link_enabled]
+                properties:
+                  people: {type: integer}
+                  password: {type: object, required: [people, only], properties: {people: {type: integer}, only: {type: integer}}}
+                  passkey: {type: object, required: [people, only], properties: {people: {type: integer}, only: {type: integer}}}
+                  social:
+                    type: array
+                    items:
+                      type: object
+                      required: [provider, linked, only]
+                      properties:
+                        provider: {type: string}
+                        linked: {type: integer}
+                        only: {type: integer}
+                  magic_link_enabled: {type: boolean}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/tenants/{tenantID}/auth-policy:
     get:
       operationId: get_v1_tenants_ByTenantID_auth_policy
@@ -4080,7 +4811,7 @@ paths:
             schema:
               $ref: '#/components/schemas/AuthPolicy'
         description: The whole policy (a full replace). `lockout_limits` is read-only and ignored.
-      description: 'Replaces the tenant''s authentication policy. The sign-in lockout settings apply to the next sign-in attempt with no deployment. A lockout setting outside the documented bounds (`lockout_limits.min`..`lockout_limits.max`) is refused with 422 validation_failed, naming each field (code out_of_range), and nothing is stored. The password minimum length (8..128) and magic-link lifetime (5..1440 minutes) are clamped. Refused with 422 validation_failed, storing nothing, when the change would switch off every sign-in method (password, passkey and magic link; field password_enabled, code no_sign_in_method) or switch on otp_email_enabled / otp_sms_enabled (code not_available — no one-time-code sign-in exists). Changes apply to the next sign-in; the policy is not cached.'
+      description: 'Replaces the tenant''s authentication policy. The sign-in lockout settings apply to the next sign-in attempt with no deployment. A lockout setting outside the documented bounds (`lockout_limits.min`..`lockout_limits.max`) is refused with 422 validation_failed, naming each field (code out_of_range), and nothing is stored. The password minimum length (8..128) and magic-link lifetime (5..1440 minutes) are clamped. Refused with 422 validation_failed, storing nothing, when the change would switch off every sign-in method (password, passkey and magic link; field password_enabled, code no_sign_in_method) or switch on otp_email_enabled / otp_sms_enabled (code not_available — no one-time-code sign-in exists). Changes apply to the next sign-in; the policy is not cached. Every sign-in method may be switched off only while the organisation has an active SAML, LDAP or OpenID Connect connection to sign in through (a draft or disabled one does not count); its members then sign in with single sign-on alone, break-glass members included.'
       responses:
         '200':
           description: The stored policy
@@ -4177,6 +4908,48 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_policy
+      summary: Change part of the policy
+      tags:
+        - Policy
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SecurityPolicy'
+        description: Only the fields to change; a null clears a nullable one, such as max_sessions.
+      description: >-
+        Changes only the fields sent, over the stored policy, and keeps the
+        rest; the read, the change and the write happen under the policy's
+        lock, so a rule saved meanwhile is kept (PUT takes the same lock).
+        Validation, auditing (security_policy.updated) and the step-up are as
+        for PUT.
+      responses:
+        '200':
+          description: The whole policy after the change
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecurityPolicy'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -4322,6 +5095,20 @@ paths:
                     type: object
                     additionalProperties: true
                     description: For ip.deny_rule, the rule's cidr.
+                  rules:
+                    type: object
+                    required: [allowed, reason, reason_code]
+                    description: What the organisation's rules decide whatever the enforcement flag, so they can be tried before they are turned on; with enforcement on it matches the fields above.
+                    properties:
+                      allowed: {type: boolean}
+                      reason: {type: string, description: The reason in English.}
+                      reason_code:
+                        type: string
+                        enum: [ip.allowed, ip.deny_rule, ip.not_in_allow_rules, ip.address_unknown]
+                      reason_params:
+                        type: object
+                        additionalProperties: true
+                        description: For ip.deny_rule, the rule's cidr.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4442,6 +5229,9 @@ paths:
           required: true
           schema:
             type: string
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+        - {name: cursor, in: query, required: false, description: The previous page's next_cursor., schema: {type: string}}
+        - {name: verdict, in: query, required: false, schema: {type: string, enum: [allowed, challenged, blocked]}}
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -4452,14 +5242,23 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [recent, stats]
+                required: [recent, stats, total]
                 properties:
                   recent:
                     type: array
+                    description: A page of detections, newest first.
                     items:
                       $ref: '#/components/schemas/BotEvent'
+                  next_cursor:
+                    type: string
+                    description: Present when there is a next page.
+                  total:
+                    type: integer
+                    description: How many detections match.
                   stats:
                     $ref: '#/components/schemas/Stats'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4500,7 +5299,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     put:
       operationId: put_v1_tenants_ByTenantID_security_risk_settings
-      description: 'Updates the tenant''s adaptive-risk configuration, including the medium and high risk-score thresholds, the level at which step-up MFA is forced even for a trusted device, and the impossible-travel and device-reputation signals. Both additive signals are off by default and take effect for subsequent sign-ins once enabled. Retrieve the current values first with the get-risk-settings call, since this call replaces the stored settings with the submitted state.'
+      description: 'Updates the tenant''s adaptive-risk configuration, including the medium and high risk-score thresholds, the level at which step-up MFA is forced even for a trusted device, and the impossible-travel and device-reputation signals. Both additive signals are off by default and take effect for subsequent sign-ins once enabled. Retrieve the current values first with the get-risk-settings call, since this call replaces the stored settings with the submitted state. Audited as risk.settings_updated, naming the caller, with each setting it changed (its old and new value) and the settings saved.'
       summary: Update risk settings
       tags:
         - Threats
@@ -4561,7 +5360,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     put:
       operationId: put_v1_tenants_ByTenantID_security_bots_settings
-      description: 'Updates the tenant''s bot-detection configuration and applies it to subsequent authentication traffic. Retrieve the current configuration first with the get-bot-settings call, since this call replaces the stored settings with the submitted state. Review the effect afterward through the bot-telemetry call.'
+      description: 'Updates the tenant''s bot-detection configuration and applies it to subsequent authentication traffic. Retrieve the current configuration first with the get-bot-settings call, since this call replaces the stored settings with the submitted state. Review the effect afterward through the bot-telemetry call. Audited as bot.settings_updated, naming the caller, with each setting it changed (its old and new value) and the settings saved.'
       summary: Update bot settings
       tags:
         - Threats
@@ -4607,21 +5406,33 @@ paths:
           required: true
           schema:
             type: string
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+        - {name: cursor, in: query, required: false, description: The previous page's next_cursor., schema: {type: string}}
+        - {name: status, in: query, required: false, schema: {type: string, enum: [open, resolved]}}
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
         '200':
-          description: Recent anomalies
+          description: A page of anomalies, newest first
           content:
             application/json:
               schema:
                 type: object
+                required: [items, total]
                 properties:
                   items:
                     type: array
                     items:
                       $ref: '#/components/schemas/Anomaly'
+                  next_cursor:
+                    type: string
+                    description: Present when there is a next page.
+                  total:
+                    type: integer
+                    description: How many anomalies match.
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4656,7 +5467,7 @@ paths:
   /v1/tenants/{tenantID}/security/anomalies/{id}/resolve:
     post:
       operationId: post_v1_tenants_ByTenantID_security_anomalies_ById_resolve
-      description: 'Marks a login anomaly as resolved, recording that an operator has reviewed it and removing it from the open queue. Resolving is a review action; it does not itself block a user or revoke a session, so take any remediation separately. The updated totals are reflected by the anomaly-summary call.'
+      description: 'Marks a login anomaly as resolved, recording that an operator has reviewed it and removing it from the open queue. Resolving is a review action; it does not itself block a user or revoke a session, so take any remediation separately. The updated totals are reflected by the anomaly-summary call. Audited as anomaly.resolved, naming the caller and the anomaly''s type, severity and account; another organisation''s anomaly, or one already resolved, is 404.'
       summary: Resolve anomaly
       tags:
         - Threats
@@ -4712,6 +5523,17 @@ components:
       name: qe_ls
       description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session and consumed by the OAuth authorize/consent flow, and by the few signed-in routes the hosted login calls itself (listing, renaming and adding passkeys). State-changing calls made with it need the CSRF token.
   responses:
+    Overloaded:
+      description: The server is too busy to check or set a password or code now, so the request was refused and changed nothing (`server.overloaded`, retryable). Try again after the seconds Retry-After gives, also sent as `metadata.retry_after`.
+      headers:
+        Retry-After:
+          description: Seconds to wait before trying again (1 to 3).
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     BadRequest:
       description: Malformed request
       content:
@@ -4761,7 +5583,18 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     SignInUnavailable:
-      description: The sign-in lockout could not be evaluated (its counters could not be read or written), or the password could not be checked within a few seconds because the service is busy, so the attempt was refused and not counted (`auth.sign_in_unavailable`, retryable). The same answer whatever the password and whether the address has an account.
+      description: The attempt was refused and not counted, the same answer whatever the password and whether the address has an account. Either the sign-in lockout could not be evaluated, its counters could not be read or written (`auth.sign_in_unavailable`, retryable), or the server is too busy to check a password now (`server.overloaded`, retryable, with Retry-After).
+      headers:
+        Retry-After:
+          description: With `server.overloaded`, seconds to wait before trying again (1 to 3), also sent as `metadata.retry_after`.
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    SSORequired:
+      description: 'The address must sign in through its organisation''s identity provider (`auth.sso_required`): its domain is managed by an organisation (the domain it verified, or the closest verified domain above it) that has switched sso_enabled on for that domain and has an active SAML, LDAP or OpenID Connect connection. Decided from the domain before any account is looked up, so every address on the domain gets this answer whether or not it has an account; only the organisation''s break-glass members, and its administrators single sign-on can''t sign in (an administrator isn''t adopted by address, so one without an identity linked to an active connection keeps their own methods), are let through. error.metadata.connections lists the organisation''s active connections to sign in with, each {id, protocol: saml | ldap | oidc, name}: start SAML at GET /v1/saml/login/{id}, LDAP at POST /ldap/{id}/authenticate, OpenID Connect at GET /v1/oidc-connections/{id}/login.'
       content:
         application/json:
           schema:
@@ -4786,6 +5619,16 @@ components:
         device_reputation_enabled:
           type: boolean
           description: Off by default. Flags a login from a browser+OS combination never seen before for this user.
+        country_header_configured:
+          type: boolean
+          readOnly: true
+          description: Whether the deployment names a trusted proxy country header (GEO_COUNTRY_HEADER). Without one impossible travel never fires. Ignored on update.
+        country_last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+          readOnly: true
+          description: When the instance answering last read a country from that header; null if none since it started (no header, or the proxy isn't sending it). Ignored on update.
     Error:
       type: object
       required:
@@ -4956,6 +5799,11 @@ components:
             Where the session was opened, approximately — the ISO 3166-1
             alpha-2 country a trusted upstream proxy reported
             (GEO_COUNTRY_HEADER). Omitted when the deployment supplies none.
+        city:
+          type: string
+          description: >-
+            The city the session was opened from, when the proxy names one
+            (GEO_CITY_HEADER); omitted otherwise.
         current:
           type: boolean
           description: True for the session the listing request was made with.
@@ -5024,11 +5872,14 @@ components:
           format: uuid
         password_min_length:
           type: integer
-          minimum: 8
-          maximum: 128
+          deprecated: true
+          writeOnly: true
+          description: Accepted and ignored, and never returned. Password rules are the auth policy's (AuthPolicy, PUT /v1/tenants/{tenantID}/auth-policy), which sign-in and the compliance checks apply.
         password_complexity:
           type: string
-          enum: [relaxed, standard, strict]
+          deprecated: true
+          writeOnly: true
+          description: Accepted and ignored, and never returned; see password_min_length.
         session_max_age:
           type: string
           example: 720h
@@ -5282,6 +6133,12 @@ components:
     Anomaly:
       type: object
       properties:
+        resolved_by:
+          type: string
+          format: uuid
+          description: The person who resolved it; absent while open.
+        resolved_by_email:
+          type: string
         id:
           type: string
           format: uuid
@@ -5374,9 +6231,18 @@ components:
           type: string
         is_system:
           type: boolean
+          description: A built-in role (owner, admin, member or viewer), whose permissions can't be changed and which doesn't count against the plan's custom roles.
         created_at:
           type: string
           format: date-time
+        holders:
+          type: object
+          description: Who holds the role, in the roles list only.
+          required: [people_direct, people_through_groups, groups]
+          properties:
+            people_direct: {type: integer, description: People granted the role themselves.}
+            people_through_groups: {type: integer, description: People holding it only through a group.}
+            groups: {type: integer, description: Groups granted the role.}
     GroupRole:
       type: object
       description: A role granted to a group, with the role's name for display.
@@ -5406,9 +6272,14 @@ components:
           type: string
           format: uuid
           description: Set only when via is a group grant.
+        group_name:
+          type: string
+          description: The group's name, set only when via is a group grant.
         role_id:
           type: string
           format: uuid
+        role_name:
+          type: string
     AuthzDecidedBy:
       type: object
       description: >-
@@ -5451,6 +6322,16 @@ components:
       type: object
       required:
         - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        description:
+          type: string
+          maxLength: 500
+    RoleUpdate:
+      type: object
       properties:
         name:
           type: string
@@ -5504,15 +6385,32 @@ components:
             {"attr":"subject.region","op":"eq","value":{"attr":"resource.region"}},
             for eq, ne, gt, gte, lt, lte, in, nin and contains (not regex, prefix,
             suffix or exists). The reference is exactly
-            {"attr":"<subject|resource|context>.<path>"}, names an attribute other
+            {"attr":"<subject|resource|action|context>.<path>"}, names an attribute other
             than the leaf's own, and is the whole value, never an array element. A
-            string value is always a literal, even "resource.region". When either
-            attribute a reference compares is absent or null, an allow policy does
-            not match and a deny policy does. A comparison with a literal against an
-            absent attribute is false, except nin, which holds. prefix and suffix
+            string value is always a literal, even "resource.region". A comparison
+            with a missing attribute (absent or null), on either side and with any
+            operator, ne and nin included, is unknown; not of unknown is unknown,
+            all is unknown unless a child is false, and any unknown unless a child
+            is true. A condition left unknown fails closed: a deny policy applies
+            (reason authz.attribute_absent) and an allow policy grants nothing.
+            exists alone tests presence and is never unknown, so a deny meant only
+            for requests that carry an attribute guards it with exists in an all
+            (otherwise a deny for "*" on an attribute the platform's own route
+            check doesn't supply refuses every request there). prefix and suffix
             need a non-empty string value and match only string attributes; any
             other value is refused with 422 abac.condition_invalid, as is contains
             or regex with an empty value.
+            Two more leaves combine roles and relationships with attributes:
+            {"role":"<name>"} holds when the subject has the role, by name, in
+            the organisation (directly or through a group), as the platform
+            supplies subject.roles when it decides for a person itself; it is
+            unknown when no roles are supplied. {"relation":{"relation":"viewer",
+            "object":"document:1"}} holds when the subject (subject.id, a user)
+            has the relationship on the object in the organisation's ReBAC
+            tuples, the object given as type:id or as an attribute reference
+            {"attr":"resource.object"}; it is unknown with no subject id or no
+            object. Like a missing attribute, an unknown role or relation applies
+            a deny and grants nothing.
           additionalProperties: true
         priority:
           type: integer
@@ -5525,6 +6423,14 @@ components:
         updated_at:
           type: string
           format: date-time
+        version:
+          type: integer
+          minimum: 1
+          description: The policy's saves counted from 1; each create, change or restore adds one.
+        updated_by:
+          type: [string, 'null']
+          format: uuid
+          description: The person who made the last save; null for a machine caller, or one from before it was kept.
     ABACPolicyCreate:
       type: object
       required:
@@ -5561,7 +6467,39 @@ components:
           description: Higher priority policies are evaluated first.
         enabled:
           type: boolean
-          default: true
+          default: false
+          description: Whether the policy is evaluated; left out, it is saved disabled.
+    AuthZENSubject:
+      type: object
+      properties:
+        type:
+          type: string
+        id:
+          type: string
+        properties:
+          type: object
+          description: The subject's attributes for ABAC policies (subject.*).
+          additionalProperties: true
+    AuthZENResource:
+      type: object
+      properties:
+        type:
+          type: string
+        id:
+          type: string
+        properties:
+          type: object
+          description: The resource's attributes for ABAC policies (resource.*).
+          additionalProperties: true
+    AuthZENAction:
+      type: object
+      properties:
+        name:
+          type: string
+        properties:
+          type: object
+          description: The action's attributes for ABAC policies (action.*).
+          additionalProperties: true
     ABACEvaluateRequest:
       type: object
       required:
@@ -5584,15 +6522,33 @@ components:
               description: Resource identifier.
             attrs:
               type: object
-              description: Additional resource attributes.
+              description: Additional resource attributes; type and id above win over attributes of those names.
               additionalProperties: true
         action:
           type: string
-          description: The action being attempted, e.g. "read".
+          description: The action being attempted, e.g. "read"; policies see it as action.name.
+        action_attrs:
+          type: object
+          description: Optional attributes of the action, the action namespace beside action.name (which wins over an attribute of that name), e.g. {"channel":"api"}.
+          additionalProperties: true
         context:
           type: object
           description: Request-context attributes, e.g. {"ip":"1.2.3.4","hour":14}.
           additionalProperties: true
+        draft:
+          description: >-
+            An unsaved policy to evaluate with the stored ones, writing nothing. It is checked as a save is
+            (name may be left out); with replaces, it stands in for that stored policy. It applies only when
+            enabled and its resource type and action match the request, so a disabled draft only takes the
+            replaced policy out.
+          allOf:
+            - $ref: '#/components/schemas/ABACPolicyCreate'
+            - type: object
+              properties:
+                replaces:
+                  type: [string, 'null']
+                  format: uuid
+                  description: The stored policy the draft stands in for; one the organisation doesn't have is 404.
     ABACDecision:
       type: object
       description: Result of an ABAC evaluation.
@@ -5627,6 +6583,9 @@ components:
           description: Grant-path trace (present only when ?explain=true).
           items:
             type: string
+        matched_draft:
+          type: boolean
+          description: Present, true, when the request's draft policy determined the outcome. A new draft has no matched_policy_id; one standing in for a stored policy has that policy's.
     AuthenticatorSelection:
       type: object
       properties:
@@ -5640,8 +6599,18 @@ components:
           type: string
     BotEvent:
       type: object
-      required: [created_at, id, score, user_agent, verdict]
+      required: [created_at, id, score, user_agent, verdict, outcome]
       properties:
+        user_id:
+          type: string
+          format: uuid
+          description: The account the sign-in attempt was for, when it exists.
+        user_email:
+          type: string
+        outcome:
+          type: string
+          enum: [signed_in, failed, unknown]
+          description: How that account's next sign-in from the same address, within five minutes, ended.
         created_at:
           type: string
           format: date-time
@@ -5848,6 +6817,7 @@ components:
       properties:
         affected_accounts:
           type: integer
+          description: Distinct accounts of the organisation with an open event, counting the account an event names and every account a password spray targeted (a password_spraying event lists them in metadata.targeted_user_ids, only the organisation's own).
         high_severity_24h:
           type: integer
         open:
@@ -5867,6 +6837,9 @@ components:
           type: string
         subject:
           type: string
+        subject_name:
+          type: string
+          description: A user subject's person, by display name or address, when they belong to the organisation.
     UserEntity:
       type: object
       required: [displayName, id, name]

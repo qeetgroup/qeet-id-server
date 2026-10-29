@@ -73,3 +73,53 @@ func TestSocialSignUpWithOneConnection(t *testing.T) {
 		t.Errorf("sign-up where self-registration is off: %v; want %v and no account", err, errs.ErrAuthSelfRegistrationDisabled)
 	}
 }
+
+// TestSocialSignInAdoptsADirectoryProvisionedAccount checks that an account
+// the organisation's directory provisioned, its address never proved, is
+// adopted by a verified sign-in and marked verified, while an unproved account
+// registered any other way is still refused.
+func TestSocialSignInAdoptsADirectoryProvisionedAccount(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := NewService(pool, nil, "https://api.id.qeet.in")
+	tenant := dbtest.Tenant(t)
+	provisioned, registered := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET provisioned_via = 'scim' WHERE id = $1`, provisioned.ID); err != nil {
+		t.Fatal(err)
+	}
+	signIn := func(email string) (uuid.UUID, error) {
+		return svc.findOrCreateUser(ctx, tenant, "google", userInfo{Subject: uuid.NewString(), Email: email, EmailVerified: true})
+	}
+	if got, err := signIn(provisioned.Email); err != nil || got != provisioned.ID {
+		t.Errorf("a directory-provisioned account: %s, %v; want it adopted", got, err)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND email_verified_at IS NOT NULL`, provisioned.ID); n != 1 {
+		t.Error("the adopted account's address was not marked verified")
+	}
+	if _, err := signIn(registered.Email); !errors.Is(err, errs.ErrSocialAccountUnverified) {
+		t.Errorf("an unproved account registered otherwise: %v, want %v", err, errs.ErrSocialAccountUnverified)
+	}
+}
+
+// TestSocialSignInIgnoresConnectionLinks checks that a social provider named
+// like a single sign-on kind (saml, ldap, oidc) doesn't find a person linked
+// through one of the organisation's connections by that subject, so whoever
+// controls such a provider can't sign in as them.
+func TestSocialSignInIgnoresConnectionLinks(t *testing.T) {
+	ctx := dbtest.Context(t)
+	svc := NewService(dbtest.Pool(t), nil, "https://api.id.qeet.in")
+	tenant := dbtest.Tenant(t)
+	linked := dbtest.User(t, tenant, tenant)
+	for _, provider := range []string{"saml", "ldap", "oidc"} {
+		subject := provider + "-subject-" + uuid.NewString()
+		if _, err := dbtest.Pool(t).Exec(ctx, `
+			INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email, connection_id)
+			VALUES ($1, $2, $3, $4, $5, $6)`, linked.ID, tenant, provider, subject, linked.Email, uuid.New()); err != nil {
+			t.Fatal(err)
+		}
+		got, err := svc.findOrCreateUser(ctx, tenant, provider, userInfo{Subject: subject})
+		if got == linked.ID || !errors.Is(err, errs.ErrSocialEmailMissing) {
+			t.Errorf("a social %q sign-in with a connection's subject = %s, %v; want no link found", provider, got, err)
+		}
+	}
+}

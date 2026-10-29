@@ -41,6 +41,7 @@ func (p *Provider) Stream(ctx context.Context, system string, messages []ai.Mess
 			toolCallCount    int
 			inToolBlock      bool
 			currentToolIndex int
+			inputTokens      int // the prompt's, from message_start
 		)
 
 		for ev := range rawEvents {
@@ -77,7 +78,13 @@ func (p *Provider) Stream(ctx context.Context, system string, messages []ai.Mess
 					inToolBlock = false
 				}
 
+			case EventMessageStart:
+				inputTokens = ev.InputTokens
+
 			case EventMessageDelta:
+				if ev.OutputTokens > 0 || inputTokens > 0 {
+					out <- ai.Event{Type: ai.EventUsage, InputTokens: inputTokens, OutputTokens: ev.OutputTokens}
+				}
 				if ev.StopReason != "" {
 					out <- ai.Event{Type: ai.EventStop, StopReason: ev.StopReason}
 				}

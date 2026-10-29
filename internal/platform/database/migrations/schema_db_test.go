@@ -19,6 +19,7 @@ import (
 // "my sessions", "my invitations", sign-in), or are platform-wide.
 var accountLevelTables = map[string]bool{
 	"audit.events":                  true, // one hash chain per organisation and one platform chain
+	"platform.tenant_purges":        true, // the record of a purged organisation, kept after it is gone
 	"auth.login_context_history":    true, // a person's sign-in history, across organisations
 	"auth.magic_links":              true, // sign-in, before an organisation applies
 	"auth.mfa_login_challenges":     true, // sign-in, before an organisation applies

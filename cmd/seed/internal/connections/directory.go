@@ -111,8 +111,8 @@ func (d *directory) ldapConnection() {
 			continue
 		}
 		d.success(d.ldap, "sign-in", "sign-in", "user", p.ID.String(), p.Joined.Add(-900*time.Millisecond))
-		batch.Queue(`INSERT INTO "user".external_identities (id, user_id, tenant_id, provider, subject, email, metadata, linked_at)
-			VALUES ($1, $2, $3, 'ldap', $4, $5, $6, $7)`, uuid.New(), p.ID, o.ID, p.ExternalID, p.Email,
+		batch.Queue(`INSERT INTO "user".external_identities (id, user_id, tenant_id, provider, connection_id, subject, email, metadata, linked_at)
+			VALUES ($1, $2, $3, 'ldap', $4, $5, $6, $7, $8)`, uuid.New(), p.ID, o.ID, d.ldap, p.ExternalID, p.Email,
 			map[string]any{"connection": d.ldap}, p.Joined)
 		if p.Status == world.StatusActive {
 			clinical = append(clinical, p)
@@ -294,7 +294,7 @@ func (d *directory) scimConnection() {
 	if len(people) > 0 {
 		last := f.ago(14*time.Minute, 44*time.Minute)
 		d.success(d.scim, "patch", "push", "user", world.Pick(w, people).ID.String(), last)
-		w.Exec("SCIM token last use", `UPDATE tenant.scim_tokens SET last_used_at = $2 WHERE tenant_id = $1`, o.ID, last)
+		w.Exec("SCIM token last use", `UPDATE tenant.scim_tokens SET last_used_at = $2 WHERE tenant_id = $1 AND revoked_at IS NULL`, o.ID, last)
 	}
 	f.scim = append(f.scim, scimNote{org: o.Spec.Name, token: token})
 }

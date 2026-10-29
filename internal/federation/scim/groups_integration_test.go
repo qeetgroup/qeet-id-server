@@ -32,6 +32,7 @@ type scimFixture struct {
 	tenantID uuid.UUID
 	token    string
 	router   chi.Router
+	svc      *Service
 }
 
 func newSCIMFixture(t *testing.T, ctx context.Context) *scimFixture {
@@ -51,7 +52,7 @@ func newSCIMFixture(t *testing.T, ctx context.Context) *scimFixture {
 	h := &Handler{Service: svc}
 	r := chi.NewRouter()
 	h.MountPublic(r)
-	return &scimFixture{tenantID: tid, token: token, router: r}
+	return &scimFixture{tenantID: tid, token: token, router: r, svc: svc}
 }
 
 // seedUser creates a tenant user and returns its id.
@@ -552,5 +553,272 @@ func TestSCIMUserWriteTenantIsolation(t *testing.T) {
 		},
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("A PATCH its own user: status %d, want 200", rec.Code)
+	}
+}
+
+// TestSCIMCreatesNoAccountOnAnotherOrganisationsDomain checks that a
+// directory provisions no account on a domain another organisation has
+// verified, and still provisions its own.
+func TestSCIMCreatesNoAccountOnAnotherOrganisationsDomain(t *testing.T) {
+	ctx := dbtest.Context(t)
+	f := newSCIMFixture(t, ctx)
+	theirs := dbtest.Domain(t, dbtest.Tenant(t))
+	claimed := dbtest.Unique("scim") + "@" + theirs
+	if rec := f.do(t, http.MethodPost, "/scim/v2/Users", map[string]any{"userName": claimed, "active": true}); rec.Code != http.StatusConflict {
+		t.Errorf("provision on another organisation's domain: %d %s, want 409", rec.Code, rec.Body.String())
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE email = $1`, claimed); n != 0 {
+		t.Errorf("the account was created")
+	}
+	own := dbtest.Unique("scim") + "@" + dbtest.Domain(t, f.tenantID)
+	if rec := f.do(t, http.MethodPost, "/scim/v2/Users", map[string]any{"userName": own, "active": true}); rec.Code != http.StatusCreated {
+		t.Errorf("provision on the organisation's domain: %d %s, want 201", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSCIMDeprovisioningEndsEverySignIn checks that deactivating or deleting
+// a user through SCIM ends their sessions, remembered devices and application
+// grants, as an administrator's suspension does.
+func TestSCIMDeprovisioningEndsEverySignIn(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	f := newSCIMFixture(t, ctx)
+	signedIn := func() uuid.UUID {
+		t.Helper()
+		id := f.seedUser(t, ctx, dbtest.Unique("scim")+"@example.test")
+		if _, err := pool.Exec(ctx, `
+			WITH s AS (INSERT INTO auth.sessions (user_id, tenant_id) VALUES ($1, $2)),
+			     d AS (INSERT INTO auth.trusted_devices (user_id, tenant_id, token_hash, expires_at) VALUES ($1, $2, $3, NOW() + INTERVAL '1 day'))
+			INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, tenant_id, expires_at)
+			VALUES ($4, 'app', $1, $2, NOW() + INTERVAL '1 day')
+		`, id, f.tenantID, dbtest.Unique("device"), dbtest.Unique("grant")); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	live := func(id uuid.UUID) int {
+		return dbtest.Count(t, `
+			SELECT (SELECT count(*) FROM auth.sessions WHERE user_id = $1 AND revoked_at IS NULL)
+			     + (SELECT count(*) FROM auth.trusted_devices WHERE user_id = $1)
+			     + (SELECT count(*) FROM auth.oidc_refresh_tokens WHERE user_id = $1 AND revoked_at IS NULL)
+		`, id)
+	}
+
+	deactivated, deleted := signedIn(), signedIn()
+	if rec := f.do(t, http.MethodPatch, "/scim/v2/Users/"+deactivated.String(), map[string]any{
+		"schemas":    []string{schemaPatchOp},
+		"Operations": []map[string]any{{"op": "replace", "path": "active", "value": false}},
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("deactivate: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.do(t, http.MethodDelete, "/scim/v2/Users/"+deleted.String(), nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
+	}
+	for name, id := range map[string]uuid.UUID{"deactivated": deactivated, "deleted": deleted} {
+		if n := live(id); n != 0 {
+			t.Errorf("a %s user kept %d ways in", name, n)
+		}
+	}
+}
+
+// TestSCIMLeavesOwnersAndOthersSuspensionsAlone checks that a directory can
+// neither change nor delete an account that owns the organisation, and that
+// reactivating someone lifts only a suspension it set itself.
+func TestSCIMLeavesOwnersAndOthersSuspensionsAlone(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	f := newSCIMFixture(t, ctx)
+	active := func(id uuid.UUID, on bool) *httptest.ResponseRecorder {
+		t.Helper()
+		return f.do(t, http.MethodPatch, "/scim/v2/Users/"+id.String(), map[string]any{
+			"schemas":    []string{schemaPatchOp},
+			"Operations": []map[string]any{{"op": "replace", "path": "active", "value": on}},
+		})
+	}
+	status := func(id uuid.UUID) string {
+		t.Helper()
+		var s string
+		if err := pool.QueryRow(ctx, `SELECT status FROM "user".users WHERE id = $1`, id).Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+
+	owner := f.seedUser(t, ctx, dbtest.Unique("owner")+"@example.test")
+	var ownerRole uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, f.tenantID).Scan(&ownerRole); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.Assign(t, owner, f.tenantID, ownerRole)
+	if rec := active(owner, false); rec.Code != http.StatusForbidden || status(owner) != "active" {
+		t.Errorf("deactivate an owner: %d %s, status %s; want 403 and still active", rec.Code, rec.Body.String(), status(owner))
+	}
+	if rec := f.do(t, http.MethodDelete, "/scim/v2/Users/"+owner.String(), nil); rec.Code != http.StatusForbidden {
+		t.Errorf("delete an owner: %d %s, want 403", rec.Code, rec.Body.String())
+	}
+
+	byAdmin := f.seedUser(t, ctx, dbtest.Unique("held")+"@example.test")
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, byAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET suspension_source = 'manual' WHERE id = $1`, byAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if rec := active(byAdmin, true); rec.Code != http.StatusOK || status(byAdmin) != "suspended" {
+		t.Errorf("reactivate an administrator's suspension: %d, status %s; want it to stand", rec.Code, status(byAdmin))
+	}
+
+	byDirectory := f.seedUser(t, ctx, dbtest.Unique("left")+"@example.test")
+	if rec := active(byDirectory, false); rec.Code != http.StatusOK || status(byDirectory) != "suspended" {
+		t.Fatalf("deactivate: %d, status %s", rec.Code, status(byDirectory))
+	}
+	if rec := active(byDirectory, true); rec.Code != http.StatusOK || status(byDirectory) != "active" {
+		t.Errorf("reactivate the directory's own suspension: %d, status %s; want active", rec.Code, status(byDirectory))
+	}
+}
+
+// TestSCIMManagesOnlyItsOwnGroups checks that a directory can neither see
+// nor change a group an administrator made, so it can't put anyone in one
+// that carries roles, and that its changes to its own groups are audited
+// member by member.
+func TestSCIMManagesOnlyItsOwnGroups(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	f := newSCIMFixture(t, ctx)
+	member := f.seedUser(t, ctx, dbtest.Unique("member")+"@example.test")
+	var admins uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Admins') RETURNING id`, f.tenantID).Scan(&admins); err != nil {
+		t.Fatal(err)
+	}
+	addMember := map[string]any{
+		"schemas":    []string{schemaPatchOp},
+		"Operations": []map[string]any{{"op": "add", "path": "members", "value": []map[string]string{{"value": member.String()}}}},
+	}
+	path := "/scim/v2/Groups/" + admins.String()
+	for name, rec := range map[string]*httptest.ResponseRecorder{
+		"read":    f.do(t, http.MethodGet, path, nil),
+		"patch":   f.do(t, http.MethodPatch, path, addMember),
+		"replace": f.do(t, http.MethodPut, path, map[string]any{"schemas": []string{schemaGroup}, "displayName": "Admins", "members": []map[string]string{{"value": member.String()}}}),
+		"delete":  f.do(t, http.MethodDelete, path, nil),
+	} {
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s an administrator's group: %d %s, want 404", name, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := f.do(t, http.MethodGet, "/scim/v2/Groups?filter="+url.QueryEscape(`displayName eq "Admins"`), nil); decodeBody(t, rec)["totalResults"] != float64(0) {
+		t.Errorf("listing found the administrator's group: %s", rec.Body.String())
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.group_members WHERE group_id = $1`, admins); n != 0 || dbtest.Count(t, `SELECT count(*) FROM tenant.groups WHERE id = $1`, admins) != 1 {
+		t.Error("the directory changed an administrator's group")
+	}
+
+	rec := f.do(t, http.MethodPost, "/scim/v2/Groups", map[string]any{"schemas": []string{schemaGroup}, "displayName": "Engineering", "externalId": "eng"})
+	id, _ := decodeBody(t, rec)["id"].(string)
+	if rec.Code != http.StatusCreated || id == "" {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.do(t, http.MethodPatch, "/scim/v2/Groups/"+id, addMember); rec.Code != http.StatusOK {
+		t.Fatalf("add a member: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.do(t, http.MethodDelete, "/scim/v2/Groups/"+id, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, action := range []string{"group.created", "group.member_added", "group.member_removed", "group.deleted"} {
+		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE resource_id = $1 AND action = $2 AND actor_type = 'scim'`, uuid.MustParse(id), action); n != 1 {
+			t.Errorf("%d %s records, want 1", n, action)
+		}
+	}
+}
+
+// TestSCIMMatchesAndAdoptsMembers checks that a userName lookup finds a
+// member the directory didn't create, that creating them adopts that account
+// rather than refusing a duplicate, and that someone at home elsewhere is
+// still refused.
+func TestSCIMMatchesAndAdoptsMembers(t *testing.T) {
+	ctx := dbtest.Context(t)
+	f := newSCIMFixture(t, ctx)
+	domain := dbtest.Domain(t, f.tenantID)
+	member := f.seedUser(t, ctx, dbtest.Unique("invited")+"@"+domain)
+	var email string
+	if err := dbtest.Pool(t).QueryRow(ctx, `SELECT email FROM "user".users WHERE id = $1`, member).Scan(&email); err != nil {
+		t.Fatal(err)
+	}
+	found := decodeBody(t, f.do(t, http.MethodGet, "/scim/v2/Users?filter="+url.QueryEscape(`userName eq "`+strings.ToUpper(email)+`"`), nil))
+	if found["totalResults"] != float64(1) {
+		t.Errorf("lookup by userName: %v; want the member", found)
+	}
+	if all := decodeBody(t, f.do(t, http.MethodGet, "/scim/v2/Users", nil)); all["totalResults"] != float64(0) {
+		t.Errorf("unfiltered list: %v; want only directory-provisioned accounts", all)
+	}
+
+	rec := f.do(t, http.MethodPost, "/scim/v2/Users", map[string]any{"userName": email, "externalId": "okta-77", "displayName": "Ada Lovelace", "active": true})
+	if rec.Code != http.StatusCreated || decodeBody(t, rec)["id"] != member.String() {
+		t.Fatalf("create the member: %d %s; want 201 with the existing account", rec.Code, rec.Body.String())
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND provisioned_via = 'scim' AND external_id = 'okta-77' AND display_name = 'Ada Lovelace'`, member); n != 1 {
+		t.Error("the adopted account was not tagged and updated")
+	}
+
+	guest := dbtest.UserAt(t, dbtest.Unique("guest")+"@"+domain, dbtest.Tenant(t))
+	if rec := f.do(t, http.MethodPost, "/scim/v2/Users", map[string]any{"userName": guest.Email, "active": true}); rec.Code != http.StatusConflict {
+		t.Errorf("create someone at home elsewhere: %d %s, want 409", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSCIMPatchAppliesIdentityAttributes checks that a PATCH applies active
+// sent as a string, name parts, externalId and a new userName on the
+// organisation's domain, refuses one elsewhere, and that a PUT changes the
+// address too.
+func TestSCIMPatchAppliesIdentityAttributes(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	f := newSCIMFixture(t, ctx)
+	domain := dbtest.Domain(t, f.tenantID)
+	rec := f.do(t, http.MethodPost, "/scim/v2/Users", map[string]any{"userName": dbtest.Unique("grace") + "@" + domain, "active": true})
+	id, _ := decodeBody(t, rec)["id"].(string)
+	if rec.Code != http.StatusCreated || id == "" {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	patch := func(ops ...map[string]any) *httptest.ResponseRecorder {
+		t.Helper()
+		return f.do(t, http.MethodPatch, "/scim/v2/Users/"+id, map[string]any{"schemas": []string{schemaPatchOp}, "Operations": ops})
+	}
+	row := func() (status, email, display, external string, verified bool) {
+		t.Helper()
+		if err := pool.QueryRow(ctx, `
+			SELECT status, email, COALESCE(display_name, ''), COALESCE(external_id, ''), email_verified_at IS NOT NULL
+			FROM "user".users WHERE id = $1`, id).Scan(&status, &email, &display, &external, &verified); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+
+	if rec := patch(map[string]any{"op": "Replace", "path": "active", "value": "False"}); rec.Code != http.StatusOK {
+		t.Fatalf("deactivate with a string: %d %s", rec.Code, rec.Body.String())
+	}
+	if status, _, _, _, _ := row(); status != "suspended" {
+		t.Errorf("after active \"False\": %s, want suspended", status)
+	}
+	moved := dbtest.Unique("grace.hopper") + "@" + domain
+	if rec := patch(
+		map[string]any{"op": "replace", "value": map[string]any{"active": "True", "externalId": "entra-9"}},
+		map[string]any{"op": "replace", "path": "name.givenName", "value": "Grace"},
+		map[string]any{"op": "replace", "path": "name.familyName", "value": "Hopper"},
+		map[string]any{"op": "replace", "path": "userName", "value": moved},
+	); rec.Code != http.StatusOK {
+		t.Fatalf("patch: %d %s", rec.Code, rec.Body.String())
+	}
+	if status, email, display, external, verified := row(); status != "active" || email != moved || display != "Grace Hopper" || external != "entra-9" || !verified {
+		t.Errorf("after the patch: %s %s %q %s verified=%v; want active, the new address verified, the name and the external ID", status, email, display, external, verified)
+	}
+	if rec := patch(map[string]any{"op": "replace", "path": "userName", "value": dbtest.Unique("grace") + "@elsewhere.example.test"}); rec.Code != http.StatusBadRequest {
+		t.Errorf("a userName off the organisation's domains: %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	again := dbtest.Unique("hopper") + "@" + domain
+	if rec := f.do(t, http.MethodPut, "/scim/v2/Users/"+id, map[string]any{"userName": again, "displayName": "Grace Hopper", "active": true}); rec.Code != http.StatusOK {
+		t.Fatalf("put: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, email, _, _, _ := row(); email != again {
+		t.Errorf("after the put: %s, want %s", email, again)
 	}
 }

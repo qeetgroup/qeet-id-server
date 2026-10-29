@@ -5,12 +5,15 @@ package activity
 
 import (
 	"encoding/json"
+	"net/netip"
 	"slices"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/google/uuid"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/useragent"
 )
 
 // Severity levels of an ActivityEvent, lowest first. They match the console's
@@ -50,7 +53,10 @@ type ActivityEvent struct {
 	Source      *string         `json:"source,omitempty"`
 	IP          *string         `json:"ip,omitempty"`
 	Location    *string         `json:"location,omitempty"`
+	Country     *string         `json:"country,omitempty"`
+	City        *string         `json:"city,omitempty"`
 	Device      *string         `json:"device,omitempty"`
+	OS          *string         `json:"os,omitempty"`
 	Browser     *string         `json:"browser,omitempty"`
 	Status      *string         `json:"status,omitempty"`
 	RequestID   *string         `json:"request_id,omitempty"`
@@ -79,17 +85,22 @@ type StreamFilter struct {
 	Category string   // exact category match; empty = all
 }
 
-// ListFilter narrows the history query. Severity and Category are applied after
-// the fetch, because they are derived from the action rather than stored.
+// ListFilter narrows the history query. Severities and Categories are those
+// activity derives from the action, matched in the query by
+// audit.activity_severity and audit.activity_category.
 type ListFilter struct {
-	Types    []string   // filter by exact audit action values; empty = all
-	Severity string     // post-fetch: minimum severity
-	Category string     // post-fetch: exact category
-	ActorID  uuid.UUID  // filter by actor_user_id; uuid.Nil = all
-	Subject  *uuid.UUID // identity timeline: actor OR user-resource target; nil = all
-	Search   string     // full-text via websearch_to_tsquery
-	From     *time.Time // inclusive lower bound on created_at
-	To       *time.Time // inclusive upper bound on created_at
+	Types         []string    // filter by exact audit action values; empty = all
+	Severities    []string    // any of these severities; empty = all
+	MinSeverity   string      // at least this severity; "" = all
+	Categories    []string    // any of these categories; empty = all
+	ActorID       uuid.UUID   // filter by actor_user_id; uuid.Nil = all
+	Subject       *uuid.UUID  // identity timeline: actor OR user-resource target; nil = all
+	Search        string      // words, as prefixes, or the actor's name or email (audit.search_query)
+	From          *time.Time  // inclusive lower bound on created_at
+	To            *time.Time  // inclusive upper bound on created_at
+	ResourceTypes []string    // any of these resource types; empty = all
+	ResourceID    *uuid.UUID  // the resource acted on; nil = all
+	IP            *netip.Addr // the requester's address; nil = all
 }
 
 // categoryPrefixes maps an action prefix to its category. The first match wins,
@@ -107,6 +118,7 @@ var categoryPrefixes = []struct {
 	{"social.", CategoryAuthentication},
 	{"social_provider.", CategoryAuthentication},
 	{"ldap.", CategoryAuthentication},
+	{"oidc_connection.", CategoryAuthentication},
 	{"oidc.", CategoryAuthentication},
 	{"oauth.", CategoryAuthentication},
 	{"mfa.", CategoryAuthentication},
@@ -142,6 +154,7 @@ var categoryPrefixes = []struct {
 	{"branding.", CategoryDirectory},
 	{"email.", CategoryDirectory},
 	{"email_template.", CategoryDirectory},
+	{"phone.", CategoryDirectory},
 	{"agent.", CategoryDeveloper},
 	{"apikey.", CategoryDeveloper},
 	{"api_key.", CategoryDeveloper},
@@ -287,15 +300,6 @@ func matchesStreamFilter(ev ActivityEvent, f StreamFilter) bool {
 	return severityMeets(ev.Severity, f.Severity)
 }
 
-// matchesListFilter reports whether ev passes the post-fetch list filters
-// (severity and category, which are computed and not stored in the DB).
-func matchesListFilter(ev ActivityEvent, f ListFilter) bool {
-	if f.Category != "" && ev.Category != f.Category {
-		return false
-	}
-	return severityMeets(ev.Severity, f.Severity)
-}
-
 // auditRow is the common shape of the activity query rows, which mapAuditRow
 // turns into an ActivityEvent.
 type auditRow struct {
@@ -364,11 +368,9 @@ func mapAuditRow(r auditRow) ActivityEvent {
 	}
 
 	if r.UserAgent != nil && *r.UserAgent != "" {
-		ua := parseBrowser(*r.UserAgent)
-		if ua != "" {
-			ev.Browser = &ua
-		}
+		ev.Browser, ev.OS, ev.Device = describeAgent(*r.UserAgent)
 	}
+	ev.Country, ev.City, ev.Location = placeOf(ev.Metadata)
 
 	// request_id may be NULL or empty; surface it only when set.
 	if r.RequestID != nil && *r.RequestID != "" {
@@ -379,22 +381,48 @@ func mapAuditRow(r auditRow) ActivityEvent {
 	return ev
 }
 
-// parseBrowser extracts a coarse browser label from a user-agent string.
-func parseBrowser(ua string) string {
-	switch {
-	case strings.Contains(ua, "Edg/"):
-		return "Edge"
-	case strings.Contains(ua, "Chrome/") && !strings.Contains(ua, "Chromium"):
-		return "Chrome"
-	case strings.Contains(ua, "Firefox/"):
-		return "Firefox"
-	case strings.Contains(ua, "Safari/") && !strings.Contains(ua, "Chrome"):
-		return "Safari"
-	case strings.Contains(ua, "curl"):
-		return "curl"
-	default:
-		return ""
+// describeAgent is the browser, operating system and device type ("desktop",
+// "mobile" or "tablet") a user agent names; each nil when it doesn't say.
+func describeAgent(ua string) (browser, os, device *string) {
+	d := useragent.Parse(ua)
+	if d.Browser == "" && strings.Contains(ua, "curl") {
+		d.Browser = "curl"
 	}
+	switch d.Platform {
+	case "iPhone":
+		d.Platform = "iOS"
+	case "iPad":
+		d.Platform = "iPadOS"
+	}
+	if d.Kind == "unknown" {
+		d.Kind = ""
+	}
+	return nonEmpty(d.Browser), nonEmpty(d.Platform), nonEmpty(d.Kind)
+}
+
+// placeOf is the country and city an event's metadata records the request
+// came from (its "geo"), and the two as a place ("Pune, IN"); each nil when
+// unknown.
+func placeOf(meta map[string]any) (country, city, location *string) {
+	geo, _ := meta["geo"].(map[string]any)
+	c, _ := geo["country"].(string)
+	t, _ := geo["city"].(string)
+	country, city = nonEmpty(c), nonEmpty(t)
+	switch {
+	case c != "" && t != "":
+		location = nonEmpty(t + ", " + c)
+	case c != "":
+		location = country
+	}
+	return country, city, location
+}
+
+// nonEmpty is &s, or nil for "".
+func nonEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // outboxPayload holds the common fields of a domain event payload. Every event

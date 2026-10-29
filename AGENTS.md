@@ -54,7 +54,7 @@ section of the context document.
 ### 1. Inspect before editing
 
 **Never change code based on a filename or an assumption.** Read the file. Read its callers. This
-repository has 77 packages and near-identical names in different contexts — `internal/access/risk/ipallow`
+repository has 93 packages and near-identical names in different contexts — `internal/access/risk/ipallow`
 and `internal/access/threat/risk` are different things.
 
 ### 2. Follow the existing architecture
@@ -142,9 +142,12 @@ internal/platform/database/migrations/NNNN_description.up.sql
 internal/platform/database/migrations/NNNN_description.down.sql
 ```
 
-Numbering continues from the highest present (currently `0164`; `0082` is absent and is not to be
+Numbering continues from the highest present (currently `0229`; `0082` is absent and is not to be
 reused). Migrations are embedded with `//go:embed` and applied on startup. Additive first —
-expand, migrate, contract across releases.
+expand, migrate, contract across releases. An index on a table that already exists is built with
+`CREATE INDEX CONCURRENTLY`, alone in its file (a plain one blocks writes while it builds;
+`TestNewIndexesDontLockTheirTable` enforces it). A migration waits at most 10s for a busy table,
+then fails and runs again at the next start.
 
 ### 9. Behaviour changes require tests
 
@@ -168,7 +171,8 @@ make dev              # run the API on :4001 (persistent JWT + SAML keys from .s
 make dev-secrets      # generate local dev key material
 make build            # go build -o bin/qeet-id ./cmd/api
 make test             # go test ./...
-make test-db          # database tests against PostgreSQL (needs Docker)
+make test-db          # every test, database ones too, race detector on, one shared PostgreSQL (needs Docker)
+make ci               # everything CI checks: build, test-db, lint, sqlc-check, vuln, sast
 make lint             # go vet + golangci-lint, as CI runs it
 make sqlc             # regenerate dbgen/ from queries.sql
 make sqlc-check       # fail if dbgen/ is stale
