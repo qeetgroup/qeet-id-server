@@ -21,8 +21,8 @@ var (
 	ErrWebhookURLRequired      = New(CodeWebhookURLRequired, "Enter a URL for the webhook.")
 	ErrWebhookURLNotAllowed    = New(CodeWebhookURLNotAllowed,
 		"Webhooks can only be sent to a public https address, not a private, local or reserved one.")
-	ErrWebhookInvalidID        = New(CodeWebhookInvalidID, "That identifier isn't valid.")
-	ErrWebhookTenantMismatch   = New(CodeWebhookTenantMismatch, "You can only manage webhooks in your own tenant.")
-	ErrWebhookEventsRequired   = New(CodeWebhookEventsRequired, "Choose at least one event for the webhook.")
-	ErrWebhookEventUnknown     = New(CodeWebhookEventUnknown, "That isn't an event a webhook can receive.")
+	ErrWebhookInvalidID      = New(CodeWebhookInvalidID, "That identifier isn't valid.")
+	ErrWebhookTenantMismatch = New(CodeWebhookTenantMismatch, "You can only manage webhooks in your own tenant.")
+	ErrWebhookEventsRequired = New(CodeWebhookEventsRequired, "Choose at least one event for the webhook.")
+	ErrWebhookEventUnknown   = New(CodeWebhookEventUnknown, "That isn't an event a webhook can receive.")
 )

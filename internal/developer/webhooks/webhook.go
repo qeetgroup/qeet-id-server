@@ -308,21 +308,27 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 		}
 		in.Events = &events
 	}
-	if before, err = s.Get(ctx, id, tenantID); err != nil {
+	q := s.q.WithTx(tx)
+	row, err := q.GetWebhookSubscription(ctx, dbgen.GetWebhookSubscriptionParams{ID: id, TenantID: tenantID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil, errs.ErrWebhookNotFound
+	}
+	if err != nil {
 		return nil, nil, err
 	}
+	before = subscriptionOf(row)
 	var events []string
 	if in.Events != nil {
 		events = *in.Events
 	}
-	if _, err := s.q.WithTx(tx).UpdateWebhookSubscription(ctx, dbgen.UpdateWebhookSubscriptionParams{
+	if _, err := q.UpdateWebhookSubscription(ctx, dbgen.UpdateWebhookSubscriptionParams{
 		ID: id, TenantID: tenantID, Url: in.URL, Events: events,
 	}); errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil, errs.ErrWebhookNotFound
 	} else if err != nil {
 		return nil, nil, err
 	}
-	row, err := s.q.WithTx(tx).GetWebhookSubscription(ctx, dbgen.GetWebhookSubscriptionParams{ID: id, TenantID: tenantID})
+	row, err = q.GetWebhookSubscription(ctx, dbgen.GetWebhookSubscriptionParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		return nil, nil, err
 	}

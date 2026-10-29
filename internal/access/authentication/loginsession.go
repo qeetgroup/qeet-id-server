@@ -97,6 +97,7 @@ func (s *Service) createLoginSession(ctx context.Context, userID, tenantID uuid.
 		}
 		tenantID = u.TenantID
 	}
+	meta := s.signInClientMeta(ctx)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return "", err
@@ -113,7 +114,6 @@ func (s *Service) createLoginSession(ctx context.Context, userID, tenantID uuid.
 	if err != nil {
 		return "", err
 	}
-	meta := s.signInClientMeta(ctx)
 	if secondFactor != "" {
 		if meta == nil {
 			meta = map[string]any{}
