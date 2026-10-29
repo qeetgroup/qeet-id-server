@@ -52,32 +52,36 @@ func (q *Queries) CountActiveAPIKeys(ctx context.Context, tenantID uuid.UUID) (i
 
 const createAPIKey = `-- name: CreateAPIKey :one
 
-INSERT INTO auth.api_keys (tenant_id, user_id, name, prefix, key_hash, scopes, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, tenant_id, user_id, name, prefix, scopes, expires_at, last_used_at, revoked_at, created_at
+INSERT INTO auth.api_keys (tenant_id, user_id, name, prefix, key_hash, scopes, expires_at, created_by, rotated_from)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, tenant_id, user_id, name, prefix, scopes, expires_at, last_used_at, revoked_at, created_at, created_by, rotated_from
 `
 
 type CreateAPIKeyParams struct {
-	TenantID  uuid.UUID
-	UserID    pgtype.UUID
-	Name      string
-	Prefix    string
-	KeyHash   string
-	Scopes    []string
-	ExpiresAt pgtype.Timestamptz
+	TenantID    uuid.UUID
+	UserID      pgtype.UUID
+	Name        string
+	Prefix      string
+	KeyHash     string
+	Scopes      []string
+	ExpiresAt   pgtype.Timestamptz
+	CreatedBy   pgtype.UUID
+	RotatedFrom pgtype.UUID
 }
 
 type CreateAPIKeyRow struct {
-	ID         uuid.UUID
-	TenantID   uuid.UUID
-	UserID     pgtype.UUID
-	Name       string
-	Prefix     string
-	Scopes     []string
-	ExpiresAt  pgtype.Timestamptz
-	LastUsedAt pgtype.Timestamptz
-	RevokedAt  pgtype.Timestamptz
-	CreatedAt  time.Time
+	ID          uuid.UUID
+	TenantID    uuid.UUID
+	UserID      pgtype.UUID
+	Name        string
+	Prefix      string
+	Scopes      []string
+	ExpiresAt   pgtype.Timestamptz
+	LastUsedAt  pgtype.Timestamptz
+	RevokedAt   pgtype.Timestamptz
+	CreatedAt   time.Time
+	CreatedBy   pgtype.UUID
+	RotatedFrom pgtype.UUID
 }
 
 // Queries for the api-keys domain.
@@ -91,6 +95,8 @@ func (q *Queries) CreateAPIKey(ctx context.Context, arg CreateAPIKeyParams) (Cre
 		arg.KeyHash,
 		arg.Scopes,
 		arg.ExpiresAt,
+		arg.CreatedBy,
+		arg.RotatedFrom,
 	)
 	var i CreateAPIKeyRow
 	err := row.Scan(
@@ -104,28 +110,51 @@ func (q *Queries) CreateAPIKey(ctx context.Context, arg CreateAPIKeyParams) (Cre
 		&i.LastUsedAt,
 		&i.RevokedAt,
 		&i.CreatedAt,
+		&i.CreatedBy,
+		&i.RotatedFrom,
 	)
 	return i, err
 }
 
+const endAPIKeyAt = `-- name: EndAPIKeyAt :exec
+UPDATE auth.api_keys
+SET expires_at = LEAST(COALESCE(expires_at, $1::timestamptz), $1::timestamptz),
+    revoked_at = CASE WHEN $1::timestamptz <= NOW() THEN NOW() ELSE revoked_at END
+WHERE id = $2 AND tenant_id = $3
+`
+
+type EndAPIKeyAtParams struct {
+	Until    time.Time
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+// The replaced key stops at until, or at once.
+func (q *Queries) EndAPIKeyAt(ctx context.Context, arg EndAPIKeyAtParams) error {
+	_, err := q.db.Exec(ctx, endAPIKeyAt, arg.Until, arg.ID, arg.TenantID)
+	return err
+}
+
 const listAPIKeys = `-- name: ListAPIKeys :many
-SELECT id, tenant_id, user_id, name, prefix, scopes, expires_at, last_used_at, revoked_at, created_at
+SELECT id, tenant_id, user_id, name, prefix, scopes, expires_at, last_used_at, revoked_at, created_at, created_by, rotated_from
 FROM auth.api_keys
 WHERE tenant_id = $1
 ORDER BY created_at DESC
 `
 
 type ListAPIKeysRow struct {
-	ID         uuid.UUID
-	TenantID   uuid.UUID
-	UserID     pgtype.UUID
-	Name       string
-	Prefix     string
-	Scopes     []string
-	ExpiresAt  pgtype.Timestamptz
-	LastUsedAt pgtype.Timestamptz
-	RevokedAt  pgtype.Timestamptz
-	CreatedAt  time.Time
+	ID          uuid.UUID
+	TenantID    uuid.UUID
+	UserID      pgtype.UUID
+	Name        string
+	Prefix      string
+	Scopes      []string
+	ExpiresAt   pgtype.Timestamptz
+	LastUsedAt  pgtype.Timestamptz
+	RevokedAt   pgtype.Timestamptz
+	CreatedAt   time.Time
+	CreatedBy   pgtype.UUID
+	RotatedFrom pgtype.UUID
 }
 
 func (q *Queries) ListAPIKeys(ctx context.Context, tenantID uuid.UUID) ([]ListAPIKeysRow, error) {
@@ -148,6 +177,8 @@ func (q *Queries) ListAPIKeys(ctx context.Context, tenantID uuid.UUID) ([]ListAP
 			&i.LastUsedAt,
 			&i.RevokedAt,
 			&i.CreatedAt,
+			&i.CreatedBy,
+			&i.RotatedFrom,
 		); err != nil {
 			return nil, err
 		}
@@ -157,6 +188,39 @@ func (q *Queries) ListAPIKeys(ctx context.Context, tenantID uuid.UUID) ([]ListAP
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockAPIKeyForRotation = `-- name: LockAPIKeyForRotation :one
+SELECT id, user_id, name, scopes, expires_at FROM auth.api_keys
+WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())
+FOR UPDATE
+`
+
+type LockAPIKeyForRotationParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+type LockAPIKeyForRotationRow struct {
+	ID        uuid.UUID
+	UserID    pgtype.UUID
+	Name      string
+	Scopes    []string
+	ExpiresAt pgtype.Timestamptz
+}
+
+// A live key of the tenant, held while it is replaced.
+func (q *Queries) LockAPIKeyForRotation(ctx context.Context, arg LockAPIKeyForRotationParams) (LockAPIKeyForRotationRow, error) {
+	row := q.db.QueryRow(ctx, lockAPIKeyForRotation, arg.ID, arg.TenantID)
+	var i LockAPIKeyForRotationRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.Scopes,
+		&i.ExpiresAt,
+	)
+	return i, err
 }
 
 const revokeAPIKey = `-- name: RevokeAPIKey :execrows

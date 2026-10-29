@@ -49,6 +49,7 @@ var Events = []EventType{
 	{"agent.deleted", "An AI agent was deleted."},
 	{"agent.sponsor_transferred", "A person's AI agents were given to another sponsor."},
 	{"agent.kill_switch", "Every active AI agent of the organisation was suspended at once."},
+	{"agent.resume_all", "Every suspended AI agent of the organisation was made active again at once."},
 	{"rebac.tuple_written", "A relationship was written."},
 	{"rebac.tuple_deleted", "A relationship was deleted."},
 	{"abac_policy.created", "An attribute-based access policy was created."},

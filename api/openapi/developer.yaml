@@ -194,6 +194,61 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/api-keys/{id}/rotate:
+    post:
+      operationId: post_v1_tenants_ByTenantID_api_keys_ById_rotate
+      summary: Rotate API key
+      description: 'Replaces a live API key with a new one of the same name, scopes, person and expiry, whose secret is returned only now, and keeps the old key working for overlap_hours (default 24, at most 168; 0 revokes it at once). The new key names the one it replaced in rotated_from. A key acting for a person is rotated only by that person (403 apikey.user_not_self). The caller must hold every scope of the key (403 rbac.grant_exceeds_caller). Requires apikey.write. Needs a recent step-up. Audited as apikey.rotated.'
+      tags:
+        - API Keys
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                overlap_hours:
+                  type: integer
+                  minimum: 0
+                  maximum: 168
+                  description: How long the old key goes on working beside the new one. Defaults to 24; 0 stops it at once.
+      responses:
+        '201':
+          description: The new key; its secret shown once
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api_key:
+                    $ref: '#/components/schemas/ApiKey'
+                  secret:
+                    type: string
+                  warning:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
   /v1/agents/token:
     post:
       operationId: post_v1_agents_token
@@ -531,6 +586,95 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/agents/resume-all:
+    post:
+      operationId: post_v1_tenants_ByTenantID_agents_resume_all
+      summary: Resume all agents
+      description: 'Makes every suspended agent of the tenant active again in a single transaction, the undoing of suspend-all. Returns the number resumed. Requires apikey.write. Needs a recent step-up. Audited, and sent to webhooks, as agent.resume_all.'
+      tags:
+        - Agents
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Agents resumed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  resumed:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/agents/{id}/rotate-secret:
+    post:
+      operationId: post_v1_tenants_ByTenantID_agents_ById_rotate_secret
+      summary: Rotate agent secret
+      description: 'Gives an agent that is not decommissioned a new secret, returned only now, and keeps the old secret minting tokens for overlap_hours (default 24, at most 168; 0 stops it at once). Requires apikey.write. Needs a recent step-up. Audited as agent.secret_rotated.'
+      tags:
+        - Agents
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                overlap_hours:
+                  type: integer
+                  minimum: 0
+                  maximum: 168
+                  description: How long the old secret goes on working beside the new one. Defaults to 24; 0 stops it at once.
+      responses:
+        '200':
+          description: The new secret, shown once
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, secret, previous_secret_expires_at]
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  secret:
+                    type: string
+                  previous_secret_expires_at:
+                    type: string
+                    format: date-time
+                    description: When the old secret stops working.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
   /v1/tenants/{tenantID}/agents/sponsored-by/{userID}:
     get:
       operationId: get_v1_tenants_ByTenantID_agents_sponsored_by_ByUserID
@@ -2096,6 +2240,16 @@ components:
         created_at:
           type: string
           format: date-time
+        created_by:
+          type: string
+          format: uuid
+          nullable: true
+          description: The person who created the key, or rotated it into being; null for a key made by a machine or before this was kept.
+        rotated_from:
+          type: string
+          format: uuid
+          nullable: true
+          description: The key this one replaced at a rotation.
     ApiKeyCreate:
       type: object
       required:
@@ -2148,6 +2302,14 @@ components:
           type: string
         token_ttl_seconds:
           type: integer
+        last_used_at:
+          type: [string, 'null']
+          format: date-time
+          description: When the agent was last issued a token, to the minute.
+        previous_secret_expires_at:
+          type: string
+          format: date-time
+          description: Present while the secret replaced at its last rotation still works, until then.
     GrantMeta:
       type: object
       required: [created_at, provider, updated_at]

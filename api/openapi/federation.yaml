@@ -1099,6 +1099,97 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/service-principals/{id}/rotate-secret:
+    post:
+      operationId: post_v1_tenants_ByTenantID_service_principals_ById_rotate_secret
+      summary: Rotate service principal secret
+      description: 'Gives a service principal a new client secret, returned only now, and keeps the old secret getting tokens for overlap_hours (default 24, at most 168; 0 stops it at once). Tokens already issued are unaffected. Requires apikey.write. Needs a recent step-up. Audited as service_principal.secret_rotated.'
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                overlap_hours:
+                  type: integer
+                  minimum: 0
+                  maximum: 168
+                  description: How long the old secret goes on working beside the new one. Defaults to 24; 0 stops it at once.
+      responses:
+        '200':
+          description: The new secret, shown once
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [client_id, client_secret, previous_secret_expires_at, warning]
+                properties:
+                  client_id:
+                    type: string
+                    format: uuid
+                  client_secret:
+                    type: string
+                  previous_secret_expires_at:
+                    type: string
+                    format: date-time
+                    description: When the old secret stops working.
+                  warning:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/service-principals/{id}/enable:
+    post:
+      operationId: post_v1_tenants_ByTenantID_service_principals_ById_enable
+      summary: Enable service principal
+      description: 'Turns a disabled service principal back on, so its secret gets tokens again; enabling one that is on changes nothing. Requires apikey.write. Needs a recent step-up. Audited as service_principal.enabled.'
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Enabled
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/tenants/{tenantID}/oauth/devices:
     get:
       operationId: get_v1_tenants_ByTenantID_oauth_devices
@@ -7734,7 +7825,7 @@ components:
           type: string
     Principal:
       type: object
-      required: [created_at, disabled_at, id, name, scopes, tenant_id]
+      required: [created_at, description, disabled_at, id, last_used_at, name, scopes, tenant_id]
       properties:
         created_at:
           type: string
@@ -7754,6 +7845,16 @@ components:
         tenant_id:
           type: string
           format: uuid
+        description:
+          type: string
+        last_used_at:
+          type: [string, 'null']
+          format: date-time
+          description: When the principal was last issued a token, to the minute.
+        previous_secret_expires_at:
+          type: string
+          format: date-time
+          description: Present while the secret replaced at its last rotation still works, until then.
     Provider:
       type: object
       required: [client_id, created_at, discovery_url, enabled, id, provider, tenant_id]

@@ -52,14 +52,19 @@ func tsPtr(p pgtype.Timestamptz) *time.Time {
 	return &t
 }
 
-// Principal is a service principal, without its secret.
+// Principal is a service principal, without its secret. LastUsedAt is when it
+// was last issued a token, to the minute; PreviousSecretExpiresAt, when the
+// secret it replaced at its last rotation stops working.
 type Principal struct {
-	ID         uuid.UUID  `json:"id"`
-	TenantID   uuid.UUID  `json:"tenant_id"`
-	Name       string     `json:"name"`
-	Scopes     []string   `json:"scopes"`
-	DisabledAt *time.Time `json:"disabled_at"`
-	CreatedAt  time.Time  `json:"created_at"`
+	ID                      uuid.UUID  `json:"id"`
+	TenantID                uuid.UUID  `json:"tenant_id"`
+	Name                    string     `json:"name"`
+	Description             string     `json:"description"`
+	Scopes                  []string   `json:"scopes"`
+	DisabledAt              *time.Time `json:"disabled_at"`
+	LastUsedAt              *time.Time `json:"last_used_at"`
+	PreviousSecretExpiresAt *time.Time `json:"previous_secret_expires_at,omitempty"`
+	CreatedAt               time.Time  `json:"created_at"`
 }
 
 // CreateInput is what Create takes.
@@ -92,7 +97,7 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Princ
 		return nil, "", err
 	}
 	p := &Principal{
-		ID: row.ID, TenantID: row.TenantID, Name: row.Name,
+		ID: row.ID, TenantID: row.TenantID, Name: row.Name, Description: row.Description,
 		Scopes: row.Scopes, DisabledAt: tsPtr(row.DisabledAt), CreatedAt: row.CreatedAt,
 	}
 	return p, raw, nil
@@ -106,10 +111,14 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Principal, er
 	}
 	out := make([]Principal, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, Principal{
-			ID: row.ID, TenantID: row.TenantID, Name: row.Name,
-			Scopes: row.Scopes, DisabledAt: tsPtr(row.DisabledAt), CreatedAt: row.CreatedAt,
-		})
+		p := Principal{
+			ID: row.ID, TenantID: row.TenantID, Name: row.Name, Description: row.Description,
+			Scopes: row.Scopes, DisabledAt: tsPtr(row.DisabledAt), LastUsedAt: tsPtr(row.LastUsedAt), CreatedAt: row.CreatedAt,
+		}
+		if until := tsPtr(row.PreviousSecretExpiresAt); until != nil && until.After(time.Now()) {
+			p.PreviousSecretExpiresAt = until
+		}
+		out = append(out, p)
 	}
 	return out, nil
 }
@@ -164,7 +173,10 @@ func (s *Service) IssueClientCredentials(ctx context.Context, clientID, clientSe
 	// The secret first, so only its holder learns that it is disabled.
 	ok, rehash := password.VerifySecret(row.SecretHash, clientSecret)
 	if !ok {
-		return nil, errs.ErrPrincipalInvalidCredentials
+		if !previousSecretWorks(row.PreviousSecretHash, row.PreviousSecretExpiresAt, clientSecret) {
+			return nil, errs.ErrPrincipalInvalidCredentials
+		}
+		rehash = false
 	}
 	if rehash {
 		if err := s.q.UpgradeServicePrincipalSecretHash(ctx, dbgen.UpgradeServicePrincipalSecretHashParams{
@@ -175,6 +187,9 @@ func (s *Service) IssueClientCredentials(ctx context.Context, clientID, clientSe
 	}
 	if row.DisabledAt.Valid {
 		return nil, errs.ErrPrincipalDisabled
+	}
+	if err := s.q.TouchServicePrincipal(ctx, dbgen.TouchServicePrincipalParams{ID: row.ID, TenantID: row.TenantID}); err != nil {
+		slog.Warn("service principal last use not recorded", "err", err, "principal_id", row.ID)
 	}
 	id, tenantID, scopes := row.ID, row.TenantID, row.Scopes
 	now := time.Now().UTC()
@@ -241,6 +256,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/service-principals", h.create)
 	r.Get("/tenants/{tenantID}/service-principals", h.list)
 	r.Delete("/service-principals/{id}", h.disable)
+	r.Post("/tenants/{tenantID}/service-principals/{id}/rotate-secret", h.rotateSecret)
+	r.Post("/tenants/{tenantID}/service-principals/{id}/enable", h.enable)
 }
 
 // MountToken registers the client-credentials token endpoint, which the router

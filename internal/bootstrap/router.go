@@ -542,11 +542,14 @@ func NoStoreRoutes() []string {
 
 		// A secret, key, code or credential returned to its holder.
 		"POST /v1/api-keys",
+		"POST /v1/tenants/{tenantID}/api-keys/{id}/rotate",
 		"POST /v1/oidc/clients",
 		"POST /v1/tenants/{tenantID}/oidc/clients",
 		"POST /v1/tenants/{tenantID}/oidc/clients/{id}/rotate-secret",
 		"POST /v1/service-principals",
+		"POST /v1/tenants/{tenantID}/service-principals/{id}/rotate-secret",
 		"POST /v1/tenants/{tenantID}/agents",
+		"POST /v1/tenants/{tenantID}/agents/{id}/rotate-secret",
 		"POST /v1/webhooks",
 		"POST /v1/tenants/{tenantID}/webhooks/{id}/rotate-secret",
 		"POST /v1/mfa/totp/enroll/start",

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
@@ -103,5 +104,63 @@ func TestPersonalKeysStopWithTheirPerson(t *testing.T) {
 		if _, err := svc.Verify(ctx, shared); err != nil {
 			t.Errorf("a key for no one, its creator %s: %v", step.name, err)
 		}
+	}
+}
+
+// TestRotateReplacesAKeyWithAnOverlap checks that a rotated key's replacement
+// carries its scopes, its creator and the key it replaced, that the old key
+// works until the overlap ends and stops at once with none, and that only the
+// person a personal key acts for may rotate it.
+func TestRotateReplacesAKeyWithAnOverlap(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := NewService(pool)
+	tenant := dbtest.Tenant(t)
+	a, b := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
+	asA, asB := audit.Actor{UserID: &a.ID, Type: "user"}, audit.Actor{UserID: &b.ID, Type: "user"}
+	old, oldRaw, err := svc.Create(ctx, CreateInput{TenantID: tenant, Name: "ci", Scopes: []string{}, Actor: asA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.CreatedBy == nil || *old.CreatedBy != a.ID {
+		t.Errorf("a new key's created_by = %v, want %s", old.CreatedBy, a.ID)
+	}
+	k, raw, err := svc.Rotate(ctx, tenant, old.ID, DefaultRotationOverlap, asB)
+	if err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	if k.Name != "ci" || k.RotatedFrom == nil || *k.RotatedFrom != old.ID || k.CreatedBy == nil || *k.CreatedBy != b.ID {
+		t.Errorf("the replacement: %+v, want ci, rotated from %s, created by %s", k, old.ID, b.ID)
+	}
+	for name, key := range map[string]string{"old": oldRaw, "new": raw} {
+		if _, err := svc.Verify(ctx, key); err != nil {
+			t.Errorf("the %s key during the overlap: %v", name, err)
+		}
+	}
+	if _, _, err := svc.Rotate(ctx, tenant, k.ID, 0, asA); err != nil {
+		t.Fatalf("rotate with no overlap: %v", err)
+	}
+	if _, err := svc.Verify(ctx, raw); err == nil {
+		t.Error("a key rotated with no overlap still works")
+	}
+	if _, _, err := svc.Rotate(ctx, tenant, k.ID, time.Hour, asA); !errors.Is(err, errs.ErrAPIKeyNotFound) {
+		t.Errorf("rotate a revoked key: %v, want %v", err, errs.ErrAPIKeyNotFound)
+	}
+	if _, _, err := svc.Rotate(ctx, tenant, old.ID, 8*24*time.Hour, asA); err == nil {
+		t.Error("an eight-day overlap was accepted")
+	}
+
+	personal, _, err := svc.Create(ctx, CreateInput{TenantID: tenant, Name: "laptop", UserID: &a.ID, Actor: asA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.Rotate(ctx, tenant, personal.ID, time.Hour, asB); !errors.Is(err, errs.ErrAPIKeyUserNotSelf) {
+		t.Errorf("rotate another person's key: %v, want %v", err, errs.ErrAPIKeyUserNotSelf)
+	}
+	if k, _, err := svc.Rotate(ctx, tenant, personal.ID, time.Hour, asA); err != nil || k.UserID == nil || *k.UserID != a.ID {
+		t.Errorf("rotate one's own key: %+v, %v", k, err)
+	}
+	if _, _, err := svc.Rotate(ctx, dbtest.Tenant(t), old.ID, time.Hour, asA); !errors.Is(err, errs.ErrAPIKeyNotFound) {
+		t.Errorf("rotate from another tenant: %v, want %v", err, errs.ErrAPIKeyNotFound)
 	}
 }

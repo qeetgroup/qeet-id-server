@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"slices"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
@@ -87,5 +90,60 @@ func TestTokenChecksTheSecretFirst(t *testing.T) {
 	}
 	if _, err := svc.IssueToken(ctx, a.ID.String(), a.Secret); !errors.Is(err, errs.ErrAgentInactive) {
 		t.Errorf("right secret for a suspended agent: %v, want %v", err, errs.ErrAgentInactive)
+	}
+}
+
+// TestAgentSecretsRotateAndAgentsResumeTogether checks that a rotated agent's
+// old secret goes on minting tokens until its overlap ends, that a token
+// minted is noted as its last use, and that resume-all undoes the kill switch
+// for its own tenant only.
+func TestAgentSecretsRotateAndAgentsResumeTogether(t *testing.T) {
+	ctx := dbtest.Context(t)
+	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	system := audit.Actor{Type: "system"}
+	a, err := svc.Create(ctx, tenant, "triage-bot", nil, 0, dbtest.User(t, tenant, tenant).ID, system)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := svc.Create(ctx, other, "other-bot", nil, 0, dbtest.User(t, other, other).ID, system)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, _, err := svc.RotateSecret(ctx, tenant, a.ID, time.Hour, system)
+	if err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	for name, s := range map[string]string{"old": a.Secret, "new": secret} {
+		if _, err := svc.IssueToken(ctx, a.ID.String(), s); err != nil {
+			t.Errorf("the %s secret during the overlap: %v", name, err)
+		}
+	}
+	list, err := svc.List(ctx, tenant)
+	if err != nil || len(list) != 1 || list[0].LastUsedAt == nil || list[0].PreviousSecretExpiresAt == nil {
+		t.Errorf("listed agents %+v, %v: want a last use and the overlap's end", list, err)
+	}
+	if _, _, err := svc.RotateSecret(ctx, tenant, a.ID, 0, system); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.IssueToken(ctx, a.ID.String(), secret); !errors.Is(err, errs.ErrAgentTokenInvalid) {
+		t.Errorf("a secret rotated with no overlap: %v, want %v", err, errs.ErrAgentTokenInvalid)
+	}
+	if _, _, err := svc.RotateSecret(ctx, other, a.ID, time.Hour, system); !errors.Is(err, errs.ErrAgentNotFound) {
+		t.Errorf("rotate from another tenant: %v, want %v", err, errs.ErrAgentNotFound)
+	}
+
+	for _, tid := range []uuid.UUID{tenant, other} {
+		if _, err := svc.KillAll(ctx, tid, system); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, err := svc.ResumeAll(ctx, tenant, system); err != nil || n != 1 {
+		t.Errorf("resume all: %d, %v; want 1", n, err)
+	}
+	for id, want := range map[uuid.UUID]string{a.ID: "active", b.ID: "suspended"} {
+		if got, err := svc.AgentStatus(ctx, id); err != nil || got != want {
+			t.Errorf("agent %s after resume-all: %q, %v; want %q", id, got, err, want)
+		}
 	}
 }

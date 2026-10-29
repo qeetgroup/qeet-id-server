@@ -121,12 +121,15 @@ func userPermissionMap() map[string]string {
 		"POST /v1/groups/import":               "group.write",
 
 		// API keys + service principals (M2M).
-		"POST /v1/api-keys":                             "apikey.write",
-		"GET /v1/tenants/{tenantID}/api-keys":           "apikey.read",
-		"DELETE /v1/api-keys/{id}":                      "apikey.write",
-		"POST /v1/service-principals":                   "apikey.write",
-		"GET /v1/tenants/{tenantID}/service-principals": "apikey.read",
-		"DELETE /v1/service-principals/{id}":            "apikey.write",
+		"POST /v1/api-keys":                                                 "apikey.write",
+		"GET /v1/tenants/{tenantID}/api-keys":                               "apikey.read",
+		"DELETE /v1/api-keys/{id}":                                          "apikey.write",
+		"POST /v1/service-principals":                                       "apikey.write",
+		"GET /v1/tenants/{tenantID}/service-principals":                     "apikey.read",
+		"DELETE /v1/service-principals/{id}":                                "apikey.write",
+		"POST /v1/tenants/{tenantID}/api-keys/{id}/rotate":                  "apikey.write",
+		"POST /v1/tenants/{tenantID}/service-principals/{id}/rotate-secret": "apikey.write",
+		"POST /v1/tenants/{tenantID}/service-principals/{id}/enable":        "apikey.write",
 
 		// SSO / identity connections: OIDC clients + grants/devices.
 		"GET /v1/oidc/signing-keys":                                   "connection.read",
@@ -259,6 +262,8 @@ func userPermissionMap() map[string]string {
 		"GET /v1/tenants/{tenantID}/agents":                                 "apikey.read",
 		"POST /v1/tenants/{tenantID}/agents":                                "apikey.write",
 		"POST /v1/tenants/{tenantID}/agents/kill-all":                       "apikey.write",
+		"POST /v1/tenants/{tenantID}/agents/resume-all":                     "apikey.write",
+		"POST /v1/tenants/{tenantID}/agents/{id}/rotate-secret":             "apikey.write",
 		"DELETE /v1/tenants/{tenantID}/agents/{id}":                         "apikey.write",
 		"PATCH /v1/tenants/{tenantID}/agents/{id}":                          "apikey.write",
 		"POST /v1/tenants/{tenantID}/agents/{id}/suspend":                   "apikey.write",
