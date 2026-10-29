@@ -178,6 +178,30 @@ func TestDeviceFlow(t *testing.T) {
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'oauth.device_revoked'`, tenant); n != 1 {
 		t.Errorf("the revocation was audited %d times, want once", n)
 	}
+
+	// The approved code that bought tokens names its application and when it
+	// was spent, and revoking it ends the grant it bought.
+	approved := list.Items[slices.IndexFunc(list.Items, func(d DeviceAuthorization) bool { return d.UserCode == started.UserCode })]
+	if approved.ClientName != "TV" || approved.ConsumedAt == nil || list.Items[at].ConsumedAt != nil {
+		t.Errorf("devices %+v, want the application's name and when an approval was spent", list.Items)
+	}
+	renew := url.Values{"grant_type": {"refresh_token"}, "client_id": {device.ClientID}, "refresh_token": {issued.RefreshToken}}
+	if rec := postForm(t, p.public, "/oauth/token-code", renew, "", ""); rec.Code != http.StatusOK {
+		t.Fatalf("renew the device's tokens: %d %s", rec.Code, rec.Body.String())
+	} else {
+		dbtest.Decode(t, rec, &issued)
+	}
+	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/tenants/"+tenant.String()+"/oauth/devices/"+approved.ID.String(), nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("revoke the approved device: %d %s", rec.Code, rec.Body.String())
+	}
+	renew.Set("refresh_token", issued.RefreshToken)
+	if code, _ := decodeTokenError(t, postForm(t, p.public, "/oauth/token-code", renew, "", "")); code != "invalid_grant" {
+		t.Errorf("renew after the device was revoked: %s, want invalid_grant", code)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'oauth.device_revoked'
+		AND (metadata->>'grant_ended')::boolean`, tenant); n != 1 {
+		t.Errorf("%d revocations recorded ending a grant, want one", n)
+	}
 }
 
 // TestDeviceAuthorizationNeedsTheDeviceGrant checks that only an application

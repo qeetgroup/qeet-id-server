@@ -1210,11 +1210,12 @@ func (q *Queries) ListClientWebOrigins(ctx context.Context, tenantID uuid.UUID) 
 }
 
 const listDevices = `-- name: ListDevices :many
-SELECT d.id, d.client_id, d.user_code, d.status, d.user_id,
+SELECT d.id, d.client_id, COALESCE(c.name, '') AS client_name, d.user_code, d.status, d.user_id,
        COALESCE(u.email, '') AS user_email, d.scopes,
-       d.created_at, d.expires_at, d.last_polled_at
+       d.created_at, d.expires_at, d.last_polled_at, d.consumed_at
 FROM auth.oidc_device_codes d
 LEFT JOIN "user".users u ON u.id = d.user_id
+LEFT JOIN auth.oidc_clients c ON c.client_id = d.client_id AND c.tenant_id = d.tenant_id
 WHERE d.tenant_id = $1
 ORDER BY d.created_at DESC
 LIMIT 1001
@@ -1223,6 +1224,7 @@ LIMIT 1001
 type ListDevicesRow struct {
 	ID           uuid.UUID
 	ClientID     string
+	ClientName   string
 	UserCode     string
 	Status       string
 	UserID       pgtype.UUID
@@ -1231,6 +1233,7 @@ type ListDevicesRow struct {
 	CreatedAt    time.Time
 	ExpiresAt    time.Time
 	LastPolledAt pgtype.Timestamptz
+	ConsumedAt   pgtype.Timestamptz
 }
 
 // At most paging.MaxListItems+1 rows: the API truncates the rest.
@@ -1246,6 +1249,7 @@ func (q *Queries) ListDevices(ctx context.Context, tenantID uuid.UUID) ([]ListDe
 		if err := rows.Scan(
 			&i.ID,
 			&i.ClientID,
+			&i.ClientName,
 			&i.UserCode,
 			&i.Status,
 			&i.UserID,
@@ -1254,6 +1258,7 @@ func (q *Queries) ListDevices(ctx context.Context, tenantID uuid.UUID) ([]ListDe
 			&i.CreatedAt,
 			&i.ExpiresAt,
 			&i.LastPolledAt,
+			&i.ConsumedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1920,7 +1925,7 @@ func (q *Queries) ReviewOIDCClient(ctx context.Context, arg ReviewOIDCClientPara
 const revokeDevice = `-- name: RevokeDevice :one
 UPDATE auth.oidc_device_codes SET status = 'denied'
 WHERE id = $1 AND tenant_id = $2
-RETURNING client_id, user_code
+RETURNING client_id, user_code, device_code_hash
 `
 
 type RevokeDeviceParams struct {
@@ -1929,15 +1934,38 @@ type RevokeDeviceParams struct {
 }
 
 type RevokeDeviceRow struct {
-	ClientID string
-	UserCode string
+	ClientID       string
+	UserCode       string
+	DeviceCodeHash string
 }
 
 func (q *Queries) RevokeDevice(ctx context.Context, arg RevokeDeviceParams) (RevokeDeviceRow, error) {
 	row := q.db.QueryRow(ctx, revokeDevice, arg.ID, arg.TenantID)
 	var i RevokeDeviceRow
-	err := row.Scan(&i.ClientID, &i.UserCode)
+	err := row.Scan(&i.ClientID, &i.UserCode, &i.DeviceCodeHash)
 	return i, err
+}
+
+const revokeDeviceGrant = `-- name: RevokeDeviceGrant :execrows
+UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
+WHERE tenant_id = $1 AND client_id = $2
+  AND authorization_code_hash = $3 AND revoked_at IS NULL
+`
+
+type RevokeDeviceGrantParams struct {
+	TenantID       uuid.UUID
+	ClientID       string
+	DeviceCodeHash *string
+}
+
+// RevokeDeviceGrant ends the grant a device code was redeemed for, every
+// rotation of it included.
+func (q *Queries) RevokeDeviceGrant(ctx context.Context, arg RevokeDeviceGrantParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeDeviceGrant, arg.TenantID, arg.ClientID, arg.DeviceCodeHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const revokeGrantChain = `-- name: RevokeGrantChain :exec

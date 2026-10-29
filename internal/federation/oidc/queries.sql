@@ -268,11 +268,12 @@ UPDATE auth.oidc_device_codes SET consumed_at = NOW() WHERE id = @id;
 
 -- name: ListDevices :many
 -- At most paging.MaxListItems+1 rows: the API truncates the rest.
-SELECT d.id, d.client_id, d.user_code, d.status, d.user_id,
+SELECT d.id, d.client_id, COALESCE(c.name, '') AS client_name, d.user_code, d.status, d.user_id,
        COALESCE(u.email, '') AS user_email, d.scopes,
-       d.created_at, d.expires_at, d.last_polled_at
+       d.created_at, d.expires_at, d.last_polled_at, d.consumed_at
 FROM auth.oidc_device_codes d
 LEFT JOIN "user".users u ON u.id = d.user_id
+LEFT JOIN auth.oidc_clients c ON c.client_id = d.client_id AND c.tenant_id = d.tenant_id
 WHERE d.tenant_id = @tenant_id
 ORDER BY d.created_at DESC
 LIMIT 1001;
@@ -280,7 +281,14 @@ LIMIT 1001;
 -- name: RevokeDevice :one
 UPDATE auth.oidc_device_codes SET status = 'denied'
 WHERE id = @id AND tenant_id = @tenant_id
-RETURNING client_id, user_code;
+RETURNING client_id, user_code, device_code_hash;
+
+-- RevokeDeviceGrant ends the grant a device code was redeemed for, every
+-- rotation of it included.
+-- name: RevokeDeviceGrant :execrows
+UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
+WHERE tenant_id = @tenant_id AND client_id = @client_id
+  AND authorization_code_hash = @device_code_hash AND revoked_at IS NULL;
 
 -- ==========================================================================
 -- CIBA (OpenID Connect Client-Initiated Backchannel Authentication)

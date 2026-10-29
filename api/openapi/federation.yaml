@@ -1138,7 +1138,7 @@ paths:
   /v1/tenants/{tenantID}/oauth/devices/{id}:
     delete:
       operationId: delete_v1_tenants_ByTenantID_oauth_devices_ById
-      description: 'Revokes a device authorization in the tenant so the device can no longer complete or continue its token poll at the token-code endpoint. The action is audited. Pairs with the device-authorization list for administrative cleanup.'
+      description: 'Revokes a device authorization in the tenant so the device can no longer complete or continue its token poll at the token-code endpoint. For an approval the device has already redeemed, the grant it bought ends too: its refresh tokens stop working at once, and access tokens already issued run out on their own. Audited as oauth.device_revoked, with grant_ended saying whether a grant ended.'
       summary: Revoke device authorization
       tags:
         - OIDC
@@ -6435,6 +6435,9 @@ components:
           format: uuid
         client_id:
           type: string
+        client_name:
+          type: string
+          description: The application's name; empty once the application is deleted.
         user_code:
           type: string
         status:
@@ -6463,6 +6466,11 @@ components:
           type: string
           format: date-time
           nullable: true
+        consumed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the device redeemed the approval for tokens; null until then.
     DirectoryAlert:
       type: object
       required: [id, name, connection_id, threshold, enabled, user_id, created_at, last_notified_at]
