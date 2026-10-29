@@ -713,7 +713,8 @@ func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, passwor
 		return nil, err
 	}
 	started := time.Now()
-	defer func() { s.recordOperation(ctx, c.TenantID, connID, "sign-in", "user", started, resultError) }()
+	var signedIn *uuid.UUID
+	defer func() { s.recordOperation(ctx, c, "sign-in", "user", started, resultError, username, signedIn) }()
 	// A draft connection is still being set up: it signs nobody in until an
 	// administrator turns it on.
 	switch c.Status {
@@ -744,6 +745,9 @@ func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, passwor
 		}
 		userID, err := s.findOrCreateUser(ctx, c.TenantID, connID, du,
 			audit.Actor{Type: provider, IP: ip, UserAgent: ua, RequestID: middleware.GetReqID(ctx)})
+		if err == nil {
+			signedIn = &userID
+		}
 		return userID, false, err
 	})
 	if err != nil {

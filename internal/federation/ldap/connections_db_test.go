@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -25,12 +24,14 @@ import (
 type operations struct {
 	mu  sync.Mutex
 	got []string
+	ops []Operation
 }
 
-func (o *operations) RecordOperation(_ context.Context, _ uuid.UUID, _, operation, _, _ string, status int, _ time.Time, _ time.Duration) error {
+func (o *operations) RecordLDAPOperation(_ context.Context, op Operation) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.got = append(o.got, operation+" "+http.StatusText(status))
+	o.got = append(o.got, op.Operation+" "+http.StatusText(op.Status))
+	o.ops = append(o.ops, op)
 	return nil
 }
 
@@ -134,6 +135,10 @@ func TestDirectoryConnectionsOverHTTP(t *testing.T) {
 	if got := strings.Join(observed.got, ","); got != "test OK,test Forbidden" {
 		t.Errorf("operations recorded %q", got)
 	}
+	// The failure keeps its own code and the server it reached.
+	if len(observed.ops) == 2 && (observed.ops[1].Reason != errs.CodeLDAPServiceBindFailed || observed.ops[1].Params["host"] == "" || observed.ops[0].Reason != "") {
+		t.Errorf("a refused test recorded as %+v, a passing one as %+v; want the refusal's code and the host", observed.ops[1], observed.ops[0])
+	}
 	observed.mu.Unlock()
 
 	signIn := func(username, password string) response {
@@ -158,6 +163,21 @@ func TestDirectoryConnectionsOverHTTP(t *testing.T) {
 	}
 	if res := signIn("bob", ""); !strings.Contains(res.body, errs.CodeLDAPCredentialsRequired) {
 		t.Errorf("no password: %d %s", res.code, res.body)
+	}
+	// Each sign-in names the login name tried, and the person once known.
+	observed.mu.Lock()
+	var bobs, nomail int
+	for _, op := range observed.ops {
+		switch {
+		case op.Operation == "sign-in" && op.Subject == "bob" && op.UserID != nil && op.Reason == "":
+			bobs++
+		case op.Operation == "sign-in" && op.Subject == "nomail" && op.UserID == nil && op.Reason == errs.CodeLDAPEmailAttributeMissing:
+			nomail++
+		}
+	}
+	observed.mu.Unlock()
+	if bobs != 2 || nomail != 1 {
+		t.Errorf("sign-ins recorded %d times for bob with the person, %d for nomail with its reason; want 2 and 1", bobs, nomail)
 	}
 
 	otherAdmin := dbtest.User(t, other, other)

@@ -13,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -40,6 +42,13 @@ type Event struct {
 	ResolvedAt   *time.Time `json:"resolved_at"`
 	RetryOf      *uuid.UUID `json:"retry_of"`
 	Retryable    bool       `json:"retryable"`
+	// Reason is the failure's own code, such as ldap.dial_failed, with Params
+	// its safe details; Subject the login name a sign-in tried, and UserID the
+	// person it was for once known.
+	Reason  string            `json:"reason,omitempty"`
+	Params  map[string]string `json:"params,omitempty"`
+	Subject string            `json:"subject,omitempty"`
+	UserID  *uuid.UUID        `json:"user_id,omitempty"`
 }
 
 // EventSummary counts the events on a page's filter by outcome.
@@ -109,11 +118,54 @@ func classifyOperation(operation string, status int) (outcome, category, code, m
 	return outcome, category, "DIR-" + strconv.Itoa(status), message, severity
 }
 
+// Operation is one provisioning or directory operation to record. Reason,
+// Params, Subject and UserID are as on Event.
+type Operation struct {
+	TenantID     uuid.UUID
+	ConnectionID string
+	Operation    string
+	ResourceType string
+	ResourceID   string
+	Status       int
+	Started      time.Time
+	Duration     time.Duration
+	Reason       string
+	Params       map[string]string
+	Subject      string
+	UserID       *uuid.UUID
+}
+
 // RecordOperation records one provisioning operation of a connection.
 func (service *Service) RecordOperation(ctx context.Context, tenantID uuid.UUID, connectionID, operation, resourceType, resourceID string, status int, started time.Time, duration time.Duration) error {
+	return service.Record(ctx, Operation{TenantID: tenantID, ConnectionID: connectionID, Operation: operation,
+		ResourceType: resourceType, ResourceID: resourceID, Status: status, Started: started, Duration: duration})
+}
+
+// RecordLDAPOperation records an LDAP connection's operation.
+func (service *Service) RecordLDAPOperation(ctx context.Context, op ldap.Operation) error {
+	return service.Record(ctx, Operation{TenantID: op.TenantID, ConnectionID: op.ConnectionID.String(), Operation: op.Operation,
+		ResourceType: op.Resource, Status: op.Status, Started: op.Started, Duration: op.Duration,
+		Reason: op.Reason, Params: op.Params, Subject: op.Subject, UserID: op.UserID})
+}
+
+// RecordSCIMOperation records a change an organisation's identity provider
+// sent over SCIM.
+func (service *Service) RecordSCIMOperation(ctx context.Context, op scim.Operation) error {
+	return service.Record(ctx, Operation{TenantID: op.TenantID, ConnectionID: "scim:" + op.TenantID.String(), Operation: op.Operation,
+		ResourceType: op.Resource, ResourceID: op.ResourceID, Status: op.Status, Started: op.Started, Duration: op.Duration,
+		Reason: op.Reason})
+}
+
+// maxSubjectLen bounds the login name an event keeps.
+const maxSubjectLen = 256
+
+// Record records one operation of a connection.
+func (service *Service) Record(ctx context.Context, op Operation) error {
 	if service.pool == nil {
 		return nil
 	}
+	tenantID, connectionID, operation, resourceType, resourceID := op.TenantID, op.ConnectionID, op.Operation, op.ResourceType, op.ResourceID
+	status, started, duration := op.Status, op.Started, op.Duration
 	if tenantID == uuid.Nil || !validConnectionID(tenantID, connectionID) || status < 100 || status > 599 {
 		return errs.ErrBadRequest
 	}
@@ -122,6 +174,14 @@ func (service *Service) RecordOperation(ctx context.Context, tenantID uuid.UUID,
 	}
 	if len(resourceID) > 128 {
 		resourceID = ""
+	}
+	subject := op.Subject
+	if len(subject) > maxSubjectLen {
+		subject = subject[:maxSubjectLen]
+	}
+	params := op.Params
+	if params == nil {
+		params = map[string]string{}
 	}
 	outcome, category, code, message, severity := classifyOperation(operation, status)
 	trigger := "manual"
@@ -139,9 +199,10 @@ func (service *Service) RecordOperation(ctx context.Context, tenantID uuid.UUID,
 	}
 	_, err := service.pool.Exec(ctx, `
 		INSERT INTO tenant.directory_events
-		(id,tenant_id,connection_id,operation,trigger_type,resource_type,resource_id,started_at,duration_ms,http_status,status,users_synced,groups_synced,error_code,message,category,severity,retry_of)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
-		uuid.New(), tenantID, connectionID, operation, trigger, resourceType, resourceID, started.UTC(), max(0, duration.Milliseconds()), status, outcome, users, groups, code, message, category, severity, ctx.Value(retryContextKey{}))
+		(id,tenant_id,connection_id,operation,trigger_type,resource_type,resource_id,started_at,duration_ms,http_status,status,users_synced,groups_synced,error_code,message,category,severity,retry_of,reason,params,subject,user_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+		uuid.New(), tenantID, connectionID, operation, trigger, resourceType, resourceID, started.UTC(), max(0, duration.Milliseconds()), status, outcome, users, groups, code, message, category, severity, ctx.Value(retryContextKey{}),
+		op.Reason, params, subject, op.UserID)
 	if err != nil {
 		return err
 	}
@@ -240,12 +301,16 @@ func parseEventFilter(request *http.Request) (eventFilter, error) {
 	return filter, nil
 }
 
-const eventColumns = `id,connection_id,operation,trigger_type,resource_type,resource_id,started_at,duration_ms,http_status,status,users_synced,groups_synced,error_code,message,category,severity,resolution,resolved_at,retry_of`
-const eventWhere = `tenant_id=$1 AND started_at >= $2 AND ($3='' OR connection_id=$3) AND ($4='' OR status=$4) AND ($5='' OR operation ILIKE '%'||$5||'%' OR message ILIKE '%'||$5||'%' OR error_code ILIKE '%'||$5||'%')`
+const eventColumns = `id,connection_id,operation,trigger_type,resource_type,resource_id,started_at,duration_ms,http_status,status,users_synced,groups_synced,error_code,message,category,severity,resolution,resolved_at,retry_of,reason,params,subject,user_id`
+const eventWhere = `tenant_id=$1 AND started_at >= $2 AND ($3='' OR connection_id=$3) AND ($4='' OR status=$4) AND ($5='' OR operation ILIKE '%'||$5||'%' OR message ILIKE '%'||$5||'%' OR error_code ILIKE '%'||$5||'%' OR reason ILIKE '%'||$5||'%' OR subject ILIKE '%'||$5||'%')`
 
 func scanEvent(row pgx.Row) (Event, error) {
 	var event Event
-	err := row.Scan(&event.ID, &event.ConnectionID, &event.Operation, &event.Trigger, &event.ResourceType, &event.ResourceID, &event.StartedAt, &event.DurationMS, &event.HTTPStatus, &event.Status, &event.UsersSynced, &event.GroupsSynced, &event.ErrorCode, &event.Message, &event.Category, &event.Severity, &event.Resolution, &event.ResolvedAt, &event.RetryOf)
+	err := row.Scan(&event.ID, &event.ConnectionID, &event.Operation, &event.Trigger, &event.ResourceType, &event.ResourceID, &event.StartedAt, &event.DurationMS, &event.HTTPStatus, &event.Status, &event.UsersSynced, &event.GroupsSynced, &event.ErrorCode, &event.Message, &event.Category, &event.Severity, &event.Resolution, &event.ResolvedAt, &event.RetryOf,
+		&event.Reason, &event.Params, &event.Subject, &event.UserID)
+	if len(event.Params) == 0 {
+		event.Params = nil
+	}
 	event.Retryable = event.Status != "success" && event.Resolution == "open" && event.Operation == "test" && !strings.HasPrefix(event.ConnectionID, "scim:")
 	return event, err
 }

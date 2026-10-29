@@ -206,6 +206,7 @@ func userPermissionMap() map[string]string {
 		"POST /v1/tenants/{tenantID}/scim/tokens/{id}/rotate":                                     "connection.write",
 		"DELETE /v1/tenants/{tenantID}/scim/tokens/{id}":                                          "connection.write",
 		"GET /v1/tenants/{tenantID}/scim/users":                                                   "connection.read",
+		"GET /v1/tenants/{tenantID}/scim/groups":                                                  "connection.read",
 		"POST /v1/tenants/{tenantID}/admin-portal/links":                                          "connection.write",
 		"GET /v1/tenants/{tenantID}/admin-portal/links":                                           "connection.read",
 		"DELETE /v1/tenants/{tenantID}/admin-portal/links/{id}":                                   "connection.write",

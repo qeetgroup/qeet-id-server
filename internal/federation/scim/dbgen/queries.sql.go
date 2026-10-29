@@ -282,6 +282,46 @@ func (q *Queries) InsertScimToken(ctx context.Context, arg InsertScimTokenParams
 	return i, err
 }
 
+const lastSCIMOperation = `-- name: LastSCIMOperation :one
+SELECT started_at, operation, resource_type, http_status, status, error_code, reason
+FROM tenant.directory_events
+WHERE tenant_id = $1 AND connection_id = $2
+ORDER BY started_at DESC, id DESC
+LIMIT 1
+`
+
+type LastSCIMOperationParams struct {
+	TenantID     uuid.UUID
+	ConnectionID string
+}
+
+type LastSCIMOperationRow struct {
+	StartedAt    time.Time
+	Operation    string
+	ResourceType string
+	HttpStatus   int32
+	Status       string
+	ErrorCode    string
+	Reason       string
+}
+
+// LastSCIMOperation returns the last change the organisation's identity
+// provider sent, as its directory event recorded it.
+func (q *Queries) LastSCIMOperation(ctx context.Context, arg LastSCIMOperationParams) (LastSCIMOperationRow, error) {
+	row := q.db.QueryRow(ctx, lastSCIMOperation, arg.TenantID, arg.ConnectionID)
+	var i LastSCIMOperationRow
+	err := row.Scan(
+		&i.StartedAt,
+		&i.Operation,
+		&i.ResourceType,
+		&i.HttpStatus,
+		&i.Status,
+		&i.ErrorCode,
+		&i.Reason,
+	)
+	return i, err
+}
+
 const listGroupMembers = `-- name: ListGroupMembers :many
 SELECT gm.user_id, u.email, u.display_name
 FROM tenant.group_members gm

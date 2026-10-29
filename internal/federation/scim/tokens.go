@@ -103,6 +103,22 @@ type ConfigView struct {
 	LastUsedAt       *time.Time `json:"last_used_at"`
 	TokenCount       int        `json:"token_count"`
 	ProvisionedCount int        `json:"provisioned_count"`
+	// LastRequest is the last change the identity provider sent, nil before
+	// the first.
+	LastRequest *LastRequest `json:"last_request"`
+}
+
+// LastRequest is how a change the identity provider sent was answered: Status
+// is success, warning or failed, ErrorCode the directory's (DIR-409, say) and
+// Reason the SCIM error type, when the answer gave one.
+type LastRequest struct {
+	At         time.Time `json:"at"`
+	Operation  string    `json:"operation"`
+	Resource   string    `json:"resource"`
+	HTTPStatus int       `json:"http_status"`
+	Status     string    `json:"status"`
+	ErrorCode  string    `json:"error_code,omitempty"`
+	Reason     string    `json:"reason,omitempty"`
 }
 
 // Config returns the tenant's SCIM settings, without its tokens.
@@ -132,6 +148,14 @@ func (s *Service) Config(ctx context.Context, tenantID uuid.UUID) (*ConfigView, 
 		return nil, err
 	}
 	v.ProvisionedCount = int(count)
+	last, err := s.q.LastSCIMOperation(ctx, dbgen.LastSCIMOperationParams{TenantID: tenantID, ConnectionID: "scim:" + tenantID.String()})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	if err == nil {
+		v.LastRequest = &LastRequest{At: last.StartedAt, Operation: last.Operation, Resource: last.ResourceType,
+			HTTPStatus: int(last.HttpStatus), Status: last.Status, ErrorCode: last.ErrorCode, Reason: last.Reason}
+	}
 	return v, nil
 }
 

@@ -48,7 +48,7 @@ type errorFilter struct {
 	Resolution string
 }
 
-const errorWhere = `tenant_id=$1 AND started_at >= $2 AND ($3='' OR connection_id=$3) AND ($4='' OR severity=$4) AND ($5='' OR resolution=$5) AND ($6='' OR message ILIKE '%'||$6||'%' OR error_code ILIKE '%'||$6||'%' OR resource_id ILIKE '%'||$6||'%') AND status <> 'success' AND status <> 'warning'`
+const errorWhere = `tenant_id=$1 AND started_at >= $2 AND ($3='' OR connection_id=$3) AND ($4='' OR severity=$4) AND ($5='' OR resolution=$5) AND ($6='' OR message ILIKE '%'||$6||'%' OR error_code ILIKE '%'||$6||'%' OR reason ILIKE '%'||$6||'%' OR subject ILIKE '%'||$6||'%' OR resource_id ILIKE '%'||$6||'%') AND status <> 'success' AND status <> 'warning'`
 
 // Errors returns one page of the tenant's directory errors.
 func (service *Service) Errors(ctx context.Context, tenantID uuid.UUID, filter errorFilter) (ErrorPage, error) {

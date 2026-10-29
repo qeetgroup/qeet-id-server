@@ -163,3 +163,12 @@ INSERT INTO tenant.group_members AS gm (group_id, user_id, tenant_id)
 VALUES (@group_id, @user_id, @tenant_id)
 ON CONFLICT (group_id, user_id) DO UPDATE SET source_connection_id = NULL
 WHERE gm.tenant_id = EXCLUDED.tenant_id AND gm.source_connection_id IS NOT NULL;
+
+-- LastSCIMOperation returns the last change the organisation's identity
+-- provider sent, as its directory event recorded it.
+-- name: LastSCIMOperation :one
+SELECT started_at, operation, resource_type, http_status, status, error_code, reason
+FROM tenant.directory_events
+WHERE tenant_id = @tenant_id AND connection_id = @connection_id
+ORDER BY started_at DESC, id DESC
+LIMIT 1;

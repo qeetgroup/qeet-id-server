@@ -36,12 +36,14 @@ func TestDirectoryMigrationsRoundTrip(test *testing.T) {
 	_, source, _, _ := runtime.Caller(0)
 	directory := filepath.Join(filepath.Dir(source), "..", "..", "platform", "database", "migrations")
 	for _, migration := range []string{
+		"0225_directory_event_reasons.down.sql",
 		"0111_suspension_review.down.sql",
 		"0110_directory_mappings.down.sql",
 		"0109_directory_events.down.sql",
 		"0109_directory_events.up.sql",
 		"0110_directory_mappings.up.sql",
 		"0111_suspension_review.up.sql",
+		"0225_directory_event_reasons.up.sql",
 	} {
 		script, err := os.ReadFile(filepath.Join(directory, migration))
 		if err != nil {
@@ -371,6 +373,18 @@ func TestRefusedSignInIsNotASyncError(test *testing.T) {
 	errorsPage, err = service.Errors(ctx, tenantID, errorFilter{eventFilter: since})
 	if err != nil || errorsPage.Total != 1 || errorsPage.Summary.Critical != 1 || notifications() != 1 {
 		test.Fatalf("the service account refused: %+v, %d alerts (%v); want one critical error and an alert", errorsPage.Summary, notifications(), err)
+	}
+	if err := service.RecordLDAPOperation(ctx, ldap.Operation{TenantID: tenantID, ConnectionID: connection, Operation: "sign-in", Resource: "user",
+		Status: http.StatusBadGateway, Started: time.Now(), Duration: time.Second, Reason: "ldap.dial_failed",
+		Params: map[string]string{"host": "ldap.example.test:636"}, Subject: "asha", UserID: &userID}); err != nil {
+		test.Fatal(err)
+	}
+	errorsPage, err = service.Errors(ctx, tenantID, errorFilter{eventFilter: eventFilter{Since: since.Since, Limit: 25, Search: "dial_failed"}})
+	if err != nil || errorsPage.Total != 1 {
+		test.Fatalf("errors searched by their reason: %+v %v; want the unreachable directory", errorsPage, err)
+	}
+	if got := errorsPage.Items[0]; got.Reason != "ldap.dial_failed" || got.Params["host"] != "ldap.example.test:636" || got.Subject != "asha" || got.UserID == nil || *got.UserID != userID {
+		test.Errorf("an unreachable directory at sign-in listed as %+v; want its reason, host, login name and person", got)
 	}
 }
 

@@ -32,6 +32,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 const (
@@ -217,6 +218,7 @@ type Handler struct {
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/scim", h.config)
 	r.Get("/tenants/{tenantID}/scim/users", h.adminListUsers)
+	r.Get("/tenants/{tenantID}/scim/groups", h.adminListGroups)
 	r.Post("/tenants/{tenantID}/scim/token", h.rotate)
 	r.Delete("/tenants/{tenantID}/scim/token", h.revoke)
 	r.Get("/tenants/{tenantID}/scim/tokens", h.listTokens)
@@ -235,30 +237,135 @@ type adminUser struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-// adminListUsers returns this tenant's SCIM-provisioned users for the admin UI.
+// adminPage reads a console list's limit (1..200, default 50) and cursor.
+func adminPage(r *http.Request) (int, time.Time, uuid.UUID, error) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > maxPageCount {
+		limit = 50
+	}
+	before, beforeID := time.Now().Add(time.Hour), uuid.Max
+	if cursor := r.URL.Query().Get("cursor"); cursor != "" {
+		var err error
+		if before, beforeID, err = paging.DecodeTimeUUID(cursor); err != nil {
+			return 0, time.Time{}, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid cursor")
+		}
+	}
+	return limit, before, beforeID, nil
+}
+
+// adminListUsers returns a page of this tenant's SCIM-provisioned users for the
+// admin UI, newest first, with how many there are.
 func (h *Handler) adminListUsers(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := requirePathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	rows, _, err := h.Service.listProvisioned(r.Context(), tenantID, "", 1, maxPageCount)
+	limit, before, beforeID, err := adminPage(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	items := make([]adminUser, 0, len(rows))
-	for i := range rows {
-		items = append(items, adminUser{
-			ID:          rows[i].ID,
-			Email:       rows[i].Email,
-			DisplayName: rows[i].DisplayName,
-			Status:      rows[i].Status,
-			ExternalID:  rows[i].ExternalID,
-			CreatedAt:   rows[i].CreatedAt,
-		})
+	ctx := r.Context()
+	var total int
+	if err := h.Service.pool.QueryRow(ctx, `SELECT count(*) FROM "user".users WHERE tenant_id = $1 AND deleted_at IS NULL AND provisioned_via = $2`,
+		tenantID, provisionedScim).Scan(&total); err != nil {
+		httpx.WriteError(w, r, err)
+		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+	rows, err := h.Service.pool.Query(ctx, `
+		SELECT id, email, display_name, status, external_id, created_at FROM "user".users
+		WHERE tenant_id = $1 AND deleted_at IS NULL AND provisioned_via = $2 AND (created_at, id) < ($3, $4)
+		ORDER BY created_at DESC, id DESC LIMIT $5`, tenantID, provisionedScim, before, beforeID, limit+1)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer rows.Close()
+	items := make([]adminUser, 0, limit+1)
+	for rows.Next() {
+		var u adminUser
+		if err := rows.Scan(&u.ID, &u.Email, &u.DisplayName, &u.Status, &u.ExternalID, &u.CreatedAt); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		items = append(items, u)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out := map[string]any{"total": total}
+	if len(items) > limit {
+		items = items[:limit]
+		out["next_cursor"] = paging.EncodeTimeUUID(items[limit-1].CreatedAt, items[limit-1].ID)
+	}
+	out["items"] = items
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// adminGroup is a group SCIM made, as the console lists it.
+type adminGroup struct {
+	ID         uuid.UUID `json:"id"`
+	Name       string    `json:"name"`
+	ExternalID *string   `json:"external_id"`
+	Members    int       `json:"members"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// adminListGroups returns a page of the groups this tenant's SCIM made, newest
+// first, each with its count of live members, and how many there are.
+func (h *Handler) adminListGroups(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	limit, before, beforeID, err := adminPage(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	ctx := r.Context()
+	var total int
+	if err := h.Service.pool.QueryRow(ctx, `SELECT count(*) FROM tenant.groups WHERE tenant_id = $1 AND provisioned_via = 'scim'`,
+		tenantID).Scan(&total); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	rows, err := h.Service.pool.Query(ctx, `
+		SELECT g.id, g.name, g.external_id, g.created_at, g.updated_at,
+		       (SELECT count(*) FROM tenant.group_members gm JOIN "user".users u ON u.id = gm.user_id
+		        WHERE gm.group_id = g.id AND gm.tenant_id = g.tenant_id AND u.deleted_at IS NULL)::int
+		FROM tenant.groups g
+		WHERE g.tenant_id = $1 AND g.provisioned_via = 'scim' AND (g.created_at, g.id) < ($2, $3)
+		ORDER BY g.created_at DESC, g.id DESC LIMIT $4`, tenantID, before, beforeID, limit+1)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer rows.Close()
+	items := make([]adminGroup, 0, limit+1)
+	for rows.Next() {
+		var g adminGroup
+		if err := rows.Scan(&g.ID, &g.Name, &g.ExternalID, &g.CreatedAt, &g.UpdatedAt, &g.Members); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		items = append(items, g)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out := map[string]any{"total": total}
+	if len(items) > limit {
+		items = items[:limit]
+		out["next_cursor"] = paging.EncodeTimeUUID(items[limit-1].CreatedAt, items[limit-1].ID)
+	}
+	out["items"] = items
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // MountPublic registers the SCIM 2.0 protocol surface at the root, guarded
@@ -448,6 +555,7 @@ func writeSCIMErr(w http.ResponseWriter, status int, detail string) {
 }
 
 func writeSCIMTypedErr(w http.ResponseWriter, status int, scimType, detail string) {
+	noteReason(w, scimType)
 	writeSCIM(w, status, map[string]any{
 		"schemas":  []string{schemaError},
 		"status":   strconv.Itoa(status),
