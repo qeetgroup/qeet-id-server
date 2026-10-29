@@ -4294,6 +4294,92 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/relation-tuples/types:
+    get:
+      operationId: get_v1_tenants_ByTenantID_relation_tuples_types
+      summary: List relationship object types
+      description: 'Lists the types of object the organisation''s relationship tuples name, with how many objects of each and how many tuples. Requires role.read.'
+      tags:
+        - ReBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Object types
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [type, objects, tuples]
+                      properties:
+                        type: {type: string}
+                        objects: {type: integer}
+                        tuples: {type: integer}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/relation-tuples/objects:
+    get:
+      operationId: get_v1_tenants_ByTenantID_relation_tuples_objects
+      summary: List relationship objects
+      description: 'Lists, a page at a time by id, the objects of one type the organisation''s relationship tuples name, each with how many tuples it has; next_cursor fetches the next page and total counts them all. Requires role.read.'
+      tags:
+        - ReBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - {name: type, in: query, required: true, description: 'The type of object, such as document.', schema: {type: string}}
+        - {name: limit, in: query, required: false, description: 'Page size, 1 to 500; 100 by default.', schema: {type: integer, minimum: 1, maximum: 500}}
+        - {name: cursor, in: query, required: false, description: 'The next_cursor of the previous page.', schema: {type: string}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Objects
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [object, id, tuples]
+                      properties:
+                        object: {type: string, description: '"type:id"'}
+                        id: {type: string}
+                        tuples: {type: integer}
+                  next_cursor:
+                    type: string
+                    description: Present when there is another page.
+                  total:
+                    type: integer
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/tenants/{tenantID}/relation-tuples/graph:
     get:
       operationId: get_v1_tenants_ByTenantID_relation_tuples_graph
@@ -4366,6 +4452,9 @@ paths:
                           type: string
                         label:
                           type: string
+                        name:
+                          type: string
+                          description: A user node's person, by display name or address, when they belong to the organisation.
                   edges:
                     type: array
                     items:
@@ -6678,6 +6767,9 @@ components:
           type: string
         subject:
           type: string
+        subject_name:
+          type: string
+          description: A user subject's person, by display name or address, when they belong to the organisation.
     UserEntity:
       type: object
       required: [displayName, id, name]

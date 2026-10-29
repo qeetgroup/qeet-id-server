@@ -103,6 +103,8 @@ func userPermissionMap() map[string]string {
 		"DELETE /v1/tenants/{tenantID}/relation-tuples/{id}":            "role.write",
 		"POST /v1/tenants/{tenantID}/relation-tuples/check":             "role.read",
 		"GET /v1/tenants/{tenantID}/relation-tuples/graph":              "role.read",
+		"GET /v1/tenants/{tenantID}/relation-tuples/types":              "role.read",
+		"GET /v1/tenants/{tenantID}/relation-tuples/objects":            "role.read",
 		"POST /v1/tenants/{tenantID}/groups/{groupID}/roles/{roleID}":   "role.write",
 		"DELETE /v1/tenants/{tenantID}/groups/{groupID}/roles/{roleID}": "role.write",
 

@@ -9,7 +9,25 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const countRelationObjects = `-- name: CountRelationObjects :one
+SELECT count(DISTINCT object_id)::int FROM auth.relation_tuples
+WHERE tenant_id = $1 AND object_type = $2
+`
+
+type CountRelationObjectsParams struct {
+	TenantID   uuid.UUID
+	ObjectType string
+}
+
+func (q *Queries) CountRelationObjects(ctx context.Context, arg CountRelationObjectsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countRelationObjects, arg.TenantID, arg.ObjectType)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
 
 const deleteRelationTuple = `-- name: DeleteRelationTuple :one
 DELETE FROM auth.relation_tuples WHERE id = $1 AND tenant_id = $2
@@ -128,6 +146,91 @@ func (q *Queries) InsertRelationTuple(ctx context.Context, arg InsertRelationTup
 	return id, err
 }
 
+const listRelationObjectTypes = `-- name: ListRelationObjectTypes :many
+SELECT object_type, count(DISTINCT object_id)::int AS objects, count(*)::int AS tuples
+FROM auth.relation_tuples
+WHERE tenant_id = $1
+GROUP BY object_type
+ORDER BY object_type
+LIMIT 500
+`
+
+type ListRelationObjectTypesRow struct {
+	ObjectType string
+	Objects    int32
+	Tuples     int32
+}
+
+// ListRelationObjectTypes counts, for each type of object the tenant's tuples
+// name, its objects and tuples.
+func (q *Queries) ListRelationObjectTypes(ctx context.Context, tenantID uuid.UUID) ([]ListRelationObjectTypesRow, error) {
+	rows, err := q.db.Query(ctx, listRelationObjectTypes, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRelationObjectTypesRow{}
+	for rows.Next() {
+		var i ListRelationObjectTypesRow
+		if err := rows.Scan(&i.ObjectType, &i.Objects, &i.Tuples); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRelationObjects = `-- name: ListRelationObjects :many
+SELECT object_id, count(*)::int AS tuples
+FROM auth.relation_tuples
+WHERE tenant_id = $1 AND object_type = $2 AND object_id > $3
+GROUP BY object_id
+ORDER BY object_id
+LIMIT $4
+`
+
+type ListRelationObjectsParams struct {
+	TenantID   uuid.UUID
+	ObjectType string
+	After      string
+	RowLimit   int32
+}
+
+type ListRelationObjectsRow struct {
+	ObjectID string
+	Tuples   int32
+}
+
+// ListRelationObjects returns a page of the objects of one type the tenant's
+// tuples name, by id, after the cursor, with how many tuples each has.
+func (q *Queries) ListRelationObjects(ctx context.Context, arg ListRelationObjectsParams) ([]ListRelationObjectsRow, error) {
+	rows, err := q.db.Query(ctx, listRelationObjects,
+		arg.TenantID,
+		arg.ObjectType,
+		arg.After,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRelationObjectsRow{}
+	for rows.Next() {
+		var i ListRelationObjectsRow
+		if err := rows.Scan(&i.ObjectID, &i.Tuples); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRelationTuplesByObject = `-- name: ListRelationTuplesByObject :many
 SELECT id, relation, subject_type, subject_id, subject_relation
 FROM auth.relation_tuples
@@ -216,6 +319,46 @@ func (q *Queries) ListRelationTuplesBySubject(ctx context.Context, arg ListRelat
 			&i.Relation,
 			&i.SubjectRelation,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const namePeople = `-- name: NamePeople :many
+SELECT u.id, COALESCE(NULLIF(u.display_name, ''), u.email)::text AS name
+FROM "user".users u
+WHERE u.id = ANY($1::uuid[]) AND u.deleted_at IS NULL
+  AND (u.tenant_id = $2 OR EXISTS (
+      SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $2))
+`
+
+type NamePeopleParams struct {
+	Ids      []uuid.UUID
+	TenantID pgtype.UUID
+}
+
+type NamePeopleRow struct {
+	ID   uuid.UUID
+	Name string
+}
+
+// NamePeople names, by display name or else address, those of ids who belong
+// to the organisation: their home, or one they hold a role in.
+func (q *Queries) NamePeople(ctx context.Context, arg NamePeopleParams) ([]NamePeopleRow, error) {
+	rows, err := q.db.Query(ctx, namePeople, arg.Ids, arg.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NamePeopleRow{}
+	for rows.Next() {
+		var i NamePeopleRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
