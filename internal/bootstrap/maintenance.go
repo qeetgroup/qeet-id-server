@@ -202,6 +202,22 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller, box *
 			},
 		},
 		{
+			// A deleted organisation's data is purged once its restore window
+			// has passed, its people's accounts with it, leaving a record that
+			// it was.
+			Name:     "tenant-purges",
+			Interval: time.Hour,
+			Run: func(ctx context.Context) error {
+				svc := gdpr.NewService(pool, 0)
+				svc.SetSessionSignals(signals)
+				n, err := svc.PurgeDeletedTenants(ctx, gdpr.TenantPurgeAfter)
+				if n > 0 {
+					slog.Info("deleted organisations purged", "purged", n)
+				}
+				return err
+			},
+		},
+		{
 			// A built data export is downloadable for a week; then its payload,
 			// a full copy of the person's data, is deleted.
 			Name:     "gdpr-export-expiry",
