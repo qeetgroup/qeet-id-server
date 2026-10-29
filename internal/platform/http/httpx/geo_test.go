@@ -48,3 +48,31 @@ func TestGeoCountryHeaderIsReported(t *testing.T) {
 		t.Errorf("last seen %v after a request with a country, want about now", seen)
 	}
 }
+
+// TestGeoCityComesOnlyFromTheTrustedHeader checks that a city is read, decoded
+// as CloudFront sends it, only from the named header, and that an overlong
+// one, or one with control characters, is dropped.
+func TestGeoCityComesOnlyFromTheTrustedHeader(t *testing.T) {
+	var got string
+	h := GeoCountryContext(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got = GeoCity(r.Context()) }))
+	long := make([]byte, maxCityLength+1)
+	for i := range long {
+		long[i] = 'a'
+	}
+	for _, c := range []struct{ header, value, want string }{
+		{"", "Pune", ""},
+		{"CloudFront-Viewer-City", " Pune ", "Pune"},
+		{"CloudFront-Viewer-City", "S%C3%A3o%20Paulo", "São Paulo"},
+		{"CloudFront-Viewer-City", "Bad%0ACity", ""},
+		{"CloudFront-Viewer-City", string(long), ""},
+	} {
+		SetGeoCityHeader(c.header)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("CloudFront-Viewer-City", c.value)
+		h.ServeHTTP(httptest.NewRecorder(), req)
+		if got != c.want {
+			t.Errorf("header %q value %q: city %q, want %q", c.header, c.value, got, c.want)
+		}
+	}
+	SetGeoCityHeader("")
+}

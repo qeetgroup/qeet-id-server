@@ -5514,6 +5514,11 @@ components:
             Where the session was opened, approximately — the ISO 3166-1
             alpha-2 country a trusted upstream proxy reported
             (GEO_COUNTRY_HEADER). Omitted when the deployment supplies none.
+        city:
+          type: string
+          description: >-
+            The city the session was opened from, when the proxy names one
+            (GEO_CITY_HEADER); omitted otherwise.
         current:
           type: boolean
           description: True for the session the listing request was made with.

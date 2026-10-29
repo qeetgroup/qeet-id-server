@@ -94,6 +94,7 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 		MaxAgeSeconds: maxAge.Seconds(),
 		IdleSeconds:   idle.Seconds(),
 		Country:       httpx.GeoCountry(ctx),
+		City:          httpx.GeoCity(ctx),
 	})
 	if err != nil {
 		return nil, nil, nil, err

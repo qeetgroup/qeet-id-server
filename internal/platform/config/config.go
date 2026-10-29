@@ -232,6 +232,9 @@ type Config struct {
 	// only geo signal, for risk checks and sessions; there is no server-side GeoIP.
 	// Empty, or a header the proxy doesn't set, means no country.
 	GeoCountryHeader string `envconfig:"GEO_COUNTRY_HEADER" default:""`
+	// GeoCityHeader names the header the same proxy sets to the client's city
+	// (e.g. CloudFront-Viewer-City), recorded on audit events and sessions.
+	GeoCityHeader string `envconfig:"GEO_CITY_HEADER" default:""`
 
 	// EmailProvider selects the email transport: "smtp" (default) or "ses-api".
 	// Use "ses-api" in regions that offer the SES API but no SMTP endpoint

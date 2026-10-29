@@ -312,6 +312,9 @@ type Session struct {
 	// Country is where the session was opened, approximately (ISO 3166-1
 	// alpha-2), when the deployment supplies it; omitted otherwise.
 	Country string `json:"country,omitempty"`
+	// City is the city it was opened from, approximately, when the deployment
+	// supplies it; omitted otherwise.
+	City string `json:"city,omitempty"`
 	// Current marks the session the request listing them was made with.
 	Current bool `json:"current"`
 }
@@ -377,7 +380,7 @@ func (s *Service) ListSessionsPageFor(ctx context.Context, userID, current uuid.
 		       CASE WHEN ends.idle <= COALESCE(sess.revoked_at, NOW()) THEN 'expired'
 		            WHEN sess.revoked_at IS NOT NULL THEN 'revoked'
 		            ELSE 'active' END,
-		       COALESCE(sess.country, '')
+		       COALESCE(sess.country, ''), COALESCE(sess.city, '')
 		FROM auth.sessions sess
 		CROSS JOIN LATERAL (SELECT LEAST(sess.last_seen_at + sess.idle_timeout, sess.expires_at) AS idle) ends
 		JOIN "user".users u ON u.id = sess.user_id
@@ -395,7 +398,7 @@ func (s *Service) ListSessionsPageFor(ctx context.Context, userID, current uuid.
 		var session Session
 		var tenantID pgtype.UUID
 		if err := rows.Scan(&session.ID, &session.UserID, &tenantID, &session.IP, &session.UserAgent, &session.CreatedAt, &session.LastSeenAt, &session.RevokedAt,
-			&session.ExpiresAt, &session.IdleExpiresAt, &session.Status, &session.Country); err != nil {
+			&session.ExpiresAt, &session.IdleExpiresAt, &session.Status, &session.Country, &session.City); err != nil {
 			return nil, err
 		}
 		ua := ""

@@ -137,7 +137,8 @@ LIMIT 1;
 -- timeout. Sessions in no tenant belong to the account, so only its home tenant
 -- sees them. ip goes through host() and COALESCE to scan as a plain string.
 -- name: ListUserActiveSessions :many
-SELECT s.id, COALESCE(host(s.ip), '')::text AS ip, s.user_agent, s.created_at, s.last_seen_at
+SELECT s.id, COALESCE(host(s.ip), '')::text AS ip, s.user_agent, s.created_at, s.last_seen_at,
+       COALESCE(s.country, '')::text AS country, COALESCE(s.city, '')::text AS city
 FROM auth.sessions s
 JOIN "user".users u ON u.id = s.user_id
 WHERE s.user_id = @user_id AND s.revoked_at IS NULL

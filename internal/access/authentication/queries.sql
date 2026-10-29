@@ -361,11 +361,11 @@ RETURNING id, created_at, updated_at;
 -- NULLIF so an empty string stores as SQL NULL, matching InsertLoginSession.
 -- With no organisation, the platform's session bounds apply. Returns when it
 -- ends however active, and when it ends unless renewed.
-INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, expires_at, idle_timeout, country)
+INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, expires_at, idle_timeout, country, city)
 VALUES (@id, @user_id, NULL, NULLIF(@ip::text, '')::inet, @user_agent,
         NOW() + make_interval(secs => @max_age_seconds::float8),
         make_interval(secs => @idle_seconds::float8),
-        NULLIF(@country::text, ''))
+        NULLIF(@country::text, ''), NULLIF(@city::text, ''))
 RETURNING expires_at, LEAST(last_seen_at + idle_timeout, expires_at)::timestamptz AS idle_expires_at;
 
 -- name: DeleteMFALoginChallenge :exec

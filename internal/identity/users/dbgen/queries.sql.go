@@ -682,7 +682,8 @@ func (q *Queries) ListDeletedUsers(ctx context.Context, arg ListDeletedUsersPara
 }
 
 const listUserActiveSessions = `-- name: ListUserActiveSessions :many
-SELECT s.id, COALESCE(host(s.ip), '')::text AS ip, s.user_agent, s.created_at, s.last_seen_at
+SELECT s.id, COALESCE(host(s.ip), '')::text AS ip, s.user_agent, s.created_at, s.last_seen_at,
+       COALESCE(s.country, '')::text AS country, COALESCE(s.city, '')::text AS city
 FROM auth.sessions s
 JOIN "user".users u ON u.id = s.user_id
 WHERE s.user_id = $1 AND s.revoked_at IS NULL
@@ -703,6 +704,8 @@ type ListUserActiveSessionsRow struct {
 	UserAgent  *string
 	CreatedAt  time.Time
 	LastSeenAt time.Time
+	Country    string
+	City       string
 }
 
 // ListUserActiveSessions lists a user's live sessions in @tenant_id (most
@@ -724,6 +727,8 @@ func (q *Queries) ListUserActiveSessions(ctx context.Context, arg ListUserActive
 			&i.UserAgent,
 			&i.CreatedAt,
 			&i.LastSeenAt,
+			&i.Country,
+			&i.City,
 		); err != nil {
 			return nil, err
 		}

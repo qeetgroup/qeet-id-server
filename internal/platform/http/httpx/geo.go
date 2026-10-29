@@ -3,9 +3,12 @@ package httpx
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // The approximate country of a request comes only from a header a trusted
@@ -16,17 +19,29 @@ import (
 var (
 	geoCountryHeader atomic.Value // string
 	geoCountrySeen   atomic.Int64 // Unix nanoseconds of the last request it gave a country; 0: none yet
+	geoCityHeader    atomic.Value // string
 )
 
-const ctxKeyGeoCountry ctxKey = "qeet.geo_country"
+const (
+	ctxKeyGeoCountry ctxKey = "qeet.geo_country"
+	ctxKeyGeoCity    ctxKey = "qeet.geo_city"
+)
+
+// maxCityLength bounds the city a header may give.
+const maxCityLength = 100
 
 // SetGeoCountryHeader names the trusted upstream header carrying the
 // request's country ("" = none). Call it from the composition root before
 // serving.
 func SetGeoCountryHeader(name string) { geoCountryHeader.Store(strings.TrimSpace(name)) }
 
+// SetGeoCityHeader names the trusted upstream header carrying the request's
+// city, such as CloudFront-Viewer-City ("" = none).
+func SetGeoCityHeader(name string) { geoCityHeader.Store(strings.TrimSpace(name)) }
+
 // GeoCountryContext puts the request's country, when the trusted header
-// gives a well-formed one, in its context for GeoCountry.
+// gives a well-formed one, in its context for GeoCountry, and its city, when
+// that header gives one, for GeoCity.
 func GeoCountryContext(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name, _ := geoCountryHeader.Load().(string)
@@ -36,8 +51,37 @@ func GeoCountryContext(next http.Handler) http.Handler {
 				geoCountrySeen.Store(time.Now().UnixNano())
 			}
 		}
+		if name, _ := geoCityHeader.Load().(string); name != "" {
+			if city := cleanCity(r.Header.Get(name)); city != "" {
+				r = r.WithContext(context.WithValue(r.Context(), ctxKeyGeoCity, city))
+			}
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// cleanCity is a header's city, URL-decoded as CloudFront sends it, or "" when
+// it is empty, too long or holds control characters.
+func cleanCity(raw string) string {
+	if decoded, err := url.QueryUnescape(raw); err == nil {
+		raw = decoded
+	}
+	city := strings.TrimSpace(raw)
+	if city == "" || len(city) > maxCityLength || !utf8.ValidString(city) {
+		return ""
+	}
+	for _, c := range city {
+		if unicode.IsControl(c) {
+			return ""
+		}
+	}
+	return city
+}
+
+// GeoCity is the request's approximate city, or "" when unknown.
+func GeoCity(ctx context.Context) string {
+	c, _ := ctx.Value(ctxKeyGeoCity).(string)
+	return c
 }
 
 // GeoCountryHeaderConfigured reports whether a trusted country header is named.

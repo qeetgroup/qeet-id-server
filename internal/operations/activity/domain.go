@@ -11,6 +11,8 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/useragent"
 )
 
 // Severity levels of an ActivityEvent, lowest first. They match the console's
@@ -50,7 +52,10 @@ type ActivityEvent struct {
 	Source      *string         `json:"source,omitempty"`
 	IP          *string         `json:"ip,omitempty"`
 	Location    *string         `json:"location,omitempty"`
+	Country     *string         `json:"country,omitempty"`
+	City        *string         `json:"city,omitempty"`
 	Device      *string         `json:"device,omitempty"`
+	OS          *string         `json:"os,omitempty"`
 	Browser     *string         `json:"browser,omitempty"`
 	Status      *string         `json:"status,omitempty"`
 	RequestID   *string         `json:"request_id,omitempty"`
@@ -366,11 +371,9 @@ func mapAuditRow(r auditRow) ActivityEvent {
 	}
 
 	if r.UserAgent != nil && *r.UserAgent != "" {
-		ua := parseBrowser(*r.UserAgent)
-		if ua != "" {
-			ev.Browser = &ua
-		}
+		ev.Browser, ev.OS, ev.Device = describeAgent(*r.UserAgent)
 	}
+	ev.Country, ev.City, ev.Location = placeOf(ev.Metadata)
 
 	// request_id may be NULL or empty; surface it only when set.
 	if r.RequestID != nil && *r.RequestID != "" {
@@ -381,22 +384,48 @@ func mapAuditRow(r auditRow) ActivityEvent {
 	return ev
 }
 
-// parseBrowser extracts a coarse browser label from a user-agent string.
-func parseBrowser(ua string) string {
-	switch {
-	case strings.Contains(ua, "Edg/"):
-		return "Edge"
-	case strings.Contains(ua, "Chrome/") && !strings.Contains(ua, "Chromium"):
-		return "Chrome"
-	case strings.Contains(ua, "Firefox/"):
-		return "Firefox"
-	case strings.Contains(ua, "Safari/") && !strings.Contains(ua, "Chrome"):
-		return "Safari"
-	case strings.Contains(ua, "curl"):
-		return "curl"
-	default:
-		return ""
+// describeAgent is the browser, operating system and device type ("desktop",
+// "mobile" or "tablet") a user agent names; each nil when it doesn't say.
+func describeAgent(ua string) (browser, os, device *string) {
+	d := useragent.Parse(ua)
+	if d.Browser == "" && strings.Contains(ua, "curl") {
+		d.Browser = "curl"
 	}
+	switch d.Platform {
+	case "iPhone":
+		d.Platform = "iOS"
+	case "iPad":
+		d.Platform = "iPadOS"
+	}
+	if d.Kind == "unknown" {
+		d.Kind = ""
+	}
+	return nonEmpty(d.Browser), nonEmpty(d.Platform), nonEmpty(d.Kind)
+}
+
+// placeOf is the country and city an event's metadata records the request
+// came from (its "geo"), and the two as a place ("Pune, IN"); each nil when
+// unknown.
+func placeOf(meta map[string]any) (country, city, location *string) {
+	geo, _ := meta["geo"].(map[string]any)
+	c, _ := geo["country"].(string)
+	t, _ := geo["city"].(string)
+	country, city = nonEmpty(c), nonEmpty(t)
+	switch {
+	case c != "" && t != "":
+		location = nonEmpty(t + ", " + c)
+	case c != "":
+		location = country
+	}
+	return country, city, location
+}
+
+// nonEmpty is &s, or nil for "".
+func nonEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // outboxPayload holds the common fields of a domain event payload. Every event

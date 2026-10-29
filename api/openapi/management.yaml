@@ -1529,6 +1529,10 @@ paths:
                         user_agent: { type: string, nullable: true }
                         created_at: { type: string, format: date-time }
                         last_seen_at: { type: string, format: date-time }
+                        device: { type: string, description: 'The device and browser in words ("Chrome on macOS"), as the person''s own session list says.' }
+                        device_kind: { type: string, enum: [desktop, mobile, tablet, unknown] }
+                        country: { type: string, description: Where the session was opened, approximately (ISO 3166-1 alpha-2); omitted when unknown. }
+                        city: { type: string, description: The city it was opened from, when the proxy names one. }
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

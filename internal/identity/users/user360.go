@@ -18,6 +18,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/useragent"
 )
 
 // SecuritySummary is a user's authentication posture for the console. MFARequired
@@ -42,12 +43,18 @@ type SecuritySummary struct {
 // SessionInfo is one live session for a user. Device/OS/geo are intentionally
 // absent — the sessions model stores only ip + raw user_agent; the console
 // parses the UA client-side.
+// Device and DeviceKind describe it from the user agent, as the person's own
+// session list does; Country and City are where it was opened, when known.
 type SessionInfo struct {
 	ID         uuid.UUID `json:"id"`
 	IP         *string   `json:"ip"`
 	UserAgent  *string   `json:"user_agent"`
 	CreatedAt  time.Time `json:"created_at"`
 	LastSeenAt time.Time `json:"last_seen_at"`
+	Device     string    `json:"device"`
+	DeviceKind string    `json:"device_kind"`
+	Country    string    `json:"country,omitempty"`
+	City       string    `json:"city,omitempty"`
 }
 
 // RoleInfo is a role shown in the console's Access tab.
@@ -187,11 +194,20 @@ func (r *Repository) ListUserSessions(ctx context.Context, id, tenantID uuid.UUI
 	}
 	out := make([]SessionInfo, 0, len(rows))
 	for _, row := range rows {
+		ua := ""
+		if row.UserAgent != nil {
+			ua = *row.UserAgent
+		}
+		device := useragent.Parse(ua)
 		si := SessionInfo{
 			ID:         row.ID,
 			UserAgent:  row.UserAgent,
 			CreatedAt:  row.CreatedAt,
 			LastSeenAt: row.LastSeenAt,
+			Device:     device.Label(),
+			DeviceKind: device.Kind,
+			Country:    row.Country,
+			City:       row.City,
 		}
 		if row.Ip != "" {
 			ip := row.Ip

@@ -3631,10 +3631,20 @@ components:
           description: Requester IP address (dot-decimal or IPv6).
         location:
           type: string
-          description: Best-effort geo location derived from IP (optional).
+          description: Where the request came from, approximately ("Pune, IN", or the country alone), from what the trusted proxy reported (GEO_COUNTRY_HEADER, GEO_CITY_HEADER), kept in the event's metadata.geo. Omitted when unknown; there is no GeoIP lookup.
+        country:
+          type: string
+          description: The ISO 3166-1 alpha-2 country of location.
+        city:
+          type: string
+          description: The city of location, when the proxy names one.
         device:
           type: string
-          description: Device label parsed from user-agent (optional).
+          enum: [desktop, mobile, tablet]
+          description: The device type the user agent names; omitted when it names none.
+        os:
+          type: string
+          description: The operating system the user agent names (Windows, macOS, iOS, iPadOS, Android, ChromeOS, Linux).
         browser:
           type: string
           description: Browser label parsed from user-agent (optional).

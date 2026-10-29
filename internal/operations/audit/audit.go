@@ -281,6 +281,19 @@ func Record(ctx context.Context, tx pgx.Tx, e Event) error {
 	if err != nil {
 		return err
 	}
+	// Where the request came from, approximately, when the proxy says.
+	if _, given := labels["geo"]; !given {
+		geo := map[string]any{}
+		if c := httpx.GeoCountry(ctx); c != "" {
+			geo["country"] = c
+		}
+		if c := httpx.GeoCity(ctx); c != "" {
+			geo["city"] = c
+		}
+		if len(geo) > 0 {
+			labels["geo"] = geo
+		}
+	}
 	e.Metadata = labels
 	var shard int16
 	if e.TenantID == nil {

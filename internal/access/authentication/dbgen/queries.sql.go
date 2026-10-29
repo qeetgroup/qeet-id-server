@@ -425,11 +425,11 @@ func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshToken
 }
 
 const insertTenantlessSession = `-- name: InsertTenantlessSession :one
-INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, expires_at, idle_timeout, country)
+INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, expires_at, idle_timeout, country, city)
 VALUES ($1, $2, NULL, NULLIF($3::text, '')::inet, $4,
         NOW() + make_interval(secs => $5::float8),
         make_interval(secs => $6::float8),
-        NULLIF($7::text, ''))
+        NULLIF($7::text, ''), NULLIF($8::text, ''))
 RETURNING expires_at, LEAST(last_seen_at + idle_timeout, expires_at)::timestamptz AS idle_expires_at
 `
 
@@ -441,6 +441,7 @@ type InsertTenantlessSessionParams struct {
 	MaxAgeSeconds float64
 	IdleSeconds   float64
 	Country       string
+	City          string
 }
 
 type InsertTenantlessSessionRow struct {
@@ -461,6 +462,7 @@ func (q *Queries) InsertTenantlessSession(ctx context.Context, arg InsertTenantl
 		arg.MaxAgeSeconds,
 		arg.IdleSeconds,
 		arg.Country,
+		arg.City,
 	)
 	var i InsertTenantlessSessionRow
 	err := row.Scan(&i.ExpiresAt, &i.IdleExpiresAt)

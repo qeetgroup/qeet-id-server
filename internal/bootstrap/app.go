@@ -88,6 +88,7 @@ func Run() {
 	httpx.SetTrustedProxyHops(cfg.TrustedProxyHops)
 	httpx.SetRelayKeys(cfg.RelayKeys()) // first-party relays may name the person's address
 	httpx.SetGeoCountryHeader(cfg.GeoCountryHeader)
+	httpx.SetGeoCityHeader(cfg.GeoCityHeader)
 	password.Configure(password.Limits{
 		Concurrency: cfg.PasswordHashConcurrency, Queue: cfg.PasswordHashQueue, MaxWait: cfg.PasswordHashMaxWait,
 	})
