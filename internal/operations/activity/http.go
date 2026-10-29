@@ -29,7 +29,27 @@ import (
 type Handler struct {
 	Hub  *Hub
 	pool *pgxpool.Pool
+	// Access decides again, while a stream is open, whether its reader may
+	// still read it, as the request was admitted: their session or credential
+	// still live and audit.read still theirs. A stream it refuses, or can't
+	// ask, ends. nil leaves an open stream unchecked.
+	Access func(ctx context.Context, p *httpx.Principal) (bool, error)
+	// RecheckEvery is how often Access is asked; 0 means streamRecheck.
+	RecheckEvery time.Duration
 }
+
+// streamRecheck is how long a stream may go on delivering after its reader
+// lost access.
+const streamRecheck = 30 * time.Second
+
+// maxReplayRows bounds how much of the audit log one connection replays. A
+// client further behind gets the cursor of the last row read and a reconnect
+// hint, and its next connection carries on from there.
+var maxReplayRows = 1000
+
+// replayPage is how many audit rows one replay query reads, as
+// ReplayActivityHistory's LIMIT.
+const replayPage = 100
 
 // NewHandler returns a Handler that reads history from pool and live events
 // from hub.
@@ -49,12 +69,17 @@ func (h *Handler) Mount(r chi.Router) {
 
 // stream serves GET /v1/activity/stream as Server-Sent Events. It replays audit
 // events newer than Last-Event-ID, then forwards live hub events until the
-// client disconnects or the hub shuts down; the query filters apply to both.
+// client disconnects, the hub shuts down, the reader's credential expires or
+// Access refuses them; the query filters apply to both. Delivery is
+// at least once: an event may arrive twice, and when the client is too far
+// behind, or the hub couldn't keep up with it, the stream ends with a
+// reconnect hint so the next connection catches up from the audit log.
 func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	tenantID, _, ok := h.requireTenantUser(w, r)
 	if !ok {
 		return
 	}
+	reader := httpx.PrincipalFromCtx(r.Context())
 
 	f := StreamFilter{
 		Types:    splitCSV(r.URL.Query().Get("types")),
@@ -103,13 +128,25 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	// waits in the channel instead of being lost. Live events come from the
 	// outbox and replayed ones from the audit log, with different ids, so they
 	// can't be matched: an event in both may arrive twice, but none is dropped.
-	evCh, unsub := h.Hub.Subscribe(tenantID)
+	evCh, lost, unsub := h.Hub.subscribe(tenantID)
 	defer unsub()
 
 	// On reconnect the client sends the ID of the last event it received; replay
 	// everything newer before switching to live.
 	if lastID := r.Header.Get("Last-Event-ID"); lastID != "" {
-		h.replayHistory(ctx, sse, tenantID, lastID, f)
+		if !h.replayHistory(ctx, sse, tenantID, lastID, f) {
+			sse.retryLater()
+			return
+		}
+	}
+
+	recheck := time.NewTicker(h.recheckEvery())
+	defer recheck.Stop()
+	var expired <-chan time.Time
+	if reader != nil && reader.ExpiresAt != nil {
+		t := time.NewTimer(time.Until(*reader.ExpiresAt))
+		defer t.Stop()
+		expired = t.C
 	}
 
 	for {
@@ -117,6 +154,15 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		case <-h.Hub.stopping:
+			sse.retryLater()
+			return
+		case <-expired:
+			return
+		case <-recheck.C:
+			if !h.stillAllowed(ctx, reader) {
+				return
+			}
+		case <-lost:
 			sse.retryLater()
 			return
 		case ev := <-evCh:
@@ -146,31 +192,70 @@ const shutdownRetry = 3 * time.Second
 // arrive twice, but none is skipped.
 const outboxLag = 10 * time.Second
 
+// recheckEvery is how often a stream asks Access again.
+func (h *Handler) recheckEvery() time.Duration {
+	if h.RecheckEvery > 0 {
+		return h.RecheckEvery
+	}
+	return streamRecheck
+}
+
+// stillAllowed reports whether reader may go on reading, failing closed when
+// Access can't say.
+func (h *Handler) stillAllowed(ctx context.Context, reader *httpx.Principal) bool {
+	if h.Access == nil {
+		return true
+	}
+	ok, err := h.Access(ctx, reader)
+	if err != nil {
+		slog.Warn("activity: stream access check failed; ending the stream", "err", err)
+		return false
+	}
+	return ok
+}
+
 // replayHistory sends the audit events newer than the lastEventID cursor,
-// oldest first, as a connected client would have seen them. A lastEventID that
-// does not decode skips the replay, so the stream just starts live.
-func (h *Handler) replayHistory(ctx context.Context, sse *sseWriter, tenantID uuid.UUID, lastEventID string, f StreamFilter) {
+// oldest first, as a connected client would have seen them, page after page
+// until it has caught up. It reads at most maxReplayRows: further behind, it
+// sends the cursor of the last row read and reports false, for the stream to
+// end and the client to carry on from there. The cursor of a row the filters
+// pass over is sent too, so a filtered backlog is read only once. A lastEventID
+// that does not decode skips the replay, so the stream just starts live.
+func (h *Handler) replayHistory(ctx context.Context, sse *sseWriter, tenantID uuid.UUID, lastEventID string, f StreamFilter) bool {
 	afterTs, afterID, err := decodeCursor(lastEventID)
 	if err != nil {
-		return // invalid Last-Event-ID — skip replay rather than erroring
+		return true // invalid Last-Event-ID — skip replay rather than erroring
 	}
-
-	rows, err := dbgen.New(h.pool).ReplayActivityHistory(ctx, dbgen.ReplayActivityHistoryParams{
-		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-		AfterTs:  afterTs,
-		AfterID:  afterID,
-	})
-	if err != nil {
-		slog.Warn("activity: replay query", "err", err)
-		return
-	}
-
-	for _, row := range rows {
-		ev := mapAuditRow(replayRowToAuditRow(row))
-		if !matchesStreamFilter(ev, f) {
-			continue
+	q := dbgen.New(h.pool)
+	for read := 0; ; {
+		rows, err := q.ReplayActivityHistory(ctx, dbgen.ReplayActivityHistoryParams{
+			TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+			AfterTs:  afterTs,
+			AfterID:  afterID,
+		})
+		if err != nil {
+			slog.Warn("activity: replay query", "err", err)
+			return false
 		}
-		sse.sendActivity(ev, ev.At)
+		sentLast := false
+		for _, row := range rows {
+			ev := mapAuditRow(replayRowToAuditRow(row))
+			afterTs, afterID, sentLast = row.CreatedAt, row.ID, false
+			if matchesStreamFilter(ev, f) {
+				sse.sendActivity(ev, ev.At)
+				sentLast = true
+			}
+		}
+		if len(rows) > 0 && !sentLast {
+			sse.sendCursor(afterTs, afterID)
+		}
+		read += len(rows)
+		if len(rows) < replayPage {
+			return true
+		}
+		if read >= maxReplayRows {
+			return false
+		}
 	}
 }
 
@@ -932,8 +1017,15 @@ func (s *sseWriter) sendActivity(ev ActivityEvent, cursorAt time.Time) {
 	s.write(fmt.Sprintf("id: %s\nevent: activity\ndata: %s\n\n", encodeCursor(cursorAt, ev.ID), raw))
 }
 
+// sendCursor writes a frame holding only the cursor of the audit row at at,
+// id: the client keeps it as its Last-Event-ID without an event to show.
+func (s *sseWriter) sendCursor(at time.Time, id uuid.UUID) {
+	s.write(fmt.Sprintf("id: %s\n\n", encodeCursor(at, id)))
+}
+
 // retryLater sets the client's reconnect delay to shutdownRetry, for a stream
-// about to end because the server is stopping.
+// about to end so the client reconnects: the server is stopping, or the
+// client must catch up from the audit log.
 func (s *sseWriter) retryLater() {
 	s.write(fmt.Sprintf("retry: %d\n\n", shutdownRetry.Milliseconds()))
 }

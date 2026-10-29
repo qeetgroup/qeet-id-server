@@ -9,14 +9,18 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-// subBufSize is the capacity of each subscriber's channel. When it is full, the
-// hub drops the oldest event rather than block the NATS goroutine.
+// subBufSize is the capacity of each subscriber's channel. When it is full the
+// hub drops the event rather than block the NATS goroutine, and tells the
+// subscriber it has lost one.
 const subBufSize = 256
 
-// subscriber is the receive end of one SSE connection.
+// subscriber is the receive end of one SSE connection. lost is closed once an
+// event couldn't be delivered to it.
 type subscriber struct {
 	tenantID uuid.UUID
 	ch       chan ActivityEvent
+	lost     chan struct{}
+	lostOnce sync.Once
 }
 
 // Hub fans out domain events from the NATS outbox to the SSE subscribers of
@@ -61,16 +65,24 @@ func (h *Hub) Shutdown() { h.stopOnce.Do(func() { close(h.stopping) }) }
 // and an unsubscribe func the caller must call when the connection closes.
 // tenantID must come from the authenticated principal.
 func (h *Hub) Subscribe(tenantID uuid.UUID) (<-chan ActivityEvent, func()) {
+	ch, _, unsub := h.subscribe(tenantID)
+	return ch, unsub
+}
+
+// subscribe is Subscribe, also returning a channel closed once the subscriber
+// has lost an event because it fell behind.
+func (h *Hub) subscribe(tenantID uuid.UUID) (<-chan ActivityEvent, <-chan struct{}, func()) {
 	s := &subscriber{
 		tenantID: tenantID,
 		ch:       make(chan ActivityEvent, subBufSize),
+		lost:     make(chan struct{}),
 	}
 
 	h.mu.Lock()
 	h.subs[tenantID] = append(h.subs[tenantID], s)
 	h.mu.Unlock()
 
-	return s.ch, func() {
+	return s.ch, s.lost, func() {
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		list := h.subs[tenantID]
@@ -111,10 +123,11 @@ func (h *Hub) dispatch(msg *nats.Msg) {
 	h.fanOut(tenantID, ev)
 }
 
-// fanOut delivers ev to every subscriber of tenantID without blocking. A full
-// channel loses its oldest event to make room; if it is still full, ev is
-// dropped and logged. It holds the read lock throughout, because unsubscribe
-// rewrites the slice it iterates.
+// fanOut delivers ev to every subscriber of tenantID without blocking. A
+// subscriber whose channel is full doesn't get it and is told it lost an
+// event, so its stream can have the client catch up from the audit log. It
+// holds the read lock throughout, because unsubscribe rewrites the slice it
+// iterates.
 func (h *Hub) fanOut(tenantID uuid.UUID, ev ActivityEvent) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -122,22 +135,12 @@ func (h *Hub) fanOut(tenantID uuid.UUID, ev ActivityEvent) {
 	for _, s := range h.subs[tenantID] {
 		select {
 		case s.ch <- ev:
-			// Fast path: channel had room.
 		default:
-			// Slow consumer — drop the oldest buffered event to make room.
-			select {
-			case <-s.ch:
-			default:
-			}
-			// Another dispatch may have refilled the slot; then drop ev.
-			select {
-			case s.ch <- ev:
-			default:
-				slog.Warn("activity hub: event dropped (slow consumer)",
-					"tenant_id", tenantID,
-					"event_type", ev.Type,
-				)
-			}
+			s.lostOnce.Do(func() {
+				close(s.lost)
+				slog.Warn("activity hub: subscriber fell behind; its stream reconnects",
+					"tenant_id", tenantID, "event_type", ev.Type)
+			})
 		}
 	}
 }

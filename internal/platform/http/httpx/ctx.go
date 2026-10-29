@@ -40,6 +40,10 @@ type Principal struct {
 	// authorization server (its client_id claim); empty for the user's own
 	// tokens. See RefuseApplicationTokens.
 	ClientID string
+	// ExpiresAt is when the credential the request was authenticated with is
+	// no longer accepted, if it has an end: the access token's expiry, or the
+	// API key's. A request that outlives it, such as a stream, ends then.
+	ExpiresAt *time.Time
 	// SignedInAt is when a principal authenticated by the hosted login's session
 	// cookie (no API session) proved a second factor, such as a passkey; nil
 	// otherwise. A recent one counts as step-up (see mfa.Service.StepUpGate).

@@ -305,11 +305,26 @@ paths:
 
 
         When `Last-Event-ID` is supplied (the `id` of the last frame received,
-        an opaque cursor, not the event's UUID) the server replays up to 100
-        audit events newer than it (chronological order) before switching to
-        the live stream, covering reconnect gaps. A live frame's id sits ten
-        seconds before its event, to cover events the server had yet to
-        publish, so a reconnect may repeat an event but never skips one.
+        an opaque cursor, not the event's UUID) the server replays every audit
+        event newer than it, in chronological order, before switching to the
+        live stream. One connection replays at most 1,000 audit rows: further
+        behind, it sends the cursor of the last row read and a `retry:` frame
+        and ends, and the client's reconnect carries on from there. A frame
+        may carry only an `id` (no event): the cursor of rows the filters
+        passed over, kept as the client's Last-Event-ID. A live frame's id
+        sits ten seconds before its event, to cover events the server had yet
+        to publish. Delivery is at least once: a reconnect may repeat an event
+        but doesn't skip one, and a client too slow for the live stream is
+        sent a `retry:` frame and disconnected, to catch up from the audit log
+        on reconnect.
+
+
+        The stream lasts only as long as the access it was opened with. It
+        ends when the access token or API key expires, and within 30 seconds
+        of the reader losing access: their session ended, audit.read no
+        longer theirs (or no longer the key's), the API key revoked, the
+        service principal or agent disabled. It also ends if that check
+        can't be made. A new request is then refused as any other would be.
 
 
         Server-side filters (`?types`, `?severity`, `?category`) are applied

@@ -121,3 +121,48 @@ func (g importRoles) Assign(ctx context.Context, tx pgx.Tx, userID, tenantID, ro
 		return g.repo.AssignRole(ctx, tx, userID, tenantID, roleID, grantedBy)
 	})
 }
+
+// streamAccess decides, while an activity stream is open, whether its reader
+// may still read it, as the request was admitted: the access token unexpired
+// and its session still live, the service principal or agent still enabled,
+// the API key still valid, and the stream route's policy still met (through
+// checker, as rbac.Enforce asks it).
+type streamAccess struct {
+	verifier *httpx.AuthVerifier
+	checker  rbac.Checker
+	apiKeys  *apikey.Service
+	policy   rbac.RoutePolicy
+}
+
+func (a streamAccess) Allowed(ctx context.Context, p *httpx.Principal) (bool, error) {
+	if p == nil || (p.ExpiresAt != nil && !time.Now().Before(*p.ExpiresAt)) {
+		return false, nil
+	}
+	switch {
+	case p.ActorType == "api_key":
+		id, err := uuid.Parse(p.Subject)
+		if err != nil || p.TenantID == nil {
+			return false, nil
+		}
+		if live, err := a.apiKeys.Live(ctx, *p.TenantID, id); err != nil || !live {
+			return false, err
+		}
+	case p.ActorType == "service" && a.verifier.PrincipalLive != nil:
+		id, err := uuid.Parse(p.Subject)
+		if err != nil {
+			return false, nil
+		}
+		if live, err := a.verifier.PrincipalLive(ctx, id); err != nil || !live {
+			return false, err
+		}
+	case p.AgentID != nil && a.verifier.AgentStatus != nil:
+		if status, err := a.verifier.AgentStatus(ctx, *p.AgentID); err != nil || status != "active" {
+			return false, err
+		}
+	case p.SessionID != nil && p.UserID != nil && p.ClientID == "" && a.verifier.SessionLive != nil:
+		if live, err := a.verifier.SessionLive(ctx, *p.SessionID, *p.UserID); err != nil || !live {
+			return false, err
+		}
+	}
+	return rbac.Allows(ctx, a.checker, p, a.policy)
+}

@@ -98,6 +98,10 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 				p.SessionID = &sid
 			}
 			p.ClientID = claims.ClientID
+			if claims.ExpiresAt != nil {
+				exp := claims.ExpiresAt.Time
+				p.ExpiresAt = &exp
+			}
 			if p.SessionID != nil && p.UserID != nil && p.ClientID == "" && p.ActorType == "user" {
 				if v.SessionLive != nil {
 					live, err := v.SessionLive(r.Context(), *p.SessionID, *p.UserID)

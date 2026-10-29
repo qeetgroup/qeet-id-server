@@ -382,3 +382,122 @@ func TestOneEventByID(t *testing.T) {
 		t.Errorf("naming another organisation in the path: %d, want 403", rec.Code)
 	}
 }
+
+// replayed opens the stream at path with Last-Event-ID lastID and reads it
+// until want activity frames arrived or the stream ended. It returns their ids,
+// the last cursor the stream gave (an activity frame's or a bare one), and
+// whether the stream ended with a reconnect hint.
+func replayed(t *testing.T, srv *httptest.Server, path, lastID string, want int) (ids []uuid.UUID, cursor string, reconnect bool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(dbtest.Context(t), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Last-Event-ID", lastID)
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	defer resp.Body.Close()
+	activity := false
+	scanner := bufio.NewScanner(resp.Body)
+	for len(ids) < want && scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case strings.HasPrefix(line, "id: "):
+			cursor = strings.TrimPrefix(line, "id: ")
+		case line == "event: activity":
+			activity = true
+		case strings.HasPrefix(line, "retry: "):
+			return ids, cursor, true
+		case line == "" && activity:
+			_, id, err := decodeCursor(cursor)
+			if err != nil {
+				t.Fatalf("frame id %q: %v", cursor, err)
+			}
+			ids = append(ids, id)
+			activity = false
+		}
+	}
+	return ids, cursor, false
+}
+
+// TestReplayCatchesUpPastOnePage checks that a reconnect replays every event
+// it missed, a page of the audit log after another, and that a filtered
+// backlog is read through to the events the filter keeps.
+func TestReplayCatchesUpPastOnePage(t *testing.T) {
+	tenant := dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	base := time.Now().Add(-time.Hour)
+	seen := insertEvent(t, tenant, "user.created", base)
+	var missed []uuid.UUID
+	for i := range 151 {
+		missed = append(missed, insertEvent(t, tenant, "user.updated", base.Add(time.Duration(i+1)*time.Millisecond)).id)
+	}
+	wanted := insertEvent(t, tenant, "user.deleted", base.Add(time.Second))
+	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount))
+	defer srv.Close()
+
+	ids, _, reconnect := replayed(t, srv, "/activity/stream", encodeCursor(seen.at, seen.id), 152)
+	if reconnect || len(ids) != 152 || !slices.Equal(ids[:151], missed) || ids[151] != wanted.id {
+		t.Errorf("replay of 152 missed events: %d replayed, reconnect %v; want all of them, oldest first", len(ids), reconnect)
+	}
+	ids, _, reconnect = replayed(t, srv, "/activity/stream?types=user.deleted", encodeCursor(seen.at, seen.id), 1)
+	if reconnect || len(ids) != 1 || ids[0] != wanted.id {
+		t.Errorf("filtered replay behind 151 others: %v, reconnect %v; want the one it keeps", ids, reconnect)
+	}
+}
+
+// TestReplayBeyondItsBoundCarriesOn checks that a connection replays at most
+// maxReplayRows, then gives the cursor of the last row it read and a reconnect
+// hint, and that reconnecting from there replays the rest: every event once,
+// in order, a filtered backlog included.
+func TestReplayBeyondItsBoundCarriesOn(t *testing.T) {
+	maxReplayRows = 100
+	t.Cleanup(func() { maxReplayRows = 1000 })
+	tenant := dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	base := time.Now().Add(-time.Hour)
+	seen := insertEvent(t, tenant, "user.created", base)
+	var missed []uuid.UUID
+	for i := range 250 {
+		missed = append(missed, insertEvent(t, tenant, "user.updated", base.Add(time.Duration(i+1)*time.Millisecond)).id)
+	}
+	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount))
+	defer srv.Close()
+
+	var all []uuid.UUID
+	cursor := encodeCursor(seen.at, seen.id)
+	for conn := 1; ; conn++ {
+		ids, next, reconnect := replayed(t, srv, "/activity/stream", cursor, len(missed)-len(all))
+		all = append(all, ids...)
+		if !reconnect {
+			break
+		}
+		if conn > 5 || next == cursor {
+			t.Fatalf("connection %d made no progress (cursor %q)", conn, next)
+		}
+		cursor = next
+	}
+	if !slices.Equal(all, missed) {
+		t.Errorf("replayed %d events over reconnects, want the %d missed, once each and in order", len(all), len(missed))
+	}
+
+	// A filtered backlog moves the cursor on too, so reconnects reach the end.
+	cursor = encodeCursor(seen.at, seen.id)
+	for conn := 1; ; conn++ {
+		ids, next, reconnect := replayed(t, srv, "/activity/stream?types=user.deleted", cursor, 1)
+		if len(ids) != 0 {
+			t.Fatalf("a filtered replay sent %v, want nothing", ids)
+		}
+		if !reconnect {
+			break
+		}
+		if conn > 5 || next == cursor {
+			t.Fatalf("filtered connection %d made no progress (cursor %q)", conn, next)
+		}
+		cursor = next
+	}
+}

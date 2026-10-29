@@ -13,6 +13,30 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const aPIKeyLive = `-- name: APIKeyLive :one
+SELECT EXISTS (
+    SELECT 1 FROM auth.api_keys k
+    LEFT JOIN "user".users u ON u.id = k.user_id
+    WHERE k.id = $1 AND k.tenant_id = $2 AND k.revoked_at IS NULL
+      AND (k.expires_at IS NULL OR k.expires_at > NOW())
+      AND (k.user_id IS NULL OR (u.status = 'active' AND u.deleted_at IS NULL))
+)::bool
+`
+
+type APIKeyLiveParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+// Whether a key would still authenticate, as VerifyAPIKey decides: not revoked
+// or expired, and the person it acts for, if any, still active.
+func (q *Queries) APIKeyLive(ctx context.Context, arg APIKeyLiveParams) (bool, error) {
+	row := q.db.QueryRow(ctx, aPIKeyLive, arg.ID, arg.TenantID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countActiveAPIKeys = `-- name: CountActiveAPIKeys :one
 SELECT COUNT(*) FROM auth.api_keys
 WHERE tenant_id = $1 AND revoked_at IS NULL

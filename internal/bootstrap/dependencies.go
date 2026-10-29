@@ -433,6 +433,10 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		BuiltIn: builtInLimits,
 	}
 
+	// An open activity stream is checked again as its request was admitted.
+	activityHandler := activity.NewHandler(pool, activityHub)
+	activityHandler.Access = streamAccess{verifier: verifier, checker: decider, apiKeys: apikeyService,
+		policy: RoutePolicies()["GET /v1/activity/stream"]}.Allowed
 	v := newValidator()
 	deps := Deps{
 		Tenant: &tenant.Handler{Repo: tenantRepo, Validate: v, AuthService: authService, Signals: sessionSignals, OwnerCheck: rbacRepo.IsOwner},
@@ -495,7 +499,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		VC:           &vc.Handler{Service: vcService},
 		Qeetai:       qeetaiHandler,
 		Search:       &search.Handler{Service: searchService},
-		Activity:     activity.NewHandler(pool, activityHub),
+		Activity:     activityHandler,
 		Health:       healthHandler,
 		MetricsToken: cfg.MetricsToken,
 		MetricsOpen:  cfg.IsDev(),

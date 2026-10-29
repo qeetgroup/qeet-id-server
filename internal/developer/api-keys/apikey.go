@@ -298,6 +298,12 @@ func (s *Service) Verify(ctx context.Context, raw string) (*Key, error) {
 	return &k, nil
 }
 
+// Live reports whether tenantID's key id would still authenticate a request:
+// it isn't revoked or expired, and the person it acts for, if any, is active.
+func (s *Service) Live(ctx context.Context, tenantID, id uuid.UUID) (bool, error) {
+	return s.q.APIKeyLive(ctx, dbgen.APIKeyLiveParams{ID: id, TenantID: tenantID})
+}
+
 // Middleware authenticates the request if it carries `Authorization:
 // ApiKey <raw>`. On success the principal is attached and ActorType is
 // "api_key"; on failure we fall through so the next middleware can try.
@@ -315,6 +321,7 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 				ActorType: "api_key",
 				Subject:   k.ID.String(),
 				Scopes:    k.Scopes,
+				ExpiresAt: k.ExpiresAt,
 			}
 			tenant := k.TenantID
 			p.TenantID = &tenant

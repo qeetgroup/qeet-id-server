@@ -32,6 +32,17 @@ LEFT JOIN "user".users u ON u.id = k.user_id
 WHERE k.prefix = $1 AND k.revoked_at IS NULL
   AND (k.user_id IS NULL OR (u.status = 'active' AND u.deleted_at IS NULL));
 
+-- name: APIKeyLive :one
+-- Whether a key would still authenticate, as VerifyAPIKey decides: not revoked
+-- or expired, and the person it acts for, if any, still active.
+SELECT EXISTS (
+    SELECT 1 FROM auth.api_keys k
+    LEFT JOIN "user".users u ON u.id = k.user_id
+    WHERE k.id = @id AND k.tenant_id = @tenant_id AND k.revoked_at IS NULL
+      AND (k.expires_at IS NULL OR k.expires_at > NOW())
+      AND (k.user_id IS NULL OR (u.status = 'active' AND u.deleted_at IS NULL))
+)::bool;
+
 -- name: TouchAPIKeyLastUsed :exec
 UPDATE auth.api_keys SET last_used_at = NOW() WHERE id = $1;
 

@@ -145,61 +145,77 @@ func Enforce(c Checker, policies map[string]RoutePolicy) func(http.Handler) http
 				return
 			}
 
-			switch p.ActorType {
-			case "", "user":
-				if !policy.AllowUser || p.UserID == nil {
-					httpx.WriteError(w, r, errs.ErrRBACPermissionDenied)
-					return
-				}
-				// A token issued to an application acts for its user only as far
-				// as the user approved: it needs the route's scope, and then the
-				// user's permission below like any other request.
-				if p.ClientID != "" && (policy.ApplicationScope == "" || !slices.Contains(p.Scopes, policy.ApplicationScope)) {
-					challenge := `Bearer realm="qeet", error="insufficient_scope"`
-					if policy.ApplicationScope != "" {
-						challenge += `, scope="` + policy.ApplicationScope + `"`
-					}
+			refusal, challenge, err := ruling(r.Context(), c, p, policy)
+			if err != nil {
+				httpx.WriteError(w, r, err)
+				return
+			}
+			if refusal != nil {
+				if challenge != "" {
 					w.Header().Set("WWW-Authenticate", challenge)
-					httpx.WriteError(w, r, errs.ErrAuthInsufficientScope.WithDetail("this request needs the "+policy.ApplicationScope+" scope"))
-					return
 				}
-				if policy.UserPermission != "" {
-					if p.TenantID == nil {
-						httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("tenant scope required"))
-						return
-					}
-					allowed, err := c.Check(r.Context(), *p.UserID, *p.TenantID, policy.UserPermission)
-					if err != nil {
-						httpx.WriteError(w, r, err)
-						return
-					}
-					if !allowed {
-						httpx.WriteError(w, r, errs.ErrRBACPermissionDenied)
-						return
-					}
-				}
-			case "api_key":
-				if !policy.AllowAPIKey || !machineScopeAllowed(p, policy) {
-					httpx.WriteError(w, r, errs.ErrRBACPermissionDenied)
-					return
-				}
-			case "service", "service_principal":
-				if !policy.AllowService || !machineScopeAllowed(p, policy) {
-					httpx.WriteError(w, r, errs.ErrRBACPermissionDenied)
-					return
-				}
-			case "agent":
-				if !policy.AllowAgent || !machineScopeAllowed(p, policy) {
-					httpx.WriteError(w, r, errs.ErrRBACPermissionDenied)
-					return
-				}
-			default:
-				httpx.WriteError(w, r, errs.ErrRBACPermissionDenied)
+				httpx.WriteError(w, r, refusal)
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// Allows reports whether p may use a route with policy, as Enforce decides it:
+// for a handler that must decide again while a long request runs.
+func Allows(ctx context.Context, c Checker, p *httpx.Principal, policy RoutePolicy) (bool, error) {
+	refusal, _, err := ruling(ctx, c, p, policy)
+	return err == nil && refusal == nil, err
+}
+
+// ruling is Enforce's decision for p on a route with policy: a nil refusal
+// lets it through, else refusal is the error to answer with, and challenge
+// the WWW-Authenticate header to send, if any. err is a fault, not a refusal.
+func ruling(ctx context.Context, c Checker, p *httpx.Principal, policy RoutePolicy) (refusal error, challenge string, err error) {
+	switch p.ActorType {
+	case "", "user":
+		if !policy.AllowUser || p.UserID == nil {
+			return errs.ErrRBACPermissionDenied, "", nil
+		}
+		// A token issued to an application acts for its user only as far as
+		// the user approved: it needs the route's scope, and then the user's
+		// permission below like any other request.
+		if p.ClientID != "" && (policy.ApplicationScope == "" || !slices.Contains(p.Scopes, policy.ApplicationScope)) {
+			challenge := `Bearer realm="qeet", error="insufficient_scope"`
+			if policy.ApplicationScope != "" {
+				challenge += `, scope="` + policy.ApplicationScope + `"`
+			}
+			return errs.ErrAuthInsufficientScope.WithDetail("this request needs the " + policy.ApplicationScope + " scope"), challenge, nil
+		}
+		if policy.UserPermission != "" {
+			if p.TenantID == nil {
+				return errs.ErrForbidden.WithDetail("tenant scope required"), "", nil
+			}
+			allowed, err := c.Check(ctx, *p.UserID, *p.TenantID, policy.UserPermission)
+			if err != nil {
+				return nil, "", err
+			}
+			if !allowed {
+				return errs.ErrRBACPermissionDenied, "", nil
+			}
+		}
+	case "api_key":
+		if !policy.AllowAPIKey || !machineScopeAllowed(p, policy) {
+			return errs.ErrRBACPermissionDenied, "", nil
+		}
+	case "service", "service_principal":
+		if !policy.AllowService || !machineScopeAllowed(p, policy) {
+			return errs.ErrRBACPermissionDenied, "", nil
+		}
+	case "agent":
+		if !policy.AllowAgent || !machineScopeAllowed(p, policy) {
+			return errs.ErrRBACPermissionDenied, "", nil
+		}
+	default:
+		return errs.ErrRBACPermissionDenied, "", nil
+	}
+	return nil, "", nil
 }
 
 func machineScopeAllowed(p *httpx.Principal, policy RoutePolicy) bool {

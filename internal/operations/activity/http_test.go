@@ -1,10 +1,13 @@
 package activity
 
 import (
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -107,4 +110,125 @@ func TestStreamEndsWhenTheHubShutsDown(t *testing.T) {
 		t.Errorf("stream opened after shutdown sent %q (%v), want %q", body, err, want)
 	}
 	hub.Shutdown() // a second call is harmless
+}
+
+// openStream serves h's stream to reader on a test server and returns a
+// channel that gets the whole body once the stream ends, and a func that waits
+// until the stream has subscribed to the hub.
+func openStream(t *testing.T, h *Handler, reader *httpx.Principal) (<-chan string, func()) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.stream(w, r.WithContext(httpx.WithPrincipal(r.Context(), reader)))
+	}))
+	t.Cleanup(srv.Close)
+	got := make(chan string, 1)
+	go func() {
+		resp, err := (&http.Client{Timeout: 5 * time.Second}).Get(srv.URL)
+		if err != nil {
+			got <- err.Error()
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		got <- string(body)
+	}()
+	subscribed := func() {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+			h.Hub.mu.RLock()
+			n := len(h.Hub.subs[*reader.TenantID])
+			h.Hub.mu.RUnlock()
+			if n > 0 {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the stream never subscribed")
+			}
+		}
+	}
+	return got, subscribed
+}
+
+// ended waits for got, failing if the stream is still open after within.
+func ended(t *testing.T, got <-chan string, within time.Duration, what string) string {
+	t.Helper()
+	select {
+	case body := <-got:
+		return body
+	case <-time.After(within):
+		t.Fatalf("%s: the stream is still open after %s", what, within)
+		return ""
+	}
+}
+
+// TestStreamEndsWhenAccessEnds checks that an open stream asks Access again
+// and ends, delivering nothing more, once its reader is refused or Access
+// can't answer; and that a reader still allowed keeps their stream.
+func TestStreamEndsWhenAccessEnds(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		answer func() (bool, error)
+	}{
+		{"access withdrawn", func() (bool, error) { return false, nil }},
+		{"access can't be checked", func() (bool, error) { return false, errors.New("store down") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tenantID, userID := uuid.New(), uuid.New()
+			var allowed atomic.Bool
+			allowed.Store(true)
+			h := NewHandler(nil, NewHub(nil))
+			h.RecheckEvery = 20 * time.Millisecond
+			h.Access = func(context.Context, *httpx.Principal) (bool, error) {
+				if allowed.Load() {
+					return true, nil
+				}
+				return tc.answer()
+			}
+			got, subscribed := openStream(t, h, &httpx.Principal{TenantID: &tenantID, UserID: &userID})
+			subscribed()
+			time.Sleep(100 * time.Millisecond)
+			select {
+			case <-got:
+				t.Fatal("the stream of a reader still allowed ended")
+			default:
+			}
+			allowed.Store(false)
+			body := ended(t, got, 2*time.Second, tc.name)
+			h.Hub.fanOut(tenantID, newTestEvent("user.created", SeverityInfo))
+			if strings.Contains(body, "event: activity") || strings.Contains(body, "retry:") {
+				t.Errorf("%s: the stream sent %q, want it to end with nothing more", tc.name, body)
+			}
+		})
+	}
+}
+
+// TestStreamEndsWhenTheCredentialExpires checks that a stream ends when the
+// credential it was opened with expires, though nothing else ends it.
+func TestStreamEndsWhenTheCredentialExpires(t *testing.T) {
+	tenantID, userID := uuid.New(), uuid.New()
+	expires := time.Now().Add(150 * time.Millisecond)
+	got, _ := openStream(t, NewHandler(nil, NewHub(nil)), &httpx.Principal{TenantID: &tenantID, UserID: &userID, ExpiresAt: &expires})
+	ended(t, got, 2*time.Second, "an expired credential")
+	if time.Now().Before(expires) {
+		t.Error("the stream ended before its credential expired")
+	}
+}
+
+// TestStreamReconnectsWhenItFallsBehind checks that a stream whose hub buffer
+// overflowed ends with a reconnect hint, so the client catches up from the
+// audit log instead of silently missing events.
+func TestStreamReconnectsWhenItFallsBehind(t *testing.T) {
+	tenantID, userID := uuid.New(), uuid.New()
+	h := NewHandler(nil, NewHub(nil))
+	got, subscribed := openStream(t, h, &httpx.Principal{TenantID: &tenantID, UserID: &userID})
+	subscribed()
+	h.Hub.mu.RLock()
+	sub := h.Hub.subs[tenantID][0]
+	h.Hub.mu.RUnlock()
+	// The hub tells a subscriber it lost an event as fanOut does on a full
+	// channel (TestHubSlowConsumerIsToldItLostAnEvent).
+	sub.lostOnce.Do(func() { close(sub.lost) })
+	if body := ended(t, got, 2*time.Second, "a lagging stream"); !strings.HasSuffix(body, "retry: 3000\n\n") {
+		t.Errorf("a lagging stream ended with %q, want a reconnect hint", body[max(0, len(body)-80):])
+	}
 }

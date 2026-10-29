@@ -77,51 +77,38 @@ func TestHubTenantIsolation(t *testing.T) {
 }
 
 // TestHubSlowConsumerDropOldest checks that a full subscriber channel drops its
-// oldest event to make room for the new one, without blocking.
-func TestHubSlowConsumerDropOldest(t *testing.T) {
+// TestHubSlowConsumerIsToldItLostAnEvent checks that an event for a subscriber
+// whose channel is full is dropped without blocking, and the subscriber told,
+// once, that it lost one, so its stream can have the client catch up; the
+// events already buffered stay.
+func TestHubSlowConsumerIsToldItLostAnEvent(t *testing.T) {
 	h := NewHub(nil)
 	tenant := uuid.New()
-
-	ch, unsub := h.Subscribe(tenant)
+	ch, lost, unsub := h.subscribe(tenant)
 	defer unsub()
 
-	// Fill the channel to capacity.
-	for i := 0; i < subBufSize; i++ {
-		ev := newTestEvent("user.created", SeveritySuccess)
-		// Mark with a sequence so we can identify ordering.
-		ev.Type = "seq." + string(rune('A'+i%26))
-		h.fanOut(tenant, ev)
+	for range subBufSize {
+		h.fanOut(tenant, newTestEvent("user.created", SeveritySuccess))
 	}
-
-	// Overflow: one more event should succeed (drop-oldest makes room).
-	overflow := newTestEvent("overflow.event", SeverityInfo)
-	overflow.Type = "overflow"
-	h.fanOut(tenant, overflow) // must not block
-
-	// The channel should still have exactly subBufSize events.
-	count := 0
-	hasOverflow := false
-	drain := time.After(2 * time.Second)
-loop:
-	for {
-		select {
-		case got := <-ch:
-			count++
-			if got.Type == "overflow" {
-				hasOverflow = true
-			}
-		case <-drain:
-			break loop
-		default:
-			break loop
+	select {
+	case <-lost:
+		t.Fatal("told it lost an event before its channel was full")
+	default:
+	}
+	h.fanOut(tenant, newTestEvent("overflow", SeverityInfo)) // must not block
+	h.fanOut(tenant, newTestEvent("overflow", SeverityInfo)) // nor signal twice
+	select {
+	case <-lost:
+	default:
+		t.Fatal("not told it lost an event")
+	}
+	if len(ch) != subBufSize {
+		t.Errorf("%d events buffered, want the %d it had room for", len(ch), subBufSize)
+	}
+	for range subBufSize {
+		if ev := <-ch; ev.Type == "overflow" {
+			t.Fatal("an event past the full channel was delivered")
 		}
-	}
-
-	if count != subBufSize {
-		t.Errorf("want %d events after overflow, got %d", subBufSize, count)
-	}
-	if !hasOverflow {
-		t.Error("overflow event was not delivered (expected it to replace the oldest)")
 	}
 }
 
