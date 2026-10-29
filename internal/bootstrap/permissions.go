@@ -394,6 +394,7 @@ func userPermissionMap() map[string]string {
 
 		// Analytics.
 		"GET /v1/tenants/{tenantID}/analytics/overview": "analytics.read",
+		"GET /v1/tenants/{tenantID}/service-health":     "tenant.read",
 
 		// Email delivery: whether the organisation's mail arrived (support),
 		// and lifting a suppression its mail caused (administrators).

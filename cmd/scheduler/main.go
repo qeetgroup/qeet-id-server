@@ -7,6 +7,8 @@
 // moves dead-lettered outbox events back to the outbox, to be published again,
 // and exits. "scheduler mark-invoice-paid -invoice ID -reference REF" records
 // an invoice paid outside a checkout, such as by bank transfer, and exits.
+// "scheduler open-incident -component C -impact I -title T [-detail D]" and
+// "scheduler resolve-incident -incident ID" post and end a service incident.
 package main
 
 import (
@@ -18,6 +20,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/bootstrap"
 	webhook "github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/servicehealth"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/migrations"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
@@ -67,6 +70,15 @@ func main() {
 	defer pool.Close()
 	if len(os.Args) > 1 && os.Args[1] == replayCommand {
 		code := replayDeadLetters(rootCtx, pool, os.Args[2:])
+		pool.Close()
+		os.Exit(code)
+	}
+	if len(os.Args) > 1 && (os.Args[1] == openIncidentCommand || os.Args[1] == resolveIncidentCommand) {
+		run := openIncident
+		if os.Args[1] == resolveIncidentCommand {
+			run = resolveIncident
+		}
+		code := run(rootCtx, servicehealth.NewService(pool), os.Args[2:])
 		pool.Close()
 		os.Exit(code)
 	}

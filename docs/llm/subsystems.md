@@ -274,7 +274,7 @@ SHA-256 hash chaining to the previous row in the same tenant; tampering (delete,
 breaks the chain and is caught by `Verifier.Verify`."* Rows with no tenant go on one of 16
 platform chains (`chain_shard`, the writer's database connection's), so their writers don't
 queue on one lock; each is a whole chain with its own tip, lock and checkpoint.
-**Path** `internal/operations/{audit,billing,gdpr,analytics,retention,siem,activity,notifications,entitlements,ratelimits,search,sales,email,qeetai}/`
+**Path** `internal/operations/{audit,billing,gdpr,analytics,retention,siem,activity,notifications,entitlements,ratelimits,search,sales,email,qeetai,servicehealth}/`
 **Key dependencies** `platform/http/{errs,httpx}` · `platform/ai` (+`openai`, `anthropic`) — **sole
 consumer** · `platform/cache/ratelimit`
 **Security** **Critical** for `audit/`; **High** for `billing/`, `gdpr/`, `siem/`
@@ -292,6 +292,7 @@ gdpr/erasure.go · gdpr/export.go   what erasure removes, what an export holds
 gdpr/tenantpurge.go        a deleted organisation's data purged after 30 days
 retention/retention.go · retention/sweeps.go   purge window, sweeps of every growing table
 siem/siem.go · analytics/analytics.go
+servicehealth/servicehealth.go   each component's state, operator-posted incidents
 activity/{domain,http,hub}.go   SSE feed
 qeetai/{qeetai,orchestrator,sse,tools,providercfg,http}.go
 entitlements/ · ratelimits/ · search/ · notifications/ · sales/ · email/

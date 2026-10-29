@@ -147,6 +147,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Retention auto-purge | `internal/operations/retention/` |
 | SIEM streaming | `internal/operations/siem/` |
 | Analytics | `internal/operations/analytics/` |
+| Service health and incidents | `internal/operations/servicehealth/` |
 | Live activity feed (SSE) | `internal/operations/activity/` |
 | In-app notifications | `internal/operations/notifications/` |
 | Plan entitlements | `internal/operations/entitlements/` |

@@ -64,6 +64,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/sales"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/search"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/servicehealth"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/siem"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
@@ -108,6 +109,7 @@ type Deps struct {
 	Entitlement   *entitlements.Handler
 	Sales         *sales.Handler
 	Analytics     *analytics.Handler
+	ServiceHealth *servicehealth.Handler
 	OIDC          *oidc.Handler
 	Passkey       *passkey.Handler
 	Social        *social.Handler
@@ -394,6 +396,7 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.Entitlement.Mount(r)
 	d.Sales.Mount(r)
 	d.Analytics.Mount(r)
+	d.ServiceHealth.Mount(r)
 	d.OIDC.Mount(r)
 	d.Passkey.Mount(r)
 	d.Social.Mount(r)
