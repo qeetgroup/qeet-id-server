@@ -164,7 +164,7 @@ internal/platform      shared kernel — pure infrastructure
 | `internal/platform` | HTTP, database, crypto, cache, config, events, jobs, messaging, observability |
 | `internal/bootstrap` | Composition root: dependencies, router, permission map, lifecycle, server |
 
-77 packages contain Go files.
+93 packages contain Go files.
 
 **File-naming convention — `<domain>.go`, not layered file names.** Domain logic, persistence and
 HTTP handlers usually live in **one file named after the package**; additional files split by
@@ -288,13 +288,13 @@ One PostgreSQL database, **seven schemas**: `auth`, `tenant`, `user`, `rbac`, `a
 `qeetai`.
 
 - **Driver:** pgx v5. **Queries:** hand-written SQL in `queries.sql`, compiled by **sqlc** into
-  `dbgen/` packages. 48 `queries.sql`/`sqlc.yaml` pairs, 47 `dbgen` directories.
+  `dbgen/` packages. 52 `queries.sql`/`sqlc.yaml` pairs, 52 `dbgen` directories.
 - **Generated `dbgen/` code is never hand-edited.** Change `queries.sql` and regenerate.
 - Transactions are opened at the service layer, so a domain write and its outbox row commit together.
 
 ### Migrations
 
-**Evidence:** `internal/platform/database/migrations/` — 205 up/down pairs, `0001`–`0206` (`0082` intentionally absent)
+**Evidence:** `internal/platform/database/migrations/` — 228 up/down pairs, `0001`–`0229` (`0082` intentionally absent)
 (`0082` is absent and must not be reused). Embedded with `//go:embed *.sql` in `runner.go` and
 applied on startup.
 

@@ -54,7 +54,7 @@ section of the context document.
 ### 1. Inspect before editing
 
 **Never change code based on a filename or an assumption.** Read the file. Read its callers. This
-repository has 77 packages and near-identical names in different contexts — `internal/access/risk/ipallow`
+repository has 93 packages and near-identical names in different contexts — `internal/access/risk/ipallow`
 and `internal/access/threat/risk` are different things.
 
 ### 2. Follow the existing architecture
@@ -142,7 +142,7 @@ internal/platform/database/migrations/NNNN_description.up.sql
 internal/platform/database/migrations/NNNN_description.down.sql
 ```
 
-Numbering continues from the highest present (currently `0206`; `0082` is absent and is not to be
+Numbering continues from the highest present (currently `0229`; `0082` is absent and is not to be
 reused). Migrations are embedded with `//go:embed` and applied on startup. Additive first —
 expand, migrate, contract across releases. An index on a table that already exists is built with
 `CREATE INDEX CONCURRENTLY`, alone in its file (a plain one blocks writes while it builds;
