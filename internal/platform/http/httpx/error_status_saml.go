@@ -57,5 +57,6 @@ func init() {
 		errs.CodeSAMLCertificateRequired:      http.StatusUnprocessableEntity,
 		errs.CodeSAMLEncryptionKeyUnsupported: http.StatusUnprocessableEntity,
 		errs.CodeSAMLRequestSignatureInvalid:  http.StatusForbidden,
+		errs.CodeSAMLConnectionIncomplete:     http.StatusUnprocessableEntity,
 	})
 }

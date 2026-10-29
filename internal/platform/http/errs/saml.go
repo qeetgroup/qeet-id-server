@@ -50,6 +50,7 @@ const (
 	CodeSAMLCertificateRequired      = "saml.certificate_required"
 	CodeSAMLEncryptionKeyUnsupported = "saml.encryption_key_unsupported"
 	CodeSAMLRequestSignatureInvalid  = "saml.request_signature_invalid"
+	CodeSAMLConnectionIncomplete     = "saml.connection_incomplete"
 )
 
 // SAML errors. Message is the end-user-facing text; edit wording here. Handlers
@@ -112,4 +113,6 @@ var (
 	ErrSAMLEncryptionKeyUnsupported = New(CodeSAMLEncryptionKeyUnsupported, "Encrypting assertions needs a certificate with an RSA key.")
 	ErrSAMLRequestSignatureInvalid  = New(CodeSAMLRequestSignatureInvalid,
 		"The app's sign-in request isn't signed with the certificate registered for it.")
+	ErrSAMLConnectionIncomplete = New(CodeSAMLConnectionIncomplete,
+		"Add the identity provider's entity ID, SSO URL and signing certificate before turning the connection on.")
 )

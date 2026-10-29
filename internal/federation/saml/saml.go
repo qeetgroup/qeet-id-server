@@ -185,13 +185,20 @@ func validGroupsAttribute(attribute *string) bool {
 
 // check trims the IdP SSO URL, then requires it to pass validIdPSSOURL, the
 // certificate to parse, the status, if given, to be a known one and the groups
-// attribute to fit.
+// attribute to fit. A draft named before the IdP's details are known needs
+// none of them, and can't be anything but a draft.
 func (in *CreateInput) check() error {
 	if in.Status != "" && !validStatus(in.Status) {
 		return errs.ErrSAMLStatusInvalid
 	}
 	if !validGroupsAttribute(&in.GroupsAttribute) {
 		return errGroupsAttributeInvalid
+	}
+	if in.awaitsIdP() {
+		if in.Status != "" && in.Status != "draft" {
+			return errs.ErrSAMLConnectionIncomplete
+		}
+		return nil
 	}
 	in.IdpSSOURL = strings.TrimSpace(in.IdpSSOURL)
 	if !validIdPSSOURL(in.IdpSSOURL) {
@@ -201,6 +208,13 @@ func (in *CreateInput) check() error {
 		return errs.ErrSAMLCertificateInvalid
 	}
 	return nil
+}
+
+// awaitsIdP reports whether the connection is named before any of its IdP's
+// details: entity ID, SSO URL and certificate.
+func (in *CreateInput) awaitsIdP() bool {
+	return strings.TrimSpace(in.IdpEntityID) == "" && strings.TrimSpace(in.IdpSSOURL) == "" &&
+		strings.TrimSpace(in.IdpCertificate) == ""
 }
 
 // validStatus reports whether status is one a connection or service provider
@@ -233,12 +247,14 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 	if err != nil {
 		return nil, err
 	}
-	cert, err := parseCertificate(in.IdpCertificate)
-	if err != nil {
-		return nil, errs.ErrSAMLCertificateInvalid
-	}
-	if err := replaceCertificates(ctx, q, row.ID, tenantID, cert); err != nil {
-		return nil, err
+	if !in.awaitsIdP() {
+		cert, err := parseCertificate(in.IdpCertificate)
+		if err != nil {
+			return nil, errs.ErrSAMLCertificateInvalid
+		}
+		if err := replaceCertificates(ctx, q, row.ID, tenantID, cert); err != nil {
+			return nil, err
+		}
 	}
 	out := toConnection(dbgen.GetSamlConnectionRow(row))
 	if out.Certificates, err = listCertificates(ctx, q, row.ID, tenantID); err != nil {
@@ -465,6 +481,11 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 	}
 	if out.Certificates, err = listCertificates(ctx, q, id, tenantID); err != nil {
 		return nil, err
+	}
+	// A connection that signs people in has its IdP's details, however it got
+	// them: given here, imported or read from metadata.
+	if out.Status == "active" && (out.IdpEntityID == "" || out.IdpSSOURL == "" || len(out.Certificates) == 0) {
+		return nil, errs.ErrSAMLConnectionIncomplete
 	}
 	if err := withMetadataSource(ctx, q, out); err != nil {
 		return nil, err
@@ -1099,7 +1120,22 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	items := make([]connectionView, len(out))
+	for i := range out {
+		items[i] = h.view(r, &out[i])
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// connectionView is a connection with the addresses its IdP is given.
+type connectionView struct {
+	*Connection
+	SPAddresses
+}
+
+// view is conn with its addresses on the API's public origin.
+func (h *Handler) view(r *http.Request, conn *Connection) connectionView {
+	return connectionView{Connection: conn, SPAddresses: Addresses(h.publicBase(r), conn.ID)}
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
@@ -1116,7 +1152,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	in.Name = strings.TrimSpace(in.Name)
 	in.IdpEntityID = strings.TrimSpace(in.IdpEntityID)
 	in.IdpSSOURL = strings.TrimSpace(in.IdpSSOURL)
-	if in.Name == "" || in.IdpEntityID == "" || in.IdpSSOURL == "" || strings.TrimSpace(in.IdpCertificate) == "" {
+	// A name alone makes a draft, whose addresses go to the IdP before its
+	// details come back; any detail given brings the rest with it.
+	if in.Name == "" || (!in.awaitsIdP() && (in.IdpEntityID == "" || in.IdpSSOURL == "" || strings.TrimSpace(in.IdpCertificate) == "")) {
 		httpx.WriteError(w, r, errs.ErrSAMLConnectionFieldsRequired)
 		return
 	}
@@ -1148,7 +1186,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, conn)
+	httpx.WriteJSON(w, http.StatusCreated, h.view(r, conn))
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
@@ -1167,7 +1205,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, conn)
+	httpx.WriteJSON(w, http.StatusOK, h.view(r, conn))
 }
 
 // test runs a config preflight over a SAML connection and returns per-check
@@ -1235,7 +1273,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, conn)
+	httpx.WriteJSON(w, http.StatusOK, h.view(r, conn))
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {

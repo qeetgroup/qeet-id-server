@@ -532,7 +532,7 @@ func (h *Handler) importConnection(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, created)
+	httpx.WriteJSON(w, http.StatusCreated, h.view(r, created))
 }
 
 // applyMetadata gives a connection its IdP's metadata, from a URL (kept for
@@ -603,5 +603,5 @@ func (h *Handler) applyMetadata(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, updated)
+	httpx.WriteJSON(w, http.StatusOK, h.view(r, updated))
 }

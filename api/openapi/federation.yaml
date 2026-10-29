@@ -2520,7 +2520,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_saml
-      description: 'Creates an inbound SAML connection in the tenant with the external IdP''s entity id, SSO URL and signing certificate so Qeet can act as the Service Provider for that IdP. Validate the configuration with the connection test endpoint, then drive sign-in via GET /saml/login/{id}. Scoped to the tenant in the path. A status, when given, must be draft, active or disabled (422 saml.status_invalid). The organisation''s plan must include enterprise SSO (402 billing.upgrade_required, metadata.feature sso), and every sign-in through the connection checks it again.'
+      description: 'Creates an inbound SAML connection in the tenant with the external IdP''s entity id, SSO URL and signing certificate so Qeet can act as the Service Provider for that IdP. A name alone creates a draft before the IdP''s details are known, since the IdP needs the connection''s addresses first: the answer carries them (sp_entity_id, acs_url, sp_metadata_url), and the IdP''s details are added later by PATCH, its metadata or its certificates. Any one of the IdP''s details brings the rest with it (422 saml.connection_fields_required), and a connection without them is a draft only (422 saml.connection_incomplete). Validate the configuration with the connection test endpoint, then drive sign-in via GET /saml/login/{id}. Scoped to the tenant in the path. A status, when given, must be draft, active or disabled (422 saml.status_invalid). The organisation''s plan must include enterprise SSO (402 billing.upgrade_required, metadata.feature sso), and every sign-in through the connection checks it again.'
       summary: Create connection
       tags:
         - SAML
@@ -3326,7 +3326,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_tenants_ByTenantID_saml_ById
-      description: 'Applies a partial update to an inbound SAML connection in the tenant, covering the IdP entity id, SSO URL, signing certificate, attribute mappings or status, with Qeet acting as the Service Provider. A new idp_certificate replaces every certificate the connection trusts; to roll over without an outage, use the certificates endpoints instead. Changes are confined to the tenant in the path and are audited. Re-run the connection test endpoint after changing IdP details.'
+      description: 'Applies a partial update to an inbound SAML connection in the tenant, covering the IdP entity id, SSO URL, signing certificate, attribute mappings or status, with Qeet acting as the Service Provider. A new idp_certificate replaces every certificate the connection trusts; to roll over without an outage, use the certificates endpoints instead. Changes are confined to the tenant in the path and are audited. Re-run the connection test endpoint after changing IdP details. An active connection needs the IdP''s entity ID, SSO URL and a certificate: turning on one without them is refused with 422 saml.connection_incomplete.'
       summary: Update connection
       tags:
         - SAML
@@ -6711,6 +6711,15 @@ components:
     SAMLConnection:
       type: object
       properties:
+        sp_entity_id:
+          type: string
+          description: The connection's own entity ID, for the IdP.
+        acs_url:
+          type: string
+          description: Where the IdP posts assertions.
+        sp_metadata_url:
+          type: string
+          description: The connection's own metadata, for the IdP to import.
         id:
           type: string
           format: uuid
@@ -6789,11 +6798,9 @@ components:
           nullable: true
     SAMLConnectionCreate:
       type: object
+      description: The name, with all of the IdP's entity ID, SSO URL and certificate, or none of them for a draft.
       required:
         - name
-        - idp_entity_id
-        - idp_sso_url
-        - idp_certificate
       properties:
         name:
           type: string
