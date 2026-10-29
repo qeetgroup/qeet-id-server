@@ -52,6 +52,9 @@ type Service struct {
 	// principalLive reports whether a service principal exists and isn't
 	// disabled, so its tokens introspect inactive once it is (nil: not checked).
 	principalLive func(ctx context.Context, principalID uuid.UUID) (bool, error)
+	// webOrigins caches every application's web origins for the CORS check
+	// (see weborigins.go).
+	webOrigins originCache
 }
 
 // SetAgentStatus wires the agent lifecycle lookup introspection consults.

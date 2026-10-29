@@ -1,8 +1,10 @@
 package bootstrap
 
 import (
+	"context"
 	"crypto/subtle"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -188,14 +190,11 @@ func NewRouter(d Deps) http.Handler {
 	// CORS first (above CSRF) so that even a rejected request — e.g. a CSRF 403
 	// — still carries Access-Control-* headers; otherwise the browser masks the
 	// real error as a generic "blocked by CORS policy" failure.
-	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   d.AllowedOrigins,
-		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Request-Id", "X-Dev-User", "X-Dev-Tenant", "X-CSRF-Token", idempotency.Header},
-		ExposedHeaders:   []string{"X-Request-Id", "Idempotent-Replayed"},
-		AllowCredentials: true,
-		MaxAge:           300,
-	}))
+	var appOrigin func(ctx context.Context, origin string) bool
+	if d.OIDC != nil && d.OIDC.Service != nil {
+		appOrigin = d.OIDC.Service.AllowsWebOrigin
+	}
+	r.Use(corsPolicy(d.AllowedOrigins, appOrigin))
 	// CSRF applies to cookie-bearing browser requests; bearer tokens and API keys
 	// bypass it. CSRFDisabled is for dev only, and startup refuses it elsewhere.
 	if !d.CSRFDisabled {
@@ -608,5 +607,71 @@ func csrfExemptPaths() []string {
 		"/v1/mfa/push/challenges/",      // a linked phone answers with its device credential (no cookie session)
 		"/v1/mfa/push/devices/*/unlink", // a linked phone removes itself with its device credential (no cookie session)
 		"/v1/mfa/push/pairing/claim",    // a phone links with a one-time pairing code (no cookie session)
+	}
+}
+
+// publicMetadataPaths answer any origin: the OpenID Connect and OAuth metadata
+// and the signing keys, which hold nothing to protect.
+var publicMetadataPaths = []string{
+	"/.well-known/openid-configuration",
+	"/.well-known/oauth-authorization-server",
+	"/.well-known/oauth-protected-resource",
+	"/.well-known/jwks.json",
+}
+
+// browserAppPaths are the OAuth endpoints a single-page application calls
+// from the browser with its own code or token, never a cookie.
+var browserAppPaths = []string{
+	"/v1/oauth/token-code",
+	"/v1/oauth/userinfo",
+	"/oauth/revoke",
+	"/oauth/introspect",
+}
+
+// corsPolicy answers cross-origin requests. The console and hosted login, the
+// operator's allowed origins, may send credentials anywhere, as before. The
+// metadata and signing keys answer any origin, without credentials. The OAuth
+// endpoints a browser application calls answer an origin one of the
+// applications allows (appOrigin), without credentials, so a page reads only
+// what its own request, holding its own code or token, gets. Nothing is ever
+// allowed for every origin with credentials.
+func corsPolicy(allowed []string, appOrigin func(ctx context.Context, origin string) bool) func(http.Handler) http.Handler {
+	operator := cors.Handler(cors.Options{
+		AllowedOrigins:   allowed,
+		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Request-Id", "X-Dev-User", "X-Dev-Tenant", "X-CSRF-Token", idempotency.Header},
+		ExposedHeaders:   []string{"X-Request-Id", "Idempotent-Replayed"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	})
+	public := cors.Handler(cors.Options{
+		AllowedOrigins: []string{"*"},
+		AllowedMethods: []string{"GET", "OPTIONS"},
+		MaxAge:         300,
+	})
+	app := cors.Handler(cors.Options{
+		AllowOriginFunc: func(r *http.Request, origin string) bool {
+			return appOrigin != nil && appOrigin(r.Context(), origin)
+		},
+		AllowedMethods: []string{"GET", "POST", "OPTIONS"},
+		AllowedHeaders: []string{"Authorization", "Content-Type"},
+		ExposedHeaders: []string{"WWW-Authenticate"},
+		MaxAge:         300,
+	})
+	operatorOrigin := func(origin string) bool {
+		return slices.ContainsFunc(allowed, func(a string) bool { return strings.EqualFold(a, origin) })
+	}
+	return func(next http.Handler) http.Handler {
+		viaOperator, viaPublic, viaApp := operator(next), public(next), app(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case slices.Contains(publicMetadataPaths, r.URL.Path):
+				viaPublic.ServeHTTP(w, r)
+			case slices.Contains(browserAppPaths, r.URL.Path) && !operatorOrigin(r.Header.Get("Origin")):
+				viaApp.ServeHTTP(w, r)
+			default:
+				viaOperator.ServeHTTP(w, r)
+			}
+		})
 	}
 }

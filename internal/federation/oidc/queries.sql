@@ -524,3 +524,19 @@ WHERE id = @id;
 -- name: UpgradeOIDCClientSecretHash :exec
 UPDATE auth.oidc_clients SET client_secret_hash = @new_hash
 WHERE id = @id AND tenant_id = @tenant_id AND client_secret_hash = @old_hash;
+
+-- name: GetClientWebOrigins :one
+-- The web origins an application set; NULL: its redirect URIs' origins.
+SELECT web_origins FROM auth.oidc_clients WHERE id = @id AND tenant_id = @tenant_id;
+
+-- name: ListClientWebOrigins :many
+SELECT id, web_origins FROM auth.oidc_clients WHERE tenant_id = @tenant_id;
+
+-- name: SetClientWebOrigins :exec
+UPDATE auth.oidc_clients SET web_origins = sqlc.narg('web_origins')
+WHERE id = @id AND tenant_id = @tenant_id;
+
+-- name: ListAllWebOrigins :many
+-- Every application's redirect URIs and web origins, for the CORS check of
+-- the OAuth endpoints a browser calls before it names its application.
+SELECT redirect_uris, web_origins FROM auth.oidc_clients;

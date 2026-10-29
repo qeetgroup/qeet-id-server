@@ -131,6 +131,7 @@ internal/federation/oidc/queries.sql#GetClientTenantAndScopes  global-client: cl
 internal/federation/oidc/queries.sql#GetDeviceByUserCode  secret-lookup: request found by its user code
 internal/federation/oidc/queries.sql#GetRefreshTokenForIntrospect  secret-lookup: token row found by its hash, then bound to the calling client
 internal/federation/oidc/queries.sql#GetUserinfo  session-scoped: account named by the verified access token
+internal/federation/oidc/queries.sql#ListAllWebOrigins  platform-wide: the CORS allow-list of every application's web origins, read before a request names its application; no other column
 internal/federation/oidc/queries.sql#ListPendingCIBA  session-scoped: the caller's own pending requests
 internal/federation/oidc/queries.sql#LockCIBARequest  session-scoped: checked against the caller before any use
 internal/federation/oidc/queries.sql#LockCIBARequestByHash  secret-lookup: request found by its auth_req_id hash

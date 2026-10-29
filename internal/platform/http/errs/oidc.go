@@ -11,6 +11,7 @@ const (
 
 	// Redirect URIs & scopes.
 	CodeOIDCRedirectURIInvalid       = "oidc.redirect_uri_invalid"
+	CodeOIDCWebOriginInvalid         = "oidc.web_origin_invalid"
 	CodeOIDCRedirectURIMismatch      = "oidc.redirect_uri_mismatch"
 	CodeOIDCRedirectURINotRegistered = "oidc.redirect_uri_not_registered"
 	CodeOIDCConsentRequestInvalid    = "oidc.consent_request_invalid"
@@ -97,6 +98,7 @@ var (
 
 	// Redirect URIs & scopes.
 	ErrOIDCRedirectURIInvalid       = New(CodeOIDCRedirectURIInvalid, "That redirect URI is not registered for this client.")
+	ErrOIDCWebOriginInvalid         = New(CodeOIDCWebOriginInvalid, "A web origin is a scheme, host and optional port, such as https://app.example.com: https, or http only for localhost.")
 	ErrOIDCRedirectURIMismatch      = New(CodeOIDCRedirectURIMismatch, "The redirect URI doesn't match the one used to obtain this code.")
 	ErrOIDCRedirectURINotRegistered = New(CodeOIDCRedirectURINotRegistered, "This application didn't register that return address, so we can't send you back to it.")
 	ErrOIDCConsentRequestInvalid    = New(CodeOIDCConsentRequestInvalid, "This sign-in request has expired or isn't valid. Start signing in again from the application.")

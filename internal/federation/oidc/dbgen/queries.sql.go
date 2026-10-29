@@ -372,6 +372,23 @@ func (q *Queries) GetClientTenantAndScopes(ctx context.Context, clientID string)
 	return i, err
 }
 
+const getClientWebOrigins = `-- name: GetClientWebOrigins :one
+SELECT web_origins FROM auth.oidc_clients WHERE id = $1 AND tenant_id = $2
+`
+
+type GetClientWebOriginsParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+// The web origins an application set; NULL: its redirect URIs' origins.
+func (q *Queries) GetClientWebOrigins(ctx context.Context, arg GetClientWebOriginsParams) ([]string, error) {
+	row := q.db.QueryRow(ctx, getClientWebOrigins, arg.ID, arg.TenantID)
+	var web_origins []string
+	err := row.Scan(&web_origins)
+	return web_origins, err
+}
+
 const getConsent = `-- name: GetConsent :one
 
 SELECT scopes FROM auth.oidc_consents WHERE user_id = $1 AND client_id = $2
@@ -1090,6 +1107,37 @@ func (q *Queries) IsActiveTenantMember(ctx context.Context, arg IsActiveTenantMe
 	return member, err
 }
 
+const listAllWebOrigins = `-- name: ListAllWebOrigins :many
+SELECT redirect_uris, web_origins FROM auth.oidc_clients
+`
+
+type ListAllWebOriginsRow struct {
+	RedirectUris []string
+	WebOrigins   []string
+}
+
+// Every application's redirect URIs and web origins, for the CORS check of
+// the OAuth endpoints a browser calls before it names its application.
+func (q *Queries) ListAllWebOrigins(ctx context.Context) ([]ListAllWebOriginsRow, error) {
+	rows, err := q.db.Query(ctx, listAllWebOrigins)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAllWebOriginsRow{}
+	for rows.Next() {
+		var i ListAllWebOriginsRow
+		if err := rows.Scan(&i.RedirectUris, &i.WebOrigins); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listClientAuthFailures = `-- name: ListClientAuthFailures :many
 SELECT created_at, COALESCE(host(ip), '')::text AS ip, COALESCE(metadata->>'reason', '')::text AS reason
 FROM audit.events
@@ -1122,6 +1170,35 @@ func (q *Queries) ListClientAuthFailures(ctx context.Context, arg ListClientAuth
 	for rows.Next() {
 		var i ListClientAuthFailuresRow
 		if err := rows.Scan(&i.CreatedAt, &i.Ip, &i.Reason); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listClientWebOrigins = `-- name: ListClientWebOrigins :many
+SELECT id, web_origins FROM auth.oidc_clients WHERE tenant_id = $1
+`
+
+type ListClientWebOriginsRow struct {
+	ID         uuid.UUID
+	WebOrigins []string
+}
+
+func (q *Queries) ListClientWebOrigins(ctx context.Context, tenantID uuid.UUID) ([]ListClientWebOriginsRow, error) {
+	rows, err := q.db.Query(ctx, listClientWebOrigins, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListClientWebOriginsRow{}
+	for rows.Next() {
+		var i ListClientWebOriginsRow
+		if err := rows.Scan(&i.ID, &i.WebOrigins); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -2011,6 +2088,22 @@ func (q *Queries) SessionClients(ctx context.Context, loginSessionID pgtype.UUID
 		return nil, err
 	}
 	return items, nil
+}
+
+const setClientWebOrigins = `-- name: SetClientWebOrigins :exec
+UPDATE auth.oidc_clients SET web_origins = $1
+WHERE id = $2 AND tenant_id = $3
+`
+
+type SetClientWebOriginsParams struct {
+	WebOrigins []string
+	ID         uuid.UUID
+	TenantID   uuid.UUID
+}
+
+func (q *Queries) SetClientWebOrigins(ctx context.Context, arg SetClientWebOriginsParams) error {
+	_, err := q.db.Exec(ctx, setClientWebOrigins, arg.WebOrigins, arg.ID, arg.TenantID)
+	return err
 }
 
 const takeConsentRequest = `-- name: TakeConsentRequest :one

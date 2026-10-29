@@ -44,6 +44,9 @@ type Client struct {
 	// the hosted sign-in page shows. "" for none.
 	LogoURI   string `json:"logo_uri"`
 	ClientURI string `json:"client_uri"`
+	// WebOrigins are the origins a browser application calls the OAuth
+	// endpoints from: those it set, else its redirect URIs' origins.
+	WebOrigins []string `json:"web_origins"`
 }
 
 // CreateClientInput is what RegisterClient takes.
@@ -61,6 +64,8 @@ type CreateClientInput struct {
 	// The application's logo and home page (see Client).
 	LogoURI   string `json:"logo_uri"`
 	ClientURI string `json:"client_uri"`
+	// WebOrigins, left out or null, are its redirect URIs' origins (see Client).
+	WebOrigins []string `json:"web_origins"`
 }
 
 // PlanLimiter returns the numeric cap for a plan-gated resource (negative =
@@ -168,6 +173,18 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 		BackchannelLogoutURI: derefStr(row.BackchannelLogoutUri), FrontchannelLogoutURI: derefStr(row.FrontchannelLogoutUri),
 		LogoURI: derefStr(row.LogoUri), ClientURI: derefStr(row.ClientUri),
 	}
+	if in.WebOrigins != nil {
+		if err := s.setWebOrigins(ctx, tx, row.TenantID, row.ID, in.WebOrigins); err != nil {
+			return nil, "", err
+		}
+	} else {
+		s.webOrigins.forget()
+	}
+	stored, err := s.q.WithTx(tx).GetClientWebOrigins(ctx, dbgen.GetClientWebOriginsParams{ID: row.ID, TenantID: row.TenantID})
+	if err != nil {
+		return nil, "", err
+	}
+	c.WebOrigins = effectiveWebOrigins(c.RedirectURIs, stored)
 	return &c, raw, nil
 }
 

@@ -41,6 +41,9 @@ func (s *Service) ListClients(ctx context.Context, tenantID uuid.UUID) ([]Client
 			LogoURI: derefStr(r.LogoUri), ClientURI: derefStr(r.ClientUri),
 		}
 	}
+	if err := s.clientWebOrigins(ctx, tenantID, out); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -61,6 +64,11 @@ func (s *Service) GetClient(ctx context.Context, tenantID, id uuid.UUID) (*Clien
 		BackchannelLogoutURI: derefStr(r.BackchannelLogoutUri), FrontchannelLogoutURI: derefStr(r.FrontchannelLogoutUri),
 		LogoURI: derefStr(r.LogoUri), ClientURI: derefStr(r.ClientUri),
 	}
+	stored, err := s.q.GetClientWebOrigins(ctx, dbgen.GetClientWebOriginsParams{ID: id, TenantID: tenantID})
+	if err != nil {
+		return nil, err
+	}
+	c.WebOrigins = effectiveWebOrigins(c.RedirectURIs, stored)
 	return &c, nil
 }
 
@@ -84,6 +92,9 @@ type UpdateClientInput struct {
 	// nil: unchanged).
 	LogoURI   *string `json:"logo_uri"`
 	ClientURI *string `json:"client_uri"`
+	// WebOrigins sets the origins a browser application calls from (null:
+	// its redirect URIs' origins; left out: unchanged).
+	WebOrigins OptionalOrigins `json:"web_origins"`
 }
 
 // UpdateClient applies a partial update to a tenant's client and returns the
@@ -175,6 +186,18 @@ func (s *Service) UpdateClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 		BackchannelLogoutURI: derefStr(r.BackchannelLogoutUri), FrontchannelLogoutURI: derefStr(r.FrontchannelLogoutUri),
 		LogoURI: derefStr(r.LogoUri), ClientURI: derefStr(r.ClientUri),
 	}
+	if in.WebOrigins.Set {
+		if err := s.setWebOrigins(ctx, tx, tenantID, id, in.WebOrigins.Origins); err != nil {
+			return nil, err
+		}
+	} else if in.RedirectURIs != nil {
+		s.webOrigins.forget()
+	}
+	stored, err := q.GetClientWebOrigins(ctx, dbgen.GetClientWebOriginsParams{ID: id, TenantID: tenantID})
+	if err != nil {
+		return nil, err
+	}
+	c.WebOrigins = effectiveWebOrigins(c.RedirectURIs, stored)
 	return &c, nil
 }
 
