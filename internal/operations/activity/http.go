@@ -1001,7 +1001,7 @@ func (s *sseWriter) write(frame string) {
 	defer s.mu.Unlock()
 	// A failed write means the client has gone; the handler returns when the
 	// request context is cancelled, so there is nothing to do here.
-	_, _ = fmt.Fprint(s.w, frame)
+	_, _ = fmt.Fprint(s.w, frame) // #nosec G705 -- a text/event-stream of JSON frames and server-encoded cursors, never HTML
 	s.flusher.Flush()
 }
 

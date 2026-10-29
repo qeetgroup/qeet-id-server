@@ -140,16 +140,16 @@ func (a streamAccess) Allowed(ctx context.Context, p *httpx.Principal) (bool, er
 	}
 	switch {
 	case p.ActorType == "api_key":
-		id, err := uuid.Parse(p.Subject)
-		if err != nil || p.TenantID == nil {
+		id, ok := subjectID(p)
+		if !ok || p.TenantID == nil {
 			return false, nil
 		}
 		if live, err := a.apiKeys.Live(ctx, *p.TenantID, id); err != nil || !live {
 			return false, err
 		}
 	case p.ActorType == "service" && a.verifier.PrincipalLive != nil:
-		id, err := uuid.Parse(p.Subject)
-		if err != nil {
+		id, ok := subjectID(p)
+		if !ok {
 			return false, nil
 		}
 		if live, err := a.verifier.PrincipalLive(ctx, id); err != nil || !live {
@@ -165,4 +165,11 @@ func (a streamAccess) Allowed(ctx context.Context, p *httpx.Principal) (bool, er
 		}
 	}
 	return rbac.Allows(ctx, a.checker, p, a.policy)
+}
+
+// subjectID is the id a machine credential's principal names as its subject;
+// ok is false for one that isn't an id, which no credential of it can be.
+func subjectID(p *httpx.Principal) (id uuid.UUID, ok bool) {
+	id, err := uuid.Parse(p.Subject)
+	return id, err == nil
 }
