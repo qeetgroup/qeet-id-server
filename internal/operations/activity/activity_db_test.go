@@ -127,7 +127,7 @@ func TestFilteredHistoryReachesOlderMatches(t *testing.T) {
 	}
 
 	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
-	if got, want := allPages(t, h, "limit=1&severity=warning"), newestFirst(warnings); !slices.Equal(got, want) {
+	if got, want := allPages(t, h, "limit=1&min_severity=warning"), newestFirst(warnings); !slices.Equal(got, want) {
 		t.Errorf("filtered history = %v, want %v", got, want)
 	}
 }

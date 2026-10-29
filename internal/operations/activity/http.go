@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -270,7 +272,11 @@ func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
 
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	cursor := r.URL.Query().Get("cursor")
-	f := parseListFilter(r)
+	f, err := parseListFilter(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 
 	events, next, err := h.listHistory(r.Context(), tenantID, f, cursor, limit)
 	if err != nil {
@@ -280,41 +286,58 @@ func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
 	if events == nil {
 		events = []ActivityEvent{}
 	}
+	total, err := dbgen.New(h.pool).CountActivityHistory(r.Context(), historyCountParams(tenantID, f))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 
-	resp := map[string]any{"events": events}
+	resp := map[string]any{"events": events, "total": min(total, maxCountedEvents), "total_capped": total > maxCountedEvents}
 	if next != "" {
 		resp["next_cursor"] = next
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
-// listHistory returns a page of up to limit events (50 when limit is not in
-// 1..200) and the next page's cursor, or "" on the last page. Severity and
-// Category are filtered after the fetch, so it over-fetches when they are set,
-// and a filtered page can be short yet have a next page.
-func (h *Handler) listHistory(ctx context.Context, tenantID uuid.UUID, f ListFilter, cursor string, limit int) ([]ActivityEvent, string, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
-	// Fetch a larger page when post-fetch filters are active.
-	fetchLimit := limit + 1
-	if f.Severity != "" || f.Category != "" {
-		fetchLimit = min(limit*3+1, 201)
-	}
+// maxCountedEvents is how far the history's total counts; past it the total
+// says it is capped.
+const maxCountedEvents = 10000
 
-	// A zero-value pgtype (Valid=false) passes NULL, which the query treats as
-	// "no filter on this dimension".
+// historyCountParams are f's filters for CountActivityHistory, counting one
+// past maxCountedEvents.
+func historyCountParams(tenantID uuid.UUID, f ListFilter) dbgen.CountActivityHistoryParams {
+	p := historyParams(tenantID, f)
+	return dbgen.CountActivityHistoryParams{
+		TenantID: p.TenantID, Actions: p.Actions, ActorID: p.ActorID, Subject: p.Subject,
+		FromTs: p.FromTs, ToTs: p.ToTs, Q: p.Q, ResourceTypes: p.ResourceTypes, ResourceID: p.ResourceID,
+		Ip: p.Ip, Categories: p.Categories, Severities: p.Severities, MinSeverity: p.MinSeverity,
+		CountCap: maxCountedEvents + 1,
+	}
+}
+
+// historyParams are f's filters for ListActivityHistory, with no cursor or
+// limit. A zero-value pgtype (Valid=false) passes NULL, which the query treats
+// as "no filter on this dimension".
+func historyParams(tenantID uuid.UUID, f ListFilter) dbgen.ListActivityHistoryParams {
 	params := dbgen.ListActivityHistoryParams{
-		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-		Actions:  f.Types, // nil slice → NULL → no filter
-		RowLimit: int32(fetchLimit),
+		TenantID:      pgtype.UUID{Bytes: tenantID, Valid: true},
+		Actions:       f.Types, // nil slice → NULL → no filter
+		ResourceTypes: f.ResourceTypes,
+		Categories:    f.Categories,
+		Severities:    f.Severities,
+		Ip:            f.IP,
 	}
-
+	if f.MinSeverity != "" {
+		params.MinSeverity = &f.MinSeverity
+	}
 	if f.ActorID != uuid.Nil {
 		params.ActorID = pgtype.UUID{Bytes: f.ActorID, Valid: true}
 	}
 	if f.Subject != nil {
 		params.Subject = pgtype.UUID{Bytes: *f.Subject, Valid: true}
+	}
+	if f.ResourceID != nil {
+		params.ResourceID = pgtype.UUID{Bytes: *f.ResourceID, Valid: true}
 	}
 	if f.From != nil {
 		params.FromTs = pgtype.Timestamptz{Time: *f.From, Valid: true}
@@ -325,7 +348,18 @@ func (h *Handler) listHistory(ctx context.Context, tenantID uuid.UUID, f ListFil
 	if f.Search != "" {
 		params.Q = &f.Search
 	}
+	return params
+}
 
+// listHistory returns a page of up to limit events (50 when limit is not in
+// 1..200) and the next page's cursor, or "" on the last page. Every filter is
+// applied in the query, so a page is full unless it is the last.
+func (h *Handler) listHistory(ctx context.Context, tenantID uuid.UUID, f ListFilter, cursor string, limit int) ([]ActivityEvent, string, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	params := historyParams(tenantID, f)
+	params.RowLimit = int32(limit + 1) // #nosec G115 -- at most 201
 	if cursor != "" {
 		cursorTs, cursorID, err := decodeCursor(cursor)
 		if err != nil {
@@ -334,49 +368,60 @@ func (h *Handler) listHistory(ctx context.Context, tenantID uuid.UUID, f ListFil
 		params.CursorTs = pgtype.Timestamptz{Time: cursorTs, Valid: true}
 		params.CursorID = pgtype.UUID{Bytes: cursorID, Valid: true}
 	}
-
 	dbRows, err := dbgen.New(h.pool).ListActivityHistory(ctx, params)
 	if err != nil {
 		return nil, "", err
 	}
-
-	out := []ActivityEvent{}
-	more := false
+	out := make([]ActivityEvent, 0, len(dbRows))
 	for _, row := range dbRows {
-		ev := mapAuditRow(listRowToAuditRow(row))
-		if !matchesListFilter(ev, f) {
-			continue
-		}
-		if len(out) == limit {
-			more = true
-			break
-		}
-		out = append(out, ev)
+		out = append(out, mapAuditRow(listRowToAuditRow(row)))
 	}
-
-	// The next page starts after the last event returned. When the post-fetch
-	// filters leave the page short with the fetch full, rows may remain, so it
-	// starts after the last row fetched.
 	var next string
-	switch {
-	case more:
+	if len(out) > limit {
+		out = out[:limit]
 		last := out[limit-1]
 		next = encodeCursor(last.At, last.ID)
-	case len(dbRows) == fetchLimit:
-		last := dbRows[len(dbRows)-1]
-		next = encodeCursor(last.CreatedAt, last.ID)
 	}
 	return out, next, nil
 }
 
 // parseListFilter builds the ListFilter shared by history and summary from the
-// query string. Values that do not parse (actor, subject, from, to) are ignored.
-func parseListFilter(r *http.Request) ListFilter {
+// query string. Values that do not parse (actor, subject, from, to) are
+// ignored; an unknown severity or category, or a malformed resource_id or ip,
+// is refused with ErrBadRequest.
+func parseListFilter(r *http.Request) (ListFilter, error) {
+	query := r.URL.Query()
 	f := ListFilter{
-		Types:    splitCSV(r.URL.Query().Get("types")),
-		Severity: r.URL.Query().Get("severity"),
-		Category: r.URL.Query().Get("category"),
-		Search:   r.URL.Query().Get("q"),
+		Types:         splitCSV(query.Get("types")),
+		Severities:    splitCSV(query.Get("severity")),
+		MinSeverity:   query.Get("min_severity"),
+		Categories:    splitCSV(query.Get("category")),
+		Search:        query.Get("q"),
+		ResourceTypes: splitCSV(query.Get("resource_type")),
+	}
+	for _, s := range append(slices.Clone(f.Severities), f.MinSeverity) {
+		if s != "" && !slices.Contains(severities, s) {
+			return ListFilter{}, errs.ErrBadRequest.WithDetail("unknown severity " + s)
+		}
+	}
+	for _, c := range f.Categories {
+		if !slices.Contains(categories, c) {
+			return ListFilter{}, errs.ErrBadRequest.WithDetail("unknown category " + c)
+		}
+	}
+	if raw := query.Get("resource_id"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return ListFilter{}, errs.ErrBadRequest.WithDetail("invalid resource_id")
+		}
+		f.ResourceID = &id
+	}
+	if raw := query.Get("ip"); raw != "" {
+		addr, err := netip.ParseAddr(raw)
+		if err != nil {
+			return ListFilter{}, errs.ErrBadRequest.WithDetail("invalid ip")
+		}
+		f.IP = &addr
 	}
 	if raw := r.URL.Query().Get("actor"); raw != "" {
 		if id, err := uuid.Parse(raw); err == nil {
@@ -398,8 +443,14 @@ func parseListFilter(r *http.Request) ListFilter {
 			f.To = &t
 		}
 	}
-	return f
+	return f, nil
 }
+
+// The severities and categories activity gives an action.
+var (
+	severities = []string{SeverityInfo, SeveritySuccess, SeverityWarning, SeverityError, SeverityCritical}
+	categories = []string{CategoryAuthentication, CategoryAuthorization, CategorySecurity, CategoryDirectory, CategoryDeveloper, CategorySystem}
+)
 
 // Summary window and bucket bounds. The window defaults to the last 24h and is
 // capped at 90 days, so the per-tenant aggregates never scan unbounded history.
@@ -453,7 +504,11 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	f := parseListFilter(r)
+	f, err := parseListFilter(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 
 	// The window defaults to the last 24h and is clamped to summaryMaxWindow.
 	to := time.Now().UTC()

@@ -5,6 +5,7 @@ package activity
 
 import (
 	"encoding/json"
+	"net/netip"
 	"slices"
 	"strings"
 	"time"
@@ -84,17 +85,22 @@ type StreamFilter struct {
 	Category string   // exact category match; empty = all
 }
 
-// ListFilter narrows the history query. Severity and Category are applied after
-// the fetch, because they are derived from the action rather than stored.
+// ListFilter narrows the history query. Severities and Categories are those
+// activity derives from the action, matched in the query by
+// audit.activity_severity and audit.activity_category.
 type ListFilter struct {
-	Types    []string   // filter by exact audit action values; empty = all
-	Severity string     // post-fetch: minimum severity
-	Category string     // post-fetch: exact category
-	ActorID  uuid.UUID  // filter by actor_user_id; uuid.Nil = all
-	Subject  *uuid.UUID // identity timeline: actor OR user-resource target; nil = all
-	Search   string     // full-text via websearch_to_tsquery
-	From     *time.Time // inclusive lower bound on created_at
-	To       *time.Time // inclusive upper bound on created_at
+	Types         []string    // filter by exact audit action values; empty = all
+	Severities    []string    // any of these severities; empty = all
+	MinSeverity   string      // at least this severity; "" = all
+	Categories    []string    // any of these categories; empty = all
+	ActorID       uuid.UUID   // filter by actor_user_id; uuid.Nil = all
+	Subject       *uuid.UUID  // identity timeline: actor OR user-resource target; nil = all
+	Search        string      // full-text via websearch_to_tsquery
+	From          *time.Time  // inclusive lower bound on created_at
+	To            *time.Time  // inclusive upper bound on created_at
+	ResourceTypes []string    // any of these resource types; empty = all
+	ResourceID    *uuid.UUID  // the resource acted on; nil = all
+	IP            *netip.Addr // the requester's address; nil = all
 }
 
 // categoryPrefixes maps an action prefix to its category. The first match wins,
@@ -288,15 +294,6 @@ func matchesStreamFilter(ev ActivityEvent, f StreamFilter) bool {
 			return false
 		}
 	}
-	if f.Category != "" && ev.Category != f.Category {
-		return false
-	}
-	return severityMeets(ev.Severity, f.Severity)
-}
-
-// matchesListFilter reports whether ev passes the post-fetch list filters
-// (severity and category, which are computed and not stored in the DB).
-func matchesListFilter(ev ActivityEvent, f ListFilter) bool {
 	if f.Category != "" && ev.Category != f.Category {
 		return false
 	}
