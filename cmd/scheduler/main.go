@@ -5,7 +5,8 @@
 //
 // "scheduler replay-dead-letters [-type event.type] [-since RFC3339]" instead
 // moves dead-lettered outbox events back to the outbox, to be published again,
-// and exits.
+// and exits. "scheduler mark-invoice-paid -invoice ID -reference REF" records
+// an invoice paid outside a checkout, such as by bank transfer, and exits.
 package main
 
 import (
@@ -69,6 +70,12 @@ func main() {
 		pool.Close()
 		os.Exit(code)
 	}
+	billingService := bootstrap.SchedulerBilling(cfg, pool)
+	if len(os.Args) > 1 && os.Args[1] == markPaidCommand {
+		code := markInvoicePaid(rootCtx, billingService, os.Args[2:])
+		pool.Close()
+		os.Exit(code)
+	}
 	// Sessions the cleanup removes that were never ended are announced
 	// (session.revoked, reason expired) to the organisations' subscribers.
 	sessionSignals := sessionsignal.New(webhook.NewService(pool).EnqueueTx)
@@ -80,7 +87,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	jobs := bootstrap.MaintenanceJobs(pool, sessionSignals, box, bootstrap.OutboundPolicy(cfg))
+	jobs := append(bootstrap.MaintenanceJobs(pool, sessionSignals, box, bootstrap.OutboundPolicy(cfg)), bootstrap.BillingJobs(billingService)...)
 	for _, j := range jobs {
 		slog.Info("job registered", "name", j.Name, "interval", j.Interval)
 	}

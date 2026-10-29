@@ -2844,7 +2844,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Lists the organisation''s invoices, newest first. Requires billing.read.'
+      description: 'Lists the organisation''s invoices, newest first. Each keeps the billing profile it was issued to (billed_to) and the supplier''s GSTIN and SAC, and is emailed to that profile''s billing email when issued. Requires billing.read.'
       responses:
         '200':
           description: OK
@@ -2868,6 +2868,107 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/billing/invoices/{invoiceID}/pay:
+    post:
+      operationId: post_v1_tenants_ByTenantID_billing_invoices_ByInvoiceID_pay
+      summary: Pay an open invoice
+      description: >-
+        Returns a hosted-payment URL for an open invoice, such as a renewal, charging its total. The provider is chosen by the billing profile's country, else the invoice's currency; with none, it answers 422 and the invoice is paid by bank transfer, quoting its number. When the payment completes, the invoice is paid (billing.invoice_paid) and a renewal starts the period it billed. A paid or void invoice answers 409 billing.invoice_not_open.
+        Send an Idempotency-Key header to retry it safely, as for checkout.
+      tags:
+        - Billing
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: invoiceID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/IdempotencyKey'
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [success_url, cancel_url]
+              properties:
+                success_url:
+                  type: string
+                  format: uri
+                cancel_url:
+                  type: string
+                  format: uri
+      responses:
+        '200':
+          description: The hosted checkout ({status:"checkout"})
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckoutResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 'The invoice is paid or void (billing.invoice_not_open), or a request with this Idempotency-Key is still being processed.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/billing/payment-method:
+    get:
+      operationId: get_v1_tenants_ByTenantID_billing_payment_method
+      summary: Get the payment method
+      description: 'Returns what the organisation''s most recent completed checkout was paid with, as its provider reported it, or null. No card is kept with the provider: each checkout collects its own, so there is nothing to manage between payments. Razorpay reports a card''s network and last four digits but not its expiry. Requires billing.read.'
+      tags:
+        - Billing
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [payment_method]
+                properties:
+                  payment_method:
+                    oneOf:
+                      - $ref: '#/components/schemas/PaymentMethod'
+                      - type: 'null'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/tenants/{tenantID}/billing/subscription:
     get:
       operationId: get_v1_tenants_ByTenantID_billing_subscription
@@ -2883,7 +2984,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: 'Returns the organisation''s subscription. It grants its plan until current_period_end, or trial_end for a trial; nothing renews it, so once that has passed the organisation is on the free plan, whatever status says, until it pays again through checkout. Requires billing.read.'
+      description: 'Returns the organisation''s subscription. A trial grants its plan until trial_end, and a plan marked to cancel until current_period_end. Any other plan renews at current_period_end: a free one starts its next period, and a paid one is billed with an open renewal invoice and turns past_due, keeping its plan for the payment grace (7 days unless configured) while that invoice is paid, through POST /v1/tenants/{tenantID}/billing/invoices/{invoiceID}/pay or by bank transfer. Paid, it is active for the new period; still unpaid after the grace, or ended by a trial or a cancellation, it is canceled, with ended_at, and the organisation is on the free plan. Each change is audited as billing.subscription_renewed, billing.subscription_past_due or billing.subscription_ended. Requires billing.read.'
       responses:
         '200':
           description: OK
@@ -4204,7 +4305,34 @@ components:
           type: string
         status:
           type: string
-          description: paid when a payment was captured or nothing is owed; open when the plan was granted before payment (invoice-only billing); void when withdrawn.
+          enum: [paid, open, void]
+          description: paid when a payment was captured or nothing is owed; open until it is paid, due at due_at, for a plan granted before payment (invoice-only billing) or a renewal; void for a renewal no longer owed, because the subscription ended or a new plan was bought.
+        kind:
+          type: string
+          enum: [purchase, renewal]
+          description: purchase for a plan bought or changed; renewal for the next period of a plan, billed when its period ends.
+        due_at:
+          type: [string, 'null']
+          format: date-time
+          description: When an open invoice falls due; null once it is paid or when nothing was owed.
+        paid_at:
+          type: [string, 'null']
+          format: date-time
+        billed_to:
+          description: The billing profile as it stood when the invoice was issued; null on invoices issued before it was kept.
+          oneOf:
+            - $ref: '#/components/schemas/BillingProfile'
+            - type: 'null'
+        supplier_gstin:
+          type: string
+          description: The seller's GSTIN; empty when the operator has set none.
+        sac:
+          type: string
+          description: The services accounting code of what was sold; empty when the operator has set none.
+        emailed_at:
+          type: [string, 'null']
+          format: date-time
+          description: When the invoice was emailed to its billing email.
         tax_amount_minor:
           type: integer
         tax_rate_bps:
@@ -4213,6 +4341,28 @@ components:
           type: string
         taxable_amount_minor:
           type: integer
+    PaymentMethod:
+      type: object
+      required: [provider, type, last_used_at]
+      properties:
+        provider:
+          type: string
+          description: stripe, razorpay or sandbox.
+        type:
+          type: string
+          description: card, upi, netbanking, wallet, or the provider's own word.
+        brand:
+          type: string
+          description: The card network, bank or wallet.
+        last4:
+          type: string
+        exp_month:
+          type: integer
+        exp_year:
+          type: integer
+        last_used_at:
+          type: string
+          format: date-time
     MethodCount:
       type: object
       required: [method, users]
@@ -4437,9 +4587,14 @@ components:
           type: string
         status:
           type: string
+          enum: [none, trialing, active, past_due, canceled]
         trial_end:
           type: [string, 'null']
           format: date-time
+        ended_at:
+          type: [string, 'null']
+          format: date-time
+          description: When a canceled subscription ended.
     Summary:
       type: object
       required: [high_score_open, open, resolved_7d]

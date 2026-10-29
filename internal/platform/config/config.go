@@ -309,6 +309,13 @@ type Config struct {
 	BillingSellerCountry string `envconfig:"BILLING_SELLER_COUNTRY" default:"IN"`
 	BillingSellerState   string `envconfig:"BILLING_SELLER_STATE" default:""`
 	BillingGSTRateBps    int    `envconfig:"BILLING_GST_RATE_BPS" default:"1800"`
+	// BillingSupplierGSTIN and BillingSAC are printed on every invoice: the
+	// seller's GSTIN and the services accounting code of what it sells.
+	BillingSupplierGSTIN string `envconfig:"BILLING_SUPPLIER_GSTIN" default:""`
+	BillingSAC           string `envconfig:"BILLING_SAC" default:""`
+	// BillingPaymentGrace is how long an open invoice may go unpaid: a renewal
+	// still unpaid that long after its period ends ends the subscription.
+	BillingPaymentGrace time.Duration `envconfig:"BILLING_PAYMENT_GRACE" default:"168h"`
 
 	// PaymentSandbox enables a dev-only fake provider that serves a local mock
 	// hosted-checkout page and completes payment on click — the full

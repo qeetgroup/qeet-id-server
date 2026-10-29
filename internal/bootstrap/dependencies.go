@@ -116,23 +116,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	if err := rbacRepo.SeedBuiltins(rootCtx); err != nil {
 		slog.Warn("rbac seed", "err", err)
 	}
-	billingService := billing.NewService(pool)
-	payments := billing.NewPayments(
-		cfg.StripeSecretKey, cfg.StripeWebhookSecret,
-		cfg.RazorpayKeyID, cfg.RazorpayKeySecret, cfg.RazorpayWebhookSecret,
-	).WithRouting(cfg.PaymentDefaultProvider, billing.ParseCountryRoutes(cfg.PaymentCountryRoutes)) // card payments (Stripe/Razorpay), routed by billing country; no-op until keys are configured
-	if cfg.PaymentSandbox {
-		payments = payments.WithSandbox(cfg.PaymentSandboxBaseURL, "sandbox-dev-secret") // dev-only fake provider; config.Validate refuses it outside dev
-	}
-	billingService.SetPayments(payments)
-	billingService.SetAllowUnpaidActivation(cfg.BillingAllowUnpaidActivation)    // else a paid plan with no provider is refused, not granted free
-	billingService.SetOrgProvisioner(billingOrgProvisioner{tenants: tenantRepo}) // creates the org when a signup checkout is paid
-	billingService.SetTaxConfig(billing.TaxConfig{                               // invoice GST/VAT (off unless configured)
-		Enabled:       cfg.BillingTaxEnabled,
-		SellerCountry: cfg.BillingSellerCountry,
-		SellerState:   cfg.BillingSellerState,
-		GSTRateBps:    cfg.BillingGSTRateBps,
-	})
+	billingService := NewBillingService(cfg, pool, tenantRepo)
 	if err := billingService.SeedBuiltins(rootCtx); err != nil {
 		slog.Warn("billing seed", "err", err)
 	}
@@ -146,6 +130,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	policyRepo.SetSessionDefaults(cfg.SessionMaxAge, cfg.SessionIdleTimeout)
 	mail := newMailer(cfg, pool, brandingRepo, emailTemplateService)
 	sender := mail.sender
+	billingService.SetMailer(sender, cfg.AppBaseURL)
 	verifyService := verification.NewService(pool, sender, 10*time.Minute)
 	recoveryService := recovery.NewService(pool, sender, time.Hour, cfg.AppBaseURL)
 	recoveryService.SetHostedLogin(cfg.LoginBaseURL) // resets requested there link back to it
@@ -544,7 +529,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		// Audit-chain verification and the cleanups, once per interval across
 		// instances.
 		{name: "scheduler", run: func(ctx context.Context) {
-			worker.RunScheduled(ctx, pool, MaintenanceJobs(pool, sessionSignals, sharedCipher, outboundPolicy), worker.SchedulerTick)
+			jobs := append(MaintenanceJobs(pool, sessionSignals, sharedCipher, outboundPolicy), BillingJobs(billingService)...)
+			worker.RunScheduled(ctx, pool, jobs, worker.SchedulerTick)
 		}},
 	}
 	RegisterMaintenanceMetrics(pool, sharedCipher)

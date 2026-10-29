@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -160,5 +162,49 @@ func TestSandboxOverridesRouting(t *testing.T) {
 	}
 	if ref == "" {
 		t.Error("expected a provider ref")
+	}
+}
+
+// TestProvidersSayWhatPaid checks that a payment's method is read from
+// Razorpay's paid webhook, and looked up from the payment intent Stripe's
+// completed session names.
+func TestProvidersSayWhatPaid(t *testing.T) {
+	ctx := context.Background()
+	rzp := &razorpayProvider{}
+	for name, c := range map[string]struct {
+		body string
+		want PaymentMethod
+	}{
+		"card":       {`{"payload":{"payment":{"entity":{"method":"card","card":{"network":"RuPay","last4":"1111"}}}}}`, PaymentMethod{Type: "card", Brand: "RuPay", Last4: "1111"}},
+		"netbanking": {`{"payload":{"payment":{"entity":{"method":"netbanking","bank":"HDFC"}}}}`, PaymentMethod{Type: "netbanking", Brand: "HDFC"}},
+		"upi":        {`{"payload":{"payment":{"entity":{"method":"upi","vpa":"someone@bank"}}}}`, PaymentMethod{Type: "upi"}},
+	} {
+		got, err := rzp.PaymentMethod(ctx, []byte(c.body))
+		if err != nil || got == nil || *got != c.want {
+			t.Errorf("razorpay %s: %+v, %v; want %+v", name, got, err, c.want)
+		}
+	}
+	if got, err := rzp.PaymentMethod(ctx, []byte(`{"payload":{}}`)); err != nil || got != nil {
+		t.Errorf("razorpay with no payment: %+v, %v", got, err)
+	}
+
+	var asked string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = r.URL.Path + "?" + r.URL.RawQuery
+		if u, _, ok := r.BasicAuth(); !ok || u != "sk_test" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"pi_1","payment_method":{"type":"card","card":{"brand":"mastercard","last4":"4444","exp_month":3,"exp_year":2029}}}`))
+	}))
+	defer api.Close()
+	stripe := &stripeProvider{secretKey: "sk_test", client: api.Client(), apiBase: api.URL}
+	got, err := stripe.PaymentMethod(ctx, []byte(`{"data":{"object":{"payment_intent":"pi_1"}}}`))
+	want := PaymentMethod{Type: "card", Brand: "mastercard", Last4: "4444", ExpMonth: 3, ExpYear: 2029}
+	if err != nil || got == nil || *got != want || asked != "/v1/payment_intents/pi_1?expand[]=payment_method" {
+		t.Errorf("stripe: %+v, %v after asking %q; want %+v", got, err, asked, want)
+	}
+	if got, err := stripe.PaymentMethod(ctx, []byte(`{"data":{"object":{}}}`)); err != nil || got != nil {
+		t.Errorf("stripe session with no payment intent: %+v, %v", got, err)
 	}
 }

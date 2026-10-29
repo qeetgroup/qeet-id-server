@@ -80,13 +80,16 @@ func lapse(t *testing.T, tenant uuid.UUID) {
 	}
 }
 
-// TestPlanLapsesAtPeriodEnd checks that a paid subscription stops granting its
-// plan once the period it paid for ends.
+// TestPlanLapsesAtPeriodEnd checks that a paid subscription keeps its plan
+// past its period only for the payment grace, while its renewal is billed and
+// paid, even if the renewal job never runs, and that one marked to cancel
+// stops at its period end.
 func TestPlanLapsesAtPeriodEnd(t *testing.T) {
+	ctx := dbtest.Context(t)
 	svc := newTestService(t)
 	tenant := dbtest.Tenant(t)
 	subscribe(t, svc, tenant, "pro", "USD")
-	sub, err := svc.GetSubscription(dbtest.Context(t), tenant)
+	sub, err := svc.GetSubscription(ctx, tenant)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,11 +97,38 @@ func TestPlanLapsesAtPeriodEnd(t *testing.T) {
 		t.Fatalf("a new subscription grants nothing: %+v", sub)
 	}
 	lapse(t, tenant)
-	if sub, err = svc.GetSubscription(dbtest.Context(t), tenant); err != nil {
+	if sub, err = svc.GetSubscription(ctx, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if !sub.Grants(time.Now()) {
+		t.Errorf("a subscription just past its period, its renewal not yet billed, grants nothing")
+	}
+	if sub.Grants(time.Now().Add(DefaultPaymentGrace)) {
+		t.Errorf("a subscription past its period and the payment grace still grants %s", sub.PlanCode)
+	}
+	cancelSubscription(t, svc, tenant)
+	if sub, err = svc.GetSubscription(ctx, tenant); err != nil {
 		t.Fatal(err)
 	}
 	if sub.Grants(time.Now()) {
-		t.Errorf("a subscription past its period still grants %s", sub.PlanCode)
+		t.Errorf("a subscription marked to cancel still grants %s past its period", sub.PlanCode)
+	}
+}
+
+// cancelSubscription marks the tenant's subscription to end with its period.
+func cancelSubscription(t *testing.T, svc *Service, tenant uuid.UUID) {
+	t.Helper()
+	ctx := dbtest.Context(t)
+	tx, err := svc.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if err := svc.Cancel(ctx, tx, tenant); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -318,7 +348,7 @@ func TestCheckoutChargesTheInvoiceTotal(t *testing.T) {
 	if err := svc.UpsertBillingProfile(ctx, tenant, BillingProfile{Country: "US"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.CompleteCheckout(ctx, ref); err != nil {
+	if err := svc.CompleteCheckout(ctx, ref, nil); err != nil {
 		t.Fatalf("complete checkout: %v", err)
 	}
 
@@ -388,7 +418,7 @@ func TestSignupCheckoutChargesTheInvoiceTotal(t *testing.T) {
 	if charged != 944000 {
 		t.Fatalf("provider asked to charge %d, want 944000 (8000.00 plus 18%% GST)", charged)
 	}
-	if err := svc.CompleteCheckout(ctx, ref); err != nil {
+	if err := svc.CompleteCheckout(ctx, ref, nil); err != nil {
 		t.Fatalf("complete checkout: %v", err)
 	}
 	var org uuid.UUID
@@ -438,7 +468,7 @@ func TestCompleteCheckoutUsesOneConnection(t *testing.T) {
 	completeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	for _, ref := range []uuid.UUID{tenantCheckout, signupCheckout, tenantCheckout, signupCheckout} {
-		if err := svc.CompleteCheckout(completeCtx, ref.String()); err != nil {
+		if err := svc.CompleteCheckout(completeCtx, ref.String(), nil); err != nil {
 			t.Fatalf("complete checkout %s with one free connection: %v", ref, err)
 		}
 	}
@@ -479,7 +509,7 @@ func TestSignupCheckoutResumesAfterAFailure(t *testing.T) {
 	`, dbtest.User(t, uuid.Nil).ID, name, dbtest.Unique("org")).Scan(&checkout); err != nil {
 		t.Fatalf("stage signup checkout: %v", err)
 	}
-	if err := svc.CompleteCheckout(ctx, checkout.String()); err == nil {
+	if err := svc.CompleteCheckout(ctx, checkout.String(), nil); err == nil {
 		t.Fatal("completing a checkout for an unknown plan succeeded")
 	}
 	var status string
@@ -494,7 +524,7 @@ func TestSignupCheckoutResumesAfterAFailure(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE tenant.signup_checkouts SET plan_code = 'pro' WHERE id = $1`, checkout); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.CompleteCheckout(ctx, checkout.String()); err != nil {
+	if err := svc.CompleteCheckout(ctx, checkout.String(), nil); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.tenants WHERE name = $1`, name); n != 1 {

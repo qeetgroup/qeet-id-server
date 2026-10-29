@@ -213,6 +213,9 @@ internal/operations/billing/checkout.go#Service.completeSignupCheckout  pre-tena
 internal/operations/billing/queries.sql#CompleteCheckout  parent-scoped: checkout named by a signature-verified payment webhook or callback
 internal/operations/billing/queries.sql#UpdateCheckoutFailed  parent-scoped: checkout inserted for the tenant just before
 internal/operations/billing/queries.sql#UpdateCheckoutProviderRef  parent-scoped: checkout inserted for the tenant just before
+internal/operations/billing/queries.sql#DueSubscriptions  background-sweep: the period-end job finds every organisation whose trial or period has ended
+internal/operations/billing/queries.sql#ClaimInvoiceEmails  background-sweep: the invoice-email job sends every organisation's newly issued invoices to the address each was billed to
+internal/operations/billing/queries.sql#InvoiceTenant  platform-wide: the operator's mark-invoice-paid command finds which organisation an invoice belongs to, then settles it scoped to that one
 internal/operations/email/editor.go#Handler.testEmail  session-scoped: sends to the caller's own verified email
 internal/operations/gdpr/erasure.go#eraseAccountData  parent-scoped: the account being erased (see PurgeUserPII), everywhere it left data
 internal/operations/gdpr/gdpr.go#Service.ExportSelf  session-scoped: the caller's own data export

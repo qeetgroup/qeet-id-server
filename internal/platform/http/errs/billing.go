@@ -17,6 +17,8 @@ const (
 	CodeBillingCheckoutRequired          = "billing.checkout_required"
 	CodeBillingTaxIDInvalid              = "billing.tax_id_invalid"
 	CodeBillingTrialNotEligible          = "billing.trial_not_eligible"
+	CodeBillingInvoiceNotOpen            = "billing.invoice_not_open"
+	CodeBillingInvoiceNotFound           = "billing.invoice_not_found"
 )
 
 // Billing errors. The Message is the end-user-facing text; edit wording here.
@@ -36,4 +38,6 @@ var (
 	ErrBillingCheckoutRequired          = New(CodeBillingCheckoutRequired, "This plan requires checkout. Start the paid signup flow to create this organization.")
 	ErrBillingTaxIDInvalid              = New(CodeBillingTaxIDInvalid, "That tax ID isn't valid.")
 	ErrBillingTrialNotEligible          = New(CodeBillingTrialNotEligible, "This organization isn't eligible for a trial.")
+	ErrBillingInvoiceNotOpen            = New(CodeBillingInvoiceNotOpen, "This invoice isn't open: it's already paid, or no longer owed.")
+	ErrBillingInvoiceNotFound           = New(CodeBillingInvoiceNotFound, "That invoice doesn't exist.")
 )

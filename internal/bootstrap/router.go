@@ -487,6 +487,7 @@ func IdempotentRoutes() []string {
 		"POST /v1/service-principals",
 		"POST /v1/tenants/{tenantID}/agents",
 		"POST /v1/tenants/{tenantID}/billing/checkout",
+		"POST /v1/tenants/{tenantID}/billing/invoices/{invoiceID}/pay",
 		"POST /v1/users",
 		"POST /v1/webhooks",
 	}

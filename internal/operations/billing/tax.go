@@ -24,6 +24,8 @@ type TaxConfig struct {
 	SellerCountry string // ISO 3166-1 alpha-2 code of the seller's tax jurisdiction
 	SellerState   string // seller's Indian state, for intra- versus inter-state GST
 	GSTRateBps    int    // India GST rate in basis points; 0 means 1800 (18%)
+	SupplierGSTIN string // seller's GSTIN, printed on every invoice
+	SAC           string // services accounting code, printed on every invoice
 }
 
 // TaxInput is the tax input of one invoice, from the plan price and the billing

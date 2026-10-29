@@ -16,11 +16,11 @@ import (
 const cancelSubscription = `-- name: CancelSubscription :execrows
 UPDATE tenant.subscriptions
 SET cancel_at_period_end = TRUE, updated_at = NOW()
-WHERE tenant_id = $1
+WHERE tenant_id = $1 AND status <> 'canceled'
 `
 
 // Mark the subscription to cancel at end of current period.  Returns 0 rows
-// affected when no active subscription exists.
+// affected when no subscription that hasn't ended exists.
 func (q *Queries) CancelSubscription(ctx context.Context, tenantID uuid.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, cancelSubscription, tenantID)
 	if err != nil {
@@ -29,13 +29,81 @@ func (q *Queries) CancelSubscription(ctx context.Context, tenantID uuid.UUID) (i
 	return result.RowsAffected(), nil
 }
 
+const claimInvoiceEmails = `-- name: ClaimInvoiceEmails :many
+UPDATE tenant.invoices i SET emailed_at = NOW()
+WHERE i.id IN (
+    SELECT c.id FROM tenant.invoices c
+    WHERE c.emailed_at IS NULL AND c.amount_minor > 0
+      AND COALESCE(c.billed_to->>'billing_email', '') <> ''
+      AND c.issued_at > NOW() - INTERVAL '1 day'
+    ORDER BY c.issued_at
+    LIMIT 100
+    FOR UPDATE SKIP LOCKED)
+RETURNING i.id, i.tenant_id, i.invoice_number, i.plan_code, i.currency, i.amount_minor, i.status,
+          i.period_start, i.period_end, i.due_at, i.billed_to
+`
+
+type ClaimInvoiceEmailsRow struct {
+	ID            uuid.UUID
+	TenantID      uuid.UUID
+	InvoiceNumber *string
+	PlanCode      string
+	Currency      string
+	AmountMinor   int64
+	Status        string
+	PeriodStart   time.Time
+	PeriodEnd     time.Time
+	DueAt         pgtype.Timestamptz
+	BilledTo      []byte
+}
+
+// Claim recently issued invoices not yet emailed to the billing address they
+// were billed to. A send that fails releases its claim.
+func (q *Queries) ClaimInvoiceEmails(ctx context.Context) ([]ClaimInvoiceEmailsRow, error) {
+	rows, err := q.db.Query(ctx, claimInvoiceEmails)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ClaimInvoiceEmailsRow{}
+	for rows.Next() {
+		var i ClaimInvoiceEmailsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.InvoiceNumber,
+			&i.PlanCode,
+			&i.Currency,
+			&i.AmountMinor,
+			&i.Status,
+			&i.PeriodStart,
+			&i.PeriodEnd,
+			&i.DueAt,
+			&i.BilledTo,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const completeCheckout = `-- name: CompleteCheckout :one
 UPDATE tenant.billing_checkouts
-SET status = 'completed', completed_at = NOW()
-WHERE id = $1 AND status = 'pending'
+SET status = 'completed', completed_at = NOW(), payment_method = $1
+WHERE id = $2 AND status = 'pending'
 RETURNING tenant_id, plan_code, currency, amount_minor,
-          taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply
+          taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply,
+          invoice_id, provider, provider_ref
 `
+
+type CompleteCheckoutParams struct {
+	PaymentMethod []byte
+	ID            uuid.UUID
+}
 
 type CompleteCheckoutRow struct {
 	TenantID           uuid.UUID
@@ -47,14 +115,17 @@ type CompleteCheckoutRow struct {
 	TaxRateBps         int32
 	TaxType            string
 	PlaceOfSupply      string
+	InvoiceID          pgtype.UUID
+	Provider           string
+	ProviderRef        string
 }
 
 // Atomically flip a pending checkout to completed and return the plan details
 // needed to activate the subscription, with what it charged.  Returns ErrNoRows
 // when the checkout is already completed, failed, or unknown — callers treat
 // that as an idempotent no-op.
-func (q *Queries) CompleteCheckout(ctx context.Context, id uuid.UUID) (CompleteCheckoutRow, error) {
-	row := q.db.QueryRow(ctx, completeCheckout, id)
+func (q *Queries) CompleteCheckout(ctx context.Context, arg CompleteCheckoutParams) (CompleteCheckoutRow, error) {
+	row := q.db.QueryRow(ctx, completeCheckout, arg.PaymentMethod, arg.ID)
 	var i CompleteCheckoutRow
 	err := row.Scan(
 		&i.TenantID,
@@ -66,8 +137,61 @@ func (q *Queries) CompleteCheckout(ctx context.Context, id uuid.UUID) (CompleteC
 		&i.TaxRateBps,
 		&i.TaxType,
 		&i.PlaceOfSupply,
+		&i.InvoiceID,
+		&i.Provider,
+		&i.ProviderRef,
 	)
 	return i, err
+}
+
+const dueSubscriptions = `-- name: DueSubscriptions :many
+
+SELECT tenant_id FROM tenant.subscriptions
+WHERE (status = 'trialing' AND trial_end <= $1::timestamptz)
+   OR (status = 'active' AND current_period_end <= $1::timestamptz)
+   OR (status = 'past_due' AND (cancel_at_period_end OR current_period_end <= $2::timestamptz))
+ORDER BY current_period_end
+LIMIT 200
+`
+
+type DueSubscriptionsParams struct {
+	Now          time.Time
+	LapsedBefore time.Time
+}
+
+// ==========================================================================
+// Period ends, renewal and settling invoices
+// ==========================================================================
+// The organisations whose trial or period has ended, or whose renewal went
+// unpaid past lapsed_before, oldest first.
+func (q *Queries) DueSubscriptions(ctx context.Context, arg DueSubscriptionsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, dueSubscriptions, arg.Now, arg.LapsedBefore)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var tenant_id uuid.UUID
+		if err := rows.Scan(&tenant_id); err != nil {
+			return nil, err
+		}
+		items = append(items, tenant_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const endSubscription = `-- name: EndSubscription :exec
+UPDATE tenant.subscriptions SET status = 'canceled', ended_at = NOW(), updated_at = NOW()
+WHERE tenant_id = $1
+`
+
+func (q *Queries) EndSubscription(ctx context.Context, tenantID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, endSubscription, tenantID)
+	return err
 }
 
 const getBillingPlanByCode = `-- name: GetBillingPlanByCode :one
@@ -139,7 +263,7 @@ func (q *Queries) GetBillingProfile(ctx context.Context, tenantID uuid.UUID) (Te
 const getSubscription = `-- name: GetSubscription :one
 SELECT p.code, p.name, p.interval, s.currency, s.status,
        s.current_period_start, s.current_period_end, s.cancel_at_period_end,
-       s.trial_end,
+       s.trial_end, s.ended_at,
        COALESCE(pp.amount_minor, 0) AS amount_minor
 FROM tenant.subscriptions s
 JOIN platform.billing_plans p ON p.id = s.plan_id
@@ -158,6 +282,7 @@ type GetSubscriptionRow struct {
 	CurrentPeriodEnd   time.Time
 	CancelAtPeriodEnd  bool
 	TrialEnd           pgtype.Timestamptz
+	EndedAt            pgtype.Timestamptz
 	AmountMinor        int64
 }
 
@@ -176,6 +301,7 @@ func (q *Queries) GetSubscription(ctx context.Context, tenantID uuid.UUID) (GetS
 		&i.CurrentPeriodEnd,
 		&i.CancelAtPeriodEnd,
 		&i.TrialEnd,
+		&i.EndedAt,
 		&i.AmountMinor,
 	)
 	return i, err
@@ -184,9 +310,10 @@ func (q *Queries) GetSubscription(ctx context.Context, tenantID uuid.UUID) (GetS
 const insertBillingCheckout = `-- name: InsertBillingCheckout :one
 INSERT INTO tenant.billing_checkouts
     (tenant_id, provider, plan_code, currency, amount_minor,
-     taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply)
+     taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply, invoice_id)
 VALUES ($1, $2, $3, $4, $5,
-        $6, $7, $8, $9, $10)
+        $6, $7, $8, $9, $10,
+        $11)
 RETURNING id
 `
 
@@ -201,11 +328,13 @@ type InsertBillingCheckoutParams struct {
 	TaxRateBps         int32
 	TaxType            string
 	PlaceOfSupply      string
+	InvoiceID          pgtype.UUID
 }
 
 // Create a pending card-payment checkout row and return its id, which is
 // passed to the provider as client_reference_id for webhook correlation.
-// amount_minor is the total the provider charges (taxable + tax).
+// amount_minor is the total the provider charges (taxable + tax). invoice_id
+// is set when the checkout pays an open invoice rather than buying a plan.
 func (q *Queries) InsertBillingCheckout(ctx context.Context, arg InsertBillingCheckoutParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, insertBillingCheckout,
 		arg.TenantID,
@@ -218,20 +347,23 @@ func (q *Queries) InsertBillingCheckout(ctx context.Context, arg InsertBillingCh
 		arg.TaxRateBps,
 		arg.TaxType,
 		arg.PlaceOfSupply,
+		arg.InvoiceID,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
 }
 
-const insertInvoice = `-- name: InsertInvoice :exec
+const insertInvoice = `-- name: InsertInvoice :one
 INSERT INTO tenant.invoices
     (tenant_id, plan_code, currency, amount_minor, status, period_start, period_end,
      taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply,
-     invoice_number)
+     invoice_number, kind, due_at, paid_at, billed_to, supplier_gstin, sac)
 VALUES ($1, $2, $3, $4, $5, $6, $7,
         $8, $9, $10, $11, $12,
-        $13)
+        $13, $14, $15,
+        CASE WHEN $5::text = 'paid' THEN NOW() END, $16, $17, $18)
+RETURNING id
 `
 
 type InsertInvoiceParams struct {
@@ -248,13 +380,18 @@ type InsertInvoiceParams struct {
 	TaxType            string
 	PlaceOfSupply      string
 	InvoiceNumber      *string
+	Kind               string
+	DueAt              pgtype.Timestamptz
+	BilledTo           []byte
+	SupplierGstin      string
+	Sac                string
 }
 
 // Issue an invoice for one billing period (zero-amount plans still get a record).
 // amount_minor is the total charged (taxable + tax); status is 'paid' when a
-// payment was captured or nothing is owed, else 'open'.
-func (q *Queries) InsertInvoice(ctx context.Context, arg InsertInvoiceParams) error {
-	_, err := q.db.Exec(ctx, insertInvoice,
+// payment was captured or nothing is owed, else 'open', due at due_at.
+func (q *Queries) InsertInvoice(ctx context.Context, arg InsertInvoiceParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, insertInvoice,
 		arg.TenantID,
 		arg.PlanCode,
 		arg.Currency,
@@ -268,8 +405,15 @@ func (q *Queries) InsertInvoice(ctx context.Context, arg InsertInvoiceParams) er
 		arg.TaxType,
 		arg.PlaceOfSupply,
 		arg.InvoiceNumber,
+		arg.Kind,
+		arg.DueAt,
+		arg.BilledTo,
+		arg.SupplierGstin,
+		arg.Sac,
 	)
-	return err
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const insertTrialSubscription = `-- name: InsertTrialSubscription :exec
@@ -297,6 +441,44 @@ func (q *Queries) InsertTrialSubscription(ctx context.Context, arg InsertTrialSu
 		arg.TrialEnd,
 	)
 	return err
+}
+
+const invoiceTenant = `-- name: InvoiceTenant :one
+SELECT tenant_id FROM tenant.invoices WHERE id = $1
+`
+
+// The organisation an invoice belongs to, for the operator's settle command.
+func (q *Queries) InvoiceTenant(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, invoiceTenant, id)
+	var tenant_id uuid.UUID
+	err := row.Scan(&tenant_id)
+	return tenant_id, err
+}
+
+const latestPaymentMethod = `-- name: LatestPaymentMethod :one
+SELECT m.provider, m.payment_method, m.completed_at FROM (
+    SELECT c.provider, c.payment_method, c.completed_at FROM tenant.billing_checkouts c
+    WHERE c.tenant_id = $1 AND c.status = 'completed' AND c.payment_method IS NOT NULL
+    UNION ALL
+    SELECT sc.provider, sc.payment_method, sc.completed_at FROM tenant.signup_checkouts sc
+    WHERE sc.tenant_id = $1 AND sc.status = 'completed' AND sc.payment_method IS NOT NULL
+) m
+ORDER BY m.completed_at DESC
+LIMIT 1
+`
+
+type LatestPaymentMethodRow struct {
+	Provider      string
+	PaymentMethod []byte
+	CompletedAt   pgtype.Timestamptz
+}
+
+// What the organisation's most recent completed checkout was paid with.
+func (q *Queries) LatestPaymentMethod(ctx context.Context, tenantID uuid.UUID) (LatestPaymentMethodRow, error) {
+	row := q.db.QueryRow(ctx, latestPaymentMethod, tenantID)
+	var i LatestPaymentMethodRow
+	err := row.Scan(&i.Provider, &i.PaymentMethod, &i.CompletedAt)
+	return i, err
 }
 
 const listBillingPlanPrices = `-- name: ListBillingPlanPrices :many
@@ -375,7 +557,7 @@ func (q *Queries) ListBillingPlans(ctx context.Context) ([]ListBillingPlansRow, 
 const listInvoices = `-- name: ListInvoices :many
 SELECT id, plan_code, currency, amount_minor, status, period_start, period_end, issued_at,
        taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply,
-       invoice_number
+       invoice_number, kind, due_at, paid_at, billed_to, supplier_gstin, sac, emailed_at
 FROM tenant.invoices
 WHERE tenant_id = $1
 ORDER BY issued_at DESC
@@ -397,6 +579,13 @@ type ListInvoicesRow struct {
 	TaxType            string
 	PlaceOfSupply      string
 	InvoiceNumber      *string
+	Kind               string
+	DueAt              pgtype.Timestamptz
+	PaidAt             pgtype.Timestamptz
+	BilledTo           []byte
+	SupplierGstin      string
+	Sac                string
+	EmailedAt          pgtype.Timestamptz
 }
 
 // Return the tenant's billing history, most recent first.
@@ -424,6 +613,13 @@ func (q *Queries) ListInvoices(ctx context.Context, tenantID uuid.UUID) ([]ListI
 			&i.TaxType,
 			&i.PlaceOfSupply,
 			&i.InvoiceNumber,
+			&i.Kind,
+			&i.DueAt,
+			&i.PaidAt,
+			&i.BilledTo,
+			&i.SupplierGstin,
+			&i.Sac,
+			&i.EmailedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -433,6 +629,100 @@ func (q *Queries) ListInvoices(ctx context.Context, tenantID uuid.UUID) ([]ListI
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockInvoice = `-- name: LockInvoice :one
+SELECT id, tenant_id, kind, status, invoice_number, plan_code, currency, amount_minor,
+       taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply,
+       period_start, period_end
+FROM tenant.invoices WHERE id = $1 AND tenant_id = $2
+FOR UPDATE
+`
+
+type LockInvoiceParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+type LockInvoiceRow struct {
+	ID                 uuid.UUID
+	TenantID           uuid.UUID
+	Kind               string
+	Status             string
+	InvoiceNumber      *string
+	PlanCode           string
+	Currency           string
+	AmountMinor        int64
+	TaxableAmountMinor int64
+	TaxAmountMinor     int64
+	TaxRateBps         int32
+	TaxType            string
+	PlaceOfSupply      string
+	PeriodStart        time.Time
+	PeriodEnd          time.Time
+}
+
+func (q *Queries) LockInvoice(ctx context.Context, arg LockInvoiceParams) (LockInvoiceRow, error) {
+	row := q.db.QueryRow(ctx, lockInvoice, arg.ID, arg.TenantID)
+	var i LockInvoiceRow
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Kind,
+		&i.Status,
+		&i.InvoiceNumber,
+		&i.PlanCode,
+		&i.Currency,
+		&i.AmountMinor,
+		&i.TaxableAmountMinor,
+		&i.TaxAmountMinor,
+		&i.TaxRateBps,
+		&i.TaxType,
+		&i.PlaceOfSupply,
+		&i.PeriodStart,
+		&i.PeriodEnd,
+	)
+	return i, err
+}
+
+const lockSubscription = `-- name: LockSubscription :one
+SELECT p.code, p.interval, s.currency, s.status, s.current_period_start, s.current_period_end,
+       s.cancel_at_period_end, s.trial_end, COALESCE(pp.amount_minor, 0) AS amount_minor
+FROM tenant.subscriptions s
+JOIN platform.billing_plans p ON p.id = s.plan_id
+LEFT JOIN platform.billing_plan_prices pp ON pp.plan_id = s.plan_id AND pp.currency = s.currency
+WHERE s.tenant_id = $1
+FOR UPDATE OF s
+`
+
+type LockSubscriptionRow struct {
+	Code               string
+	Interval           string
+	Currency           string
+	Status             string
+	CurrentPeriodStart time.Time
+	CurrentPeriodEnd   time.Time
+	CancelAtPeriodEnd  bool
+	TrialEnd           pgtype.Timestamptz
+	AmountMinor        int64
+}
+
+// The tenant's subscription with its plan and price, locked for a change.
+func (q *Queries) LockSubscription(ctx context.Context, tenantID uuid.UUID) (LockSubscriptionRow, error) {
+	row := q.db.QueryRow(ctx, lockSubscription, tenantID)
+	var i LockSubscriptionRow
+	err := row.Scan(
+		&i.Code,
+		&i.Interval,
+		&i.Currency,
+		&i.Status,
+		&i.CurrentPeriodStart,
+		&i.CurrentPeriodEnd,
+		&i.CancelAtPeriodEnd,
+		&i.TrialEnd,
+		&i.AmountMinor,
+	)
+	return i, err
 }
 
 const nextInvoiceNumber = `-- name: NextInvoiceNumber :one
@@ -452,6 +742,48 @@ func (q *Queries) NextInvoiceNumber(ctx context.Context, financialYear string) (
 	return last_number, err
 }
 
+const releaseInvoiceEmail = `-- name: ReleaseInvoiceEmail :exec
+UPDATE tenant.invoices SET emailed_at = NULL WHERE id = $1 AND tenant_id = $2
+`
+
+type ReleaseInvoiceEmailParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+func (q *Queries) ReleaseInvoiceEmail(ctx context.Context, arg ReleaseInvoiceEmailParams) error {
+	_, err := q.db.Exec(ctx, releaseInvoiceEmail, arg.ID, arg.TenantID)
+	return err
+}
+
+const renewSubscription = `-- name: RenewSubscription :exec
+UPDATE tenant.subscriptions
+SET status = 'active', current_period_start = $1, current_period_end = $2, updated_at = NOW()
+WHERE tenant_id = $3
+`
+
+type RenewSubscriptionParams struct {
+	PeriodStart time.Time
+	PeriodEnd   time.Time
+	TenantID    uuid.UUID
+}
+
+// Start the next period.
+func (q *Queries) RenewSubscription(ctx context.Context, arg RenewSubscriptionParams) error {
+	_, err := q.db.Exec(ctx, renewSubscription, arg.PeriodStart, arg.PeriodEnd, arg.TenantID)
+	return err
+}
+
+const setSubscriptionPastDue = `-- name: SetSubscriptionPastDue :exec
+UPDATE tenant.subscriptions SET status = 'past_due', updated_at = NOW()
+WHERE tenant_id = $1
+`
+
+func (q *Queries) SetSubscriptionPastDue(ctx context.Context, tenantID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, setSubscriptionPastDue, tenantID)
+	return err
+}
+
 const setTenantPlan = `-- name: SetTenantPlan :exec
 UPDATE tenant.tenants
 SET plan = $1, updated_at = NOW()
@@ -469,6 +801,22 @@ type SetTenantPlanParams struct {
 // Runs on the caller's tx, alongside UpsertSubscription.
 func (q *Queries) SetTenantPlan(ctx context.Context, arg SetTenantPlanParams) error {
 	_, err := q.db.Exec(ctx, setTenantPlan, arg.Plan, arg.TenantID)
+	return err
+}
+
+const settleInvoice = `-- name: SettleInvoice :exec
+UPDATE tenant.invoices SET status = 'paid', paid_at = NOW(), payment_reference = $1
+WHERE id = $2 AND tenant_id = $3
+`
+
+type SettleInvoiceParams struct {
+	PaymentReference string
+	ID               uuid.UUID
+	TenantID         uuid.UUID
+}
+
+func (q *Queries) SettleInvoice(ctx context.Context, arg SettleInvoiceParams) error {
+	_, err := q.db.Exec(ctx, settleInvoice, arg.PaymentReference, arg.ID, arg.TenantID)
 	return err
 }
 
@@ -639,6 +987,7 @@ ON CONFLICT (tenant_id) DO UPDATE SET
     current_period_start = EXCLUDED.current_period_start,
     current_period_end   = EXCLUDED.current_period_end,
     cancel_at_period_end = FALSE,
+    ended_at             = NULL,
     updated_at           = NOW()
 `
 
@@ -660,4 +1009,18 @@ func (q *Queries) UpsertSubscription(ctx context.Context, arg UpsertSubscription
 		arg.PeriodEnd,
 	)
 	return err
+}
+
+const voidOpenRenewals = `-- name: VoidOpenRenewals :execrows
+UPDATE tenant.invoices SET status = 'void'
+WHERE tenant_id = $1 AND kind = 'renewal' AND status = 'open'
+`
+
+// A renewal no longer owed: the subscription ended, or a checkout replaced it.
+func (q *Queries) VoidOpenRenewals(ctx context.Context, tenantID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, voidOpenRenewals, tenantID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

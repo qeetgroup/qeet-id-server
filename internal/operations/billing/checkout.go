@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -87,7 +88,7 @@ func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, cu
 	// Paid plan with a provider: record a pending checkout and open a payment
 	// for the total, tax included, that the invoice will show.
 	tr := s.taxFor(ctx, s.q, tenantID, amt, country)
-	checkoutID, err := s.q.InsertBillingCheckout(ctx, dbgen.InsertBillingCheckoutParams{
+	return s.openCheckout(ctx, provider, dbgen.InsertBillingCheckoutParams{
 		TenantID:           tenantID,
 		Provider:           provider.Name(),
 		PlanCode:           planCode,
@@ -98,15 +99,21 @@ func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, cu
 		TaxRateBps:         int32(tr.RateBps), // #nosec G115 -- operator-set GST rate in basis points
 		TaxType:            tr.Type,
 		PlaceOfSupply:      tr.PlaceOfSupply,
-	})
+	}, planName, successURL, cancelURL)
+}
+
+// openCheckout records the pending checkout in and opens the provider's hosted
+// payment for its amount, under name.
+func (s *Service) openCheckout(ctx context.Context, provider PaymentProvider, in dbgen.InsertBillingCheckoutParams, name, successURL, cancelURL string) (*CheckoutResult, error) {
+	checkoutID, err := s.q.InsertBillingCheckout(ctx, in)
 	if err != nil {
 		return nil, err
 	}
 	redirectURL, providerRef, err := provider.CreateCheckout(ctx, CheckoutInput{
 		Ref:         checkoutID.String(),
-		PlanName:    planName,
-		Currency:    cur,
-		AmountMinor: tr.TotalMinor,
+		PlanName:    name,
+		Currency:    in.Currency,
+		AmountMinor: in.AmountMinor,
 		SuccessURL:  successURL,
 		CancelURL:   cancelURL,
 	})
@@ -142,38 +149,68 @@ func (s *Service) activateDirect(ctx context.Context, tenantID uuid.UUID, planCo
 	return &CheckoutResult{Status: "active"}, nil
 }
 
-// CompleteCheckout activates the plan behind a paid checkout, tenant or signup.
-// The pending-to-completed transition is claimed atomically, so webhook retries
-// activate it exactly once; an unknown ref is a no-op.
-func (s *Service) CompleteCheckout(ctx context.Context, ref string) error {
+// CompleteCheckout activates the plan behind a paid checkout, tenant or signup,
+// or settles the invoice it paid, recording method, what it was paid with, when
+// the provider said. The pending-to-completed transition is claimed atomically,
+// so webhook retries activate it exactly once; an unknown ref is a no-op.
+func (s *Service) CompleteCheckout(ctx context.Context, ref string, method *PaymentMethod) error {
 	id, err := uuid.Parse(ref)
 	if err != nil {
 		return errs.ErrBillingCheckoutRefInvalid
 	}
-	completed, err := s.completeTenantCheckout(ctx, id)
+	var recorded []byte
+	if method != nil {
+		if recorded, err = json.Marshal(method); err != nil {
+			return err
+		}
+	}
+	completed, err := s.completeTenantCheckout(ctx, id, recorded)
 	if err != nil || completed {
 		return err
 	}
 	// Not a tenant checkout: it may be a signup checkout, whose organization is
 	// created now.
-	return s.completeSignupCheckout(ctx, id)
+	return s.completeSignupCheckout(ctx, id, recorded)
 }
 
-// completeTenantCheckout claims a pending tenant checkout and activates its
-// plan in one transaction. It reports false, having changed nothing, when id
-// is not a pending tenant checkout.
-func (s *Service) completeTenantCheckout(ctx context.Context, id uuid.UUID) (bool, error) {
+// completeTenantCheckout claims a pending tenant checkout and, in one
+// transaction, settles the invoice it paid or activates its plan. A payment for
+// an invoice no longer open buys its plan afresh instead, so it is never lost.
+// It reports false, having changed nothing, when id is not a pending tenant
+// checkout.
+func (s *Service) completeTenantCheckout(ctx context.Context, id uuid.UUID, method []byte) (bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return false, err
 	}
 	defer tx.Rollback(ctx)
-	row, err := s.q.WithTx(tx).CompleteCheckout(ctx, id)
+	row, err := s.q.WithTx(tx).CompleteCheckout(ctx, dbgen.CompleteCheckoutParams{ID: id, PaymentMethod: method})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
+	}
+	if row.InvoiceID.Valid {
+		sp, err := tx.Begin(ctx)
+		if err != nil {
+			return false, err
+		}
+		err = s.settleInvoice(ctx, sp, row.TenantID, uuid.UUID(row.InvoiceID.Bytes), row.ProviderRef, row.Provider)
+		if err == nil {
+			if err := sp.Commit(ctx); err != nil {
+				return false, err
+			}
+			return true, tx.Commit(ctx)
+		}
+		if !errors.Is(err, errs.ErrBillingInvoiceNotOpen) && !errors.Is(err, errs.ErrBillingInvoiceNotFound) {
+			return false, err
+		}
+		if err := sp.Rollback(ctx); err != nil {
+			return false, err
+		}
+		slog.Warn("billing: a checkout paid an invoice no longer open; buying its plan instead",
+			"checkout_id", id, "invoice_id", uuid.UUID(row.InvoiceID.Bytes))
 	}
 	charged := checkoutTax(row.AmountMinor, row.TaxableAmountMinor, row.TaxAmountMinor, row.TaxRateBps, row.TaxType, row.PlaceOfSupply)
 	if err := s.activatePaid(ctx, tx, row.TenantID, row.PlanCode, row.Currency, charged); err != nil {
@@ -186,7 +223,7 @@ func (s *Service) completeTenantCheckout(ctx context.Context, id uuid.UUID) (boo
 // organization and activates the subscription. An unknown or completed checkout
 // is a no-op. If a step fails, the checkout returns to pending, keeping any
 // organization already created, so a retry resumes where it stopped.
-func (s *Service) completeSignupCheckout(ctx context.Context, id uuid.UUID) error {
+func (s *Service) completeSignupCheckout(ctx context.Context, id uuid.UUID, method []byte) error {
 	if s.orgProvisioner == nil {
 		return nil
 	}
@@ -200,11 +237,11 @@ func (s *Service) completeSignupCheckout(ctx context.Context, id uuid.UUID) erro
 	)
 	err := s.pool.QueryRow(ctx, `
 		UPDATE tenant.signup_checkouts
-		SET status = 'completed', completed_at = NOW()
+		SET status = 'completed', completed_at = NOW(), payment_method = $2
 		WHERE id = $1 AND status = 'pending'
 		RETURNING user_id, org_name, org_slug, region, plan_code, currency, tenant_id,
 		          amount_minor, taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply`,
-		id,
+		id, method,
 	).Scan(&userID, &name, &slug, &region, &planCode, &currencyCode, &created,
 		&total, &taxable, &tax, &rateBps, &taxType, &place)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -380,7 +417,15 @@ func (s *Service) HandleWebhook(ctx context.Context, providerName string, body [
 	if !paid || ref == "" {
 		return nil
 	}
-	return s.CompleteCheckout(ctx, ref)
+	// What paid is worth knowing but never worth failing the payment over.
+	var method *PaymentMethod
+	if reader, ok := prov.(paymentMethodReader); ok {
+		if method, err = reader.PaymentMethod(ctx, body); err != nil {
+			slog.Warn("billing: payment method not read", "provider", providerName, "err", err)
+			method = nil
+		}
+	}
+	return s.CompleteCheckout(ctx, ref, method)
 }
 
 // WebhookSignatureHeader returns the webhook signature header of a provider, or
@@ -409,5 +454,7 @@ func (s *Service) CompleteRazorpayCallback(ctx context.Context, params map[strin
 	if !paid || ref == "" {
 		return nil
 	}
-	return s.CompleteCheckout(ctx, ref)
+	// The redirect doesn't say what paid; the webhook, when it arrives, can't
+	// add it to a checkout already complete.
+	return s.CompleteCheckout(ctx, ref, nil)
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/billing/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
 var currencyRe = regexp.MustCompile(`^[A-Z]{3}$`)
@@ -38,8 +39,8 @@ type Plan struct {
 }
 
 // Subscription is a tenant's subscription; Status is "none" if it has none.
-// Its plan lapses to free at CurrentPeriodEnd, or at TrialEnd, which is set
-// while Status is "trialing" (see Grants).
+// "past_due" is a renewal billed and not yet paid, and "canceled" one that
+// ended, at EndedAt. See Grants for how long each grants its plan.
 type Subscription struct {
 	PlanCode           string     `json:"plan_code"`
 	PlanName           string     `json:"plan_name"`
@@ -51,12 +52,16 @@ type Subscription struct {
 	CurrentPeriodEnd   *time.Time `json:"current_period_end"`
 	CancelAtPeriodEnd  bool       `json:"cancel_at_period_end"`
 	TrialEnd           *time.Time `json:"trial_end"`
+	EndedAt            *time.Time `json:"ended_at"`
+
+	grace time.Duration // how long a renewal may go unpaid
 }
 
 // Invoice is an issued invoice. AmountMinor is the total charged: TaxableMinor
 // plus TaxMinor. Status is "paid" once a payment was captured or when nothing
-// is owed, and "open" for a plan granted before payment. Number is the GST
-// invoice number, nil on a zero invoice.
+// is owed, "open" until then, due at DueAt, and "void" for a renewal no longer
+// owed. Kind is "purchase" or "renewal". Number is the GST invoice number, nil
+// on a zero invoice; BilledTo is the billing profile when it was issued.
 type Invoice struct {
 	ID            uuid.UUID `json:"id"`
 	Number        *string   `json:"invoice_number"`
@@ -72,6 +77,14 @@ type Invoice struct {
 	PeriodStart   time.Time `json:"period_start"`
 	PeriodEnd     time.Time `json:"period_end"`
 	IssuedAt      time.Time `json:"issued_at"`
+
+	Kind          string          `json:"kind"`
+	DueAt         *time.Time      `json:"due_at"`
+	PaidAt        *time.Time      `json:"paid_at"`
+	BilledTo      *BillingProfile `json:"billed_to"`
+	SupplierGSTIN string          `json:"supplier_gstin"`
+	SAC           string          `json:"sac"`
+	EmailedAt     *time.Time      `json:"emailed_at"`
 }
 
 // BillingProfile is a tenant's billing & tax details, carried onto invoices.
@@ -100,6 +113,9 @@ type Service struct {
 	allowUnpaidActivation bool           // invoice-only billing; off by default
 	orgProvisioner        OrgProvisioner // creates a signup checkout's organization
 	tax                   TaxConfig      // invoice tax; the zero value charges none
+	paymentGrace          time.Duration  // how long an open invoice may go unpaid
+	mailer                notifier.Sender
+	consoleURL            string // where invoice emails send the reader
 }
 
 // OrgProvisioner creates an organization (tenant) owned by ownerID. It completes
@@ -108,9 +124,13 @@ type OrgProvisioner interface {
 	ProvisionOrg(ctx context.Context, ownerID uuid.UUID, name, slug, region, plan string) (uuid.UUID, error)
 }
 
-// NewService returns a Service with no card providers and tax disabled.
+// DefaultPaymentGrace is how long an open invoice may go unpaid by default.
+const DefaultPaymentGrace = 7 * 24 * time.Hour
+
+// NewService returns a Service with no card providers, tax disabled and the
+// default payment grace.
 func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool)}
+	return &Service{pool: pool, q: dbgen.New(pool), paymentGrace: DefaultPaymentGrace}
 }
 
 // Pool returns the service's database pool.
@@ -130,6 +150,20 @@ func (s *Service) SetOrgProvisioner(p OrgProvisioner) { s.orgProvisioner = p }
 // SetTaxConfig sets the invoice tax configuration. The zero value charges no
 // tax.
 func (s *Service) SetTaxConfig(c TaxConfig) { s.tax = c }
+
+// SetPaymentGrace sets how long an open invoice may go unpaid: a renewal's plan
+// lapses that long after its period ends. Non-positive keeps the default.
+func (s *Service) SetPaymentGrace(d time.Duration) {
+	if d > 0 {
+		s.paymentGrace = d
+	}
+}
+
+// SetMailer sets where invoice emails go, and the console address they link
+// to. A nil mailer emails nothing.
+func (s *Service) SetMailer(m notifier.Sender, consoleURL string) {
+	s.mailer, s.consoleURL = m, strings.TrimRight(consoleURL, "/")
+}
 
 // SandboxEnabled reports whether the dev-only sandbox payment provider is active.
 func (s *Service) SandboxEnabled() bool { return s.payments.SandboxEnabled() }

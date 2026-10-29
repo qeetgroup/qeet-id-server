@@ -360,16 +360,18 @@ func userPermissionMap() map[string]string {
 		"PUT /v1/tenants/{tenantID}/audit/anomaly-settings":        "audit.write",
 
 		// Billing (GET /v1/billing/plans is a public catalog — ungated).
-		"GET /v1/tenants/{tenantID}/billing/subscription":         "billing.read",
-		"PUT /v1/tenants/{tenantID}/billing/subscription":         "billing.write",
-		"POST /v1/tenants/{tenantID}/billing/subscription/cancel": "billing.write",
-		"GET /v1/tenants/{tenantID}/billing/invoices":             "billing.read",
-		"GET /v1/tenants/{tenantID}/billing/profile":              "billing.read",
-		"PUT /v1/tenants/{tenantID}/billing/profile":              "billing.write",
-		"POST /v1/tenants/{tenantID}/billing/trial":               "billing.write",
-		"POST /v1/tenants/{tenantID}/billing/checkout":            "billing.write",
-		"GET /v1/tenants/{tenantID}/entitlements":                 "billing.read",
-		"GET /v1/tenants/{tenantID}/entitlements/usage":           "billing.read",
+		"GET /v1/tenants/{tenantID}/billing/subscription":              "billing.read",
+		"PUT /v1/tenants/{tenantID}/billing/subscription":              "billing.write",
+		"POST /v1/tenants/{tenantID}/billing/subscription/cancel":      "billing.write",
+		"GET /v1/tenants/{tenantID}/billing/invoices":                  "billing.read",
+		"POST /v1/tenants/{tenantID}/billing/invoices/{invoiceID}/pay": "billing.write",
+		"GET /v1/tenants/{tenantID}/billing/payment-method":            "billing.read",
+		"GET /v1/tenants/{tenantID}/billing/profile":                   "billing.read",
+		"PUT /v1/tenants/{tenantID}/billing/profile":                   "billing.write",
+		"POST /v1/tenants/{tenantID}/billing/trial":                    "billing.write",
+		"POST /v1/tenants/{tenantID}/billing/checkout":                 "billing.write",
+		"GET /v1/tenants/{tenantID}/entitlements":                      "billing.read",
+		"GET /v1/tenants/{tenantID}/entitlements/usage":                "billing.read",
 
 		// Analytics.
 		"GET /v1/tenants/{tenantID}/analytics/overview": "analytics.read",
