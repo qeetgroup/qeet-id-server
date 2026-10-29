@@ -29,6 +29,7 @@ import (
 const (
 	sweepInterval = time.Minute
 	sweepBatch    = 200
+	sweepBudget   = 45 * time.Second // one sweep's batches, so it ends before the next is due
 
 	defaultScoreThreshold    = 0.6
 	defaultMinBaselineEvents = 20
@@ -215,10 +216,25 @@ func settingsFor(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID) (Set
 
 // tick scores one batch of unscored events, each in its own transaction so a
 // bad row cannot block the rest.
+// tick scores unscored events in batches while they come full, within
+// sweepBudget, so the scorer keeps up with a busy log. It stops early when a
+// batch scores nothing, as when another instance holds every event in it.
 func (s *Service) tick(ctx context.Context) error {
+	deadline := time.Now().Add(sweepBudget)
+	for {
+		n, scored, err := s.scoreBatch(ctx)
+		if err != nil || n < sweepBatch || scored == 0 || time.Now().After(deadline) {
+			return err
+		}
+	}
+}
+
+// scoreBatch scores one batch of unscored events, and returns how many it
+// read and how many it scored.
+func (s *Service) scoreBatch(ctx context.Context) (int, int, error) {
 	rows, err := s.q.ListUnscoredAuditEvents(ctx, int32(sweepBatch))
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
 
 	// ip is COALESCE(host(ip), ''), typed interface{}; empty becomes nil.
@@ -237,18 +253,25 @@ func (s *Service) tick(ctx context.Context) error {
 		batch = append(batch, e)
 	}
 
+	scored := 0
 	for _, e := range batch {
-		if err := s.scoreOne(ctx, e); err != nil {
+		done, err := s.scoreOne(ctx, e)
+		if err != nil {
 			slog.Warn("audit anomaly scoring failed", "event", e.ID, "err", err)
 		}
+		if done {
+			scored++
+		}
 	}
-	return nil
+	return len(rows), scored, nil
 }
 
-func (s *Service) scoreOne(ctx context.Context, e unscoredEvent) error {
+// scoreOne scores e and folds it into its actor's baseline, reporting whether
+// it did. An event another instance is scoring is skipped, not waited for.
+func (s *Service) scoreOne(ctx context.Context, e unscoredEvent) (bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback(ctx)
 
@@ -258,28 +281,28 @@ func (s *Service) scoreOne(ctx context.Context, e unscoredEvent) error {
 		SELECT scored_at IS NOT NULL
 		FROM audit.events
 		WHERE id = $1
-		FOR UPDATE
+		FOR UPDATE SKIP LOCKED
 	`, e.ID).Scan(&alreadyScored); errors.Is(err, pgx.ErrNoRows) {
-		return nil
+		return false, nil
 	} else if err != nil {
-		return err
+		return false, err
 	}
 	if alreadyScored {
-		return nil
+		return false, nil
 	}
 
 	// No user actor (agent, service or system): nothing to baseline, so just
 	// mark it scored.
 	if e.TenantID == nil || e.ActorUserID == nil {
 		if err := qTx.MarkAuditEventScored(ctx, e.ID); err != nil {
-			return err
+			return false, err
 		}
-		return tx.Commit(ctx)
+		return true, tx.Commit(ctx)
 	}
 
 	settings, err := settingsFor(ctx, qTx, *e.TenantID)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	ip := ""
@@ -293,7 +316,7 @@ func (s *Service) scoreOne(ctx context.Context, e unscoredEvent) error {
 	if settings.Enabled {
 		b, err := s.loadBaseline(ctx, tx, *e.TenantID, *e.ActorUserID)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if b.eventCount >= int64(settings.MinBaselineEvents) {
 			sc, reasons := score(b, e.Action, ip, hour)
@@ -305,20 +328,20 @@ func (s *Service) scoreOne(ctx context.Context, e unscoredEvent) error {
 					Score:       sc,
 					Reasons:     reasons,
 				}); err != nil {
-					return err
+					return false, err
 				}
 			}
 		}
 		b = fold(b, e.Action, ip, hour)
 		if err := s.saveBaseline(ctx, tx, *e.TenantID, *e.ActorUserID, b); err != nil {
-			return err
+			return false, err
 		}
 	}
 
 	if err := qTx.MarkAuditEventScored(ctx, e.ID); err != nil {
-		return err
+		return false, err
 	}
-	return tx.Commit(ctx)
+	return true, tx.Commit(ctx)
 }
 
 // Run is the background sweeper: it scores a batch every minute until ctx is

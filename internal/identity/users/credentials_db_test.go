@@ -125,6 +125,7 @@ func TestAdminPhoneChangeDropsItsVerification(t *testing.T) {
 func TestAccountViewsDescribeTheCallersOrganisation(t *testing.T) {
 	home, tenant := dbtest.Tenant(t), dbtest.Tenant(t)
 	admin := dbtest.User(t, home, home)
+	dbtest.Assign(t, admin.ID, home, dbtest.Role(t, home, "users.read", "users.write"))
 	member := dbtest.User(t, home, tenant)
 	dbtest.Assign(t, member.ID, home, dbtest.Role(t, home, "users.read"))
 	dbtest.SetPassword(t, member.ID, "Kx7mQ2vLp9Wz")
@@ -145,6 +146,21 @@ func TestAccountViewsDescribeTheCallersOrganisation(t *testing.T) {
 	}
 	if n := audited(t, home, "user.mfa_required_set", member.ID); n != 1 {
 		t.Errorf("%d user.mfa_required_set audit events, want 1", n)
+	}
+	if rec := dbtest.Do(t, as, http.MethodPut, path+"/mfa-required", map[string]any{"required": false}); rec.Code != http.StatusOK {
+		t.Fatalf("lift the MFA requirement: %d %s", rec.Code, rec.Body.String())
+	}
+	set := func(value string) int {
+		return dbtest.Count(t, `
+			SELECT count(*) FROM audit.events
+			WHERE tenant_id = $1 AND action = 'user.mfa_required_set' AND resource_id = $2 AND actor_user_id = $3
+			  AND metadata->>'mfa_required' = $4`, home, member.ID, admin.ID, value)
+	}
+	if set("true") != 1 || set("false") != 1 {
+		t.Errorf("records of the MFA requirement set to true %d, false %d times; want once each", set("true"), set("false"))
+	}
+	if rec := dbtest.Do(t, as, http.MethodPut, path+"/mfa-required", map[string]any{"required": true}); rec.Code != http.StatusOK {
+		t.Fatalf("require MFA again: %d %s", rec.Code, rec.Body.String())
 	}
 	var sum SecuritySummary
 	dbtest.Decode(t, dbtest.Do(t, as, http.MethodGet, path+"/security", nil), &sum)
@@ -212,6 +228,24 @@ func TestSignInMethodsCountWhatTheOrganisationAllows(t *testing.T) {
 	}
 	if _, err := LockSignInMethods(ctx, tx, uuid.New()); !errors.Is(err, errs.ErrNotFound) {
 		t.Errorf("lock an account that doesn't exist: %v, want not found", err)
+	}
+
+	// An OpenID Connect connection's link counts while the connection exists;
+	// an identity merely named "oidc" by no connection doesn't.
+	var conn uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO tenant.oidc_connections (tenant_id, name, issuer, client_id, client_secret_ct, client_secret_nonce)
+		VALUES ($1, 'Entra', 'https://idp.example.test', 'client', '\x00', '\x00') RETURNING id
+	`, tenant).Scan(&conn); err != nil {
+		t.Fatal(err)
+	}
+	exec(t, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'oidc', $3, 'oidc-subject'), ($1, $2, 'oidc', NULL, 'unconnected')`, u.ID, tenant, conn)
+	if m := count(); m.LinkedIdentities != 4 {
+		t.Errorf("counted %+v, want the connection's link as a fourth way in", m)
+	}
+	exec(t, `DELETE FROM tenant.oidc_connections WHERE id = $1`, conn)
+	if m := count(); m.LinkedIdentities != 3 {
+		t.Errorf("counted %+v once the connection is deleted, want its link no longer counted", m)
 	}
 
 	methodID := uuid.New()

@@ -12,15 +12,16 @@ import (
 )
 
 type TenantTenant struct {
-	ID        uuid.UUID
-	Slug      string
-	Name      string
-	Status    string
-	Plan      string
-	Region    string
-	Metadata  []byte
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	DeletedAt pgtype.Timestamptz
-	LogoUrl   string
+	ID            uuid.UUID
+	Slug          string
+	Name          string
+	Status        string
+	Plan          string
+	Region        string
+	Metadata      []byte
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	DeletedAt     pgtype.Timestamptz
+	LogoUrl       string
+	DeletionDueAt pgtype.Timestamptz
 }

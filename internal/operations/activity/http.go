@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,7 +31,27 @@ import (
 type Handler struct {
 	Hub  *Hub
 	pool *pgxpool.Pool
+	// Access decides again, while a stream is open, whether its reader may
+	// still read it, as the request was admitted: their session or credential
+	// still live and audit.read still theirs. A stream it refuses, or can't
+	// ask, ends. nil leaves an open stream unchecked.
+	Access func(ctx context.Context, p *httpx.Principal) (bool, error)
+	// RecheckEvery is how often Access is asked; 0 means streamRecheck.
+	RecheckEvery time.Duration
 }
+
+// streamRecheck is how long a stream may go on delivering after its reader
+// lost access.
+const streamRecheck = 30 * time.Second
+
+// maxReplayRows bounds how much of the audit log one connection replays. A
+// client further behind gets the cursor of the last row read and a reconnect
+// hint, and its next connection carries on from there.
+var maxReplayRows = 1000
+
+// replayPage is how many audit rows one replay query reads, as
+// ReplayActivityHistory's LIMIT.
+const replayPage = 100
 
 // NewHandler returns a Handler that reads history from pool and live events
 // from hub.
@@ -44,16 +66,25 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/activity/summary", h.summary)
 	r.Get("/activity/stream", h.stream)
 	r.Get("/activity/{id}/related", h.related)
+	r.Get("/tenants/{tenantID}/activity/{id}", h.event)
 }
 
-// stream serves GET /v1/activity/stream as Server-Sent Events. It replays audit
-// events newer than Last-Event-ID, then forwards live hub events until the
-// client disconnects; the query filters apply to both.
+// stream serves GET /v1/activity/stream as Server-Sent Events of the audit
+// records themselves, each with its own id, so a live event can be opened and
+// related as a historical one. It replays the records newer than
+// Last-Event-ID, then follows the audit log, every streamPoll or as soon as
+// the hub says the organisation did something, until the client disconnects,
+// the hub shuts down, the reader's credential expires or Access refuses them;
+// the query filters apply throughout. Delivery is at least once: a frame's
+// cursor is set back streamLag, so a reconnect may resend a record, and when
+// the client is too far behind, or the hub couldn't keep up with it, the
+// stream ends with a reconnect hint so the next connection catches up.
 func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	tenantID, _, ok := h.requireTenantUser(w, r)
 	if !ok {
 		return
 	}
+	reader := httpx.PrincipalFromCtx(r.Context())
 
 	f := StreamFilter{
 		Types:    splitCSV(r.URL.Query().Get("types")),
@@ -91,72 +122,213 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	sse.startKeepAlive(donePing, 20*time.Second)
 
 	ctx := r.Context()
+	select {
+	case <-h.Hub.stopping:
+		sse.retryLater()
+		return
+	default:
+	}
 
-	// Subscribe before replaying, so a live event published during the replay
-	// waits in the channel instead of being lost. Live events come from the
-	// outbox and replayed ones from the audit log, with different ids, so they
-	// can't be matched: an event in both may arrive twice, but none is dropped.
-	evCh, unsub := h.Hub.Subscribe(tenantID)
+	// Subscribe before replaying, so the organisation's activity during the
+	// replay wakes the tail at once rather than at the next poll.
+	evCh, lost, unsub := h.Hub.subscribe(tenantID)
 	defer unsub()
 
 	// On reconnect the client sends the ID of the last event it received; replay
-	// everything newer before switching to live.
+	// everything newer before following the log. Without one, the stream
+	// starts at the time it was opened.
+	tail := newAuditTail(time.Now().UTC())
 	if lastID := r.Header.Get("Last-Event-ID"); lastID != "" {
-		h.replayHistory(ctx, sse, tenantID, lastID, f)
+		if !h.replayHistory(ctx, sse, tenantID, lastID, f, tail) {
+			sse.retryLater()
+			return
+		}
+	}
+
+	recheck := time.NewTicker(h.recheckEvery())
+	defer recheck.Stop()
+	poll := time.NewTicker(streamPoll)
+	defer poll.Stop()
+	var expired <-chan time.Time
+	if reader != nil && reader.ExpiresAt != nil {
+		t := time.NewTimer(time.Until(*reader.ExpiresAt))
+		defer t.Stop()
+		expired = t.C
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case ev := <-evCh:
-			// Defence in depth: drop an event whose own TenantID is not the
-			// connection's, in case the hub ever mis-routes one.
-			if ev.TenantID != tenantID {
-				slog.Error("activity: cross-tenant event dropped at write boundary",
-					"connection_tenant", tenantID,
-					"event_tenant", ev.TenantID)
-				continue
+		case <-h.Hub.stopping:
+			sse.retryLater()
+			return
+		case <-expired:
+			return
+		case <-recheck.C:
+			if !h.stillAllowed(ctx, reader) {
+				return
 			}
-			if !matchesStreamFilter(ev, f) {
-				continue
+		case <-lost:
+			sse.retryLater()
+			return
+		case <-evCh:
+			if !h.followLog(ctx, sse, tenantID, tail, f) {
+				sse.retryLater()
+				return
 			}
-			sse.sendActivity(ev, ev.At.Add(-outboxLag))
+		case <-poll.C:
+			if !h.followLog(ctx, sse, tenantID, tail, f) {
+				sse.retryLater()
+				return
+			}
 		}
 	}
 }
 
-// outboxLag is how far a live event may trail the audit record it reports: the
-// outbox's poll interval, with margin. A live frame's cursor is set back by it,
-// so a reconnect replays what the outbox had yet to publish; an event may
-// arrive twice, but none is skipped.
-const outboxLag = 10 * time.Second
+// streamPoll is how often a stream reads the audit log when nothing wakes it
+// sooner.
+const streamPoll = 2 * time.Second
+
+// auditTail is where a stream has read the audit log to: every record after
+// (floor, floorID), what the client already had, is sent once, and each sent
+// within streamLag of the newest is remembered, as a record committed late can
+// still appear among them.
+type auditTail struct {
+	floor   time.Time
+	floorID uuid.UUID
+	newest  time.Time
+	sent    map[uuid.UUID]time.Time
+}
+
+func newAuditTail(from time.Time) *auditTail {
+	return &auditTail{floor: from, newest: from, sent: map[uuid.UUID]time.Time{}}
+}
+
+// followLog sends the tenant's audit records the tail hasn't, oldest first,
+// reading back streamLag before the newest it sent. It reports false when the
+// log can't be read.
+func (h *Handler) followLog(ctx context.Context, sse *sseWriter, tenantID uuid.UUID, t *auditTail, f StreamFilter) bool {
+	q := dbgen.New(h.pool)
+	afterTs, afterID := t.newest.Add(-streamLag), uuid.Nil
+	if !afterTs.After(t.floor) {
+		afterTs, afterID = t.floor, t.floorID
+	}
+	for {
+		rows, err := q.ReplayActivityHistory(ctx, dbgen.ReplayActivityHistoryParams{
+			TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+			AfterTs:  afterTs,
+			AfterID:  afterID,
+		})
+		if err != nil {
+			slog.Warn("activity: follow the audit log", "err", err)
+			return false
+		}
+		for _, row := range rows {
+			afterTs, afterID = row.CreatedAt, row.ID
+			if _, done := t.sent[row.ID]; done {
+				continue
+			}
+			t.sent[row.ID] = row.CreatedAt
+			if row.CreatedAt.After(t.newest) {
+				t.newest = row.CreatedAt
+			}
+			if ev := mapAuditRow(replayRowToAuditRow(row)); matchesStreamFilter(ev, f) {
+				sse.sendActivity(ev, row.CreatedAt.Add(-streamLag))
+			}
+		}
+		if len(rows) < replayPage {
+			break
+		}
+	}
+	for id, at := range t.sent {
+		if at.Before(t.newest.Add(-streamLag)) {
+			delete(t.sent, id)
+		}
+	}
+	return true
+}
+
+// shutdownRetry is how long the client of a stopping server waits before it
+// reconnects, sending its Last-Event-ID so it misses nothing.
+const shutdownRetry = 3 * time.Second
+
+// streamLag is how long after its time an audit record may become visible: its
+// transaction commits after the record is stamped. The tail reads back this
+// far, and a live frame's cursor is set back by it, so a reconnect misses
+// nothing; a record may arrive twice, but none is skipped.
+const streamLag = 10 * time.Second
+
+// recheckEvery is how often a stream asks Access again.
+func (h *Handler) recheckEvery() time.Duration {
+	if h.RecheckEvery > 0 {
+		return h.RecheckEvery
+	}
+	return streamRecheck
+}
+
+// stillAllowed reports whether reader may go on reading, failing closed when
+// Access can't say.
+func (h *Handler) stillAllowed(ctx context.Context, reader *httpx.Principal) bool {
+	if h.Access == nil {
+		return true
+	}
+	ok, err := h.Access(ctx, reader)
+	if err != nil {
+		slog.Warn("activity: stream access check failed; ending the stream", "err", err)
+		return false
+	}
+	return ok
+}
 
 // replayHistory sends the audit events newer than the lastEventID cursor,
-// oldest first, as a connected client would have seen them. A lastEventID that
-// does not decode skips the replay, so the stream just starts live.
-func (h *Handler) replayHistory(ctx context.Context, sse *sseWriter, tenantID uuid.UUID, lastEventID string, f StreamFilter) {
+// oldest first, as a connected client would have seen them, page after page
+// until it has caught up, and has t follow on from them. It reads at most
+// maxReplayRows: further behind, it sends the cursor of the last row read and
+// reports false, for the stream to end and the client to carry on from there.
+// The cursor of a row the filters pass over is sent too, so a filtered backlog
+// is read only once. A lastEventID that does not decode skips the replay, so
+// the stream just starts live.
+func (h *Handler) replayHistory(ctx context.Context, sse *sseWriter, tenantID uuid.UUID, lastEventID string, f StreamFilter, t *auditTail) bool {
 	afterTs, afterID, err := decodeCursor(lastEventID)
 	if err != nil {
-		return // invalid Last-Event-ID — skip replay rather than erroring
+		return true // invalid Last-Event-ID — skip replay rather than erroring
 	}
-
-	rows, err := dbgen.New(h.pool).ReplayActivityHistory(ctx, dbgen.ReplayActivityHistoryParams{
-		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-		AfterTs:  afterTs,
-		AfterID:  afterID,
-	})
-	if err != nil {
-		slog.Warn("activity: replay query", "err", err)
-		return
-	}
-
-	for _, row := range rows {
-		ev := mapAuditRow(replayRowToAuditRow(row))
-		if !matchesStreamFilter(ev, f) {
-			continue
+	t.floor, t.floorID, t.newest = afterTs, afterID, afterTs
+	q := dbgen.New(h.pool)
+	for read := 0; ; {
+		rows, err := q.ReplayActivityHistory(ctx, dbgen.ReplayActivityHistoryParams{
+			TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+			AfterTs:  afterTs,
+			AfterID:  afterID,
+		})
+		if err != nil {
+			slog.Warn("activity: replay query", "err", err)
+			return false
 		}
-		sse.sendActivity(ev, ev.At)
+		sentLast := false
+		for _, row := range rows {
+			ev := mapAuditRow(replayRowToAuditRow(row))
+			afterTs, afterID, sentLast = row.CreatedAt, row.ID, false
+			t.sent[row.ID] = row.CreatedAt
+			if row.CreatedAt.After(t.newest) {
+				t.newest = row.CreatedAt
+			}
+			if matchesStreamFilter(ev, f) {
+				sse.sendActivity(ev, ev.At)
+				sentLast = true
+			}
+		}
+		if len(rows) > 0 && !sentLast {
+			sse.sendCursor(afterTs, afterID)
+		}
+		read += len(rows)
+		if len(rows) < replayPage {
+			return true
+		}
+		if read >= maxReplayRows {
+			return false
+		}
 	}
 }
 
@@ -171,7 +343,11 @@ func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
 
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	cursor := r.URL.Query().Get("cursor")
-	f := parseListFilter(r)
+	f, err := parseListFilter(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 
 	events, next, err := h.listHistory(r.Context(), tenantID, f, cursor, limit)
 	if err != nil {
@@ -181,41 +357,58 @@ func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
 	if events == nil {
 		events = []ActivityEvent{}
 	}
+	total, err := dbgen.New(h.pool).CountActivityHistory(r.Context(), historyCountParams(tenantID, f))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 
-	resp := map[string]any{"events": events}
+	resp := map[string]any{"events": events, "total": min(total, maxCountedEvents), "total_capped": total > maxCountedEvents}
 	if next != "" {
 		resp["next_cursor"] = next
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
-// listHistory returns a page of up to limit events (50 when limit is not in
-// 1..200) and the next page's cursor, or "" on the last page. Severity and
-// Category are filtered after the fetch, so it over-fetches when they are set,
-// and a filtered page can be short yet have a next page.
-func (h *Handler) listHistory(ctx context.Context, tenantID uuid.UUID, f ListFilter, cursor string, limit int) ([]ActivityEvent, string, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
-	// Fetch a larger page when post-fetch filters are active.
-	fetchLimit := limit + 1
-	if f.Severity != "" || f.Category != "" {
-		fetchLimit = min(limit*3+1, 201)
-	}
+// maxCountedEvents is how far the history's total counts; past it the total
+// says it is capped.
+const maxCountedEvents = 10000
 
-	// A zero-value pgtype (Valid=false) passes NULL, which the query treats as
-	// "no filter on this dimension".
+// historyCountParams are f's filters for CountActivityHistory, counting one
+// past maxCountedEvents.
+func historyCountParams(tenantID uuid.UUID, f ListFilter) dbgen.CountActivityHistoryParams {
+	p := historyParams(tenantID, f)
+	return dbgen.CountActivityHistoryParams{
+		TenantID: p.TenantID, Actions: p.Actions, ActorID: p.ActorID, Subject: p.Subject,
+		FromTs: p.FromTs, ToTs: p.ToTs, Q: p.Q, ResourceTypes: p.ResourceTypes, ResourceID: p.ResourceID,
+		Ip: p.Ip, Categories: p.Categories, Severities: p.Severities, MinSeverity: p.MinSeverity,
+		CountCap: maxCountedEvents + 1,
+	}
+}
+
+// historyParams are f's filters for ListActivityHistory, with no cursor or
+// limit. A zero-value pgtype (Valid=false) passes NULL, which the query treats
+// as "no filter on this dimension".
+func historyParams(tenantID uuid.UUID, f ListFilter) dbgen.ListActivityHistoryParams {
 	params := dbgen.ListActivityHistoryParams{
-		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-		Actions:  f.Types, // nil slice → NULL → no filter
-		RowLimit: int32(fetchLimit),
+		TenantID:      pgtype.UUID{Bytes: tenantID, Valid: true},
+		Actions:       f.Types, // nil slice → NULL → no filter
+		ResourceTypes: f.ResourceTypes,
+		Categories:    f.Categories,
+		Severities:    f.Severities,
+		Ip:            f.IP,
 	}
-
+	if f.MinSeverity != "" {
+		params.MinSeverity = &f.MinSeverity
+	}
 	if f.ActorID != uuid.Nil {
 		params.ActorID = pgtype.UUID{Bytes: f.ActorID, Valid: true}
 	}
 	if f.Subject != nil {
 		params.Subject = pgtype.UUID{Bytes: *f.Subject, Valid: true}
+	}
+	if f.ResourceID != nil {
+		params.ResourceID = pgtype.UUID{Bytes: *f.ResourceID, Valid: true}
 	}
 	if f.From != nil {
 		params.FromTs = pgtype.Timestamptz{Time: *f.From, Valid: true}
@@ -226,7 +419,18 @@ func (h *Handler) listHistory(ctx context.Context, tenantID uuid.UUID, f ListFil
 	if f.Search != "" {
 		params.Q = &f.Search
 	}
+	return params
+}
 
+// listHistory returns a page of up to limit events (50 when limit is not in
+// 1..200) and the next page's cursor, or "" on the last page. Every filter is
+// applied in the query, so a page is full unless it is the last.
+func (h *Handler) listHistory(ctx context.Context, tenantID uuid.UUID, f ListFilter, cursor string, limit int) ([]ActivityEvent, string, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	params := historyParams(tenantID, f)
+	params.RowLimit = int32(limit + 1) // #nosec G115 -- at most 201
 	if cursor != "" {
 		cursorTs, cursorID, err := decodeCursor(cursor)
 		if err != nil {
@@ -235,49 +439,60 @@ func (h *Handler) listHistory(ctx context.Context, tenantID uuid.UUID, f ListFil
 		params.CursorTs = pgtype.Timestamptz{Time: cursorTs, Valid: true}
 		params.CursorID = pgtype.UUID{Bytes: cursorID, Valid: true}
 	}
-
 	dbRows, err := dbgen.New(h.pool).ListActivityHistory(ctx, params)
 	if err != nil {
 		return nil, "", err
 	}
-
-	out := []ActivityEvent{}
-	more := false
+	out := make([]ActivityEvent, 0, len(dbRows))
 	for _, row := range dbRows {
-		ev := mapAuditRow(listRowToAuditRow(row))
-		if !matchesListFilter(ev, f) {
-			continue
-		}
-		if len(out) == limit {
-			more = true
-			break
-		}
-		out = append(out, ev)
+		out = append(out, mapAuditRow(listRowToAuditRow(row)))
 	}
-
-	// The next page starts after the last event returned. When the post-fetch
-	// filters leave the page short with the fetch full, rows may remain, so it
-	// starts after the last row fetched.
 	var next string
-	switch {
-	case more:
+	if len(out) > limit {
+		out = out[:limit]
 		last := out[limit-1]
 		next = encodeCursor(last.At, last.ID)
-	case len(dbRows) == fetchLimit:
-		last := dbRows[len(dbRows)-1]
-		next = encodeCursor(last.CreatedAt, last.ID)
 	}
 	return out, next, nil
 }
 
 // parseListFilter builds the ListFilter shared by history and summary from the
-// query string. Values that do not parse (actor, subject, from, to) are ignored.
-func parseListFilter(r *http.Request) ListFilter {
+// query string. Values that do not parse (actor, subject, from, to) are
+// ignored; an unknown severity or category, or a malformed resource_id or ip,
+// is refused with ErrBadRequest.
+func parseListFilter(r *http.Request) (ListFilter, error) {
+	query := r.URL.Query()
 	f := ListFilter{
-		Types:    splitCSV(r.URL.Query().Get("types")),
-		Severity: r.URL.Query().Get("severity"),
-		Category: r.URL.Query().Get("category"),
-		Search:   r.URL.Query().Get("q"),
+		Types:         splitCSV(query.Get("types")),
+		Severities:    splitCSV(query.Get("severity")),
+		MinSeverity:   query.Get("min_severity"),
+		Categories:    splitCSV(query.Get("category")),
+		Search:        query.Get("q"),
+		ResourceTypes: splitCSV(query.Get("resource_type")),
+	}
+	for _, s := range append(slices.Clone(f.Severities), f.MinSeverity) {
+		if s != "" && !slices.Contains(severities, s) {
+			return ListFilter{}, errs.ErrBadRequest.WithDetail("unknown severity " + s)
+		}
+	}
+	for _, c := range f.Categories {
+		if !slices.Contains(categories, c) {
+			return ListFilter{}, errs.ErrBadRequest.WithDetail("unknown category " + c)
+		}
+	}
+	if raw := query.Get("resource_id"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return ListFilter{}, errs.ErrBadRequest.WithDetail("invalid resource_id")
+		}
+		f.ResourceID = &id
+	}
+	if raw := query.Get("ip"); raw != "" {
+		addr, err := netip.ParseAddr(raw)
+		if err != nil {
+			return ListFilter{}, errs.ErrBadRequest.WithDetail("invalid ip")
+		}
+		f.IP = &addr
 	}
 	if raw := r.URL.Query().Get("actor"); raw != "" {
 		if id, err := uuid.Parse(raw); err == nil {
@@ -299,17 +514,24 @@ func parseListFilter(r *http.Request) ListFilter {
 			f.To = &t
 		}
 	}
-	return f
+	return f, nil
 }
 
+// The severities and categories activity gives an action.
+var (
+	severities = []string{SeverityInfo, SeveritySuccess, SeverityWarning, SeverityError, SeverityCritical}
+	categories = []string{CategoryAuthentication, CategoryAuthorization, CategorySecurity, CategoryDirectory, CategoryDeveloper, CategorySystem}
+)
+
 // Summary window and bucket bounds. The window defaults to the last 24h and is
-// capped at 90 days, so the per-tenant aggregates never scan unbounded history.
+// capped at a year and a day, so the per-tenant aggregates never scan
+// unbounded history; a long window gets buckets of up to a week.
 const (
 	summaryDefaultWindow = 24 * time.Hour
-	summaryMaxWindow     = 90 * 24 * time.Hour
+	summaryMaxWindow     = 366 * 24 * time.Hour
 	summaryDefaultBucket = int64(3600)
 	summaryMinBucket     = int64(60)
-	summaryMaxBucket     = int64(86400)
+	summaryMaxBucket     = int64(7 * 86400)
 	summaryTargetBuckets = 48
 )
 
@@ -317,6 +539,7 @@ const (
 type activitySummaryResponse struct {
 	Total          int64            `json:"total"`
 	UniqueActors   int64            `json:"unique_actors"`
+	Actors         actorCounts      `json:"actors"`
 	SecurityAlerts int64            `json:"security_alerts"`
 	BySeverity     map[string]int64 `json:"by_severity"`
 	ByCategory     map[string]int64 `json:"by_category"`
@@ -324,6 +547,15 @@ type activitySummaryResponse struct {
 	Series         []summaryBucket  `json:"series"`
 	BucketSeconds  int64            `json:"bucket_seconds"`
 	Window         summaryWindow    `json:"window"`
+}
+
+// actorCounts is how many distinct actors of each kind the summary's events
+// have: people, API keys, agents and service principals.
+type actorCounts struct {
+	People   int64 `json:"people"`
+	APIKeys  int64 `json:"api_keys"`
+	Agents   int64 `json:"agents"`
+	Services int64 `json:"services"`
 }
 
 // summaryBucket is one time slice of the summary series: Count is every event
@@ -354,7 +586,11 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	f := parseListFilter(r)
+	f, err := parseListFilter(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 
 	// The window defaults to the last 24h and is clamped to summaryMaxWindow.
 	to := time.Now().UTC()
@@ -396,14 +632,11 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 	q := dbgen.New(h.pool)
 	ctx := r.Context()
 
+	p := historyParams(tenantID, f)
 	byAction, err := q.SummarizeActivityByAction(ctx, dbgen.SummarizeActivityByActionParams{
-		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-		Actions:  f.Types,
-		ActorID:  nargUUID(f.ActorID),
-		Subject:  nargSubject(f.Subject),
-		FromTs:   pgtype.Timestamptz{Time: from, Valid: true},
-		ToTs:     pgtype.Timestamptz{Time: to, Valid: true},
-		Q:        nargSearch(f.Search),
+		TenantID: p.TenantID, Actions: p.Actions, ActorID: p.ActorID, Subject: p.Subject,
+		FromTs: p.FromTs, ToTs: p.ToTs, Q: p.Q, ResourceTypes: p.ResourceTypes, ResourceID: p.ResourceID,
+		Ip: p.Ip, Categories: p.Categories, Severities: p.Severities, MinSeverity: p.MinSeverity,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -411,13 +644,9 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	totals, err := q.SummarizeActivityTotals(ctx, dbgen.SummarizeActivityTotalsParams{
-		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-		Actions:  f.Types,
-		ActorID:  nargUUID(f.ActorID),
-		Subject:  nargSubject(f.Subject),
-		FromTs:   pgtype.Timestamptz{Time: from, Valid: true},
-		ToTs:     pgtype.Timestamptz{Time: to, Valid: true},
-		Q:        nargSearch(f.Search),
+		TenantID: p.TenantID, Actions: p.Actions, ActorID: p.ActorID, Subject: p.Subject,
+		FromTs: p.FromTs, ToTs: p.ToTs, Q: p.Q, ResourceTypes: p.ResourceTypes, ResourceID: p.ResourceID,
+		Ip: p.Ip, Categories: p.Categories, Severities: p.Severities, MinSeverity: p.MinSeverity,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -426,13 +655,9 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 
 	series, err := q.SummarizeActivityTimeSeries(ctx, dbgen.SummarizeActivityTimeSeriesParams{
 		BucketSeconds: bucket,
-		TenantID:      pgtype.UUID{Bytes: tenantID, Valid: true},
-		Actions:       f.Types,
-		ActorID:       nargUUID(f.ActorID),
-		Subject:       nargSubject(f.Subject),
-		FromTs:        pgtype.Timestamptz{Time: from, Valid: true},
-		ToTs:          pgtype.Timestamptz{Time: to, Valid: true},
-		Q:             nargSearch(f.Search),
+		TenantID:      p.TenantID, Actions: p.Actions, ActorID: p.ActorID, Subject: p.Subject,
+		FromTs: p.FromTs, ToTs: p.ToTs, Q: p.Q, ResourceTypes: p.ResourceTypes, ResourceID: p.ResourceID,
+		Ip: p.Ip, Categories: p.Categories, Severities: p.Severities, MinSeverity: p.MinSeverity,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -482,8 +707,12 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, activitySummaryResponse{
-		Total:          totals.Total,
-		UniqueActors:   totals.UniqueActors,
+		Total:        totals.Total,
+		UniqueActors: totals.UniqueActors,
+		Actors: actorCounts{
+			People: totals.UniqueActors, APIKeys: totals.UniqueApiKeys,
+			Agents: totals.UniqueAgents, Services: totals.UniqueServices,
+		},
 		SecurityAlerts: bySeverity[SeverityCritical],
 		BySeverity:     bySeverity,
 		ByCategory:     byCategory,
@@ -516,6 +745,35 @@ type activityRelatedSet struct {
 // related serves GET /v1/activity/{id}/related: the anchor event, the events
 // sharing its request_id, and the same actor's events within the time window.
 // An unknown or other-tenant id is a 404; no event appears in both lists.
+// event serves GET /tenants/{tenantID}/activity/{id}: one of the
+// organisation's events, with its metadata, actor and browser. Another
+// organisation's id answers 404, like an unknown one.
+func (h *Handler) event(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := httpx.PathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid event id"))
+		return
+	}
+	row, err := dbgen.New(h.pool).GetActivityEventByID(r.Context(), dbgen.GetActivityEventByIDParams{
+		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+		ID:       id,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, mapAuditRow(getRowToAuditRow(row)))
+}
+
 func (h *Handler) related(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := httpx.RequireTenant(r)
 	if err != nil {
@@ -611,30 +869,6 @@ func (h *Handler) related(w http.ResponseWriter, r *http.Request) {
 			ByActor:     byActor,
 		},
 	})
-}
-
-// nargUUID maps a possibly-Nil actor id to a nullable pgtype.UUID (Nil → NULL).
-func nargUUID(id uuid.UUID) pgtype.UUID {
-	if id == uuid.Nil {
-		return pgtype.UUID{}
-	}
-	return pgtype.UUID{Bytes: id, Valid: true}
-}
-
-// nargSubject maps a possibly-nil subject id to a nullable pgtype.UUID.
-func nargSubject(id *uuid.UUID) pgtype.UUID {
-	if id == nil {
-		return pgtype.UUID{}
-	}
-	return pgtype.UUID{Bytes: *id, Valid: true}
-}
-
-// nargSearch maps an empty search string to a nil *string (NULL predicate).
-func nargSearch(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
 }
 
 // encodeCursor packs (createdAt, id) into an opaque base64url token whose text
@@ -873,7 +1107,7 @@ func (s *sseWriter) write(frame string) {
 	defer s.mu.Unlock()
 	// A failed write means the client has gone; the handler returns when the
 	// request context is cancelled, so there is nothing to do here.
-	_, _ = fmt.Fprint(s.w, frame)
+	_, _ = fmt.Fprint(s.w, frame) // #nosec G705 -- a text/event-stream of JSON frames and server-encoded cursors, never HTML
 	s.flusher.Flush()
 }
 
@@ -887,6 +1121,19 @@ func (s *sseWriter) sendActivity(ev ActivityEvent, cursorAt time.Time) {
 		return
 	}
 	s.write(fmt.Sprintf("id: %s\nevent: activity\ndata: %s\n\n", encodeCursor(cursorAt, ev.ID), raw))
+}
+
+// sendCursor writes a frame holding only the cursor of the audit row at at,
+// id: the client keeps it as its Last-Event-ID without an event to show.
+func (s *sseWriter) sendCursor(at time.Time, id uuid.UUID) {
+	s.write(fmt.Sprintf("id: %s\n\n", encodeCursor(at, id)))
+}
+
+// retryLater sets the client's reconnect delay to shutdownRetry, for a stream
+// about to end so the client reconnects: the server is stopping, or the
+// client must catch up from the audit log.
+func (s *sseWriter) retryLater() {
+	s.write(fmt.Sprintf("retry: %d\n\n", shutdownRetry.Milliseconds()))
 }
 
 // keepAlive sends an SSE comment frame so proxies do not close an idle

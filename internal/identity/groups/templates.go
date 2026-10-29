@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -220,9 +221,57 @@ func (s *Service) DeleteTemplate(
 
 // ApplyTemplate creates a template's tree as groups under an optional parent, in
 // one transaction: a half-applied tree is worse than none.
+// ApplyOptions are where a template's groups go and what they're called:
+// under ParentID (nil: at the root), each named Prefix + its template name, and
+// the template's one top group named RootName instead, when given.
+type ApplyOptions struct {
+	ParentID *uuid.UUID
+	Prefix   string
+	RootName string
+}
+
+// maxGroupNameRunes bounds a group name a template produces.
+const maxGroupNameRunes = 200
+
+// named returns nodes with the names applying them under o gives, refusing a
+// root name for a template without exactly one top group and any name left
+// empty or longer than maxGroupNameRunes.
+func (o ApplyOptions) named(nodes []TemplateNode) ([]TemplateNode, error) {
+	if strings.TrimSpace(o.RootName) != "" && len(nodes) != 1 {
+		return nil, errs.ErrValidationFailed.WithFields([]errs.FieldError{{Field: "root_name", Code: "invalid",
+			Message: "This template has more than one top group, so there is none to rename."}})
+	}
+	var rename func(nodes []TemplateNode, top bool) ([]TemplateNode, error)
+	rename = func(nodes []TemplateNode, top bool) ([]TemplateNode, error) {
+		out := make([]TemplateNode, len(nodes))
+		for i, n := range nodes {
+			name := n.Name
+			if top && strings.TrimSpace(o.RootName) != "" {
+				name = o.RootName
+			}
+			n.Name = strings.TrimSpace(o.Prefix + strings.TrimSpace(name))
+			if n.Name == "" || utf8.RuneCountInString(n.Name) > maxGroupNameRunes {
+				return nil, errs.ErrValidationFailed.WithFields([]errs.FieldError{{Field: "prefix", Code: "too_long",
+					Message: fmt.Sprintf("Group names can be at most %d characters; %q would be longer.", maxGroupNameRunes, n.Name)}})
+			}
+			kids, err := rename(n.Children, false)
+			if err != nil {
+				return nil, err
+			}
+			n.Children = kids
+			out[i] = n
+		}
+		return out, nil
+	}
+	return rename(nodes, true)
+}
+
+// ApplyTemplate makes the template's groups in one transaction, named as opts
+// says; a name already taken makes none.
 func (s *Service) ApplyTemplate(
-	ctx context.Context, id, tenantID uuid.UUID, parentID *uuid.UUID, actor audit.Actor,
+	ctx context.Context, id, tenantID uuid.UUID, opts ApplyOptions, actor audit.Actor,
 ) ([]Group, error) {
+	parentID := opts.ParentID
 	var raw []byte
 	var tmplName string
 	err := s.pool.QueryRow(ctx,
@@ -236,6 +285,9 @@ func (s *Service) ApplyTemplate(
 	}
 	var nodes []TemplateNode
 	if err := json.Unmarshal(raw, &nodes); err != nil {
+		return nil, err
+	}
+	if nodes, err = opts.named(nodes); err != nil {
 		return nil, err
 	}
 
@@ -263,7 +315,7 @@ func (s *Service) ApplyTemplate(
 	}
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "group_template.applied",
 		"group_template", id,
-		map[string]any{"name": tmplName, "groups_created": len(created)})); err != nil {
+		map[string]any{"name": tmplName, "groups_created": len(created), "prefix": opts.Prefix, "root_name": opts.RootName})); err != nil {
 		return nil, err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{

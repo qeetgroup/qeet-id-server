@@ -6,6 +6,7 @@ package saml
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -30,10 +32,15 @@ import (
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/ssosync"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 const (
@@ -44,33 +51,48 @@ const (
 )
 
 // Connection is a tenant's connection to an external SAML IdP.
-// AllowIdPInitiated isn't in the generated queries, so it is read separately.
+// AllowIdPInitiated and GroupsAttribute aren't in the generated connection
+// queries, so they are read separately. GroupsAttribute names the attribute
+// carrying a person's groups; "" reads the common ones (assertedGroups).
+// Certificates are every signing certificate it trusts; IdpCertificate is the
+// oldest of them. MetadataURL is where it refreshes its IdP settings from.
 type Connection struct {
-	ID                uuid.UUID  `json:"id"`
-	TenantID          uuid.UUID  `json:"tenant_id"`
-	Name              string     `json:"name"`
-	IdpEntityID       string     `json:"idp_entity_id"`
-	IdpSSOURL         string     `json:"idp_sso_url"`
-	IdpCertificate    string     `json:"idp_certificate"`
-	EmailAttribute    string     `json:"email_attribute"`
-	NameAttribute     string     `json:"name_attribute"`
-	Status            string     `json:"status"`
-	AllowIdPInitiated bool       `json:"allow_idp_initiated"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
-	LastLoginAt       *time.Time `json:"last_login_at"`
+	ID                uuid.UUID     `json:"id"`
+	TenantID          uuid.UUID     `json:"tenant_id"`
+	Name              string        `json:"name"`
+	IdpEntityID       string        `json:"idp_entity_id"`
+	IdpSSOURL         string        `json:"idp_sso_url"`
+	IdpCertificate    string        `json:"idp_certificate"`
+	Certificates      []Certificate `json:"certificates"`
+	MetadataURL       *string       `json:"metadata_url"`
+	RefreshedAt       *time.Time    `json:"metadata_refreshed_at"`
+	MetadataError     *string       `json:"metadata_error"`
+	EmailAttribute    string        `json:"email_attribute"`
+	NameAttribute     string        `json:"name_attribute"`
+	GroupsAttribute   string        `json:"groups_attribute"`
+	Status            string        `json:"status"`
+	AllowIdPInitiated bool          `json:"allow_idp_initiated"`
+	CreatedAt         time.Time     `json:"created_at"`
+	UpdatedAt         time.Time     `json:"updated_at"`
+	LastLoginAt       *time.Time    `json:"last_login_at"`
 }
 
 // Service manages a tenant's IdP connections and runs SP-initiated sign-in.
 // nextRequestSweep and nextReplaySweep throttle deleting expired AuthnRequest and
 // replay rows, separately so a busy login or ACS path can't starve the other.
+// IdP metadata is fetched with metadataHTTP, within the egress policy; box
+// seals the connections' SP keys.
 type Service struct {
 	pool             *pgxpool.Pool
 	q                *dbgen.Queries
 	auth             *auth.Service
 	appBaseURL       string
+	gate             PlanGate
 	nextRequestSweep atomic.Int64
 	nextReplaySweep  atomic.Int64
+	egress           *egress.Policy
+	metadataHTTP     *http.Client
+	box              *envelope.Cipher
 }
 
 // replaySweepInterval is how often any one replica collects expired SAML
@@ -88,16 +110,29 @@ func sweepDue(next *atomic.Int64) bool {
 
 // NewService returns the SAML service.
 func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string) *Service {
-	return &Service{
+	s := &Service{
 		pool:       pool,
 		q:          dbgen.New(pool),
 		auth:       authSvc,
 		appBaseURL: strings.TrimRight(appBaseURL, "/"),
 	}
+	s.SetEgressPolicy(egress.PublicPolicy())
+	return s
 }
 
 // Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
+
+// SetPlanGate wires the plan-feature gate (nil allows all features).
+func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
+
+// RequireSSO refuses with errs.ErrUpgradeRequired when the tenant's plan
+// doesn't include enterprise SSO: setting up a connection and every sign-in
+// through one need it. It reads on the pool, so callers run it before they
+// open the transaction Create joins.
+func (s *Service) RequireSSO(ctx context.Context, tenantID uuid.UUID) error {
+	return requireSSO(ctx, s.gate, tenantID)
+}
 
 // toConnection maps a sqlc-generated row to the API-facing Connection type.
 // The other connection queries return rows with the same fields, which
@@ -115,6 +150,7 @@ func toConnection(r dbgen.GetSamlConnectionRow) *Connection {
 		IdpEntityID:    r.IdpEntityID,
 		IdpSSOURL:      r.IdpSsoUrl,
 		IdpCertificate: r.IdpCertificate,
+		Certificates:   []Certificate{},
 		EmailAttribute: r.EmailAttribute,
 		NameAttribute:  r.NameAttribute,
 		Status:         r.Status,
@@ -126,20 +162,43 @@ func toConnection(r dbgen.GetSamlConnectionRow) *Connection {
 
 // CreateInput is what Create takes.
 type CreateInput struct {
-	Name           string `json:"name"`
-	IdpEntityID    string `json:"idp_entity_id"`
-	IdpSSOURL      string `json:"idp_sso_url"`
-	IdpCertificate string `json:"idp_certificate"`
-	EmailAttribute string `json:"email_attribute"`
-	NameAttribute  string `json:"name_attribute"`
-	Status         string `json:"status"`
+	Name            string `json:"name"`
+	IdpEntityID     string `json:"idp_entity_id"`
+	IdpSSOURL       string `json:"idp_sso_url"`
+	IdpCertificate  string `json:"idp_certificate"`
+	EmailAttribute  string `json:"email_attribute"`
+	NameAttribute   string `json:"name_attribute"`
+	GroupsAttribute string `json:"groups_attribute"`
+	Status          string `json:"status"`
+}
+
+// errGroupsAttributeInvalid refuses a groups attribute over 256 characters.
+var errGroupsAttributeInvalid = errs.ErrValidationFailed.WithFields([]errs.FieldError{{
+	Field: "groups_attribute", Code: "too_long", Message: "Name the groups attribute in up to 256 characters.",
+}})
+
+// validGroupsAttribute trims attribute and reports whether it fits.
+func validGroupsAttribute(attribute *string) bool {
+	*attribute = strings.TrimSpace(*attribute)
+	return utf8.RuneCountInString(*attribute) <= 256
 }
 
 // check trims the IdP SSO URL, then requires it to pass validIdPSSOURL, the
-// certificate to parse and the status, if given, to be a known one.
+// certificate to parse, the status, if given, to be a known one and the groups
+// attribute to fit. A draft named before the IdP's details are known needs
+// none of them, and can't be anything but a draft.
 func (in *CreateInput) check() error {
 	if in.Status != "" && !validStatus(in.Status) {
 		return errs.ErrSAMLStatusInvalid
+	}
+	if !validGroupsAttribute(&in.GroupsAttribute) {
+		return errGroupsAttributeInvalid
+	}
+	if in.awaitsIdP() {
+		if in.Status != "" && in.Status != "draft" {
+			return errs.ErrSAMLConnectionIncomplete
+		}
+		return nil
 	}
 	in.IdpSSOURL = strings.TrimSpace(in.IdpSSOURL)
 	if !validIdPSSOURL(in.IdpSSOURL) {
@@ -149,6 +208,13 @@ func (in *CreateInput) check() error {
 		return errs.ErrSAMLCertificateInvalid
 	}
 	return nil
+}
+
+// awaitsIdP reports whether the connection is named before any of its IdP's
+// details: entity ID, SSO URL and certificate.
+func (in *CreateInput) awaitsIdP() bool {
+	return strings.TrimSpace(in.IdpEntityID) == "" && strings.TrimSpace(in.IdpSSOURL) == "" &&
+		strings.TrimSpace(in.IdpCertificate) == ""
 }
 
 // validStatus reports whether status is one a connection or service provider
@@ -167,7 +233,8 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 	if status == "" {
 		status = "draft"
 	}
-	row, err := s.q.WithTx(tx).InsertSamlConnection(ctx, dbgen.InsertSamlConnectionParams{
+	q := s.q.WithTx(tx)
+	row, err := q.InsertSamlConnection(ctx, dbgen.InsertSamlConnectionParams{
 		TenantID:       tenantID,
 		Name:           in.Name,
 		IdpEntityID:    in.IdpEntityID,
@@ -180,7 +247,28 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 	if err != nil {
 		return nil, err
 	}
-	return toConnection(dbgen.GetSamlConnectionRow(row)), nil
+	if !in.awaitsIdP() {
+		cert, err := parseCertificate(in.IdpCertificate)
+		if err != nil {
+			return nil, errs.ErrSAMLCertificateInvalid
+		}
+		if err := replaceCertificates(ctx, q, row.ID, tenantID, cert); err != nil {
+			return nil, err
+		}
+	}
+	out := toConnection(dbgen.GetSamlConnectionRow(row))
+	if out.Certificates, err = listCertificates(ctx, q, row.ID, tenantID); err != nil {
+		return nil, err
+	}
+	if in.GroupsAttribute != "" {
+		if err := q.SetSamlGroupsAttribute(ctx, dbgen.SetSamlGroupsAttributeParams{
+			ID: out.ID, TenantID: tenantID, GroupsAttribute: in.GroupsAttribute,
+		}); err != nil {
+			return nil, err
+		}
+		out.GroupsAttribute = in.GroupsAttribute
+	}
+	return out, nil
 }
 
 // List returns the tenant's SAML connections.
@@ -197,8 +285,31 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, e
 	if err != nil {
 		return nil, err
 	}
+	attributes, err := s.q.ListSamlGroupsAttributes(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	groups := make(map[uuid.UUID]string, len(attributes))
+	for _, a := range attributes {
+		groups[a.ID] = a.GroupsAttribute
+	}
+	certs, err := s.q.ListSamlCertificatesForTenant(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	byConnection := map[uuid.UUID][]Certificate{}
+	for _, c := range certs {
+		byConnection[c.ConnectionID] = append(byConnection[c.ConnectionID], toCertificate(c))
+	}
 	for i := range out {
 		out[i].AllowIdPInitiated = flags[out[i].ID]
+		out[i].GroupsAttribute = groups[out[i].ID]
+		if c := byConnection[out[i].ID]; c != nil {
+			out[i].Certificates = c
+		}
+	}
+	if err := s.withMetadataSources(ctx, tenantID, out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -239,7 +350,22 @@ func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Connection,
 	if err != nil {
 		return nil, err
 	}
+	out.GroupsAttribute, err = s.groupsAttribute(ctx, out)
+	if err != nil {
+		return nil, err
+	}
+	if out.Certificates, err = listCertificates(ctx, s.q, id, tenantID); err != nil {
+		return nil, err
+	}
+	if err := withMetadataSource(ctx, s.q, out); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+// groupsAttribute returns the attribute conn reads a person's groups from.
+func (s *Service) groupsAttribute(ctx context.Context, conn *Connection) (string, error) {
+	return s.q.GetSamlGroupsAttribute(ctx, dbgen.GetSamlGroupsAttributeParams{ID: conn.ID, TenantID: conn.TenantID})
 }
 
 // getByID loads a connection without tenant scoping, for the public SSO
@@ -256,7 +382,8 @@ func (s *Service) getByID(ctx context.Context, id uuid.UUID) (*Connection, error
 }
 
 // UpdateInput changes a connection; a nil field is kept. AllowIdPInitiated opts
-// into unsolicited assertions (see AllowsIdPInitiated).
+// into unsolicited assertions (see AllowsIdPInitiated). IdpCertificate becomes
+// the only certificate the connection trusts.
 type UpdateInput struct {
 	Name              *string `json:"name"`
 	IdpEntityID       *string `json:"idp_entity_id"`
@@ -264,6 +391,7 @@ type UpdateInput struct {
 	IdpCertificate    *string `json:"idp_certificate"`
 	EmailAttribute    *string `json:"email_attribute"`
 	NameAttribute     *string `json:"name_attribute"`
+	GroupsAttribute   *string `json:"groups_attribute"`
 	Status            *string `json:"status"`
 	AllowIdPInitiated *bool   `json:"allow_idp_initiated"`
 }
@@ -282,6 +410,9 @@ func (in *UpdateInput) check() error {
 			return errs.ErrSAMLCertificateInvalid
 		}
 	}
+	if in.GroupsAttribute != nil && !validGroupsAttribute(in.GroupsAttribute) {
+		return errGroupsAttributeInvalid
+	}
 	return nil
 }
 
@@ -291,7 +422,8 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 	if err := in.check(); err != nil {
 		return nil, err
 	}
-	r, err := s.q.WithTx(tx).UpdateSamlConnection(ctx, dbgen.UpdateSamlConnectionParams{
+	q := s.q.WithTx(tx)
+	r, err := q.UpdateSamlConnection(ctx, dbgen.UpdateSamlConnectionParams{
 		ID:             id,
 		TenantID:       tenantID,
 		Name:           in.Name,
@@ -308,6 +440,15 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 	if err != nil {
 		return nil, err
 	}
+	if in.IdpCertificate != nil {
+		cert, err := parseCertificate(*in.IdpCertificate)
+		if err != nil {
+			return nil, errs.ErrSAMLCertificateInvalid
+		}
+		if err := replaceCertificates(ctx, q, id, tenantID, cert); err != nil {
+			return nil, err
+		}
+	}
 	// The generated update doesn't include allow_idp_initiated.
 	if in.AllowIdPInitiated != nil {
 		if _, err := tx.Exec(ctx, `
@@ -318,12 +459,35 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 			return nil, err
 		}
 	}
+	if in.GroupsAttribute != nil {
+		if err := s.q.WithTx(tx).SetSamlGroupsAttribute(ctx, dbgen.SetSamlGroupsAttributeParams{
+			ID: id, TenantID: tenantID, GroupsAttribute: *in.GroupsAttribute,
+		}); err != nil {
+			return nil, err
+		}
+	}
 	out := toConnection(dbgen.GetSamlConnectionRow(r))
+	if out.GroupsAttribute, err = s.q.WithTx(tx).GetSamlGroupsAttribute(ctx, dbgen.GetSamlGroupsAttributeParams{
+		ID: id, TenantID: tenantID,
+	}); err != nil {
+		return nil, err
+	}
 	if in.AllowIdPInitiated != nil {
 		out.AllowIdPInitiated = *in.AllowIdPInitiated
 	} else if err := tx.QueryRow(ctx, `
 		SELECT allow_idp_initiated FROM tenant.saml_connections WHERE id = $1 AND tenant_id = $2
 	`, id, tenantID).Scan(&out.AllowIdPInitiated); err != nil {
+		return nil, err
+	}
+	if out.Certificates, err = listCertificates(ctx, q, id, tenantID); err != nil {
+		return nil, err
+	}
+	// A connection that signs people in has its IdP's details, however it got
+	// them: given here, imported or read from metadata.
+	if out.Status == "active" && (out.IdpEntityID == "" || out.IdpSSOURL == "" || len(out.Certificates) == 0) {
+		return nil, errs.ErrSAMLConnectionIncomplete
+	}
+	if err := withMetadataSource(ctx, q, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -391,14 +555,26 @@ func (s *Service) TestConnection(ctx context.Context, id, tenantID uuid.UUID) (*
 	add("IdP entity ID", strings.TrimSpace(c.IdpEntityID) != "", "The IdP's entity ID (issuer) must be set.")
 	add("IdP SSO URL", validIdPSSOURL(strings.TrimSpace(c.IdpSSOURL)), "Must be an absolute https:// URL.")
 
-	cert, cerr := parseCertificate(c.IdpCertificate)
-	add("Signing certificate", cerr == nil, "Must be a valid PEM block or base64-encoded DER certificate.")
-	if cerr == nil {
+	parsed := len(c.Certificates) > 0
+	for _, cert := range c.Certificates {
+		parsed = parsed && cert.NotAfter != nil
+	}
+	add("Signing certificate", parsed, "Each must be a valid PEM block or base64-encoded DER certificate.")
+	if parsed {
+		// Valid while any certificate is; report the furthest expiry.
 		now := time.Now()
-		valid := now.After(cert.NotBefore) && now.Before(cert.NotAfter)
-		detail := "Valid until " + cert.NotAfter.Format("2006-01-02") + "."
+		var valid bool
+		var until, latest time.Time
+		for _, cert := range c.Certificates {
+			if now.After(*cert.NotBefore) && now.Before(*cert.NotAfter) {
+				valid = true
+				until = later(until, *cert.NotAfter)
+			}
+			latest = later(latest, *cert.NotAfter)
+		}
+		detail := "Valid until " + until.Format("2006-01-02") + "."
 		if !valid {
-			detail = "Certificate is expired or not yet valid (expires " + cert.NotAfter.Format("2006-01-02") + ")."
+			detail = "Certificate is expired or not yet valid (expires " + latest.Format("2006-01-02") + ")."
 		}
 		add("Certificate validity period", valid, detail)
 	}
@@ -406,6 +582,14 @@ func (s *Service) TestConnection(ctx context.Context, id, tenantID uuid.UUID) (*
 	add("Email attribute mapping", strings.TrimSpace(c.EmailAttribute) != "", "Needed to resolve each user's email from the SAML assertion.")
 
 	return res, nil
+}
+
+// later returns whichever of a and b is later.
+func later(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
+	}
+	return a
 }
 
 // parseCertificate accepts a PEM block or bare base64 DER and returns the cert.
@@ -443,13 +627,23 @@ func (h *Handler) publicBase(r *http.Request) string {
 func spEntityID(base string, id uuid.UUID) string { return base + "/saml/metadata/" + id.String() }
 func acsURL(base string, id uuid.UUID) string     { return base + "/saml/acs/" + id.String() }
 
+// SPAddresses are what an IdP is told about a connection's service provider:
+// its entity ID, where it receives assertions, and where its metadata is.
+type SPAddresses struct {
+	EntityID    string `json:"sp_entity_id"`
+	ACSURL      string `json:"acs_url"`
+	MetadataURL string `json:"sp_metadata_url"`
+}
+
+// Addresses returns connection id's service provider addresses on base, the
+// API's public origin. The entity ID is the metadata's own URL.
+func Addresses(base string, id uuid.UUID) SPAddresses {
+	return SPAddresses{EntityID: spEntityID(base, id), ACSURL: acsURL(base, id), MetadataURL: spEntityID(base, id)}
+}
+
 // buildSP returns the gosaml2 service provider for conn, with its entity ID,
-// audience and ACS URL built on base.
-func (s *Service) buildSP(base string, conn *Connection) (*saml2.SAMLServiceProvider, error) {
-	cert, err := parseCertificate(conn.IdpCertificate)
-	if err != nil {
-		return nil, err
-	}
+// audience and ACS URL built on base, trusting signatures by certs.
+func (s *Service) buildSP(base string, conn *Connection, certs []*x509.Certificate) *saml2.SAMLServiceProvider {
 	return &saml2.SAMLServiceProvider{
 		IdentityProviderSSOURL:      conn.IdpSSOURL,
 		IdentityProviderIssuer:      conn.IdpEntityID,
@@ -457,10 +651,87 @@ func (s *Service) buildSP(base string, conn *Connection) (*saml2.SAMLServiceProv
 		AssertionConsumerServiceURL: acsURL(base, conn.ID),
 		AudienceURI:                 spEntityID(base, conn.ID),
 		SignAuthnRequests:           false,
-		IDPCertificateStore: &dsig.MemoryX509CertificateStore{
-			Roots: []*x509.Certificate{cert},
-		},
-	}, nil
+		IDPCertificateStore:         &dsig.MemoryX509CertificateStore{Roots: certs},
+	}
+}
+
+// assertionClockSkew is how far the IdP's clock may be from ours: an assertion
+// is accepted this long before its NotBefore and after its NotOnOrAfter.
+const assertionClockSkew = 3 * time.Minute
+
+// validateResponse checks the encoded SAMLResponse against each of the IdP's
+// certificates valid at now in turn, so one signed with any of them is
+// accepted, and returns the response and its assertion. Each attempt trusts a
+// single certificate, so a signature without KeyInfo is checked against each.
+//
+// gosaml2 checks the expiry times on a clock assertionClockSkew behind now, and
+// withinValidity the whole window either way; the signature, issuer, audience,
+// recipient and destination checks are unchanged. key, when not nil, decrypts
+// an EncryptedAssertion, which must still be signed. A signed assertion whose
+// conditions fail comes back with ErrSAMLAssertionConditions, for a test
+// sign-in to report what it asserted.
+func (s *Service) validateResponse(base string, conn *Connection, certs []*x509.Certificate, key *tls.Certificate, encoded string, now time.Time) (*samltypes.Response, *saml2.AssertionInfo, error) {
+	var failures []error
+	for _, cert := range certs {
+		if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
+			failures = append(failures, fmt.Errorf("certificate %s is outside its validity period", fingerprint(cert)))
+			continue
+		}
+		sp := s.buildSP(base, conn, []*x509.Certificate{cert})
+		sp.Clock = dsig.NewFakeClockAt(now.Add(-assertionClockSkew))
+		if key != nil {
+			sp.SPKeyStore = dsig.TLSCertKeyStore(*key)
+		}
+		response, err := sp.ValidateEncodedResponse(encoded)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		info, err := sp.RetrieveAssertionInfo(encoded)
+		if err != nil {
+			slog.Warn("saml acs: assertion validation failed", "err", err, "connection", conn.ID)
+			return nil, nil, errs.ErrSAMLAssertionInvalid.Wrap(err)
+		}
+		current := withinValidity(info.Assertions, now)
+		elsewhere := info.WarningInfo != nil && info.WarningInfo.NotInAudience
+		if !current || elsewhere {
+			slog.Warn("saml acs: assertion conditions not met", "connection", conn.ID,
+				"invalid_time", !current, "not_in_audience", elsewhere)
+			why := "the assertion is outside its validity period"
+			if elsewhere {
+				why = "the assertion's audience isn't this connection's SP entity ID"
+			}
+			return response, info, errs.ErrSAMLAssertionConditions.Wrap(errors.New(why))
+		}
+		return response, info, nil
+	}
+	slog.Warn("saml acs: response validation failed", "err", errors.Join(failures...), "connection", conn.ID)
+	return nil, nil, errs.ErrSAMLAssertionInvalid.Wrap(errors.Join(failures...))
+}
+
+// withinValidity reports whether every assertion's Conditions hold at now,
+// allowing assertionClockSkew either way.
+func withinValidity(assertions []samltypes.Assertion, now time.Time) bool {
+	if len(assertions) == 0 {
+		return false
+	}
+	for _, a := range assertions {
+		if a.Conditions == nil {
+			return false
+		}
+		notBefore, err := time.Parse(time.RFC3339, a.Conditions.NotBefore)
+		if err != nil {
+			return false
+		}
+		notOnOrAfter, err := time.Parse(time.RFC3339, a.Conditions.NotOnOrAfter)
+		if err != nil {
+			return false
+		}
+		if now.Add(assertionClockSkew).Before(notBefore) || !now.Add(-assertionClockSkew).Before(notOnOrAfter) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) storeAuthnRequest(ctx context.Context, connectionID uuid.UUID, requestID string) error {
@@ -545,22 +816,63 @@ func (s *Service) ConsumeValidatedResponse(ctx context.Context, connectionID uui
 	return tx.Commit(ctx)
 }
 
-// findOrCreateUser returns the user linked to the NameID subject, else the user
-// with the asserted email, else a new user, and links the subject. The account
-// must have tenantID as its home, and an adopted one a verified address. One
-// transaction, so concurrent logins can't duplicate rows.
-func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, subject, email, name string) (uuid.UUID, error) {
+// signInStatus refuses a sign-in through a connection that isn't active: a
+// draft one is still being set up, so it signs nobody in until an
+// administrator turns it on.
+func signInStatus(status string) error {
+	switch status {
+	case "active":
+		return nil
+	case "draft":
+		return errs.ErrSAMLConnectionDraft
+	}
+	return errs.ErrSAMLConnectionDisabled
+}
+
+// assertion is what a validated SAML assertion says about the person it signs
+// in: groupsWithheld means the IdP left their groups out (assertedGroups).
+type assertion struct {
+	subject, email, name string
+	groups               []string
+	groupsWithheld       bool
+}
+
+// findOrCreateUser returns the user the connection linked to the NameID
+// subject, else the user with the asserted email, else a new user, and links
+// the subject to the connection. An address is adopted or given an account
+// only on a domain the organisation manages, a new account only where that
+// domain has just-in-time provisioning on, and an adopted account must have
+// tenantID as its home, a verified address, and not administer the
+// organisation. The account's profile and groups are then brought in step
+// with the assertion (ssosync.Apply), recorded as actor's. One transaction,
+// so concurrent logins can't duplicate rows.
+func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UUID, a assertion, actor audit.Actor) (uuid.UUID, error) {
+	subject, email, name := a.subject, a.email, a.name
+	// Read before the transaction: it reads every organisation's domains.
+	domain, managed, err := domainverify.ManagingDomain(postgres.AcrossTenants(ctx), s.pool, email)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	manager := domain.TenantID
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
+	sync := func(userID uuid.UUID) error {
+		return ssosync.Apply(ctx, tx, ssosync.SignIn{
+			TenantID: tenantID, UserID: userID, ConnectionID: connID, Provider: provider,
+			DisplayName: name, Email: email, EmailManaged: managed && manager == tenantID,
+			Groups: a.groups, GroupsWithheld: a.groupsWithheld, Actor: actor,
+		})
+	}
 
 	userID, err := q.GetExternalIdentityUser(ctx, dbgen.GetExternalIdentityUserParams{
-		TenantID: tenantID,
-		Provider: provider,
-		Subject:  subject,
+		TenantID:     tenantID,
+		Provider:     provider,
+		ConnectionID: connID,
+		Subject:      subject,
 	})
 	if err == nil {
 		// A linked subject signs in only while this organisation is still the
@@ -572,14 +884,26 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, subj
 		if !home {
 			return uuid.Nil, errs.ErrSAMLUserTenantMismatch
 		}
+		if err := sync(userID); err != nil {
+			return uuid.Nil, err
+		}
 		return userID, tx.Commit(ctx)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, err
 	}
+	// The assertion proves only that this connection's IdP vouched for the
+	// address. Anyone who can configure a connection runs one, so it speaks
+	// only for the organisation's own domains.
+	if !managed || manager != tenantID {
+		return uuid.Nil, errs.ErrSAMLEmailDomainUnverified
+	}
 
 	userID, err = q.GetUserByEmail(ctx, email)
 	if errors.Is(err, pgx.ErrNoRows) {
+		if !domain.JIT {
+			return uuid.Nil, errs.ErrSAMLJITNotAllowed
+		}
 		var displayName *string
 		if name != "" {
 			displayName = &name
@@ -595,10 +919,9 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, subj
 	} else if err != nil {
 		return uuid.Nil, err
 	} else {
-		// The email may be another tenant's user's (emails are globally unique), and
-		// the assertion only proves this connection's IdP vouched for it. Otherwise
-		// anyone with a connection to an IdP they control could assert a victim's
-		// address and receive the victim's tokens.
+		// Emails are globally unique, so the address may be another tenant's
+		// user's; and an administrator keeps the credentials they have, or the
+		// connection's IdP could take over an owner.
 		home, herr := identitylink.HomeIn(ctx, tx, userID, tenantID)
 		if herr != nil {
 			return uuid.Nil, herr
@@ -613,15 +936,29 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, subj
 		if !verified {
 			return uuid.Nil, errs.ErrSAMLAccountUnverified
 		}
+		if err := identitylink.MarkAddressVerified(ctx, tx, userID); err != nil {
+			return uuid.Nil, err
+		}
+		admin, aerr := identitylink.Administers(ctx, tx, userID, tenantID)
+		if aerr != nil {
+			return uuid.Nil, aerr
+		}
+		if admin {
+			return uuid.Nil, errs.ErrSAMLAccountAdministers
+		}
 	}
 
 	if err := q.LinkExternalIdentity(ctx, dbgen.LinkExternalIdentityParams{
-		UserID:   userID,
-		TenantID: tenantID,
-		Provider: provider,
-		Subject:  subject,
-		Email:    &email,
+		UserID:       userID,
+		TenantID:     tenantID,
+		Provider:     provider,
+		ConnectionID: connID,
+		Subject:      subject,
+		Email:        &email,
 	}); err != nil {
+		return uuid.Nil, err
+	}
+	if err := sync(userID); err != nil {
 		return uuid.Nil, err
 	}
 	return userID, tx.Commit(ctx)
@@ -687,6 +1024,20 @@ type Handler struct {
 	Service       *Service
 	IdP           *IdP
 	PublicBaseURL string
+	CookieSecure  bool // the browser-binding cookie's Secure attribute; off only in development
+}
+
+// binding ties an SP-initiated sign-in to the browser that began it, so the
+// ACS completes it only there, or whoever began one could post its answer
+// from someone else's browser and sign them in as themselves. SameSite=None,
+// as the IdP posts its answer cross-site; Lax where the cookie can't be Secure
+// (development).
+func (h *Handler) binding() httpx.BindingCookie {
+	sameSite := http.SameSiteNoneMode
+	if !h.CookieSecure {
+		sameSite = http.SameSiteLaxMode
+	}
+	return httpx.BindingCookie{Name: "qe_saml", Secure: h.CookieSecure, SameSite: sameSite, MaxAge: authnRequestTTL}
 }
 
 // Mount registers the SAML routes on r.
@@ -698,6 +1049,10 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Patch("/tenants/{tenantID}/saml/{id}", h.update)
 	r.Post("/tenants/{tenantID}/saml/{id}/test", h.test)
 	r.Delete("/tenants/{tenantID}/saml/{id}", h.del)
+	r.Post("/tenants/{tenantID}/saml/import", h.importConnection)
+	r.Post("/tenants/{tenantID}/saml/{id}/metadata", h.applyMetadata)
+	r.Post("/tenants/{tenantID}/saml/{id}/certificates", h.addCertificate)
+	r.Delete("/tenants/{tenantID}/saml/{id}/certificates/{certificateID}", h.removeCertificate)
 
 	// IdP side: downstream Service Providers that consume Qeet as their IdP.
 	if h.IdP != nil {
@@ -706,6 +1061,11 @@ func (h *Handler) Mount(r chi.Router) {
 		r.Get("/tenants/{tenantID}/saml-providers/{id}", h.getSP)
 		r.Patch("/tenants/{tenantID}/saml-providers/{id}", h.updateSP)
 		r.Delete("/tenants/{tenantID}/saml-providers/{id}", h.delSP)
+		r.Get("/tenants/{tenantID}/saml-providers/{id}/assignments", h.listSPAssignments)
+		r.Post("/tenants/{tenantID}/saml-providers/{id}/assignments/users/{userID}", h.assignSPUser)
+		r.Delete("/tenants/{tenantID}/saml-providers/{id}/assignments/users/{userID}", h.unassignSPUser)
+		r.Post("/tenants/{tenantID}/saml-providers/{id}/assignments/groups/{groupID}", h.assignSPGroup)
+		r.Delete("/tenants/{tenantID}/saml-providers/{id}/assignments/groups/{groupID}", h.unassignSPGroup)
 	}
 }
 
@@ -720,6 +1080,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 	// IdP side (Qeet as IdP), per organisation: metadata + SingleSignOnService
 	// (redirect + POST).
 	r.Get("/saml/idp/{tenantID}/metadata", h.idpMetadata)
+	r.Get("/saml/idp/{tenantID}/certificate", h.idpCertificate)
 	r.Get("/saml/idp/{tenantID}/sso", h.idpSSO)
 	r.Post("/saml/idp/{tenantID}/sso", h.idpSSO) // CSRF-exempt (see router.go); SP-initiated cross-origin POST
 }
@@ -759,7 +1120,22 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	items := make([]connectionView, len(out))
+	for i := range out {
+		items[i] = h.view(r, &out[i])
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// connectionView is a connection with the addresses its IdP is given.
+type connectionView struct {
+	*Connection
+	SPAddresses
+}
+
+// view is conn with its addresses on the API's public origin.
+func (h *Handler) view(r *http.Request, conn *Connection) connectionView {
+	return connectionView{Connection: conn, SPAddresses: Addresses(h.publicBase(r), conn.ID)}
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
@@ -776,7 +1152,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	in.Name = strings.TrimSpace(in.Name)
 	in.IdpEntityID = strings.TrimSpace(in.IdpEntityID)
 	in.IdpSSOURL = strings.TrimSpace(in.IdpSSOURL)
-	if in.Name == "" || in.IdpEntityID == "" || in.IdpSSOURL == "" || strings.TrimSpace(in.IdpCertificate) == "" {
+	// A name alone makes a draft, whose addresses go to the IdP before its
+	// details come back; any detail given brings the rest with it.
+	if in.Name == "" || (!in.awaitsIdP() && (in.IdpEntityID == "" || in.IdpSSOURL == "" || strings.TrimSpace(in.IdpCertificate) == "")) {
 		httpx.WriteError(w, r, errs.ErrSAMLConnectionFieldsRequired)
 		return
 	}
@@ -785,6 +1163,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	if err := h.Service.RequireSSO(ctx, tenantID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	tx, err := h.Service.Pool().Begin(ctx)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -804,7 +1186,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, conn)
+	httpx.WriteJSON(w, http.StatusCreated, h.view(r, conn))
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
@@ -823,7 +1205,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, conn)
+	httpx.WriteJSON(w, http.StatusOK, h.view(r, conn))
 }
 
 // test runs a config preflight over a SAML connection and returns per-check
@@ -891,7 +1273,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, conn)
+	httpx.WriteJSON(w, http.StatusOK, h.view(r, conn))
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
@@ -938,18 +1320,28 @@ func (h *Handler) metadata(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
 		return
 	}
-	if _, err := h.Service.getByID(r.Context(), id); err != nil {
+	conn, err := h.Service.getByID(r.Context(), id)
+	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
+	}
+	encryption, err := h.Service.encryptionCertificate(r.Context(), conn)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	keyDescriptor := ""
+	if encryption != "" {
+		keyDescriptor = fmt.Sprintf(spEncryptionKeyDescriptor, encryption)
 	}
 	base := h.publicBase(r)
 	xml := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="%s">
-  <SPSSODescriptor AuthnRequestsSigned="false" WantAssertionsSigned="true" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+  <SPSSODescriptor AuthnRequestsSigned="false" WantAssertionsSigned="true" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">%s
     <NameIDFormat>urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress</NameIDFormat>
     <AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="%s" index="1" isDefault="true"/>
   </SPSSODescriptor>
-</EntityDescriptor>`, spEntityID(base, id), acsURL(base, id))
+</EntityDescriptor>`, spEntityID(base, id), keyDescriptor, acsURL(base, id))
 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
 	w.Header().Set("Content-Disposition", `attachment; filename="sp-metadata.xml"`)
 	_, _ = w.Write([]byte(xml)) // #nosec G705 -- XML download, not rendered as HTML
@@ -966,8 +1358,12 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if conn.Status == "disabled" {
-		httpx.WriteError(w, r, errs.ErrSAMLConnectionDisabled)
+	if err := signInStatus(conn.Status); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Service.RequireSSO(r.Context(), conn.TenantID); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if !validIdPSSOURL(conn.IdpSSOURL) {
@@ -975,12 +1371,17 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSAMLConnectionMisconfigured)
 		return
 	}
-	sp, err := h.Service.buildSP(h.publicBase(r), conn)
+	certs, err := h.Service.signingCertificates(r.Context(), conn)
 	if err != nil {
-		slog.Error("saml login: build SP", "err", err, "connection", conn.ID)
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if len(certs) == 0 {
+		slog.Error("saml login: no readable IdP certificate", "connection", conn.ID)
 		httpx.WriteError(w, r, errs.ErrSAMLConnectionMisconfigured)
 		return
 	}
+	sp := h.Service.buildSP(h.publicBase(r), conn, certs)
 	doc, err := sp.BuildAuthRequestDocument()
 	if err != nil {
 		slog.Error("saml login: build auth request", "err", err, "connection", conn.ID)
@@ -1004,6 +1405,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrInternalServer)
 		return
 	}
+	h.binding().Add(w, r, requestID)
 	http.Redirect(w, r, authURL, http.StatusFound) // #nosec G710 -- IdP SSO URL checked by validIdPSSOURL on save and above
 }
 
@@ -1018,8 +1420,18 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if conn.Status == "disabled" {
-		httpx.WriteError(w, r, errs.ErrSAMLConnectionDisabled)
+	// The answer to a test sign-in is reported, and signs nobody in.
+	if h.answerTestSignIn(w, r, conn) {
+		return
+	}
+	if err := signInStatus(conn.Status); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	// The plan is checked when the assertion arrives too, so a connection set
+	// up on a plan that has since lapsed signs no one in.
+	if err := h.Service.RequireSSO(r.Context(), conn.TenantID); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if err := httpx.ParseForm(r, httpx.MaxSAMLBodyBytes); err != nil {
@@ -1031,28 +1443,24 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSAMLResponseMissing)
 		return
 	}
-	sp, err := h.Service.buildSP(h.publicBase(r), conn)
+	certs, err := h.Service.signingCertificates(r.Context(), conn)
 	if err != nil {
-		slog.Error("saml acs: build SP", "err", err, "connection", conn.ID)
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if len(certs) == 0 {
+		slog.Error("saml acs: no readable IdP certificate", "connection", conn.ID)
 		httpx.WriteError(w, r, errs.ErrSAMLConnectionMisconfigured)
 		return
 	}
-	response, err := sp.ValidateEncodedResponse(encoded)
+	key, err := h.Service.decryptionKey(r.Context(), conn)
 	if err != nil {
-		slog.Warn("saml acs: response validation failed", "err", err, "connection", conn.ID)
-		httpx.WriteError(w, r, errs.ErrSAMLAssertionInvalid)
-		return
+		// An unencrypted assertion doesn't need the key; an encrypted one fails.
+		slog.Error("saml acs: SP encryption key unusable", "err", err, "connection", conn.ID)
 	}
-	info, err := sp.RetrieveAssertionInfo(encoded)
+	response, info, err := h.Service.validateResponse(h.publicBase(r), conn, certs, key, encoded, time.Now())
 	if err != nil {
-		slog.Warn("saml acs: assertion validation failed", "err", err, "connection", conn.ID)
-		httpx.WriteError(w, r, errs.ErrSAMLAssertionInvalid)
-		return
-	}
-	if info.WarningInfo != nil && (info.WarningInfo.InvalidTime || info.WarningInfo.NotInAudience) {
-		slog.Warn("saml acs: assertion conditions not met", "connection", conn.ID,
-			"invalid_time", info.WarningInfo.InvalidTime, "not_in_audience", info.WarningInfo.NotInAudience)
-		httpx.WriteError(w, r, errs.ErrSAMLAssertionConditions)
+		httpx.WriteError(w, r, err)
 		return
 	}
 
@@ -1081,13 +1489,28 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	name := ""
-	if conn.NameAttribute != "" {
-		name = info.Values.Get(conn.NameAttribute)
+	// An answer to a request completes only in the browser that sent it, and
+	// spends the request either way. One the IdP sends unasked has no request
+	// to bind, so it is opt-in.
+	if requestID != "" {
+		if !h.binding().Holds(r, requestID) {
+			httpx.WriteError(w, r, errs.ErrSAMLOtherBrowser)
+			return
+		}
+		h.binding().Remove(w, r, requestID)
 	}
-
 	ctx := r.Context()
-	userID, err := h.Service.findOrCreateUser(ctx, conn.TenantID, info.NameID, email, name)
+	groupsAttribute, err := h.Service.groupsAttribute(ctx, conn)
+	if err != nil {
+		slog.Error("saml acs: read the groups attribute", "err", err, "connection", conn.ID)
+		httpx.WriteError(w, r, errs.ErrInternalServer)
+		return
+	}
+	groups, withheld := assertedGroups(info.Values, groupsAttribute)
+	userID, err := h.Service.findOrCreateUser(ctx, conn.TenantID, conn.ID, assertion{
+		subject: info.NameID, email: email, name: assertedName(info.Values, conn.NameAttribute),
+		groups: groups, groupsWithheld: withheld,
+	}, audit.Actor{Type: provider, IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)})
 	if e := errs.As(err); e != nil && e.Code != errs.CodeInternal {
 		httpx.WriteError(w, r, err)
 		return

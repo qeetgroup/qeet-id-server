@@ -97,6 +97,7 @@ func (s *Service) createLoginSession(ctx context.Context, userID, tenantID uuid.
 		}
 		tenantID = u.TenantID
 	}
+	meta := s.signInClientMeta(ctx)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return "", err
@@ -113,7 +114,13 @@ func (s *Service) createLoginSession(ctx context.Context, userID, tenantID uuid.
 	if err != nil {
 		return "", err
 	}
-	if err := audit.Record(ctx, tx, signInEvent(userID, tenantID, "login_session", sessionID, ip, ua, method, nil)); err != nil {
+	if secondFactor != "" {
+		if meta == nil {
+			meta = map[string]any{}
+		}
+		meta["second_factor"] = secondFactor
+	}
+	if err := audit.Record(ctx, tx, signInEvent(userID, tenantID, "login_session", sessionID, ip, ua, method, meta)); err != nil {
 		return "", err
 	}
 	return raw, tx.Commit(ctx)

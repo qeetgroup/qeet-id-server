@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authzen"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decide"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decisionlog"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/policy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rebac"
@@ -37,11 +39,14 @@ import (
 	webhook "github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/adminportal"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/directory"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcsso"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/ssosync"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	group "github.com/qeetgroup/qeet-id-server/internal/identity/groups"
 	invite "github.com/qeetgroup/qeet-id-server/internal/identity/invitations"
@@ -63,6 +68,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/sales"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/search"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/servicehealth"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/siem"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
@@ -98,36 +104,21 @@ func Services(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool) Deps 
 func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, outboxPub outbox.Publisher) (Deps, []namedWorker) {
 	outboundPolicy := newOutboundPolicy(cfg)
 	keys := loadKeys(rootCtx, cfg, pool)
-	keyProvider, sharedCipher, signingKeyRegistry, issuer := keys.provider, keys.cipher, keys.signingKeys, keys.issuer
+	sharedCipher, signingKeyRegistry, issuer := keys.cipher, keys.signingKeys, keys.issuer
 	verifier := &httpx.AuthVerifier{
 		Tokens:          issuer,
 		DevTrustHeaders: cfg.AuthDevTrustHeaders,
 	}
 
 	tenantRepo := tenant.NewRepository(pool)
+	tenantRepo.SetHostingRegion(cmp.Or(cfg.HostingRegion, cfg.AWSRegion)) // where every organisation is created
 	userRepo := user.NewRepository(pool)
 	rbacRepo := rbac.NewRepository(pool)
 	rbacService := rbac.NewService(rbacRepo)
 	if err := rbacRepo.SeedBuiltins(rootCtx); err != nil {
 		slog.Warn("rbac seed", "err", err)
 	}
-	billingService := billing.NewService(pool)
-	payments := billing.NewPayments(
-		cfg.StripeSecretKey, cfg.StripeWebhookSecret,
-		cfg.RazorpayKeyID, cfg.RazorpayKeySecret, cfg.RazorpayWebhookSecret,
-	).WithRouting(cfg.PaymentDefaultProvider, billing.ParseCountryRoutes(cfg.PaymentCountryRoutes)) // card payments (Stripe/Razorpay), routed by billing country; no-op until keys are configured
-	if cfg.PaymentSandbox {
-		payments = payments.WithSandbox(cfg.PaymentSandboxBaseURL, "sandbox-dev-secret") // dev-only fake provider; config.Validate refuses it outside dev
-	}
-	billingService.SetPayments(payments)
-	billingService.SetAllowUnpaidActivation(cfg.BillingAllowUnpaidActivation)    // else a paid plan with no provider is refused, not granted free
-	billingService.SetOrgProvisioner(billingOrgProvisioner{tenants: tenantRepo}) // creates the org when a signup checkout is paid
-	billingService.SetTaxConfig(billing.TaxConfig{                               // invoice GST/VAT (off unless configured)
-		Enabled:       cfg.BillingTaxEnabled,
-		SellerCountry: cfg.BillingSellerCountry,
-		SellerState:   cfg.BillingSellerState,
-		GSTRateBps:    cfg.BillingGSTRateBps,
-	})
+	billingService := NewBillingService(cfg, pool, tenantRepo)
 	if err := billingService.SeedBuiltins(rootCtx); err != nil {
 		slog.Warn("billing seed", "err", err)
 	}
@@ -141,6 +132,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	policyRepo.SetSessionDefaults(cfg.SessionMaxAge, cfg.SessionIdleTimeout)
 	mail := newMailer(cfg, pool, brandingRepo, emailTemplateService)
 	sender := mail.sender
+	billingService.SetMailer(sender, cfg.AppBaseURL)
 	verifyService := verification.NewService(pool, sender, 10*time.Minute)
 	recoveryService := recovery.NewService(pool, sender, time.Hour, cfg.AppBaseURL)
 	recoveryService.SetHostedLogin(cfg.LoginBaseURL) // resets requested there link back to it
@@ -158,14 +150,16 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	inviteService.SetPasswordRules(authPolicyService)     // invite accept
 	inviteService.SetAcceptMethods(authPolicyService)     // which ways of accepting the acceptance screen offers
 
-	// Breached-password check (Have I Been Pwned k-anonymity), off by default. It
-	// fails open on a HIBP outage, counted in
-	// breached_password_check_allowed_on_error_total, and only the 5-character
-	// SHA-1 prefix leaves the process.
+	// Breached-password check (Have I Been Pwned k-anonymity), on unless
+	// BREACHED_PASSWORD_CHECK turns it off. It fails open on a HIBP outage,
+	// counted in breached_password_check_allowed_on_error_total, and only the
+	// 5-character SHA-1 prefix leaves the process.
 	if cfg.BreachedPasswordCheck {
 		breachChecker := hibp.New(&http.Client{Timeout: 3 * time.Second}, cfg.BreachedPasswordAPIURL, cfg.BreachedPasswordMinCount)
 		authPolicyService.SetBreachChecker(breachChecker)
 		slog.Info("breached-password check enabled (HIBP k-anonymity; fail-open)", "min_count", cfg.BreachedPasswordMinCount)
+	} else if !cfg.IsDev() {
+		slog.Warn("breached-password check is off (BREACHED_PASSWORD_CHECK=false): new passwords are not checked against known breaches")
 	}
 	apikeyService := apikey.NewService(pool)
 	principalService := principal.NewService(pool, issuer)
@@ -213,14 +207,17 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	botService := bot.NewService(pool)
 	siemService := siem.NewService(pool, outboundPolicy) // forwards audit events to configured log sinks
 	siemService.SetCipher(sharedCipher)
-	rebacService := rebac.NewService(pool) // fine-grained (relationship) authorization
-	abacService := abac.NewService(pool)   // attribute-based access control (policy store + PDP)
+	rebacService := rebac.NewService(pool)           // fine-grained (relationship) authorization
+	abacService := abac.NewService(pool)             // attribute-based access control (policy store + PDP)
+	abacService.SetRelationCheck(rebacService.Check) // relation conditions
 	// One decision across the three engines (an ABAC deny refuses, then any
 	// allow): the route guard, /v1/check, the relationship check and AuthZEN.
 	decider := decide.New(rbacRepo, rebacService, abacService)
 	authzenService := authzen.NewService(rbacRepo, rebacService, decider) // OpenID AuthZEN PDP facade
-	agentService := agent.NewService(pool, issuer)                        // AI-agent identities (ephemeral scoped tokens)
-	vcService := vc.NewService(pool, issuer)                              // W3C verifiable credentials (JWT-VC)
+	decisionLog := decisionlog.New(pool)                                  // the decisions organisations ask for, kept 30 days
+	authzenService.Decisions = decisionLog
+	agentService := agent.NewService(pool, issuer) // AI-agent identities (ephemeral scoped tokens)
+	vcService := vc.NewService(pool, issuer)       // W3C verifiable credentials (JWT-VC)
 
 	// Qeet AI assistant: the conversation store is created here; the per-tenant
 	// BYOK provider-config service + orchestrator + handler are wired below,
@@ -250,6 +247,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	authService.SetSessionLifetime(cfg.SessionMaxAge, cfg.SessionIdleTimeout) // session bounds where the organisation sets none
 	verifier.SessionUsed = authService.SessionUsed                            // a session's last use, for its idle timeout and the session list
 	verifier.SessionLive = authService.SessionLive                            // an ended session's access tokens are refused at once
+	verifier.PrincipalLive = principalService.PrincipalLive                   // a disabled service principal's tokens are refused at once
 	recoveryService.SetSessionSignals(sessionSignals)
 	rbacService.SetEmitter(webhookService.Enqueue)
 	gdprService := gdpr.NewService(pool, 30*24*time.Hour)
@@ -259,6 +257,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	evidenceService := gdpr.NewEvidenceService(pool, auditVerifier, cfg.BreachedPasswordCheck)
 	auditAnomalyService := anomaly.NewService(pool)
 	analyticsReader := analytics.NewReader(pool)
+	serviceHealth := servicehealth.NewService(pool)
+	serviceHealth.SignInReady = signingKeyRegistry.Ready
 
 	startedAt := time.Now()
 	healthHandler := health.New(cfg.ServiceName, cfg.ServiceEnv, startedAt)
@@ -269,6 +269,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	oidcService := oidc.NewService(pool, issuer)
 	oidcService.SetAgentStatus(agentService.AgentStatus)            // a suspended agent's tokens introspect inactive
 	oidcService.SetSessionLive(authService.SessionLive)             // an ended session's tokens introspect inactive and can't be exchanged
+	oidcService.SetPrincipalLive(principalService.PrincipalLive)    // a disabled service principal's tokens introspect inactive
 	oidcService.SetGrantMaxAge(cfg.SessionMaxAge)                   // grant bound where the organisation sets none
 	oidcService.SetTokenExchangeMaxDepth(cfg.TokenExchangeMaxDepth) // bound a chain of exchanges
 	oidcService.SetClientLockout(oidc.ClientLockout{                // wrong application secrets
@@ -295,6 +296,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	passkeyService := passkey.NewService(pool, wa, authService)
 	passkeyService.SetMethodPolicy(authPolicyService) // offer and accept new passkeys only where the tenant allows them
 	passkeyService.SetInvitations(inviteService)      // accept an invitation with a passkey
+	passkeyService.SetSender(sender)                  // tell the account holder a passkey was added or removed
 	mfaService.SetWebAuthn(passkeyService)            // a passkey can meet a sign-in's second-factor challenge
 	mfaService.SetPlan(entitlementSvc)                // SMS codes only on plans that include them
 	if mail.routed {
@@ -312,47 +314,43 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	groupService := group.NewService(pool)
 	scimService := scim.NewService(pool, userRepo)
 	scimService.SetSessionSignals(sessionSignals)
-	secretService, err := secret.NewService(rootCtx, pool, keyProvider)
-	if err != nil {
-		slog.Error("init secrets vault", "err", err)
-		os.Exit(1)
-	}
-	// Token Vault reuses the same key provider as the secrets vault above —
+	secretService := secret.NewService(pool, sharedCipher)
+	// Token Vault seals with the same cipher as the secrets vault above —
 	// one KMS/static-key setup backs both encrypted stores.
-	tokenVaultService, err := tokenvault.NewService(rootCtx, pool, keyProvider, outboundPolicy)
-	if err != nil {
-		slog.Error("init token vault", "err", err)
-		os.Exit(1)
-	}
+	tokenVaultService := tokenvault.NewService(pool, sharedCipher, outboundPolicy)
 
 	// Qeet AI provider config: per-tenant keys, encrypted with the vault data key,
 	// with QEETAI_* as the platform fallback. The orchestrator is always built,
 	// since a tenant can bring its own key.
-	qeetaiProviderCfg, err := qeetai.NewProviderConfig(rootCtx, pool, keyProvider, qeetai.PlatformProvider{
+	qeetaiProviderCfg := qeetai.NewProviderConfig(pool, sharedCipher, qeetai.PlatformProvider{
 		Provider:  cfg.QeetaiProvider,
 		APIKey:    cfg.QeetaiAPIKey,
 		Model:     cfg.QeetaiModel,
 		BaseURL:   cfg.QeetaiBaseURL,
 		MaxTokens: cfg.QeetaiMaxTokens,
 	}, outboundPolicy)
-	if err != nil {
-		slog.Error("init Qeet AI provider config", "err", err)
-		os.Exit(1)
-	}
 	if qeetaiProviderCfg.PlatformConfigured() {
 		slog.Info("Qeet AI: platform provider configured", "provider", cfg.QeetaiProvider, "model", cfg.QeetaiModel)
 	} else {
 		slog.Info("Qeet AI: no platform provider set — tenants must bring their own key (BYOK)")
 	}
+	qeetaiLimits := qeetai.Limits{
+		HistoryMessages: cfg.QeetaiHistoryMessages, HistoryBytes: cfg.QeetaiHistoryBytes, OutputBytes: cfg.QeetaiMaxOutputBytes,
+	}
 	qeetaiHandler := &qeetai.Handler{
 		Service:      qeetaiService,
-		Orchestrator: qeetai.NewOrchestrator(qeetaiProviderCfg, qeetaiService),
+		Orchestrator: qeetai.NewOrchestrator(qeetaiProviderCfg, qeetaiService, qeetaiLimits),
 		Resolver:     qeetaiProviderCfg,
 		Config:       qeetaiProviderCfg,
 		Plan:         entitlementSvc, // platform fallback is a Pro+ feature; BYOK bypasses the gate
+		Admin:        qeetaiService,
 	}
 
 	samlService := saml.NewService(pool, authService, cfg.AppBaseURL)
+	oidcSSOService := oidcsso.NewService(pool, authService, cfg.AppBaseURL, outboundPolicy)
+	oidcSSOService.SetCipher(sharedCipher)
+	samlService.SetEgressPolicy(outboundPolicy) // IdP metadata URLs
+	samlService.SetCipher(sharedCipher)         // the connections' SP encryption keys
 
 	samlIdPKeyPEM, samlIdPCertPEM := samlIdPIdentity(cfg)
 	samlIdP, err := saml.NewIdP(pool, samlIdPKeyPEM, samlIdPCertPEM, cfg.LoginBaseURL, authService)
@@ -361,6 +359,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		os.Exit(1)
 	}
 
+	samlHandler := &saml.Handler{Service: samlService, IdP: samlIdP, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev()}
 	adminPortalService := adminportal.NewService(pool, brandingRepo, cfg.LoginBaseURL)
 
 	ldapService := ldap.NewService(pool, authService, outboundPolicy)
@@ -383,15 +382,21 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	// boolean features (webhooks/SSO/SCIM/LDAP) use SetPlanGate. Free-tier caps
 	// bite here; paid tiers resolve to unlimited/enabled, so it's a no-op for them.
 	inviteService.SetPlanLimiter(entitlementSvc) // seats
+	rbacService.SetSeatGuard(inviteService)      // seats: a person's first role, directly
+	groupService.SetSeatGuard(inviteService)     // seats: a person's first role, through a group
+	scimService.SetSeatGuard(inviteService)      // seats: the same, through a directory-managed group
 	oidcService.SetPlanLimiter(entitlementSvc)   // apps (relying parties)
 	apikeyService.SetPlanLimiter(entitlementSvc) // api_keys
 	rbacService.SetPlanLimiter(entitlementSvc)   // custom_roles
 	webhookService.SetPlanGate(entitlementSvc)   // webhooks (feature)
-	samlIdP.SetPlanGate(entitlementSvc)          // SSO (SAML)
+	samlIdP.SetPlanGate(entitlementSvc)          // SSO (SAML), as identity provider
+	samlService.SetPlanGate(entitlementSvc)      // SSO (SAML), through a tenant's identity provider
+	oidcSSOService.SetPlanGate(entitlementSvc)   // SSO (OpenID Connect connections)
 	scimService.SetPlanGate(entitlementSvc)      // SCIM
 	ldapService.SetPlanGate(entitlementSvc)      // LDAP
 	brandingRepo.SetPlanGate(entitlementSvc)     // custom branding
-	abacService.SetPlanGate(entitlementSvc)      // ABAC
+	brandingRepo.SetPublicBaseURL(cfg.PublicBaseURL)
+	abacService.SetPlanGate(entitlementSvc) // ABAC
 	// Current-usage provider for the billing usage-vs-limits display.
 	entitlementSvc.SetUsageResolver(entitlementUsageResolver{
 		invites: inviteService, oidc: oidcService, apikeys: apikeyService, rbacRepo: rbacRepo,
@@ -399,25 +404,43 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	// custom domain — extracted from its inline handler so the gate can be wired.
 	domainVerifyService := domainverify.NewService(pool, outboundPolicy)
 	domainVerifyService.SetPlanGate(entitlementSvc)
+	domainVerifyService.SetOwners(rbacRepo) // only owners name break-glass members
+	// Domain capture: an address on a verified domain with SSO on, in an
+	// organisation with an active SAML or LDAP connection, signs in only there,
+	// except break-glass members and the administrators SSO never adopts.
+	domainVerifyService.SetAdminPermissions(identitylink.AdminPermissions())
+	authService.SetDomainCapture(domainVerifyService)     // password sign-in, sign-up, hosted registration
+	recoveryService.SetDomainCapture(domainVerifyService) // password reset, magic links
+	passkeyService.SetDomainCapture(domainVerifyService)  // passkey sign-in and sign-up
 
 	limits := newRateLimits(rootCtx, cfg, pool)
 	recoveryService.SetMagicLinkLimits(limits.magicAddress, limits.magicCaller)
+	recoveryService.SetResetLimit(limits.resetAddress)
 	rlStore, tenantTenantLim, tenantUserLim, tenantAPIKeyLim := limits.store, limits.tenant, limits.user, limits.apiKey
 	rateLimitsHandler := &ratelimits.Handler{
 		Pool:      pool,
 		TenantLim: tenantTenantLim,
 		UserLim:   tenantUserLim,
 		APIKeyLim: tenantAPIKeyLim,
-		Defaults:  ratelimits.Defaults{TenantRate: 100, TenantCapacity: 500, UserRate: 30, UserCapacity: 100, APIKeyRate: 50, APIKeyCapacity: 200},
+		Defaults: ratelimits.Defaults{TenantRate: tenantLimitDefault.Rate, TenantCapacity: tenantLimitDefault.Capacity,
+			UserRate: userLimitDefault.Rate, UserCapacity: userLimitDefault.Capacity,
+			APIKeyRate: apiKeyLimitDefault.Rate, APIKeyCapacity: apiKeyLimitDefault.Capacity},
+		BuiltIn: builtInLimits,
 	}
 
+	// An open activity stream is checked again as its request was admitted.
+	activityHandler := activity.NewHandler(pool, activityHub)
+	activityHandler.Access = streamAccess{verifier: verifier, checker: decider, apiKeys: apikeyService,
+		policy: RoutePolicies()["GET /v1/activity/stream"]}.Allowed
 	v := newValidator()
 	deps := Deps{
-		Tenant:        &tenant.Handler{Repo: tenantRepo, Validate: v, AuthService: authService, Signals: sessionSignals},
-		User:          &user.Handler{Repo: userRepo, Validate: v, PasswordPolicy: authPolicyService.ValidateForTenant, MFA: mfaService, SignIns: authService, Signals: sessionSignals, Mailer: sender},
+		Tenant: &tenant.Handler{Repo: tenantRepo, Validate: v, AuthService: authService, Signals: sessionSignals, OwnerCheck: rbacRepo.IsOwner},
+		User: &user.Handler{Repo: userRepo, Validate: v, PasswordPolicy: authPolicyService.ValidateForTenant, MFA: mfaService, SignIns: authService, Signals: sessionSignals, Mailer: sender, ActOnCheck: rbacRepo.CheckActOn,
+			Roles: importRoles{repo: rbacRepo, seats: inviteService}},
 		AuthPolicy:    &authpolicy.Handler{Service: authPolicyService},
 		Auth:          &auth.Handler{Service: authService, Validate: v, CookieSecure: !cfg.IsDev(), Bot: botService, GeoCountryHeader: cfg.GeoCountryHeader},
-		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbacService, Validate: v, Decider: decider},
+		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbacService, Validate: v, Decider: decider, Decisions: decisionLog},
+		DecisionLog:   &decisionlog.Handler{Log: decisionLog},
 		RBACChecker:   decider,
 		Verification:  &verification.Handler{Service: verifyService},
 		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService, DevMode: cfg.IsDev(), CookieSecure: !cfg.IsDev(), PublicBaseURL: cfg.PublicBaseURL},
@@ -427,9 +450,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		EmailTemplate: &email.Handler{Service: emailTemplateService, Sender: sender, Appearance: brandingRepo, TestEmailEnabled: mail.testEnabled},
 		EmailDelivery: &email.DeliveryHandler{Store: mail.deliveries},
 		SESWebhook:    &delivery.Webhook{Store: mail.deliveries, TopicARNs: cfg.SESEventsTopicARNs},
-		APIKey:        &apikey.Handler{Service: apikeyService},
+		APIKey:        &apikey.Handler{Service: apikeyService, GrantCheck: rbacRepo.CheckGrantScopes},
 		APIKeyService: apikeyService,
-		Principal:     &principal.Handler{Service: principalService},
+		Principal:     &principal.Handler{Service: principalService, GrantCheck: rbacRepo.CheckGrantScopes},
 		MFA:           &mfa.Handler{Service: mfaService, WebAuthn: passkeyService},
 		Webhook:       &webhook.Handler{Service: webhookService},
 		Policy:        &policy.Handler{Repo: policyRepo},
@@ -440,36 +463,44 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Entitlement:   &entitlements.Handler{Service: entitlementSvc},
 		Sales:         &sales.Handler{Service: salesService},
 		Analytics:     &analytics.Handler{Reader: analyticsReader},
+		ServiceHealth: &servicehealth.Handler{Service: serviceHealth},
 		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Methods: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: !cfg.IsDev(), PublicBaseURL: cfg.PublicBaseURL},
 		Passkey:       &passkey.Handler{Service: passkeyService, CookieSecure: !cfg.IsDev()},
 		Social:        &social.Handler{Service: socialService, CookieSecure: !cfg.IsDev(), LoginBaseURL: cfg.LoginBaseURL, PublicBaseURL: cfg.PublicBaseURL},
-		Group:         &group.Handler{Service: groupService},
-		SCIM:          &scim.Handler{Service: scimService, PublicBaseURL: cfg.PublicBaseURL},
-		Secret:        &secret.Handler{Service: secretService},
-		TokenVault:    &tokenvault.Handler{Service: tokenVaultService, PublicBaseURL: cfg.PublicBaseURL},
-		SAML:          &saml.Handler{Service: samlService, IdP: samlIdP, PublicBaseURL: cfg.PublicBaseURL},
-		AdminPortal:   &adminportal.Handler{Service: adminPortalService, SAML: samlService, SCIM: scimService, CookieSecure: !cfg.IsDev()},
-		LDAP:          &ldap.Handler{Service: ldapService},
-		Directory:     &directory.Handler{Service: directoryService},
-		IPAllow:       &ipallow.Handler{Service: ipAllowService},
-		Threat:        &threat.Handler{Service: threatService},
-		Bot:           &bot.Handler{Service: botService},
-		Risk:          &risk.Handler{Service: riskService},
-		RateLimits:    rateLimitsHandler,
-		Notification:  &notification.Handler{Service: notificationService},
-		DomainVerify:  &domainverify.Handler{Service: domainVerifyService},
-		SIEM:          &siem.Handler{Service: siemService},
-		AuthHook:      &authhook.Handler{Service: authHookService},
-		ABAC:          &abac.Handler{Service: abacService},
-		ReBAC:         &rebac.Handler{Service: rebacService, Decider: decider},
-		AuthZEN:       &authzen.Handler{Service: authzenService},
-		Agent:         &agent.Handler{Service: agentService},
-		VC:            &vc.Handler{Service: vcService},
-		Qeetai:        qeetaiHandler,
-		Search:        &search.Handler{Service: searchService},
-		Activity:      activity.NewHandler(pool, activityHub),
-		Health:        healthHandler,
-		InFlight:      inFlight,
+		Group: &group.Handler{Service: groupService, GrantCheck: rbacRepo.CheckGrantGroup, ReadsRoles: func(r *http.Request) bool {
+			ok, err := rbac.Holds(r.Context(), rbacRepo, httpx.PrincipalFromCtx(r.Context()), "role.read")
+			return err == nil && ok
+		}},
+		SCIM:         &scim.Handler{Service: scimService, PublicBaseURL: cfg.PublicBaseURL},
+		Secret:       &secret.Handler{Service: secretService},
+		TokenVault:   &tokenvault.Handler{Service: tokenVaultService, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev()},
+		SAML:         samlHandler,
+		AdminPortal:  &adminportal.Handler{Service: adminPortalService, SAML: samlService, SAMLSignIn: samlHandler, SCIM: scimService, Domains: domainVerifyService, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev()},
+		LDAP:         &ldap.Handler{Service: ldapService},
+		SSOGroups:    &ssosync.Handler{Service: ssosync.NewService(pool), GrantCheck: rbacRepo.CheckGrantGroup},
+		OIDCSSO:      &oidcsso.Handler{Service: oidcSSOService, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev()},
+		Directory:    &directory.Handler{Service: directoryService},
+		IPAllow:      &ipallow.Handler{Service: ipAllowService},
+		Threat:       &threat.Handler{Service: threatService},
+		Bot:          &bot.Handler{Service: botService},
+		Risk:         &risk.Handler{Service: riskService},
+		RateLimits:   rateLimitsHandler,
+		Notification: &notification.Handler{Service: notificationService},
+		DomainVerify: &domainverify.Handler{Service: domainVerifyService},
+		SIEM:         &siem.Handler{Service: siemService},
+		AuthHook:     &authhook.Handler{Service: authHookService},
+		ABAC:         &abac.Handler{Service: abacService, Decisions: decisionLog},
+		ReBAC:        &rebac.Handler{Service: rebacService, Decider: decider, Decisions: decisionLog},
+		AuthZEN:      &authzen.Handler{Service: authzenService},
+		Agent:        &agent.Handler{Service: agentService, GrantCheck: rbacRepo.CheckGrantScopes},
+		VC:           &vc.Handler{Service: vcService},
+		Qeetai:       qeetaiHandler,
+		Search:       &search.Handler{Service: searchService},
+		Activity:     activityHandler,
+		Health:       healthHandler,
+		MetricsToken: cfg.MetricsToken,
+		MetricsOpen:  cfg.IsDev(),
+		InFlight:     inFlight,
 
 		AuthVerifier:     verifier,
 		AllowedOrigins:   cfg.AllowedOrigins(),
@@ -484,6 +515,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		APIKeyLim:        tenantAPIKeyLim,
 		Idempotency:      idempotency.NewStore(pool, sharedCipher),
 	}
+	deps.endStreams = append(deps.endStreams, activityHub.Shutdown)
 	if activityNATSConn != nil {
 		deps.shutdownHooks = append(deps.shutdownHooks, func() { _ = activityNATSConn.Drain() })
 	}
@@ -497,6 +529,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		{name: "rate-limit-overrides", run: func(ctx context.Context) {
 			ratelimit.ReloadEvery(ctx, time.Minute, tenantTenantLim, tenantUserLim, tenantAPIKeyLim)
 		}, always: true},
+		{name: "authz-decision-log", run: decisionLog.Run, always: true}, // each instance writes the decisions it answered
 		{name: "outbox", run: outboxDispatcher.Run},
 		{name: "oidc-logout", run: oidcService.RunLogoutDeliveries},
 		{name: "webhook", run: webhookService.RunDispatcher},
@@ -507,9 +540,10 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		// Audit-chain verification and the cleanups, once per interval across
 		// instances.
 		{name: "scheduler", run: func(ctx context.Context) {
-			worker.RunScheduled(ctx, pool, MaintenanceJobs(pool, sessionSignals), worker.SchedulerTick)
+			jobs := append(MaintenanceJobs(pool, sessionSignals, sharedCipher, outboundPolicy), BillingJobs(billingService)...)
+			worker.RunScheduled(ctx, pool, jobs, worker.SchedulerTick)
 		}},
 	}
-	RegisterMaintenanceMetrics(pool)
+	RegisterMaintenanceMetrics(pool, sharedCipher)
 	return deps, workers
 }

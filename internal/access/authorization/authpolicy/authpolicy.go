@@ -290,12 +290,21 @@ func (s *Service) SignInLockout(ctx context.Context, tenantID uuid.UUID) (Lockou
 // Update stores a tenant's whole policy. Invalid settings are refused, each
 // named in the validation error, before anything is written; the password
 // length (8–128) and magic-link lifetime (5–1440 minutes) are clamped instead.
+// Every first-factor method may be off only while the tenant has an active
+// SAML or LDAP connection to sign in through.
 func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p Policy) (*Policy, error) {
 	if p.RememberDeviceDays == 0 {
 		p.RememberDeviceDays = defaultRememberDeviceDays
 	}
+	sso := false
+	if !p.PasswordEnabled && !p.PasskeyEnabled && !p.MagicLinkEnabled {
+		var err error
+		if sso, err = s.q.WithTx(tx).HasActiveSSOConnection(ctx, tenantID); err != nil {
+			return nil, err
+		}
+	}
 	fields := s.lockout.CheckLockout(p)
-	fields = append(fields, checkSignInMethods(p)...)
+	fields = append(fields, checkSignInMethods(p, sso)...)
 	if p.RememberDeviceDays < 1 || p.RememberDeviceDays > 90 {
 		fields = append(fields, errs.FieldError{Field: "remember_device_days", Code: "out_of_range",
 			Message: "Remember a device for between 1 and 90 days."})
@@ -343,14 +352,15 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 }
 
 // checkSignInMethods refuses a policy that leaves no first-factor sign-in
-// method (password, passkey or magic link) on, and one that switches on an
-// email or SMS one-time-code sign-in — no such sign-in exists, so saving it
-// would claim a method the organisation does not have.
-func checkSignInMethods(p Policy) []errs.FieldError {
+// method (password, passkey or magic link) on unless the organisation signs in
+// through single sign-on (sso), and one that switches on an email or SMS
+// one-time-code sign-in — no such sign-in exists, so saving it would claim a
+// method the organisation does not have.
+func checkSignInMethods(p Policy, sso bool) []errs.FieldError {
 	var out []errs.FieldError
-	if !p.PasswordEnabled && !p.PasskeyEnabled && !p.MagicLinkEnabled {
+	if !p.PasswordEnabled && !p.PasskeyEnabled && !p.MagicLinkEnabled && !sso {
 		out = append(out, errs.FieldError{Field: "password_enabled", Code: "no_sign_in_method",
-			Message: "Keep at least one of password, passkey or magic-link sign-in on."})
+			Message: "Keep at least one of password, passkey or magic-link sign-in on, or activate a SAML or LDAP connection first."})
 	}
 	if p.OTPEmailEnabled {
 		out = append(out, errs.FieldError{Field: "otp_email_enabled", Code: "not_available",
@@ -487,6 +497,7 @@ type Handler struct {
 // Mount registers the authentication policy routes on r.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/auth-policy", h.get)
+	r.Get("/tenants/{tenantID}/auth-policy/usage", h.usage)
 	r.Put("/tenants/{tenantID}/auth-policy", h.update)
 }
 
@@ -502,6 +513,73 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, p)
+}
+
+// MethodUsage is how many of the organisation's people use each way of
+// signing in, and how many would have no other way in without it. Magic links
+// and email codes aren't counted as a way in; MagicLinkEnabled says whether
+// they are one too.
+type MethodUsage struct {
+	People           int           `json:"people"`
+	Password         MethodCount   `json:"password"`
+	Passkey          MethodCount   `json:"passkey"`
+	Social           []SocialCount `json:"social"`
+	MagicLinkEnabled bool          `json:"magic_link_enabled"`
+}
+
+// MethodCount is the people with a way of signing in, and those with no other.
+type MethodCount struct {
+	People int `json:"people"`
+	Only   int `json:"only"`
+}
+
+// SocialCount is a social provider's linked accounts and those it alone lets in.
+type SocialCount struct {
+	Provider string `json:"provider"`
+	Linked   int    `json:"linked"`
+	Only     int    `json:"only"`
+}
+
+// Usage counts how the tenant's live accounts sign in.
+func (s *Service) Usage(ctx context.Context, tenantID uuid.UUID) (*MethodUsage, error) {
+	row, err := s.q.SignInMethodUsage(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	social, err := s.q.SocialProviderUsage(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	policy, err := s.Get(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	out := &MethodUsage{
+		People:           int(row.People),
+		Password:         MethodCount{People: int(row.WithPassword), Only: int(row.OnlyPassword)},
+		Passkey:          MethodCount{People: int(row.WithPasskey), Only: int(row.OnlyPasskey)},
+		Social:           make([]SocialCount, len(social)),
+		MagicLinkEnabled: policy.MagicLinkEnabled,
+	}
+	for i, p := range social {
+		out.Social[i] = SocialCount{Provider: p.Provider, Linked: int(p.Linked), Only: int(p.Only)}
+	}
+	return out, nil
+}
+
+// usage serves GET /tenants/{tenantID}/auth-policy/usage.
+func (h *Handler) usage(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := httpx.PathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	u, err := h.Service.Usage(r.Context(), tenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, u)
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {

@@ -1,6 +1,7 @@
 package gdpr
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -21,6 +22,9 @@ func TestControlCatalog_SOC2(t *testing.T) {
 		}
 		if c.criteria == "" {
 			t.Errorf("control %q has empty criteria", c.id)
+		}
+		if strings.HasPrefix(c.criteria, "CC6.") && c.category != "Logical and Physical Access Controls" {
+			t.Errorf("control %q (%s) filed under %q, want its CC6 group", c.id, c.criteria, c.category)
 		}
 		if c.check == nil {
 			t.Errorf("control %q has nil check function", c.id)
@@ -52,6 +56,12 @@ func TestControlCatalog_ISO27001(t *testing.T) {
 		}
 		if c.check == nil {
 			t.Errorf("control %q has nil check function", c.id)
+		}
+		if !strings.HasPrefix(c.criteria, "A.5.") && !strings.HasPrefix(c.criteria, "A.8.") {
+			t.Errorf("control %q criteria %q isn't an ISO 27001:2022 organizational or technological control", c.id, c.criteria)
+		}
+		if c.criteria2013 == "" {
+			t.Errorf("control %q has no 2013 reference", c.id)
 		}
 		if seen[c.id] {
 			t.Errorf("duplicate control id %q in iso27001 catalog", c.id)

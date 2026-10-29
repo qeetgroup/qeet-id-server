@@ -227,14 +227,22 @@ func EndSignIns(ctx context.Context, tx pgx.Tx, signals *sessionsignal.Signaller
 }
 
 // endOtherSignIns ends, inside tx, every way the user signs in besides their
-// API sessions: hosted-login sessions, remembered devices, which skip the
-// second factor, pending authorisations, which would become grants, and
-// application grants. The caller has locked the user row.
+// API sessions: hosted-login sessions, unused password-reset and sign-in
+// links, remembered devices, which skip the second factor, pending
+// authorisations, which would become grants, and application grants. It also
+// lifts a lock of their second-factor sign-in: the person proved who they are
+// another way. The caller has locked the user row.
 func endOtherSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (SignInsEnded, error) {
 	var ended SignInsEnded
 	q := dbgen.New(tx)
 	var err error
 	if ended.LoginSessions, err = sessionsignal.EndLoginSessions(ctx, tx, userID); err != nil {
+		return SignInsEnded{}, err
+	}
+	if err := q.ExpireRecoveryLinksForUser(ctx, userID); err != nil {
+		return SignInsEnded{}, err
+	}
+	if err := q.EndMFAFailureStreak(ctx, userID); err != nil {
 		return SignInsEnded{}, err
 	}
 	if ended.TrustedDevices, err = q.DeleteTrustedDevicesForUser(ctx, userID); err != nil {
@@ -265,6 +273,12 @@ func endOtherSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (SignInsE
 		}
 	}
 	return ended, nil
+}
+
+// ExpireRecoveryLinks ends, inside tx, userID's unused password-reset links
+// and the unused sign-in links to their address, as a change of address does.
+func ExpireRecoveryLinks(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
+	return dbgen.New(tx).ExpireRecoveryLinksForUser(ctx, userID)
 }
 
 // SignInMethods counts the user's ways to sign in (see user.SignInMethods).
@@ -298,6 +312,9 @@ type Session struct {
 	// Country is where the session was opened, approximately (ISO 3166-1
 	// alpha-2), when the deployment supplies it; omitted otherwise.
 	Country string `json:"country,omitempty"`
+	// City is the city it was opened from, approximately, when the deployment
+	// supplies it; omitted otherwise.
+	City string `json:"city,omitempty"`
 	// Current marks the session the request listing them was made with.
 	Current bool `json:"current"`
 }
@@ -363,7 +380,7 @@ func (s *Service) ListSessionsPageFor(ctx context.Context, userID, current uuid.
 		       CASE WHEN ends.idle <= COALESCE(sess.revoked_at, NOW()) THEN 'expired'
 		            WHEN sess.revoked_at IS NOT NULL THEN 'revoked'
 		            ELSE 'active' END,
-		       COALESCE(sess.country, '')
+		       COALESCE(sess.country, ''), COALESCE(sess.city, '')
 		FROM auth.sessions sess
 		CROSS JOIN LATERAL (SELECT LEAST(sess.last_seen_at + sess.idle_timeout, sess.expires_at) AS idle) ends
 		JOIN "user".users u ON u.id = sess.user_id
@@ -381,7 +398,7 @@ func (s *Service) ListSessionsPageFor(ctx context.Context, userID, current uuid.
 		var session Session
 		var tenantID pgtype.UUID
 		if err := rows.Scan(&session.ID, &session.UserID, &tenantID, &session.IP, &session.UserAgent, &session.CreatedAt, &session.LastSeenAt, &session.RevokedAt,
-			&session.ExpiresAt, &session.IdleExpiresAt, &session.Status, &session.Country); err != nil {
+			&session.ExpiresAt, &session.IdleExpiresAt, &session.Status, &session.Country, &session.City); err != nil {
 			return nil, err
 		}
 		ua := ""

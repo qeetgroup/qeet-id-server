@@ -25,14 +25,51 @@ type Store interface {
 type bucket struct {
 	tokens float64
 	last   time.Time
+	rate   float64 // tokens/sec, so a sweep knows when it has refilled
+	full   float64 // capacity
 }
 
+// refilledBy reports whether b holds its capacity again at now, so it is the
+// same as no bucket.
+func (b *bucket) refilledBy(now time.Time) bool {
+	return b.tokens+now.Sub(b.last).Seconds()*b.rate >= b.full
+}
+
+// The in-process store drops buckets that have refilled, at most once a
+// sweepInterval, and holds at most maxBuckets, so keys a caller chooses can't
+// grow it without bound.
+const (
+	sweepInterval = time.Minute
+	maxBuckets    = 100_000
+)
+
 type memStore struct {
-	mu      sync.Mutex
-	buckets map[string]*bucket
+	mu        sync.Mutex
+	buckets   map[string]*bucket
+	lastSweep time.Time
 }
 
 func newMemStore() *memStore { return &memStore{buckets: make(map[string]*bucket)} }
+
+// sweep drops refilled buckets once a sweepInterval and, at maxBuckets, an
+// arbitrary one to make room. Dropping one only forgets what it spent, as a
+// store error would. The caller holds mu.
+func (s *memStore) sweep(now time.Time) {
+	if now.Sub(s.lastSweep) >= sweepInterval {
+		s.lastSweep = now
+		for k, b := range s.buckets {
+			if b.refilledBy(now) {
+				delete(s.buckets, k)
+			}
+		}
+	}
+	for k := range s.buckets {
+		if len(s.buckets) < maxBuckets {
+			break
+		}
+		delete(s.buckets, k)
+	}
+}
 
 // NewMemStore returns a new in-process token-bucket store.
 func NewMemStore() Store { return newMemStore() }
@@ -43,7 +80,8 @@ func (s *memStore) Take(_ context.Context, key string, rate, capacity float64) (
 	defer s.mu.Unlock()
 	b, ok := s.buckets[key]
 	if !ok {
-		b = &bucket{tokens: capacity, last: now}
+		s.sweep(now)
+		b = &bucket{tokens: capacity, last: now, rate: rate, full: capacity}
 		s.buckets[key] = b
 	} else {
 		b.tokens += now.Sub(b.last).Seconds() * rate
@@ -136,9 +174,15 @@ func (l *Limiter) Middleware(next http.Handler) http.Handler {
 	return l.MiddlewareBy("ip", PerIP)(next)
 }
 
-// PerIP keys requests by client IP.
+// PerIP keys requests by the client's network: its IPv4 address, or the /64
+// of its IPv6 one, so rotating addresses inside one allocation shares a
+// bucket.
 func PerIP(r *http.Request) string {
-	return httpx.ClientIP(r)
+	ip := httpx.ClientIP(r)
+	if network := httpx.SourceNetwork(ip); network != "" {
+		return network
+	}
+	return ip
 }
 
 // PerTenant keys requests by the principal's tenant ID. Empty when unauthenticated.

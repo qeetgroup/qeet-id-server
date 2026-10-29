@@ -50,6 +50,7 @@ type authedClient struct {
 	ClientID   string
 	Type       string
 	GrantTypes []string
+	Scopes     []string // the scopes it is registered for
 }
 
 // authenticateClient identifies the calling client: a confidential client must
@@ -64,7 +65,7 @@ func (s *Service) authenticateClient(ctx context.Context, clientID, clientSecret
 	if err != nil {
 		return authedClient{}, err
 	}
-	c := authedClient{ID: row.ID, TenantID: row.TenantID, ClientID: clientID, Type: row.Type, GrantTypes: row.GrantTypes}
+	c := authedClient{ID: row.ID, TenantID: row.TenantID, ClientID: clientID, Type: row.Type, GrantTypes: row.GrantTypes, Scopes: row.Scopes}
 	if row.Type == "confidential" {
 		// A locked-out application is refused before its secret is compared,
 		// with the same answer as a wrong one.
@@ -180,7 +181,7 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 	// for a resource it serves, or the person delegated to it (consented).
 	// Otherwise an application allowed to exchange could mint tokens in the
 	// name of anyone whose token passes through it, an administrator's too.
-	entitled, err := s.mayExchange(ctx, caller.TenantID, clientID, userID, claims)
+	entitled, consented, err := s.mayExchange(ctx, caller.TenantID, clientID, userID, claims)
 	if err != nil {
 		return nil, err
 	}
@@ -207,8 +208,16 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 	if claims.ExchangeDepth >= s.exchangeMaxDepth {
 		return nil, errs.ErrOIDCExchangeDepthExceeded
 	}
-	// Downscope: the result is at most the subject's scopes (never escalate).
-	granted, ok := downscope(strings.Fields(claims.Scope), scope)
+	// Downscope: the result is at most the subject's scopes (never escalate),
+	// and at most what the caller may hold: the scopes it is registered for
+	// and, when it holds the token by the person's consent, those consented
+	// to. Otherwise exchanging another application's token would hand the
+	// caller that application's access.
+	held := intersect(strings.Fields(claims.Scope), client.Scopes)
+	if consented != nil {
+		held = intersect(held, consented)
+	}
+	granted, ok := downscope(held, scope)
 	if !ok {
 		return nil, errs.ErrOIDCScopeExceedsSubject
 	}
@@ -391,8 +400,8 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	// the hosted-login session the code came from either spends the code first
 	// (and this redemption fails) or waits and then ends the grant.
 	refresh := ""
-	if contains(client.GrantTypes, "refresh_token") {
-		refresh, err = s.issueRefreshToken(ctx, q, clientID, userID, tenantID, scopes, resource, ac.LoginSessionID, hash)
+	if issuesRefreshToken(clientInfo.Scopes, client.GrantTypes, scopes) {
+		refresh, err = s.issueRefreshToken(ctx, q, clientID, userID, tenantID, scopes, resource, ac.LoginSessionID, hash, ac.AuthTime)
 		if err != nil {
 			return nil, err
 		}
@@ -432,9 +441,10 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 
 // issueRefreshToken stores a refresh token for the client and user and returns
 // it. resource is the RFC 8707 resource bound to the access token ("" for none),
-// loginSessionID the hosted-login session (NULL for none) and codeHash the
-// redeemed code ("" for none). q lets it run in the caller's transaction.
-func (s *Service) issueRefreshToken(ctx context.Context, q *dbgen.Queries, clientID string, userID, tenantID uuid.UUID, scopes []string, resource string, loginSessionID pgtype.UUID, codeHash string) (string, error) {
+// loginSessionID the hosted-login session and authTime when the person signed
+// in there (NULL for none), and codeHash the redeemed code ("" for none). q
+// lets it run in the caller's transaction.
+func (s *Service) issueRefreshToken(ctx context.Context, q *dbgen.Queries, clientID string, userID, tenantID uuid.UUID, scopes []string, resource string, loginSessionID pgtype.UUID, codeHash string, authTime pgtype.Timestamptz) (string, error) {
 	raw, hash, err := tokens.NewRefreshToken()
 	if err != nil {
 		return "", err
@@ -449,6 +459,7 @@ func (s *Service) issueRefreshToken(ctx context.Context, q *dbgen.Queries, clien
 		TokenHash: hash, ClientID: clientID, UserID: userID, TenantID: tenantID,
 		Scopes: scopes, ExpiresAt: exp, Resource: res, LoginSessionID: loginSessionID,
 		DefaultMaxAgeSeconds: s.grantMaxAge.Seconds(), AuthorizationCodeHash: optionalString(codeHash),
+		AuthTime: authTime,
 	}); err != nil {
 		return "", err
 	}
@@ -554,7 +565,7 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 		TokenHash: newHash, ClientID: clientID, UserID: rt.UserID, TenantID: rt.TenantID,
 		Scopes: rt.Scopes, ExpiresAt: newExp, Resource: newRes, LoginSessionID: rt.LoginSessionID,
 		GrantExpiresAt: rt.GrantExpiresAt, AuthorizationCodeHash: rt.AuthorizationCodeHash,
-		GrantID: rt.GrantID,
+		GrantID: rt.GrantID, AuthTime: rt.AuthTime,
 	})
 	if err != nil {
 		return nil, err
@@ -580,7 +591,11 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	}
 	idTok := ""
 	if contains(scopes, "openid") {
-		t, err := s.signIDToken(ctx, idToken{UserID: userID, TenantID: tenantID, Audience: clientID, Scopes: scopes})
+		// The original sign-in's time and session (OIDC Core 12.2), not now's.
+		t, err := s.signIDToken(ctx, idToken{
+			UserID: userID, TenantID: tenantID, Audience: clientID, Scopes: scopes,
+			AuthTime: timeOrZero(rt.AuthTime), SessionID: uuidOrNil(rt.LoginSessionID),
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -613,16 +628,34 @@ func accountActive(ctx context.Context, q *dbgen.Queries, userID uuid.UUID) (boo
 
 // mayExchange reports whether clientID may exchange a subject token of its
 // tenant: the token was issued to it, or for a registered resource it serves,
-// or the person has consented to it (a delegation it holds).
-func (s *Service) mayExchange(ctx context.Context, tenantID uuid.UUID, clientID string, userID uuid.UUID, claims *tokens.Claims) (bool, error) {
+// or the person has consented to it (a delegation it holds), when it also
+// returns the scopes consented to (nil otherwise).
+func (s *Service) mayExchange(ctx context.Context, tenantID uuid.UUID, clientID string, userID uuid.UUID, claims *tokens.Claims) (bool, []string, error) {
 	if ok, err := s.mayIntrospect(ctx, tenantID, clientID, claims); err != nil || ok {
-		return ok, err
+		return ok, nil, err
 	}
-	_, err := s.q.GetConsent(ctx, dbgen.GetConsentParams{UserID: userID, ClientID: clientID})
+	consented, err := s.q.GetConsent(ctx, dbgen.GetConsentParams{UserID: userID, ClientID: clientID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		return false, nil, nil
 	}
-	return err == nil, err
+	if err != nil {
+		return false, nil, err
+	}
+	if consented == nil {
+		consented = []string{}
+	}
+	return true, consented, nil
+}
+
+// intersect is the scopes of a that b also holds, in a's order.
+func intersect(a, b []string) []string {
+	out := []string{}
+	for _, v := range a {
+		if contains(b, v) {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // auditExchange records a token exchange: caller, subject, actor, scopes,
@@ -754,6 +787,15 @@ func (s *Service) tokenSubjectLive(ctx context.Context, claims *tokens.Claims) (
 	}
 	if claims.UserID != uuid.Nil {
 		if member, err := s.activeTenantPrincipal(ctx, s.q, claims.UserID, claims.TenantID); err != nil || !member {
+			return false, err
+		}
+	}
+	if claims.ActorType == "service" && s.principalLive != nil {
+		id, err := uuid.Parse(claims.Subject)
+		if err != nil {
+			return false, nil //nolint:nilerr // an unparseable principal ID means the token is not active
+		}
+		if live, err := s.principalLive(ctx, id); err != nil || !live {
 			return false, err
 		}
 	}

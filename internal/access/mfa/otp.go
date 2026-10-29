@@ -114,6 +114,7 @@ func (s *Service) sendOTP(ctx context.Context, in otpSend) error {
 		FactorID:  in.factorID,
 		CodeHash:  codes.Hash(code),
 		ExpiresAt: time.Now().UTC().Add(otpTTL),
+		Purpose:   in.purpose,
 	}); err != nil {
 		return err
 	}
@@ -137,12 +138,20 @@ func (s *Service) sendOTP(ctx context.Context, in otpSend) error {
 		Channel: in.channel,
 		To:      in.destination,
 		Subject: "Your verification code",
-		Body:    fmt.Sprintf("Your %s sign-in code is %s. It expires in %s.", s.issuer, code, otpTTL),
+		Body:    fmt.Sprintf(otpWording[in.purpose], s.issuer, code, otpTTL),
 	}); err != nil {
 		s.undeliveredOTP(ctx, in, code)
 		return errs.ErrMFADeliveryFailed.Wrap(err)
 	}
 	return nil
+}
+
+// otpWording is each purpose's message, so a person asked for a code knows
+// what entering it will do.
+var otpWording = map[string]string{
+	"sign_in":    "Your %s sign-in code is %s. It expires in %s.",
+	"step_up":    "Your %s code to confirm a change to your account's security is %s. It expires in %s.",
+	"enrollment": "Your %s code to add this as a way to verify your sign-ins is %s. It expires in %s.",
 }
 
 // undeliveredOTP withdraws a code the provider did not take, so it counts
@@ -342,13 +351,15 @@ func (s *Service) challengeOTP(ctx context.Context, userID uuid.UUID, tenantID *
 		destination: row.Destination, purpose: purpose})
 }
 
-// VerifyOTP consumes a code from any of the user's verified OTP factors.
+// VerifyOTP consumes a step-up code sent to any of the user's verified OTP
+// factors; a sign-in code never counts.
 func (s *Service) VerifyOTP(ctx context.Context, tx pgx.Tx, attempt Attempt, code string) (bool, error) {
 	userID := attempt.userID
 	qtx := s.q.WithTx(tx)
 	codeID, err := qtx.GetOTPCodeForVerify(ctx, dbgen.GetOTPCodeForVerifyParams{
 		UserID:   userID,
 		CodeHash: codes.Hash(strings.TrimSpace(code)),
+		Purpose:  "step_up",
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, attemptError(errs.ErrMFACodeInvalid, attempt.remaining)

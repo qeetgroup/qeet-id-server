@@ -164,7 +164,7 @@ internal/platform      shared kernel — pure infrastructure
 | `internal/platform` | HTTP, database, crypto, cache, config, events, jobs, messaging, observability |
 | `internal/bootstrap` | Composition root: dependencies, router, permission map, lifecycle, server |
 
-77 packages contain Go files.
+93 packages contain Go files.
 
 **File-naming convention — `<domain>.go`, not layered file names.** Domain logic, persistence and
 HTTP handlers usually live in **one file named after the package**; additional files split by
@@ -288,13 +288,13 @@ One PostgreSQL database, **seven schemas**: `auth`, `tenant`, `user`, `rbac`, `a
 `qeetai`.
 
 - **Driver:** pgx v5. **Queries:** hand-written SQL in `queries.sql`, compiled by **sqlc** into
-  `dbgen/` packages. 48 `queries.sql`/`sqlc.yaml` pairs, 47 `dbgen` directories.
+  `dbgen/` packages. 52 `queries.sql`/`sqlc.yaml` pairs, 52 `dbgen` directories.
 - **Generated `dbgen/` code is never hand-edited.** Change `queries.sql` and regenerate.
 - Transactions are opened at the service layer, so a domain write and its outbox row commit together.
 
 ### Migrations
 
-**Evidence:** `internal/platform/database/migrations/` — 163 up/down pairs, `0001`–`0164` (`0082` intentionally absent)
+**Evidence:** `internal/platform/database/migrations/` — 228 up/down pairs, `0001`–`0229` (`0082` intentionally absent)
 (`0082` is absent and must not be reused). Embedded with `//go:embed *.sql` in `runner.go` and
 applied on startup.
 
@@ -497,8 +497,10 @@ Scheduled maintenance (audit-chain verification of every organisation, session, 
 history, published-outbox and dead-letter cleanup) is `bootstrap.MaintenanceJobs`, run by `worker.RunScheduled`: the
 API runs it as its embedded `scheduler` worker, and `cmd/scheduler` or `cmd/worker` can run it
 standalone. Each job is claimed in `platform.scheduled_job_runs` before it runs, so it runs once per
-interval however many instances run it; each verification is stored in
-`platform.audit_verification_runs`.
+interval however many instances run it, each in its own goroutine (at most four at once); each
+verification is stored in `platform.audit_verification_runs`. Verification goes on from each chain's
+checkpoint (`platform.audit_chain_checkpoints`) and walks every chain from its first row once a week;
+deleting a chain's checkpoint makes the next run walk it from the start.
 
 **Choose async when** the work is retryable, slow, or must survive a request; **sync when** the
 caller needs the result or the operation must be atomic with the response.

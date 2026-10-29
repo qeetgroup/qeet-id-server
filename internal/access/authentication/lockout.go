@@ -10,9 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/netip"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,6 +23,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // The counters a lock or throttle can come from, as named in signals and metrics.
@@ -184,7 +184,7 @@ func (s *Service) newSignInAttempt(ctx context.Context, in SignInAttempt) (signI
 func (s *Service) signInAttemptIn(ctx context.Context, tenantID uuid.UUID, account, ip string) (signInAttempt, error) {
 	a := signInAttempt{
 		email:   strings.ToLower(strings.TrimSpace(account)),
-		network: SourceNetwork(ip),
+		network: httpx.SourceNetwork(ip),
 		lockout: s.lockout.Defaults,
 		// Microseconds, as PostgreSQL stores them, so a lock this attempt sets
 		// reads back equal to the one it asked for.
@@ -200,25 +200,6 @@ func (s *Service) signInAttemptIn(ctx context.Context, tenantID uuid.UUID, accou
 		return a, lockoutFailed(stageSettings, err)
 	}
 	return a, nil
-}
-
-// SourceNetwork is the network a sign-in comes from: an IPv4 address, or the
-// /64 an IPv6 address belongs to (one subscriber's allocation, so rotating
-// addresses inside it is still one source). "" when ip is not an address.
-func SourceNetwork(ip string) string {
-	addr, err := netip.ParseAddr(strings.TrimSpace(ip))
-	if err != nil {
-		return ""
-	}
-	addr = addr.Unmap().WithZone("")
-	if addr.Is4() {
-		return addr.String()
-	}
-	prefix, err := addr.Prefix(64)
-	if err != nil {
-		return ""
-	}
-	return prefix.String()
 }
 
 func lockoutContext(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -407,29 +388,37 @@ func (s *Service) clearFailedSignIns(ctx context.Context, a signInAttempt) error
 	return nil
 }
 
-// timingHash is a password hash with the current parameters, verified when an
+// timing holds a password hash with the current parameters, verified when an
 // address has no account (or no password) so that answer costs as long as a
 // wrong password on a real account.
-var timingHash = sync.OnceValue(func() string {
+var timing atomic.Pointer[string]
+
+// timingHash returns timing's hash, made on first use. A hasher too busy to
+// make it now returns ErrHasherBusy, and a later call tries again.
+func timingHash() (string, error) {
+	if h := timing.Load(); h != nil {
+		return *h, nil
+	}
 	h, err := password.Hash(uuid.NewString())
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return h
-})
+	timing.CompareAndSwap(nil, &h)
+	return *timing.Load(), nil
+}
 
 // verifyPassword checks plain against a stored hash. With no stored hash it
 // still spends a full verification, so the outcome's timing does not reveal
-// that the account has no password. When the hasher is too busy to answer in
-// time it returns ErrAuthSignInUnavailable, which is not a failed sign-in.
+// that the account has no password. When the hasher is too busy it returns
+// errs.ErrServerOverloaded, which is not a failed sign-in.
 func verifyPassword(ctx context.Context, hash, plain string) (bool, error) {
 	stored := hash
 	if stored == "" {
-		stored = timingHash()
+		var err error
+		if stored, err = timingHash(); err != nil {
+			return false, err
+		}
 	}
 	ok, err := password.VerifyWithin(ctx, stored, plain)
-	if errors.Is(err, password.ErrHasherBusy) {
-		return false, errs.ErrAuthSignInUnavailable
-	}
-	return ok && hash != "", err
+	return ok && hash != "" && err == nil, err
 }

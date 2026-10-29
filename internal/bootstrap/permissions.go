@@ -13,9 +13,10 @@ import (
 func userPermissionMap() map[string]string {
 	return map[string]string{
 		// Tenants (GET /v1/tenants lists the caller's own memberships — ungated).
-		"GET /v1/tenants/{tenantID}":    "tenant.read",
-		"PATCH /v1/tenants/{tenantID}":  "tenant.write",
-		"DELETE /v1/tenants/{tenantID}": "tenant.write",
+		"GET /v1/tenants/{tenantID}":                  "tenant.read",
+		"PATCH /v1/tenants/{tenantID}":                "tenant.write",
+		"DELETE /v1/tenants/{tenantID}":               "tenant.delete",
+		"POST /v1/tenants/{tenantID}/deletion/cancel": "tenant.delete",
 
 		// Users.
 		"GET /v1/users":                    "user.read",
@@ -26,41 +27,49 @@ func userPermissionMap() map[string]string {
 		"POST /v1/users/bulk/import":       "user.write",
 		"GET /v1/users/deleted":            "user.read",
 		"GET /v1/users/suspended":          "user.read",
-		"POST /v1/users/{id}/reactivate":   "user.write",
-		"PUT /v1/users/{id}/suspension":    "user.write",
+		"POST /v1/users/{id}/reactivate":   "user.suspend",
+		"PUT /v1/users/{id}/suspension":    "user.suspend",
 		"GET /v1/users/{id}":               "user.read",
 		"PATCH /v1/users/{id}":             "user.write",
-		"DELETE /v1/users/{id}":            "user.write",
-		"DELETE /v1/users/{id}/membership": "user.write",
-		"POST /v1/users/{id}/restore":      "user.write",
-		"DELETE /v1/users/{id}/purge":      "user.write",
-		"POST /v1/users/{id}/password":     "user.write",
-		"DELETE /v1/users/{id}/mfa":        "user.write", // admin MFA reset (Phase 3 feature)
+		"DELETE /v1/users/{id}":            "user.delete",
+		"DELETE /v1/users/{id}/membership": "user.delete",
+		"POST /v1/users/{id}/restore":      "user.delete",
+		"DELETE /v1/users/{id}/purge":      "user.delete",
+		"POST /v1/users/{id}/password":     "user.credentials",
+		"DELETE /v1/users/{id}/mfa":        "user.credentials", // admin MFA reset
 		// A member's remembered devices, in the administrator's organisation.
 		"GET /v1/users/{id}/trusted-devices":               "user.read",
-		"DELETE /v1/users/{id}/trusted-devices":            "user.write",
-		"DELETE /v1/users/{id}/trusted-devices/{deviceID}": "user.write",
+		"DELETE /v1/users/{id}/trusted-devices":            "user.credentials",
+		"DELETE /v1/users/{id}/trusted-devices/{deviceID}": "user.credentials",
 		// A member's linked phones, in the administrator's organisation.
 		"GET /v1/users/{id}/push-devices":               "user.read",
-		"DELETE /v1/users/{id}/push-devices/{deviceID}": "user.write",
+		"DELETE /v1/users/{id}/push-devices/{deviceID}": "user.credentials",
 
 		// User 360 — per-user admin read surfaces + force sign-out (see user360.go).
-		"GET /v1/users/{id}/security":             "user.read",
-		"GET /v1/users/{id}/sessions":             "user.read",
-		"GET /v1/users/{id}/access":               "user.read",
-		"POST /v1/users/{id}/sessions/revoke-all": "user.write",
-		"PUT /v1/users/{id}/mfa-required":         "user.write",
+		"GET /v1/users/{id}/security":                                   "user.read",
+		"GET /v1/users/{id}/sessions":                                   "user.read",
+		"GET /v1/users/{id}/access":                                     "user.read",
+		"POST /v1/users/{id}/sessions/revoke-all":                       "session.revoke",
+		"DELETE /v1/tenants/{tenantID}/users/{id}/sessions/{sessionID}": "session.revoke",
+		"GET /v1/tenants/{tenantID}/users/{id}/passkeys":                "user.read",
+		"GET /v1/tenants/{tenantID}/users/{id}/sign-ins":                "audit.read",
+		"DELETE /v1/tenants/{tenantID}/users/{id}/passkeys/{passkeyID}": "user.credentials",
+		"PUT /v1/users/{id}/mfa-required":                               "user.credentials",
 
 		// Invites (inviting/removing members is user management).
-		"POST /v1/invites":                   "user.write",
+		"POST /v1/invites":                   "member.invite",
 		"GET /v1/tenants/{tenantID}/invites": "user.read",
-		"POST /v1/invites/{id}/resend":       "user.write",
-		"DELETE /v1/invites/{id}":            "user.write",
+		"POST /v1/invites/{id}/resend":       "member.invite",
+		"DELETE /v1/invites/{id}":            "member.invite",
 
 		// RBAC: roles, permissions, assignments, checks.
 		"GET /v1/permissions":                                         "role.read",
 		"GET /v1/tenants/{tenantID}/roles":                            "role.read",
+		"GET /v1/tenants/{tenantID}/roles/{roleID}/holders":           "role.read",
 		"POST /v1/tenants/{tenantID}/roles":                           "role.write",
+		"PATCH /v1/tenants/{tenantID}/roles/{roleID}":                 "role.write",
+		"DELETE /v1/tenants/{tenantID}/roles/{roleID}":                "role.write",
+		"PUT /v1/tenants/{tenantID}/roles/{roleID}/permissions":       "role.write",
 		"GET /v1/roles/{roleID}/permissions":                          "role.read",
 		"POST /v1/roles/{roleID}/permissions/{permID}":                "role.write",
 		"DELETE /v1/roles/{roleID}/permissions/{permID}":              "role.write",
@@ -74,13 +83,17 @@ func userPermissionMap() map[string]string {
 		// Reads are gated on policy.read; mutations on policy.write. The
 		// evaluate endpoint is a PDP call and is ungated beyond tenant scope
 		// (it gates itself via requirePathTenant in the handler).
-		"GET /v1/tenants/{tenantID}/abac/policies":         "policy.read",
-		"POST /v1/tenants/{tenantID}/abac/policies":        "policy.write",
-		"GET /v1/tenants/{tenantID}/abac/policies/{id}":    "policy.read",
-		"PATCH /v1/tenants/{tenantID}/abac/policies/{id}":  "policy.write",
-		"DELETE /v1/tenants/{tenantID}/abac/policies/{id}": "policy.write",
-		"POST /v1/tenants/{tenantID}/abac/evaluate":        "policy.read",
-		"POST /v1/tenants/{tenantID}/access/v1/evaluation": "role.read",
+		"GET /v1/tenants/{tenantID}/abac/policies":                                  "policy.read",
+		"POST /v1/tenants/{tenantID}/abac/policies":                                 "policy.write",
+		"GET /v1/tenants/{tenantID}/abac/policies/{id}":                             "policy.read",
+		"PATCH /v1/tenants/{tenantID}/abac/policies/{id}":                           "policy.write",
+		"DELETE /v1/tenants/{tenantID}/abac/policies/{id}":                          "policy.write",
+		"GET /v1/tenants/{tenantID}/abac/policies/{id}/versions":                    "policy.read",
+		"POST /v1/tenants/{tenantID}/abac/policies/{id}/versions/{version}/restore": "policy.write",
+		"POST /v1/tenants/{tenantID}/abac/evaluate":                                 "policy.read",
+		"POST /v1/tenants/{tenantID}/access/v1/evaluation":                          "role.read",
+		"POST /v1/tenants/{tenantID}/access/v1/evaluations":                         "role.read",
+		"GET /v1/tenants/{tenantID}/authorization/decisions":                        "policy.read",
 
 		// ReBAC: relationship tuples + identity graph.
 		// Reads are gated on role.read (structural authz data). Writes/deletes
@@ -91,6 +104,8 @@ func userPermissionMap() map[string]string {
 		"DELETE /v1/tenants/{tenantID}/relation-tuples/{id}":            "role.write",
 		"POST /v1/tenants/{tenantID}/relation-tuples/check":             "role.read",
 		"GET /v1/tenants/{tenantID}/relation-tuples/graph":              "role.read",
+		"GET /v1/tenants/{tenantID}/relation-tuples/types":              "role.read",
+		"GET /v1/tenants/{tenantID}/relation-tuples/objects":            "role.read",
 		"POST /v1/tenants/{tenantID}/groups/{groupID}/roles/{roleID}":   "role.write",
 		"DELETE /v1/tenants/{tenantID}/groups/{groupID}/roles/{roleID}": "role.write",
 
@@ -111,12 +126,15 @@ func userPermissionMap() map[string]string {
 		"POST /v1/groups/import":               "group.write",
 
 		// API keys + service principals (M2M).
-		"POST /v1/api-keys":                             "apikey.write",
-		"GET /v1/tenants/{tenantID}/api-keys":           "apikey.read",
-		"DELETE /v1/api-keys/{id}":                      "apikey.write",
-		"POST /v1/service-principals":                   "apikey.write",
-		"GET /v1/tenants/{tenantID}/service-principals": "apikey.read",
-		"DELETE /v1/service-principals/{id}":            "apikey.write",
+		"POST /v1/api-keys":                                                 "apikey.write",
+		"GET /v1/tenants/{tenantID}/api-keys":                               "apikey.read",
+		"DELETE /v1/api-keys/{id}":                                          "apikey.write",
+		"POST /v1/service-principals":                                       "apikey.write",
+		"GET /v1/tenants/{tenantID}/service-principals":                     "apikey.read",
+		"DELETE /v1/service-principals/{id}":                                "apikey.write",
+		"POST /v1/tenants/{tenantID}/api-keys/{id}/rotate":                  "apikey.write",
+		"POST /v1/tenants/{tenantID}/service-principals/{id}/rotate-secret": "apikey.write",
+		"POST /v1/tenants/{tenantID}/service-principals/{id}/enable":        "apikey.write",
 
 		// SSO / identity connections: OIDC clients + grants/devices.
 		"GET /v1/oidc/signing-keys":                                   "connection.read",
@@ -136,26 +154,43 @@ func userPermissionMap() map[string]string {
 		"POST /v1/tenants/{tenantID}/oidc/clients/{id}/review":        "connection.write",
 		"GET /v1/tenants/{tenantID}/oauth/grants":                     "connection.read",
 		"DELETE /v1/tenants/{tenantID}/oauth/grants/{id}":             "connection.write",
+		"POST /v1/tenants/{tenantID}/oauth/grants/revoke":             "connection.write",
 		"GET /v1/tenants/{tenantID}/oauth/devices":                    "connection.read",
 		// Tenant-wide trusted-device estate (adaptive MFA "remember this
 		// device"), distinct from the OAuth device-grant flows above.
 		"GET /v1/auth/trusted-devices/count":               "connection.read",
 		"DELETE /v1/tenants/{tenantID}/oauth/devices/{id}": "connection.write",
 
-		// SSO connections: SAML / SCIM / LDAP / social provider config.
+		// SSO connections: SAML / OIDC / SCIM / LDAP / social provider config.
 		"GET /v1/tenants/{tenantID}/saml":                                                         "connection.read",
 		"POST /v1/tenants/{tenantID}/saml":                                                        "connection.write",
 		"GET /v1/tenants/{tenantID}/saml/{id}":                                                    "connection.read",
 		"PATCH /v1/tenants/{tenantID}/saml/{id}":                                                  "connection.write",
 		"POST /v1/tenants/{tenantID}/saml/{id}/test":                                              "connection.write",
 		"DELETE /v1/tenants/{tenantID}/saml/{id}":                                                 "connection.write",
+		"GET /v1/tenants/{tenantID}/saml/{id}/group-mappings":                                     "connection.read",
+		"POST /v1/tenants/{tenantID}/saml/{id}/group-mappings":                                    "group.write", // decides who sign-ins put in a group
+		"DELETE /v1/tenants/{tenantID}/saml/{id}/group-mappings/{mappingID}":                      "group.write",
+		"GET /v1/tenants/{tenantID}/ldap/{id}/group-mappings":                                     "connection.read",
+		"POST /v1/tenants/{tenantID}/ldap/{id}/group-mappings":                                    "group.write", // decides who sign-ins put in a group
+		"DELETE /v1/tenants/{tenantID}/ldap/{id}/group-mappings/{mappingID}":                      "group.write",
+		"POST /v1/tenants/{tenantID}/saml/import":                                                 "connection.write",
+		"POST /v1/tenants/{tenantID}/saml/{id}/metadata":                                          "connection.write",
+		"POST /v1/tenants/{tenantID}/saml/{id}/certificates":                                      "connection.write",
+		"DELETE /v1/tenants/{tenantID}/saml/{id}/certificates/{certificateID}":                    "connection.write",
 		"GET /v1/tenants/{tenantID}/saml-providers":                                               "connection.read",
 		"POST /v1/tenants/{tenantID}/saml-providers":                                              "connection.write",
 		"GET /v1/tenants/{tenantID}/saml-providers/{id}":                                          "connection.read",
 		"PATCH /v1/tenants/{tenantID}/saml-providers/{id}":                                        "connection.write",
 		"DELETE /v1/tenants/{tenantID}/saml-providers/{id}":                                       "connection.write",
+		"GET /v1/tenants/{tenantID}/saml-providers/{id}/assignments":                              "connection.read",
+		"POST /v1/tenants/{tenantID}/saml-providers/{id}/assignments/users/{userID}":              "connection.write",
+		"DELETE /v1/tenants/{tenantID}/saml-providers/{id}/assignments/users/{userID}":            "connection.write",
+		"POST /v1/tenants/{tenantID}/saml-providers/{id}/assignments/groups/{groupID}":            "connection.write",
+		"DELETE /v1/tenants/{tenantID}/saml-providers/{id}/assignments/groups/{groupID}":          "connection.write",
 		"GET /v1/tenants/{tenantID}/scim":                                                         "connection.read",
 		"GET /v1/tenants/{tenantID}/directory/connections":                                        "connection.read",
+		"GET /v1/tenants/{tenantID}/directory/profiles/{userID}":                                  "user.read",
 		"GET /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings":                "connection.read",
 		"POST /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings":               "connection.write",
 		"POST /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings/preview":       "connection.read",
@@ -166,9 +201,17 @@ func userPermissionMap() map[string]string {
 		"POST /v1/tenants/{tenantID}/directory/errors/{eventID}/retry":                            "connection.write",
 		"GET /v1/tenants/{tenantID}/directory/activity":                                           "connection.read",
 		"POST /v1/tenants/{tenantID}/directory/alerts":                                            "connection.write",
+		"GET /v1/tenants/{tenantID}/directory/alerts":                                             "connection.read",
+		"PATCH /v1/tenants/{tenantID}/directory/alerts/{alertID}":                                 "connection.write",
+		"DELETE /v1/tenants/{tenantID}/directory/alerts/{alertID}":                                "connection.write",
 		"POST /v1/tenants/{tenantID}/scim/token":                                                  "connection.write",
 		"DELETE /v1/tenants/{tenantID}/scim/token":                                                "connection.write",
+		"GET /v1/tenants/{tenantID}/scim/tokens":                                                  "connection.read",
+		"POST /v1/tenants/{tenantID}/scim/tokens":                                                 "connection.write",
+		"POST /v1/tenants/{tenantID}/scim/tokens/{id}/rotate":                                     "connection.write",
+		"DELETE /v1/tenants/{tenantID}/scim/tokens/{id}":                                          "connection.write",
 		"GET /v1/tenants/{tenantID}/scim/users":                                                   "connection.read",
+		"GET /v1/tenants/{tenantID}/scim/groups":                                                  "connection.read",
 		"POST /v1/tenants/{tenantID}/admin-portal/links":                                          "connection.write",
 		"GET /v1/tenants/{tenantID}/admin-portal/links":                                           "connection.read",
 		"DELETE /v1/tenants/{tenantID}/admin-portal/links/{id}":                                   "connection.write",
@@ -178,6 +221,11 @@ func userPermissionMap() map[string]string {
 		"PATCH /v1/tenants/{tenantID}/ldap/{id}":                                                  "connection.write",
 		"DELETE /v1/tenants/{tenantID}/ldap/{id}":                                                 "connection.write",
 		"POST /v1/tenants/{tenantID}/ldap/{id}/test":                                              "connection.write",
+		"GET /v1/tenants/{tenantID}/oidc-connections":                                             "connection.read",
+		"POST /v1/tenants/{tenantID}/oidc-connections":                                            "connection.write",
+		"GET /v1/tenants/{tenantID}/oidc-connections/{id}":                                        "connection.read",
+		"PATCH /v1/tenants/{tenantID}/oidc-connections/{id}":                                      "connection.write",
+		"DELETE /v1/tenants/{tenantID}/oidc-connections/{id}":                                     "connection.write",
 		"GET /v1/tenants/{tenantID}/social/providers":                                             "connection.read",
 		"POST /v1/social/providers":                                                               "connection.write",
 		"PATCH /v1/social/providers/{provider}":                                                   "connection.write",
@@ -186,16 +234,19 @@ func userPermissionMap() map[string]string {
 		"DELETE /v1/social/identities/{id}":                                                       "user.write",
 
 		// Webhooks.
-		"GET /v1/tenants/{tenantID}/webhooks":                     "webhook.read",
-		"GET /v1/tenants/{tenantID}/webhooks/events":              "webhook.read",
-		"POST /v1/tenants/{tenantID}/webhooks/{id}/enable":        "webhook.write",
-		"POST /v1/tenants/{tenantID}/webhooks/{id}/rotate-secret": "webhook.write",
-		"GET /v1/webhooks/{id}":                                   "webhook.read",
-		"GET /v1/webhooks/{id}/deliveries":                        "webhook.read",
-		"POST /v1/webhooks":                                       "webhook.write",
-		"DELETE /v1/webhooks/{id}":                                "webhook.write",
-		"POST /v1/webhooks/{id}/test":                             "webhook.write",
-		"POST /v1/webhooks/{id}/deliveries/{deliveryID}/retry":    "webhook.write",
+		"GET /v1/tenants/{tenantID}/webhooks":                                       "webhook.read",
+		"GET /v1/tenants/{tenantID}/webhooks/events":                                "webhook.read",
+		"POST /v1/tenants/{tenantID}/webhooks/{id}/enable":                          "webhook.write",
+		"POST /v1/tenants/{tenantID}/webhooks/{id}/rotate-secret":                   "webhook.write",
+		"PATCH /v1/tenants/{tenantID}/webhooks/{id}":                                "webhook.write",
+		"POST /v1/tenants/{tenantID}/webhooks/{id}/deliveries/retry":                "webhook.write",
+		"GET /v1/tenants/{tenantID}/webhooks/{id}/deliveries/{deliveryID}/attempts": "webhook.read",
+		"GET /v1/webhooks/{id}":                                                     "webhook.read",
+		"GET /v1/webhooks/{id}/deliveries":                                          "webhook.read",
+		"POST /v1/webhooks":                                                         "webhook.write",
+		"DELETE /v1/webhooks/{id}":                                                  "webhook.write",
+		"POST /v1/webhooks/{id}/test":                                               "webhook.write",
+		"POST /v1/webhooks/{id}/deliveries/{deliveryID}/retry":                      "webhook.write",
 
 		// Secrets vault.
 		"GET /v1/tenants/{tenantID}/secrets":              "secret.read",
@@ -218,6 +269,8 @@ func userPermissionMap() map[string]string {
 		"GET /v1/tenants/{tenantID}/agents":                                 "apikey.read",
 		"POST /v1/tenants/{tenantID}/agents":                                "apikey.write",
 		"POST /v1/tenants/{tenantID}/agents/kill-all":                       "apikey.write",
+		"POST /v1/tenants/{tenantID}/agents/resume-all":                     "apikey.write",
+		"POST /v1/tenants/{tenantID}/agents/{id}/rotate-secret":             "apikey.write",
 		"DELETE /v1/tenants/{tenantID}/agents/{id}":                         "apikey.write",
 		"PATCH /v1/tenants/{tenantID}/agents/{id}":                          "apikey.write",
 		"POST /v1/tenants/{tenantID}/agents/{id}/suspend":                   "apikey.write",
@@ -229,10 +282,13 @@ func userPermissionMap() map[string]string {
 		// Qeet AI provider config (BYOK) — org owner/admin only. Reuses the
 		// secrets permission so a newly added capability need not be backfilled
 		// onto existing owner roles. The other /qeetai/* routes are user-level.
-		"GET /v1/qeetai/provider-config":       "secret.read",
-		"PUT /v1/qeetai/provider-config":       "secret.write",
-		"DELETE /v1/qeetai/provider-config":    "secret.write",
-		"POST /v1/qeetai/provider-config/test": "secret.write",
+		"GET /v1/qeetai/provider-config":             "secret.read",
+		"PUT /v1/qeetai/provider-config":             "secret.write",
+		"DELETE /v1/qeetai/provider-config":          "secret.write",
+		"POST /v1/qeetai/provider-config/test":       "secret.write",
+		"GET /v1/tenants/{tenantID}/qeetai/usage":    "secret.read",
+		"GET /v1/tenants/{tenantID}/qeetai/settings": "secret.read",
+		"PUT /v1/tenants/{tenantID}/qeetai/settings": "secret.write",
 
 		// Branding + email templates (GET branding is harmless — ungated).
 		"PUT /v1/tenants/{tenantID}/branding":                       "branding.write",
@@ -247,7 +303,9 @@ func userPermissionMap() map[string]string {
 		// Security / auth policy, IP rules, retention.
 		"GET /v1/tenants/{tenantID}/policy":                           "policy.read",
 		"PUT /v1/tenants/{tenantID}/policy":                           "policy.write",
+		"PATCH /v1/tenants/{tenantID}/policy":                         "policy.write",
 		"GET /v1/tenants/{tenantID}/auth-policy":                      "policy.read",
+		"GET /v1/tenants/{tenantID}/auth-policy/usage":                "policy.read",
 		"PUT /v1/tenants/{tenantID}/auth-policy":                      "policy.write",
 		"GET /v1/tenants/{tenantID}/ip-rules":                         "policy.read",
 		"POST /v1/tenants/{tenantID}/ip-rules":                        "policy.write",
@@ -271,10 +329,11 @@ func userPermissionMap() map[string]string {
 		"DELETE /v1/tenants/{tenantID}/rate-limits":                   "policy.write",
 
 		// Synchronous login hooks are tenant security policy.
-		"GET /v1/tenants/{tenantID}/auth-hooks":         "policy.read",
-		"POST /v1/tenants/{tenantID}/auth-hooks":        "policy.write",
-		"PATCH /v1/tenants/{tenantID}/auth-hooks/{id}":  "policy.write",
-		"DELETE /v1/tenants/{tenantID}/auth-hooks/{id}": "policy.write",
+		"GET /v1/tenants/{tenantID}/auth-hooks":            "policy.read",
+		"POST /v1/tenants/{tenantID}/auth-hooks":           "policy.write",
+		"PATCH /v1/tenants/{tenantID}/auth-hooks/{id}":     "policy.write",
+		"POST /v1/tenants/{tenantID}/auth-hooks/{id}/test": "policy.write",
+		"DELETE /v1/tenants/{tenantID}/auth-hooks/{id}":    "policy.write",
 
 		// Verified domains affect hosted authentication routing.
 		"GET /v1/tenants/{tenantID}/domains":              "connection.read",
@@ -283,27 +342,41 @@ func userPermissionMap() map[string]string {
 		"DELETE /v1/tenants/{tenantID}/domains/{id}":      "connection.write",
 		"PATCH /v1/tenants/{tenantID}/domains/{id}":       "connection.write",
 		"GET /v1/tenants/{tenantID}/login-domain":         "connection.read",
+		"POST /v1/tenants/{tenantID}/login-domain/check":  "connection.read",
+		// Members who keep their own sign-in methods on a domain that requires
+		// single sign-on; changing them is also owner-only (domainverify).
+		"GET /v1/tenants/{tenantID}/break-glass-members":             "connection.read",
+		"PUT /v1/tenants/{tenantID}/break-glass-members/{userID}":    "connection.write",
+		"DELETE /v1/tenants/{tenantID}/break-glass-members/{userID}": "connection.write",
 
 		// GDPR.
-		"POST /v1/gdpr/purge":                                         "gdpr.write",
-		"GET /v1/tenants/{tenantID}/gdpr/purge":                       "gdpr.write",
-		"DELETE /v1/gdpr/purge/{id}":                                  "gdpr.write",
-		"POST /v1/gdpr/export":                                        "gdpr.write",
-		"GET /v1/tenants/{tenantID}/gdpr/export":                      "gdpr.write",
-		"GET /v1/tenants/{tenantID}/gdpr/export/{id}":                 "gdpr.write",
-		"POST /v1/tenants/{tenantID}/compliance/{framework}/evidence": "audit.write",
-		"GET /v1/tenants/{tenantID}/compliance/{framework}/evidence":  "audit.read",
-		"GET /v1/tenants/{tenantID}/compliance/evidence/{id}":         "audit.read",
+		"POST /v1/gdpr/purge":                                                 "gdpr.write",
+		"GET /v1/tenants/{tenantID}/gdpr/purge":                               "gdpr.write",
+		"DELETE /v1/gdpr/purge/{id}":                                          "gdpr.write",
+		"POST /v1/gdpr/export":                                                "gdpr.write",
+		"GET /v1/tenants/{tenantID}/gdpr/export":                              "gdpr.write",
+		"GET /v1/tenants/{tenantID}/gdpr/export/{id}":                         "gdpr.write",
+		"POST /v1/tenants/{tenantID}/compliance/{framework}/evidence":         "audit.write",
+		"GET /v1/tenants/{tenantID}/compliance/{framework}/evidence":          "audit.read",
+		"GET /v1/tenants/{tenantID}/compliance/evidence/{id}":                 "audit.read",
+		"GET /v1/tenants/{tenantID}/compliance/controls/owners":               "audit.read",
+		"PUT /v1/tenants/{tenantID}/compliance/controls/{controlID}/owner":    "audit.write",
+		"DELETE /v1/tenants/{tenantID}/compliance/controls/{controlID}/owner": "audit.write",
+		"GET /v1/tenants/{tenantID}/compliance/audits":                        "audit.read",
+		"POST /v1/tenants/{tenantID}/compliance/audits":                       "audit.write",
+		"DELETE /v1/tenants/{tenantID}/compliance/audits/{id}":                "audit.write",
 
 		// Audit (sensitive read).
-		"GET /v1/tenants/{tenantID}/audit":        "audit.read",
-		"GET /v1/tenants/{tenantID}/audit/verify": "audit.read",
+		"GET /v1/tenants/{tenantID}/audit":              "audit.read",
+		"GET /v1/tenants/{tenantID}/audit/verify":       "audit.read",
+		"GET /v1/tenants/{tenantID}/audit/verification": "audit.read",
 
 		// Live Activity feed — sourced from the audit log; same sensitivity.
-		"GET /v1/activity":              "audit.read",
-		"GET /v1/activity/summary":      "audit.read",
-		"GET /v1/activity/stream":       "audit.read",
-		"GET /v1/activity/{id}/related": "audit.read",
+		"GET /v1/activity":                         "audit.read",
+		"GET /v1/activity/summary":                 "audit.read",
+		"GET /v1/activity/stream":                  "audit.read",
+		"GET /v1/activity/{id}/related":            "audit.read",
+		"GET /v1/tenants/{tenantID}/activity/{id}": "audit.read",
 
 		// Audit intelligence: behavioral-baseline anomaly detection over audit.events.
 		"GET /v1/tenants/{tenantID}/audit/anomalies":               "audit.read",
@@ -313,19 +386,22 @@ func userPermissionMap() map[string]string {
 		"PUT /v1/tenants/{tenantID}/audit/anomaly-settings":        "audit.write",
 
 		// Billing (GET /v1/billing/plans is a public catalog — ungated).
-		"GET /v1/tenants/{tenantID}/billing/subscription":         "billing.read",
-		"PUT /v1/tenants/{tenantID}/billing/subscription":         "billing.write",
-		"POST /v1/tenants/{tenantID}/billing/subscription/cancel": "billing.write",
-		"GET /v1/tenants/{tenantID}/billing/invoices":             "billing.read",
-		"GET /v1/tenants/{tenantID}/billing/profile":              "billing.read",
-		"PUT /v1/tenants/{tenantID}/billing/profile":              "billing.write",
-		"POST /v1/tenants/{tenantID}/billing/trial":               "billing.write",
-		"POST /v1/tenants/{tenantID}/billing/checkout":            "billing.write",
-		"GET /v1/tenants/{tenantID}/entitlements":                 "billing.read",
-		"GET /v1/tenants/{tenantID}/entitlements/usage":           "billing.read",
+		"GET /v1/tenants/{tenantID}/billing/subscription":              "billing.read",
+		"PUT /v1/tenants/{tenantID}/billing/subscription":              "billing.write",
+		"POST /v1/tenants/{tenantID}/billing/subscription/cancel":      "billing.write",
+		"GET /v1/tenants/{tenantID}/billing/invoices":                  "billing.read",
+		"POST /v1/tenants/{tenantID}/billing/invoices/{invoiceID}/pay": "billing.write",
+		"GET /v1/tenants/{tenantID}/billing/payment-method":            "billing.read",
+		"GET /v1/tenants/{tenantID}/billing/profile":                   "billing.read",
+		"PUT /v1/tenants/{tenantID}/billing/profile":                   "billing.write",
+		"POST /v1/tenants/{tenantID}/billing/trial":                    "billing.write",
+		"POST /v1/tenants/{tenantID}/billing/checkout":                 "billing.write",
+		"GET /v1/tenants/{tenantID}/entitlements":                      "billing.read",
+		"GET /v1/tenants/{tenantID}/entitlements/usage":                "billing.read",
 
 		// Analytics.
 		"GET /v1/tenants/{tenantID}/analytics/overview": "analytics.read",
+		"GET /v1/tenants/{tenantID}/service-health":     "tenant.read",
 
 		// Email delivery: whether the organisation's mail arrived (support),
 		// and lifting a suppression its mail caused (administrators).
@@ -334,10 +410,12 @@ func userPermissionMap() map[string]string {
 		"DELETE /v1/tenants/{tenantID}/email/suppressions/{id}": "user.write",
 
 		// SIEM/log streaming contains tenant audit data.
-		"GET /v1/tenants/{tenantID}/log-sinks":         "audit.read",
-		"POST /v1/tenants/{tenantID}/log-sinks":        "audit.write",
-		"PATCH /v1/tenants/{tenantID}/log-sinks/{id}":  "audit.write",
-		"DELETE /v1/tenants/{tenantID}/log-sinks/{id}": "audit.write",
+		"GET /v1/tenants/{tenantID}/log-sinks":            "audit.read",
+		"POST /v1/tenants/{tenantID}/log-sinks":           "audit.write",
+		"PATCH /v1/tenants/{tenantID}/log-sinks/{id}":     "audit.write",
+		"DELETE /v1/tenants/{tenantID}/log-sinks/{id}":    "audit.write",
+		"POST /v1/tenants/{tenantID}/log-sinks/test":      "audit.write",
+		"POST /v1/tenants/{tenantID}/log-sinks/{id}/test": "audit.write",
 	}
 }
 

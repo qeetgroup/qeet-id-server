@@ -59,6 +59,27 @@ func (q *Queries) ClearSignInFailures(ctx context.Context, arg ClearSignInFailur
 	return err
 }
 
+const countMFAAttempt = `-- name: CountMFAAttempt :one
+INSERT INTO auth.mfa_failure_streaks (user_id, failures) VALUES ($1, 1)
+ON CONFLICT (user_id) DO UPDATE SET failures = auth.mfa_failure_streaks.failures + 1
+RETURNING failures, (locked_at IS NOT NULL)::bool AS locked
+`
+
+type CountMFAAttemptRow struct {
+	Failures int32
+	Locked   bool
+}
+
+// CountMFAAttempt counts one more second-factor attempt in the user's run of
+// wrong answers, which a right one ends, and returns the run and whether
+// their second-factor sign-in is already locked.
+func (q *Queries) CountMFAAttempt(ctx context.Context, userID uuid.UUID) (CountMFAAttemptRow, error) {
+	row := q.db.QueryRow(ctx, countMFAAttempt, userID)
+	var i CountMFAAttemptRow
+	err := row.Scan(&i.Failures, &i.Locked)
+	return i, err
+}
+
 const countSourceAccounts = `-- name: CountSourceAccounts :one
 SELECT COUNT(*) FROM auth.login_source_failures WHERE network = $1
 `
@@ -150,6 +171,17 @@ func (q *Queries) EndLoginSession(ctx context.Context, tokenHash string) (EndLog
 	return i, err
 }
 
+const endMFAFailureStreak = `-- name: EndMFAFailureStreak :exec
+DELETE FROM auth.mfa_failure_streaks WHERE user_id = $1
+`
+
+// EndMFAFailureStreak ends the user's run of wrong answers, and any lock it
+// set.
+func (q *Queries) EndMFAFailureStreak(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, endMFAFailureStreak, userID)
+	return err
+}
+
 const expireAuthorizationCodesForLoginSession = `-- name: ExpireAuthorizationCodesForLoginSession :execrows
 UPDATE auth.oidc_authorization_codes SET used_at = NOW()
 WHERE login_session_id = $1 AND used_at IS NULL
@@ -167,6 +199,24 @@ func (q *Queries) ExpireAuthorizationCodesForLoginSession(ctx context.Context, l
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const expireRecoveryLinksForUser = `-- name: ExpireRecoveryLinksForUser :exec
+WITH resets AS (
+    UPDATE auth.password_resets SET expires_at = NOW() - INTERVAL '1 minute'
+    WHERE user_id = $1 AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute'
+)
+UPDATE auth.magic_links SET expires_at = NOW() - INTERVAL '1 minute'
+WHERE LOWER(email) = (SELECT LOWER(u.email) FROM "user".users u WHERE u.id = $1)
+  AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute'
+`
+
+// ExpireRecoveryLinksForUser ends the user's unused password-reset links and
+// the unused sign-in links to their address, set a minute back so a clock
+// behind the database's sees them ended too.
+func (q *Queries) ExpireRecoveryLinksForUser(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, expireRecoveryLinksForUser, userID)
+	return err
 }
 
 const forgetSourceFailuresBefore = `-- name: ForgetSourceFailuresBefore :exec
@@ -375,11 +425,11 @@ func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshToken
 }
 
 const insertTenantlessSession = `-- name: InsertTenantlessSession :one
-INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, expires_at, idle_timeout, country)
+INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, expires_at, idle_timeout, country, city)
 VALUES ($1, $2, NULL, NULLIF($3::text, '')::inet, $4,
         NOW() + make_interval(secs => $5::float8),
         make_interval(secs => $6::float8),
-        NULLIF($7::text, ''))
+        NULLIF($7::text, ''), NULLIF($8::text, ''))
 RETURNING expires_at, LEAST(last_seen_at + idle_timeout, expires_at)::timestamptz AS idle_expires_at
 `
 
@@ -391,6 +441,7 @@ type InsertTenantlessSessionParams struct {
 	MaxAgeSeconds float64
 	IdleSeconds   float64
 	Country       string
+	City          string
 }
 
 type InsertTenantlessSessionRow struct {
@@ -411,6 +462,7 @@ func (q *Queries) InsertTenantlessSession(ctx context.Context, arg InsertTenantl
 		arg.MaxAgeSeconds,
 		arg.IdleSeconds,
 		arg.Country,
+		arg.City,
 	)
 	var i InsertTenantlessSessionRow
 	err := row.Scan(&i.ExpiresAt, &i.IdleExpiresAt)
@@ -484,6 +536,17 @@ func (q *Queries) IsSessionOfUser(ctx context.Context, arg IsSessionOfUserParams
 	var owned bool
 	err := row.Scan(&owned)
 	return owned, err
+}
+
+const lockMFASignIn = `-- name: LockMFASignIn :exec
+UPDATE auth.mfa_failure_streaks SET locked_at = NOW() WHERE user_id = $1
+`
+
+// LockMFASignIn locks the user's second-factor sign-in, at the end of a run of
+// wrong answers.
+func (q *Queries) LockMFASignIn(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockMFASignIn, userID)
+	return err
 }
 
 const lockUserForSessionRevocation = `-- name: LockUserForSessionRevocation :one
@@ -603,18 +666,26 @@ func (q *Queries) MarkRefreshTokenUsed(ctx context.Context, arg MarkRefreshToken
 
 const purgeEndedSessions = `-- name: PurgeEndedSessions :many
 DELETE FROM auth.sessions s
-WHERE s.created_at < $1
-  AND (
-      (s.revoked_at IS NOT NULL AND s.revoked_at < $1)
-      OR (s.revoked_at IS NULL AND (
-          s.expires_at < $1
-          OR s.last_seen_at + s.idle_timeout < $1
-          OR NOT EXISTS (
-              SELECT 1 FROM auth.refresh_tokens rt
-              WHERE rt.session_id = s.id AND rt.expires_at >= $1)))
-  )
+WHERE s.ctid = ANY(ARRAY(
+    SELECT e.ctid FROM auth.sessions e
+    WHERE e.created_at < $1
+      AND (
+          (e.revoked_at IS NOT NULL AND e.revoked_at < $1)
+          OR (e.revoked_at IS NULL AND (
+              e.expires_at < $1
+              OR e.last_seen_at + e.idle_timeout < $1
+              OR NOT EXISTS (
+                  SELECT 1 FROM auth.refresh_tokens rt
+                  WHERE rt.session_id = e.id AND rt.expires_at >= $1)))
+      )
+    LIMIT $2))
 RETURNING s.id, s.user_id, s.tenant_id, (s.revoked_at IS NULL)::boolean AS expired
 `
+
+type PurgeEndedSessionsParams struct {
+	Cutoff  time.Time
+	MaxRows int32
+}
 
 type PurgeEndedSessionsRow struct {
 	ID       uuid.UUID
@@ -623,15 +694,15 @@ type PurgeEndedSessionsRow struct {
 	Expired  bool
 }
 
-// PurgeEndedSessions deletes API and console sessions past retention: ended
-// (revoked) before the cutoff, or never ended but past its maximum age or idle
-// timeout before the cutoff, or with every refresh token expired before it
-// (none was usable after it). A session opened after the cutoff is always kept.
-// Their refresh tokens go with them (cascade). Returns what it deleted;
-// expired marks the sessions that were never ended, which are announced as
-// expired.
-func (q *Queries) PurgeEndedSessions(ctx context.Context, cutoff time.Time) ([]PurgeEndedSessionsRow, error) {
-	rows, err := q.db.Query(ctx, purgeEndedSessions, cutoff)
+// PurgeEndedSessions deletes at most @max_rows API and console sessions past
+// retention: ended (revoked) before the cutoff, or never ended but past its
+// maximum age or idle timeout before the cutoff, or with every refresh token
+// expired before it (none was usable after it). A session opened after the
+// cutoff is always kept. Their refresh tokens go with them (cascade). Returns
+// what it deleted; expired marks the sessions that were never ended, which are
+// announced as expired.
+func (q *Queries) PurgeEndedSessions(ctx context.Context, arg PurgeEndedSessionsParams) ([]PurgeEndedSessionsRow, error) {
+	rows, err := q.db.Query(ctx, purgeEndedSessions, arg.Cutoff, arg.MaxRows)
 	if err != nil {
 		return nil, err
 	}
@@ -656,14 +727,15 @@ func (q *Queries) PurgeEndedSessions(ctx context.Context, cutoff time.Time) ([]P
 }
 
 const purgeExpiredCeremonies = `-- name: PurgeExpiredCeremonies :execrows
-DELETE FROM auth.webauthn_sessions WHERE expires_at < NOW()
+DELETE FROM auth.webauthn_sessions WHERE ctid = ANY(ARRAY(
+    SELECT w.ctid FROM auth.webauthn_sessions w WHERE w.expires_at < NOW() LIMIT $1))
 `
 
 // PurgeExpiredCeremonies deletes passkey ceremony state that has expired
 // unfinished — every sign-in page now starts one in the background, and most
 // are never completed. An expired ceremony can no longer be finished.
-func (q *Queries) PurgeExpiredCeremonies(ctx context.Context) (int64, error) {
-	result, err := q.db.Exec(ctx, purgeExpiredCeremonies)
+func (q *Queries) PurgeExpiredCeremonies(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeExpiredCeremonies, maxRows)
 	if err != nil {
 		return 0, err
 	}
@@ -671,13 +743,20 @@ func (q *Queries) PurgeExpiredCeremonies(ctx context.Context) (int64, error) {
 }
 
 const purgeExpiredLoginSessions = `-- name: PurgeExpiredLoginSessions :execrows
-DELETE FROM auth.login_sessions WHERE expires_at < $1
+DELETE FROM auth.login_sessions WHERE ctid = ANY(ARRAY(
+    SELECT l.ctid FROM auth.login_sessions l WHERE l.expires_at < $1 LIMIT $2))
 `
 
-// PurgeExpiredLoginSessions deletes hosted-login sessions that expired before
-// the cutoff. Their cookie stopped being sent when they expired.
-func (q *Queries) PurgeExpiredLoginSessions(ctx context.Context, cutoff time.Time) (int64, error) {
-	result, err := q.db.Exec(ctx, purgeExpiredLoginSessions, cutoff)
+type PurgeExpiredLoginSessionsParams struct {
+	Cutoff  time.Time
+	MaxRows int32
+}
+
+// PurgeExpiredLoginSessions deletes at most @max_rows hosted-login sessions
+// that expired before the cutoff. Their cookie stopped being sent when they
+// expired.
+func (q *Queries) PurgeExpiredLoginSessions(ctx context.Context, arg PurgeExpiredLoginSessionsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeExpiredLoginSessions, arg.Cutoff, arg.MaxRows)
 	if err != nil {
 		return 0, err
 	}
@@ -685,13 +764,19 @@ func (q *Queries) PurgeExpiredLoginSessions(ctx context.Context, cutoff time.Tim
 }
 
 const purgeExpiredTrustedDevices = `-- name: PurgeExpiredTrustedDevices :execrows
-DELETE FROM auth.trusted_devices WHERE expires_at < $1
+DELETE FROM auth.trusted_devices WHERE ctid = ANY(ARRAY(
+    SELECT d.ctid FROM auth.trusted_devices d WHERE d.expires_at < $1 LIMIT $2))
 `
 
-// PurgeExpiredTrustedDevices deletes remembered devices that expired before
-// the cutoff; they no longer skip anything.
-func (q *Queries) PurgeExpiredTrustedDevices(ctx context.Context, cutoff time.Time) (int64, error) {
-	result, err := q.db.Exec(ctx, purgeExpiredTrustedDevices, cutoff)
+type PurgeExpiredTrustedDevicesParams struct {
+	Cutoff  time.Time
+	MaxRows int32
+}
+
+// PurgeExpiredTrustedDevices deletes at most @max_rows remembered devices that
+// expired before the cutoff; they no longer skip anything.
+func (q *Queries) PurgeExpiredTrustedDevices(ctx context.Context, arg PurgeExpiredTrustedDevicesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeExpiredTrustedDevices, arg.Cutoff, arg.MaxRows)
 	if err != nil {
 		return 0, err
 	}
@@ -1035,6 +1120,18 @@ func (q *Queries) SessionSecondFactor(ctx context.Context, arg SessionSecondFact
 	var i SessionSecondFactorRow
 	err := row.Scan(&i.SecondFactor, &i.SteppedUp)
 	return i, err
+}
+
+const signInClientName = `-- name: SignInClientName :one
+SELECT name FROM auth.oidc_clients WHERE client_id = $1
+`
+
+// SignInClientName is the name of the application a hosted sign-in is for.
+func (q *Queries) SignInClientName(ctx context.Context, clientID string) (string, error) {
+	row := q.db.QueryRow(ctx, signInClientName, clientID)
+	var name string
+	err := row.Scan(&name)
+	return name, err
 }
 
 const spendAuthorizationCodesForUser = `-- name: SpendAuthorizationCodesForUser :execrows

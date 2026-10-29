@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,9 +22,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/abac/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decisionlog"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
@@ -52,6 +55,10 @@ type Policy struct {
 	Enabled      bool            `json:"enabled"`
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
+	// Version counts the policy's saves from 1, and UpdatedBy is who made the
+	// last, nil for a machine or before it was kept.
+	Version   int        `json:"version"`
+	UpdatedBy *uuid.UUID `json:"updated_by"`
 }
 
 // CreateInput carries the user-supplied fields for a new policy.
@@ -91,7 +98,10 @@ type EvaluationInput struct {
 	Subject  map[string]any     `json:"subject"`
 	Resource EvaluationResource `json:"resource"`
 	Action   string             `json:"action"`
-	Context  map[string]any     `json:"context"`
+	// ActionAttrs are the action's attributes beside its name, the action
+	// namespace (action.name is Action).
+	ActionAttrs map[string]any `json:"action_attrs,omitempty"`
+	Context     map[string]any `json:"context"`
 }
 
 // Decision is the result of an Evaluate call. ReasonCode is one of the
@@ -107,6 +117,8 @@ type Decision struct {
 	ReasonCode      string         `json:"reason_code,omitempty"`
 	ReasonParams    map[string]any `json:"reason_params,omitempty"`
 	Trace           []string       `json:"trace,omitempty"`
+	// MatchedDraft is set when an evaluation's draft policy decided.
+	MatchedDraft bool `json:"matched_draft,omitempty"`
 }
 
 // Decision.ReasonCode values.
@@ -356,10 +368,11 @@ func compare(op string, attrVal, value any) (bool, error) {
 	}
 }
 
-// truth is a condition's three-valued result. A leaf comparing two attributes
-// is unknown when either is absent or null; all, any and not combine unknown
-// as Kleene logic does, so all with a false child is false and any with a true
-// child is true. truth.applies turns the result into a policy match.
+// truth is a condition's three-valued result. A leaf is unknown when the
+// attribute it compares, or one its value references, is absent or null; only
+// exists, which tests presence, is always known. all, any and not combine
+// unknown as Kleene logic does, so all with a false child is false and any with
+// a true child is true. truth.applies turns the result into a policy match.
 type truth uint8
 
 const (
@@ -384,7 +397,7 @@ func (t truth) applies(effect string) bool {
 }
 
 // refNamespaces are the namespaces an attribute reference may name.
-var refNamespaces = map[string]bool{"subject": true, "resource": true, "context": true}
+var refNamespaces = map[string]bool{"subject": true, "resource": true, "action": true, "context": true}
 
 // refOps are the operators whose value may reference another attribute. Not
 // regex, so a pattern never comes from request data, nor prefix and suffix,
@@ -413,7 +426,7 @@ func leafReference(m map[string]json.RawMessage, attr, op string) (string, error
 	}
 	ns, path, _ := strings.Cut(ref, ".")
 	if !refNamespaces[ns] || path == "" || slices.Contains(strings.Split(path, "."), "") {
-		return "", fmt.Errorf("leaf 'value' references %q, which is not a subject., resource. or context. attribute", ref)
+		return "", fmt.Errorf("leaf 'value' references %q, which is not a subject., resource., action. or context. attribute", ref)
 	}
 	if ref == attr {
 		return "", errors.New("leaf 'value' references the leaf's own attribute")
@@ -460,10 +473,10 @@ func evalLeaf(m map[string]json.RawMessage, bag AttributeBag) (truth, error) {
 		return truthOf(ok), err
 	}
 
-	// Absent attribute: fail-closed for all comparison ops except 'nin'
-	// (an absent value is not a member of any set).
-	if !present {
-		return truthOf(op == "nin"), nil
+	// A missing attribute decides nothing either, whatever the op: ne and nin
+	// would otherwise hold for it and let an allow grant or lift a deny.
+	if !present || attrVal == nil {
+		return isUnknown, nil
 	}
 
 	var value any
@@ -545,15 +558,100 @@ func evaluateNode(raw json.RawMessage, bag AttributeBag) (truth, error) {
 	case m["attr"] != nil:
 		return evalLeaf(m, bag)
 
+	case m["role"] != nil:
+		return evalRole(m["role"], bag)
+
+	case m["relation"] != nil:
+		return evalRelation(m["relation"], bag)
+
 	default:
-		return isFalse, fmt.Errorf("abac: condition node has no recognized key ('all', 'any', 'not', 'attr')")
+		return isFalse, fmt.Errorf("abac: condition node has no recognized key ('all', 'any', 'not', 'attr', 'role', 'relation')")
 	}
 }
 
+// evalRole evaluates {"role": "<name>"}: whether subject.roles, the roles the
+// platform supplies by name, holds name. Unknown when it supplies none.
+func evalRole(raw json.RawMessage, bag AttributeBag) (truth, error) {
+	var name string
+	if err := json.Unmarshal(raw, &name); err != nil || name == "" {
+		return isFalse, errors.New("abac: condition 'role' must be a non-empty string")
+	}
+	roles, present := resolvePath("subject.roles", bag)
+	list, ok := toArray(roles)
+	if !present || !ok {
+		return isUnknown, nil
+	}
+	return truthOf(slices.ContainsFunc(list, func(r any) bool { return r == name })), nil
+}
+
+// relationsKey is where a bag holds the relationships its policies ask about,
+// resolved before evaluation (Service.resolveRelations); no attribute path
+// reaches it.
+const relationsKey = "#relations"
+
+// relationLeaf is {"relation": "<relation>", "object": "<type>:<id>"}, or with
+// object an attribute reference {"attr": "<namespace>.<path>"} naming it.
+type relationLeaf struct {
+	Relation string          `json:"relation"`
+	Object   json.RawMessage `json:"object"`
+}
+
+// parseRelation returns a relation leaf's relation and its object, or the
+// attribute it references for one.
+func parseRelation(raw json.RawMessage) (relation, object, ref string, err error) {
+	var leaf relationLeaf
+	if err := json.Unmarshal(raw, &leaf); err != nil || strings.TrimSpace(leaf.Relation) == "" || len(leaf.Object) == 0 {
+		return "", "", "", errors.New(`condition 'relation' must be {"relation": "<relation>", "object": "<type>:<id>"}`)
+	}
+	if json.Unmarshal(leaf.Object, &object) == nil {
+		if t, id, ok := strings.Cut(object, ":"); !ok || t == "" || id == "" {
+			return "", "", "", fmt.Errorf("condition 'relation' object %q must be <type>:<id>", object)
+		}
+		return leaf.Relation, object, "", nil
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(leaf.Object, &obj) != nil || len(obj) != 1 || json.Unmarshal(obj["attr"], &ref) != nil {
+		return "", "", "", errors.New(`condition 'relation' object must be "<type>:<id>" or an attribute reference {"attr": "<namespace>.<path>"}`)
+	}
+	ns, path, _ := strings.Cut(ref, ".")
+	if !refNamespaces[ns] || path == "" || slices.Contains(strings.Split(path, "."), "") {
+		return "", "", "", fmt.Errorf("condition 'relation' object references %q, which is not a subject., resource., action. or context. attribute", ref)
+	}
+	return leaf.Relation, "", ref, nil
+}
+
+// relationObject is the object a relation leaf asks about in bag, "" when it
+// references an attribute bag lacks.
+func relationObject(object, ref string, bag AttributeBag) string {
+	if ref == "" {
+		return object
+	}
+	v, _ := resolvePath(ref, bag)
+	o, _ := v.(string)
+	return o
+}
+
+// evalRelation evaluates a relation leaf: whether the subject has the relation
+// on the object, as resolved into bag. Unknown when it couldn't be resolved: no
+// subject id, no object, or no relationship engine.
+func evalRelation(raw json.RawMessage, bag AttributeBag) (truth, error) {
+	relation, object, ref, err := parseRelation(raw)
+	if err != nil {
+		return isFalse, fmt.Errorf("abac: %w", err)
+	}
+	object = relationObject(object, ref, bag)
+	held, ok := bag[relationsKey][object+"#"+relation].(bool)
+	if object == "" || !ok {
+		return isUnknown, nil
+	}
+	return truthOf(held), nil
+}
+
 // EvaluateCondition reports whether a policy with effect and condition node
-// applies to attrs. A node is {"all": [...]}, {"any": [...]}, {"not": node} or
-// a leaf such as {"attr": "subject.dept", "op": "eq", "value": "eng"}; an empty
-// tree applies. An error means the tree is invalid: callers must deny.
+// applies to attrs: a tree of all, any, not and leaves such as {"attr":
+// "subject.dept", "op": "eq", "value": "eng"}, {} always applying. One left
+// unknown by a missing attribute (see truth) fails closed: it applies to a deny
+// and not to an allow. An error means the tree is invalid: callers must deny.
 func EvaluateCondition(node json.RawMessage, effect string, attrs AttributeBag) (bool, error) {
 	t, err := evaluateNode(node, attrs)
 	return err == nil && t.applies(effect), err
@@ -634,10 +732,43 @@ func validateCondition(raw json.RawMessage) error {
 				}
 			}
 		}
+	case m["role"] != nil:
+		var name string
+		if err := json.Unmarshal(m["role"], &name); err != nil || strings.TrimSpace(name) == "" {
+			return errors.New("'role' must be a non-empty role name")
+		}
+	case m["relation"] != nil:
+		if _, _, _, err := parseRelation(m["relation"]); err != nil {
+			return err
+		}
 	default:
-		return fmt.Errorf("node has no recognized key ('all', 'any', 'not', 'attr')")
+		return fmt.Errorf("node has no recognized key ('all', 'any', 'not', 'attr', 'role', 'relation')")
 	}
 	return nil
+}
+
+// relationLeaves calls found for each relation leaf in a condition tree.
+func relationLeaves(raw json.RawMessage, found func(relation, object, ref string)) {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return
+	}
+	for _, key := range []string{"all", "any"} {
+		var children []json.RawMessage
+		if json.Unmarshal(m[key], &children) == nil {
+			for _, c := range children {
+				relationLeaves(c, found)
+			}
+		}
+	}
+	if m["not"] != nil {
+		relationLeaves(m["not"], found)
+	}
+	if m["relation"] != nil {
+		if relation, object, ref, err := parseRelation(m["relation"]); err == nil {
+			found(relation, object, ref)
+		}
+	}
 }
 
 // Service — CRUD + evaluate.
@@ -645,12 +776,52 @@ func validateCondition(raw json.RawMessage) error {
 // Service stores each tenant's ABAC policies and evaluates requests against
 // them.
 type Service struct {
-	pool *pgxpool.Pool
-	q    *dbgen.Queries
-	gate PlanGate
+	pool      *pgxpool.Pool
+	q         *dbgen.Queries
+	gate      PlanGate
+	relations RelationCheck
 
 	presenceMu sync.Mutex
 	presence   map[uuid.UUID]presenceEntry
+}
+
+// RelationCheck answers whether userID has relation on object (type:id) in
+// tenantID. Satisfied by rebac.Service.Check.
+type RelationCheck func(ctx context.Context, tenantID uuid.UUID, object, relation, userID string) (bool, error)
+
+// SetRelationCheck sets how relation conditions are answered; without one
+// they are unknown, so a deny holding one applies and an allow grants nothing.
+func (s *Service) SetRelationCheck(c RelationCheck) { s.relations = c }
+
+// resolveRelations answers, into bag, each relationship the conditions ask
+// about for the bag's subject, so evaluation needs no lookups of its own.
+func (s *Service) resolveRelations(ctx context.Context, tenantID uuid.UUID, conditions [][]byte, bag AttributeBag) error {
+	subject, _ := bag["subject"]["id"].(string)
+	if s.relations == nil || subject == "" {
+		return nil
+	}
+	answers := map[string]any{}
+	var failed error
+	for _, cond := range conditions {
+		relationLeaves(cond, func(relation, object, ref string) {
+			object = relationObject(object, ref, bag)
+			key := object + "#" + relation
+			if _, done := answers[key]; done || object == "" || failed != nil {
+				return
+			}
+			held, err := s.relations(ctx, tenantID, object, relation, subject)
+			switch {
+			case errors.Is(err, errs.ErrReBACObjectInvalid):
+				// An object that isn't type:id holds no relationship: left unknown.
+			case err != nil:
+				failed = err
+			default:
+				answers[key] = held
+			}
+		})
+	}
+	bag[relationsKey] = answers
+	return failed
 }
 
 // NewService returns the ABAC policy service.
@@ -702,6 +873,75 @@ func SubjectAttributes(userID string, tenantID uuid.UUID) map[string]any {
 	return map[string]any{"id": userID, "type": "user", "tenant_id": tenantID.String()}
 }
 
+// Request is what the platform itself knows of a decision it makes for a user:
+// who they are and, when it is the user's own call, its session and address.
+// Nothing in it comes from what the caller sends.
+type Request struct {
+	Subject   string    // the user's id as the engines name it
+	UserID    uuid.UUID // the same, parsed; uuid.Nil when it names no platform user
+	TenantID  uuid.UUID // the organisation decided in
+	SessionID uuid.UUID // the user's own session (uuid.Nil: none)
+	MFA       bool      // the call itself proved a second factor (a hosted-login sign-in that did)
+	IP        string    // the client address ("": not the user's own call)
+}
+
+// OwnRequest is the Request for userID's own call in ctx: with the call's
+// session, second factor and client address when ctx carries userID's
+// principal in tenantID, and without them otherwise.
+func OwnRequest(ctx context.Context, userID, tenantID uuid.UUID) Request {
+	r := Request{Subject: userID.String(), UserID: userID, TenantID: tenantID}
+	p := httpx.PrincipalFromCtx(ctx)
+	if p == nil || p.UserID == nil || *p.UserID != userID || p.TenantID == nil || *p.TenantID != tenantID {
+		return r
+	}
+	r.IP = httpx.ClientIPFromContext(ctx)
+	r.MFA = p.SignedInAt != nil
+	// An application's token names no session of the user's own.
+	if p.SessionID != nil && p.ClientID == "" && (p.ActorType == "" || p.ActorType == "user") {
+		r.SessionID = *p.SessionID
+	}
+	return r
+}
+
+// PlatformAttributes is the subject and context namespaces the platform
+// supplies for r: subject id, type, tenant_id, and the groups and roles (by
+// name) the user holds in the organisation; context mfa and ip when the call
+// is the user's own. An attribute it can't know is left out, so it is unknown.
+func (s *Service) PlatformAttributes(ctx context.Context, r Request) (subject, ctxAttrs map[string]any, err error) {
+	subject, ctxAttrs = SubjectAttributes(r.Subject, r.TenantID), map[string]any{}
+	if r.UserID != uuid.Nil {
+		rows, err := s.q.ListSubjectMemberships(ctx, dbgen.ListSubjectMembershipsParams{TenantID: r.TenantID, UserID: r.UserID})
+		if err != nil {
+			return nil, nil, err
+		}
+		groups, roles := []any{}, []any{}
+		for _, row := range rows {
+			if row.Kind == "group" {
+				groups = append(groups, row.Name)
+			} else {
+				roles = append(roles, row.Name)
+			}
+		}
+		subject["groups"], subject["roles"] = groups, roles
+	}
+	if r.IP != "" {
+		ctxAttrs["ip"] = r.IP
+	}
+	switch {
+	case r.MFA:
+		ctxAttrs["mfa"] = true
+	case r.SessionID != uuid.Nil && r.UserID != uuid.Nil:
+		met, err := s.q.SessionSecondFactorMet(ctx, dbgen.SessionSecondFactorMetParams{SessionID: r.SessionID, UserID: r.UserID, TenantID: r.TenantID})
+		switch {
+		case err == nil:
+			ctxAttrs["mfa"] = met
+		case !errors.Is(err, pgx.ErrNoRows):
+			return nil, nil, err
+		}
+	}
+	return subject, ctxAttrs, nil
+}
+
 // Resource and action of the policies that guard managing policies: a deny
 // that matches its own author here would leave nobody able to remove it.
 const (
@@ -710,21 +950,34 @@ const (
 )
 
 // locksOutAuthor reports whether an enabled deny policy would refuse its own
-// author the right to change policies (policy.write), which would leave the
-// tenant with nobody able to undo it. A condition error counts as a match: the
-// route guard fails closed on it too.
-func locksOutAuthor(effect, resourceType, action string, enabled bool, cond json.RawMessage, tenantID uuid.UUID, actor audit.Actor) bool {
+// author the right to change policies (policy.write) at the route guard, on
+// the attributes it would see for the author's call now; that would leave the
+// tenant with nobody able to undo it. See refusesPolicyWrite.
+func (s *Service) locksOutAuthor(ctx context.Context, tenantID uuid.UUID, effect, resourceType, action string, enabled bool, cond json.RawMessage, actor audit.Actor) (bool, error) {
 	if effect != "deny" || !enabled || actor.UserID == nil {
-		return false
+		return false, nil
 	}
 	if (resourceType != policyResourceType && resourceType != "*") || (action != policyWriteAction && action != "*") {
-		return false
+		return false, nil
 	}
-	matched, err := EvaluateCondition(cond, effect, AttributeBag{
-		"subject":  SubjectAttributes(actor.UserID.String(), tenantID),
-		"resource": {"type": policyResourceType, "id": ""},
-		"context":  {},
+	subject, ctxAttrs, err := s.PlatformAttributes(ctx, OwnRequest(ctx, *actor.UserID, tenantID))
+	if err != nil {
+		return false, err
+	}
+	bag := attributeBag(EvaluationInput{
+		Subject: subject, Resource: EvaluationResource{Type: policyResourceType}, Action: policyWriteAction, Context: ctxAttrs,
 	})
+	if err := s.resolveRelations(ctx, tenantID, [][]byte{cond}, bag); err != nil {
+		return false, err
+	}
+	return refusesPolicyWrite(cond, bag), nil
+}
+
+// refusesPolicyWrite reports whether a deny with cond refuses policy.write to a
+// caller with the attributes in bag, as the route guard would. A condition
+// error counts: the route guard fails closed on it too.
+func refusesPolicyWrite(cond json.RawMessage, bag AttributeBag) bool {
+	matched, err := EvaluateCondition(cond, "deny", bag)
 	return matched || err != nil
 }
 
@@ -751,6 +1004,11 @@ func toPolicy(row dbgen.AuthAbacPolicy) *Policy {
 		Enabled:      row.Enabled,
 		CreatedAt:    row.CreatedAt,
 		UpdatedAt:    row.UpdatedAt,
+		Version:      int(row.Version),
+	}
+	if row.UpdatedBy.Valid {
+		by := uuid.UUID(row.UpdatedBy.Bytes)
+		p.UpdatedBy = &by
 	}
 	if len(row.Condition) > 0 {
 		p.Condition = json.RawMessage(row.Condition)
@@ -758,6 +1016,31 @@ func toPolicy(row dbgen.AuthAbacPolicy) *Policy {
 		p.Condition = json.RawMessage(`{}`)
 	}
 	return p
+}
+
+// checkPolicy refuses a policy missing its name, resource type or action, with
+// an unknown effect, or with an invalid condition, and returns the condition
+// to store: {} when there is none.
+func checkPolicy(name, effect, resourceType, action string, cond json.RawMessage) (json.RawMessage, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, errs.ErrABACNameRequired
+	}
+	if effect != "allow" && effect != "deny" {
+		return nil, errs.ErrABACEffectInvalid
+	}
+	if strings.TrimSpace(resourceType) == "" {
+		return nil, errs.ErrABACResourceTypeRequired
+	}
+	if strings.TrimSpace(action) == "" {
+		return nil, errs.ErrABACActionRequired
+	}
+	if len(cond) == 0 {
+		cond = json.RawMessage(`{}`)
+	}
+	if err := validateCondition(cond); err != nil {
+		return nil, errs.ErrABACConditionInvalid
+	}
+	return cond, nil
 }
 
 // Create inserts a new ABAC policy. The audit row and outbox event are
@@ -773,26 +1056,13 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput
 			return nil, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "abac"})
 		}
 	}
-	if strings.TrimSpace(in.Name) == "" {
-		return nil, errs.ErrABACNameRequired
+	cond, err := checkPolicy(in.Name, in.Effect, in.ResourceType, in.Action, in.Condition)
+	if err != nil {
+		return nil, err
 	}
-	if in.Effect != "allow" && in.Effect != "deny" {
-		return nil, errs.ErrABACEffectInvalid
-	}
-	if strings.TrimSpace(in.ResourceType) == "" {
-		return nil, errs.ErrABACResourceTypeRequired
-	}
-	if strings.TrimSpace(in.Action) == "" {
-		return nil, errs.ErrABACActionRequired
-	}
-	cond := in.Condition
-	if len(cond) == 0 {
-		cond = json.RawMessage(`{}`)
-	}
-	if err := validateCondition(cond); err != nil {
-		return nil, errs.ErrABACConditionInvalid
-	}
-	if locksOutAuthor(in.Effect, in.ResourceType, in.Action, in.Enabled, cond, tenantID, actor) {
+	if locked, err := s.locksOutAuthor(ctx, tenantID, in.Effect, in.ResourceType, in.Action, in.Enabled, cond, actor); err != nil {
+		return nil, err
+	} else if locked {
 		return nil, errs.ErrABACPolicyLocksOut
 	}
 
@@ -813,6 +1083,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput
 		Condition:    []byte(cond),
 		Priority:     int32(in.Priority), // #nosec G115 -- only orders the trace; deny wins regardless
 		Enabled:      in.Enabled,
+		UpdatedBy:    savedBy(actor),
 	})
 	if err != nil {
 		if pgxerr.IsUnique(err) {
@@ -821,9 +1092,12 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput
 		return nil, err
 	}
 	p := toPolicy(row)
+	if err := s.q.WithTx(tx).SaveAbacPolicyVersion(ctx, dbgen.SaveAbacPolicyVersionParams{ID: p.ID, TenantID: tenantID}); err != nil {
+		return nil, err
+	}
 
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "abac_policy.created", "abac_policy", p.ID,
-		map[string]any{"name": p.Name, "effect": p.Effect, "resource_type": p.ResourceType, "action": p.Action})); err != nil {
+		map[string]any{"name": p.Name, "effect": p.Effect, "resource_type": p.ResourceType, "action": p.Action, "version": p.Version})); err != nil {
 		return nil, err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{
@@ -865,29 +1139,30 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Policy, error
 	return out, nil
 }
 
+// savedBy is the person a save is recorded as made by, when actor is one.
+func savedBy(actor audit.Actor) pgtype.UUID {
+	if actor.UserID == nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: *actor.UserID, Valid: true}
+}
+
 // Update replaces all mutable fields of a policy. The audit row and outbox
 // event are committed atomically in the same transaction.
 func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateInput, actor audit.Actor) (*Policy, error) {
-	if strings.TrimSpace(in.Name) == "" {
-		return nil, errs.ErrABACNameRequired
+	return s.update(ctx, id, tenantID, in, actor, 0)
+}
+
+// update saves in as the policy's next version, recorded as restoring version
+// restoredFrom when it isn't 0.
+func (s *Service) update(ctx context.Context, id, tenantID uuid.UUID, in UpdateInput, actor audit.Actor, restoredFrom int) (*Policy, error) {
+	cond, err := checkPolicy(in.Name, in.Effect, in.ResourceType, in.Action, in.Condition)
+	if err != nil {
+		return nil, err
 	}
-	if in.Effect != "allow" && in.Effect != "deny" {
-		return nil, errs.ErrABACEffectInvalid
-	}
-	if strings.TrimSpace(in.ResourceType) == "" {
-		return nil, errs.ErrABACResourceTypeRequired
-	}
-	if strings.TrimSpace(in.Action) == "" {
-		return nil, errs.ErrABACActionRequired
-	}
-	cond := in.Condition
-	if len(cond) == 0 {
-		cond = json.RawMessage(`{}`)
-	}
-	if err := validateCondition(cond); err != nil {
-		return nil, errs.ErrABACConditionInvalid
-	}
-	if locksOutAuthor(in.Effect, in.ResourceType, in.Action, in.Enabled, cond, tenantID, actor) {
+	if locked, err := s.locksOutAuthor(ctx, tenantID, in.Effect, in.ResourceType, in.Action, in.Enabled, cond, actor); err != nil {
+		return nil, err
+	} else if locked {
 		return nil, errs.ErrABACPolicyLocksOut
 	}
 
@@ -907,6 +1182,7 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 		Condition:    []byte(cond),
 		Priority:     int32(in.Priority), // #nosec G115 -- only orders the trace; deny wins regardless
 		Enabled:      in.Enabled,
+		UpdatedBy:    savedBy(actor),
 		ID:           id,
 		TenantID:     tenantID,
 	})
@@ -920,9 +1196,17 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 		return nil, err
 	}
 	p := toPolicy(row)
+	if err := s.q.WithTx(tx).SaveAbacPolicyVersion(ctx, dbgen.SaveAbacPolicyVersionParams{ID: p.ID, TenantID: tenantID}); err != nil {
+		return nil, err
+	}
 
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "abac_policy.updated", "abac_policy", p.ID,
-		map[string]any{"name": p.Name, "effect": p.Effect, "resource_type": p.ResourceType, "action": p.Action})); err != nil {
+	action, meta := "abac_policy.updated", map[string]any{
+		"name": p.Name, "effect": p.Effect, "resource_type": p.ResourceType, "action": p.Action, "version": p.Version,
+	}
+	if restoredFrom > 0 {
+		action, meta["restored_from"] = "abac_policy.restored", restoredFrom
+	}
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, action, "abac_policy", p.ID, meta)); err != nil {
 		return nil, err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{
@@ -934,6 +1218,70 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 		return nil, err
 	}
 	return p, tx.Commit(ctx)
+}
+
+// PolicyVersion is a policy as one of its saves left it, and who made it.
+type PolicyVersion struct {
+	Version      int             `json:"version"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	Effect       string          `json:"effect"`
+	ResourceType string          `json:"resource_type"`
+	Action       string          `json:"action"`
+	Condition    json.RawMessage `json:"condition"`
+	Priority     int             `json:"priority"`
+	Enabled      bool            `json:"enabled"`
+	SavedBy      *uuid.UUID      `json:"saved_by"`
+	SavedAt      time.Time       `json:"saved_at"`
+}
+
+// Versions returns the last 200 saves of one of the tenant's policies, newest
+// first.
+func (s *Service) Versions(ctx context.Context, id, tenantID uuid.UUID) ([]PolicyVersion, error) {
+	if _, err := s.Get(ctx, id, tenantID); err != nil {
+		return nil, err
+	}
+	rows, err := s.q.ListAbacPolicyVersions(ctx, dbgen.ListAbacPolicyVersionsParams{PolicyID: id, TenantID: tenantID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PolicyVersion, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, toVersion(dbgen.GetAbacPolicyVersionRow(r)))
+	}
+	return out, nil
+}
+
+func toVersion(r dbgen.GetAbacPolicyVersionRow) PolicyVersion {
+	v := PolicyVersion{
+		Version: int(r.Version), Name: r.Name, Description: r.Description, Effect: r.Effect,
+		ResourceType: r.ResourceType, Action: r.Action, Condition: json.RawMessage(r.Condition),
+		Priority: int(r.Priority), Enabled: r.Enabled, SavedAt: r.SavedAt,
+	}
+	if r.SavedBy.Valid {
+		by := uuid.UUID(r.SavedBy.Bytes)
+		v.SavedBy = &by
+	}
+	return v
+}
+
+// Restore saves one of a policy's earlier versions as its next, checked as any
+// change is, and recorded as abac_policy.restored.
+func (s *Service) Restore(ctx context.Context, id, tenantID uuid.UUID, version int, actor audit.Actor) (*Policy, error) {
+	row, err := s.q.GetAbacPolicyVersion(ctx, dbgen.GetAbacPolicyVersionParams{
+		PolicyID: id, TenantID: tenantID, Version: int32(version), // #nosec G115 -- a version number from the path, compared only
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	v := toVersion(row)
+	return s.update(ctx, id, tenantID, UpdateInput{
+		Name: v.Name, Description: v.Description, Effect: v.Effect, ResourceType: v.ResourceType,
+		Action: v.Action, Condition: v.Condition, Priority: v.Priority, Enabled: v.Enabled,
+	}, actor, version)
 }
 
 // Delete removes one policy by id, scoped to tenant.
@@ -983,10 +1331,34 @@ type candidate struct {
 // that fails to evaluate refuses, else a matching allow permits, else deny. A
 // condition comparing an absent attribute matches a deny and never an allow.
 func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in EvaluationInput) (*Decision, error) {
+	policies, err := s.candidates(ctx, tenantID, in)
+	if err != nil {
+		return nil, err
+	}
+	bag, err := s.bagFor(ctx, tenantID, in, policies)
+	if err != nil {
+		return nil, err
+	}
+	return combine(policies, bag), nil
+}
+
+// bagFor is in's attribute bag with the relationships policies ask about
+// answered.
+func (s *Service) bagFor(ctx context.Context, tenantID uuid.UUID, in EvaluationInput, policies []candidate) (AttributeBag, error) {
+	bag := attributeBag(in)
+	conditions := make([][]byte, 0, len(policies))
+	for _, p := range policies {
+		conditions = append(conditions, p.condition)
+	}
+	return bag, s.resolveRelations(ctx, tenantID, conditions, bag)
+}
+
+// candidates returns tenantID's enabled policies for in's resource type and
+// action, highest priority first.
+func (s *Service) candidates(ctx context.Context, tenantID uuid.UUID, in EvaluationInput) ([]candidate, error) {
 	if strings.TrimSpace(in.Action) == "" {
 		return nil, errs.ErrABACActionRequired
 	}
-
 	rows, err := s.q.ListEvaluationCandidates(ctx, dbgen.ListEvaluationCandidatesParams{
 		TenantID:     tenantID,
 		ResourceType: in.Resource.Type,
@@ -995,8 +1367,7 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in Evaluatio
 	if err != nil {
 		return nil, err
 	}
-
-	var policies []candidate
+	policies := make([]candidate, 0, len(rows)+1)
 	for _, row := range rows {
 		policies = append(policies, candidate{
 			id:        row.ID,
@@ -1006,19 +1377,82 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in Evaluatio
 			priority:  int(row.Priority),
 		})
 	}
-	return combine(policies, attributeBag(in)), nil
+	return policies, nil
+}
+
+// Draft is an unsaved policy to evaluate with the stored ones: a new one, or,
+// with Replaces, one standing in for a stored policy. It applies as it would
+// once saved, so a disabled draft only takes the policy it replaces out. A
+// draft without a name is called "draft".
+type Draft struct {
+	CreateInput
+	Replaces *uuid.UUID `json:"replaces"`
+}
+
+// EvaluateDraft is Evaluate with draft among tenantID's policies, writing
+// nothing. The decision's MatchedDraft is set when the draft decided it; a new
+// draft has no MatchedPolicyID.
+func (s *Service) EvaluateDraft(ctx context.Context, tenantID uuid.UUID, in EvaluationInput, draft Draft) (*Decision, error) {
+	if strings.TrimSpace(draft.Name) == "" {
+		draft.Name = "draft"
+	}
+	cond, err := checkPolicy(draft.Name, draft.Effect, draft.ResourceType, draft.Action, draft.Condition)
+	if err != nil {
+		return nil, err
+	}
+	draftID := uuid.Nil
+	if draft.Replaces != nil {
+		if _, err := s.Get(ctx, *draft.Replaces, tenantID); err != nil {
+			return nil, err
+		}
+		draftID = *draft.Replaces
+	}
+	stored, err := s.candidates(ctx, tenantID, in)
+	if err != nil {
+		return nil, err
+	}
+	policies := stored[:0:0]
+	for _, p := range stored {
+		if p.id != draftID {
+			policies = append(policies, p)
+		}
+	}
+	applies := draft.Enabled &&
+		(draft.ResourceType == in.Resource.Type || draft.ResourceType == "*") &&
+		(draft.Action == in.Action || draft.Action == "*")
+	if applies {
+		d := candidate{id: draftID, name: draft.Name, effect: draft.Effect, condition: cond, priority: draft.Priority}
+		at := len(policies)
+		for i, p := range policies {
+			if p.priority < d.priority {
+				at = i
+				break
+			}
+		}
+		policies = slices.Insert(policies, at, d)
+	}
+	bag, err := s.bagFor(ctx, tenantID, in, policies)
+	if err != nil {
+		return nil, err
+	}
+	decision := combine(policies, bag)
+	if applies && decision.MatchedPolicyID != nil && *decision.MatchedPolicyID == draftID {
+		decision.MatchedDraft = true
+		if draftID == uuid.Nil {
+			decision.MatchedPolicyID = nil
+			delete(decision.ReasonParams, "policy_id")
+		}
+	}
+	return decision, nil
 }
 
 // attributeBag builds the bag policies see for in, with the resource's type,
-// id and attrs merged into one namespace.
+// id and attrs merged into one namespace, and the action's name and attrs into
+// another. The type, id and name the request decides on win over an attribute
+// of the same name, so a condition never sees a resource the policies weren't
+// chosen for.
 func attributeBag(in EvaluationInput) AttributeBag {
-	resourceAttrs := map[string]any{
-		"type": in.Resource.Type,
-		"id":   in.Resource.ID,
-	}
-	for k, v := range in.Resource.Attrs {
-		resourceAttrs[k] = v
-	}
+	resourceAttrs := withAttrs(in.Resource.Attrs, map[string]any{"type": in.Resource.Type, "id": in.Resource.ID})
 	subject := in.Subject
 	if subject == nil {
 		subject = map[string]any{}
@@ -1030,8 +1464,21 @@ func attributeBag(in EvaluationInput) AttributeBag {
 	return AttributeBag{
 		"subject":  subject,
 		"resource": resourceAttrs,
+		"action":   withAttrs(in.ActionAttrs, map[string]any{"name": in.Action}),
 		"context":  ctxAttrs,
 	}
+}
+
+// withAttrs is attrs with over set on top: over wins where both name a key.
+func withAttrs(attrs, over map[string]any) map[string]any {
+	out := make(map[string]any, len(attrs)+len(over))
+	for k, v := range attrs {
+		out[k] = v
+	}
+	for k, v := range over {
+		out[k] = v
+	}
+	return out
 }
 
 // combine decides policies, in order, against bag deny-wins: a policy that
@@ -1138,6 +1585,8 @@ func combine(policies []candidate, bag AttributeBag) *Decision {
 // Handler serves the ABAC policy HTTP API.
 type Handler struct {
 	Service *Service
+	// Decisions keeps the decisions evaluate answers (nil: none).
+	Decisions *decisionlog.Log
 }
 
 // Mount registers the ABAC policy routes on r.
@@ -1147,6 +1596,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/abac/policies/{id}", h.getPolicy)
 	r.Patch("/tenants/{tenantID}/abac/policies/{id}", h.update)
 	r.Delete("/tenants/{tenantID}/abac/policies/{id}", h.del)
+	r.Get("/tenants/{tenantID}/abac/policies/{id}/versions", h.versions)
+	r.Post("/tenants/{tenantID}/abac/policies/{id}/versions/{version}/restore", h.restore)
 	r.Post("/tenants/{tenantID}/abac/evaluate", h.evalHandler)
 }
 
@@ -1226,6 +1677,49 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, p)
 }
 
+func (h *Handler) versions(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := httpx.PathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	out, err := h.Service.Versions(r.Context(), id, tenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (h *Handler) restore(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := httpx.PathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	version, err := strconv.Atoi(chi.URLParam(r, "version"))
+	if err != nil || version < 1 {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid version"))
+		return
+	}
+	p, err := h.Service.Restore(r.Context(), id, tenantID, version, audit.ActorOf(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, p)
+}
+
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := httpx.PathTenant(r)
 	if err != nil {
@@ -1250,16 +1744,36 @@ func (h *Handler) evalHandler(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	var in EvaluationInput
+	var in struct {
+		EvaluationInput
+		Draft *Draft `json:"draft"`
+	}
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	decision, err := h.Service.Evaluate(r.Context(), tenantID, in)
+	var decision *Decision
+	if in.Draft != nil {
+		decision, err = h.Service.EvaluateDraft(r.Context(), tenantID, in.EvaluationInput, *in.Draft)
+	} else {
+		decision, err = h.Service.Evaluate(r.Context(), tenantID, in.EvaluationInput)
+	}
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	source := decisionlog.SourceABACEvaluate
+	if in.Draft != nil {
+		source = decisionlog.SourceABACDraft
+	}
+	subject, _ := in.Subject["id"].(string)
+	resource := in.Resource.Type
+	if in.Resource.ID != "" {
+		resource += ":" + in.Resource.ID
+	}
+	rule, _ := decision.ReasonParams["policy_name"].(string)
+	h.Decisions.Record(r.Context(), decisionlog.Entry{TenantID: tenantID, Source: source, Subject: subject,
+		Resource: resource, Action: in.Action, Allowed: decision.Allow, Model: "abac", Rule: rule, ReasonCode: decision.ReasonCode})
 	// Omit the trace unless ?explain=true, mirroring the rebac/authzen convention.
 	if r.URL.Query().Get("explain") != "true" {
 		decision.Trace = nil

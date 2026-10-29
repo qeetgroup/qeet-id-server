@@ -30,7 +30,7 @@ WHERE plan_id = @plan_id AND currency = @currency;
 -- currency-specific price in one round-trip.
 SELECT p.code, p.name, p.interval, s.currency, s.status,
        s.current_period_start, s.current_period_end, s.cancel_at_period_end,
-       s.trial_end,
+       s.trial_end, s.ended_at,
        COALESCE(pp.amount_minor, 0) AS amount_minor
 FROM tenant.subscriptions s
 JOIN platform.billing_plans p ON p.id = s.plan_id
@@ -60,6 +60,7 @@ ON CONFLICT (tenant_id) DO UPDATE SET
     current_period_start = EXCLUDED.current_period_start,
     current_period_end   = EXCLUDED.current_period_end,
     cancel_at_period_end = FALSE,
+    ended_at             = NULL,
     updated_at           = NOW();
 
 -- name: SwitchSubscriptionPlan :exec
@@ -69,14 +70,28 @@ UPDATE tenant.subscriptions
 SET plan_id = @plan_id, cancel_at_period_end = FALSE, updated_at = NOW()
 WHERE tenant_id = @tenant_id;
 
--- name: InsertInvoice :exec
+-- name: InsertInvoice :one
 -- Issue an invoice for one billing period (zero-amount plans still get a record).
--- amount_minor is the total charged (taxable + tax).
+-- amount_minor is the total charged (taxable + tax); status is 'paid' when a
+-- payment was captured or nothing is owed, else 'open', due at due_at.
 INSERT INTO tenant.invoices
     (tenant_id, plan_code, currency, amount_minor, status, period_start, period_end,
-     taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply)
-VALUES (@tenant_id, @plan_code, @currency, @amount_minor, 'paid', @period_start, @period_end,
-        @taxable_amount_minor, @tax_amount_minor, @tax_rate_bps, @tax_type, @place_of_supply);
+     taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply,
+     invoice_number, kind, due_at, paid_at, billed_to, supplier_gstin, sac)
+VALUES (@tenant_id, @plan_code, @currency, @amount_minor, @status, @period_start, @period_end,
+        @taxable_amount_minor, @tax_amount_minor, @tax_rate_bps, @tax_type, @place_of_supply,
+        sqlc.narg(invoice_number), @kind, sqlc.narg(due_at),
+        CASE WHEN @status::text = 'paid' THEN NOW() END, @billed_to, @supplier_gstin, @sac)
+RETURNING id;
+
+-- name: NextInvoiceNumber :one
+-- Take the next number of a financial year's invoice series. The row stays
+-- locked until the issuing transaction ends, so the numbers have no gaps.
+INSERT INTO platform.invoice_number_series (financial_year, last_number)
+VALUES (@financial_year, 1)
+ON CONFLICT (financial_year) DO UPDATE
+    SET last_number = platform.invoice_number_series.last_number + 1
+RETURNING last_number;
 
 -- name: GetBillingProfile :one
 -- Fetch a tenant's billing & tax details (returns no rows until first save).
@@ -115,17 +130,22 @@ WHERE id = @tenant_id AND deleted_at IS NULL;
 
 -- name: CancelSubscription :execrows
 -- Mark the subscription to cancel at end of current period.  Returns 0 rows
--- affected when no active subscription exists.
+-- affected when no subscription that hasn't ended exists.
 UPDATE tenant.subscriptions
 SET cancel_at_period_end = TRUE, updated_at = NOW()
-WHERE tenant_id = @tenant_id;
+WHERE tenant_id = @tenant_id AND status <> 'canceled';
 
 -- name: InsertBillingCheckout :one
 -- Create a pending card-payment checkout row and return its id, which is
 -- passed to the provider as client_reference_id for webhook correlation.
+-- amount_minor is the total the provider charges (taxable + tax). invoice_id
+-- is set when the checkout pays an open invoice rather than buying a plan.
 INSERT INTO tenant.billing_checkouts
-    (tenant_id, provider, plan_code, currency, amount_minor)
-VALUES (@tenant_id, @provider, @plan_code, @currency, @amount_minor)
+    (tenant_id, provider, plan_code, currency, amount_minor,
+     taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply, invoice_id)
+VALUES (@tenant_id, @provider, @plan_code, @currency, @amount_minor,
+        @taxable_amount_minor, @tax_amount_minor, @tax_rate_bps, @tax_type, @place_of_supply,
+        sqlc.narg(invoice_id))
 RETURNING id;
 
 -- name: UpdateCheckoutFailed :exec
@@ -142,17 +162,21 @@ WHERE id = @id;
 
 -- name: CompleteCheckout :one
 -- Atomically flip a pending checkout to completed and return the plan details
--- needed to activate the subscription.  Returns ErrNoRows when the checkout is
--- already completed, failed, or unknown — callers treat that as an idempotent no-op.
+-- needed to activate the subscription, with what it charged.  Returns ErrNoRows
+-- when the checkout is already completed, failed, or unknown — callers treat
+-- that as an idempotent no-op.
 UPDATE tenant.billing_checkouts
-SET status = 'completed', completed_at = NOW()
+SET status = 'completed', completed_at = NOW(), payment_method = sqlc.narg(payment_method)
 WHERE id = @id AND status = 'pending'
-RETURNING tenant_id, plan_code, currency;
+RETURNING tenant_id, plan_code, currency, amount_minor,
+          taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply,
+          invoice_id, provider, provider_ref;
 
 -- name: ListInvoices :many
 -- Return the tenant's billing history, most recent first.
 SELECT id, plan_code, currency, amount_minor, status, period_start, period_end, issued_at,
-       taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply
+       taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply,
+       invoice_number, kind, due_at, paid_at, billed_to, supplier_gstin, sac, emailed_at
 FROM tenant.invoices
 WHERE tenant_id = @tenant_id
 ORDER BY issued_at DESC
@@ -177,3 +201,91 @@ INSERT INTO platform.billing_plan_prices (plan_id, currency, amount_minor)
 VALUES (@plan_id, @currency, @amount_minor)
 ON CONFLICT (plan_id, currency) DO UPDATE SET
     amount_minor = EXCLUDED.amount_minor;
+
+-- ==========================================================================
+-- Period ends, renewal and settling invoices
+-- ==========================================================================
+
+-- name: DueSubscriptions :many
+-- The organisations whose trial or period has ended, or whose renewal went
+-- unpaid past lapsed_before, oldest first.
+SELECT tenant_id FROM tenant.subscriptions
+WHERE (status = 'trialing' AND trial_end <= @now::timestamptz)
+   OR (status = 'active' AND current_period_end <= @now::timestamptz)
+   OR (status = 'past_due' AND (cancel_at_period_end OR current_period_end <= @lapsed_before::timestamptz))
+ORDER BY current_period_end
+LIMIT 200;
+
+-- name: LockSubscription :one
+-- The tenant's subscription with its plan and price, locked for a change.
+SELECT p.code, p.interval, s.currency, s.status, s.current_period_start, s.current_period_end,
+       s.cancel_at_period_end, s.trial_end, COALESCE(pp.amount_minor, 0) AS amount_minor
+FROM tenant.subscriptions s
+JOIN platform.billing_plans p ON p.id = s.plan_id
+LEFT JOIN platform.billing_plan_prices pp ON pp.plan_id = s.plan_id AND pp.currency = s.currency
+WHERE s.tenant_id = @tenant_id
+FOR UPDATE OF s;
+
+-- name: EndSubscription :exec
+UPDATE tenant.subscriptions SET status = 'canceled', ended_at = NOW(), updated_at = NOW()
+WHERE tenant_id = @tenant_id;
+
+-- name: SetSubscriptionPastDue :exec
+UPDATE tenant.subscriptions SET status = 'past_due', updated_at = NOW()
+WHERE tenant_id = @tenant_id;
+
+-- name: RenewSubscription :exec
+-- Start the next period.
+UPDATE tenant.subscriptions
+SET status = 'active', current_period_start = @period_start, current_period_end = @period_end, updated_at = NOW()
+WHERE tenant_id = @tenant_id;
+
+-- name: VoidOpenRenewals :execrows
+-- A renewal no longer owed: the subscription ended, or a checkout replaced it.
+UPDATE tenant.invoices SET status = 'void'
+WHERE tenant_id = @tenant_id AND kind = 'renewal' AND status = 'open';
+
+-- name: LockInvoice :one
+SELECT id, tenant_id, kind, status, invoice_number, plan_code, currency, amount_minor,
+       taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply,
+       period_start, period_end
+FROM tenant.invoices WHERE id = @id AND tenant_id = @tenant_id
+FOR UPDATE;
+
+-- name: InvoiceTenant :one
+-- The organisation an invoice belongs to, for the operator's settle command.
+SELECT tenant_id FROM tenant.invoices WHERE id = @id;
+
+-- name: SettleInvoice :exec
+UPDATE tenant.invoices SET status = 'paid', paid_at = NOW(), payment_reference = @payment_reference
+WHERE id = @id AND tenant_id = @tenant_id;
+
+-- name: ClaimInvoiceEmails :many
+-- Claim recently issued invoices not yet emailed to the billing address they
+-- were billed to. A send that fails releases its claim.
+UPDATE tenant.invoices i SET emailed_at = NOW()
+WHERE i.id IN (
+    SELECT c.id FROM tenant.invoices c
+    WHERE c.emailed_at IS NULL AND c.amount_minor > 0
+      AND COALESCE(c.billed_to->>'billing_email', '') <> ''
+      AND c.issued_at > NOW() - INTERVAL '1 day'
+    ORDER BY c.issued_at
+    LIMIT 100
+    FOR UPDATE SKIP LOCKED)
+RETURNING i.id, i.tenant_id, i.invoice_number, i.plan_code, i.currency, i.amount_minor, i.status,
+          i.period_start, i.period_end, i.due_at, i.billed_to;
+
+-- name: ReleaseInvoiceEmail :exec
+UPDATE tenant.invoices SET emailed_at = NULL WHERE id = @id AND tenant_id = @tenant_id;
+
+-- name: LatestPaymentMethod :one
+-- What the organisation's most recent completed checkout was paid with.
+SELECT m.provider, m.payment_method, m.completed_at FROM (
+    SELECT c.provider, c.payment_method, c.completed_at FROM tenant.billing_checkouts c
+    WHERE c.tenant_id = @tenant_id AND c.status = 'completed' AND c.payment_method IS NOT NULL
+    UNION ALL
+    SELECT sc.provider, sc.payment_method, sc.completed_at FROM tenant.signup_checkouts sc
+    WHERE sc.tenant_id = @tenant_id AND sc.status = 'completed' AND sc.payment_method IS NOT NULL
+) m
+ORDER BY m.completed_at DESC
+LIMIT 1;

@@ -145,17 +145,21 @@ func (s *Service) Transition(ctx context.Context, id, tenantID uuid.UUID, target
 // Agent is an AI-agent identity. Status is active, suspended or decommissioned;
 // Disabled mirrors Status != "active" for older clients. SponsorUserID is the
 // person accountable for it (required for new agents, nil on older ones), and
-// Secret, the plaintext credential, is returned only on create.
+// Secret, the plaintext credential, is returned only on create. LastUsedAt is
+// when it was last issued a token, to the minute; PreviousSecretExpiresAt,
+// when the secret it replaced at its last rotation stops working.
 type Agent struct {
-	ID              uuid.UUID  `json:"id"`
-	Name            string     `json:"name"`
-	Scopes          []string   `json:"scopes"`
-	TokenTTLSeconds int        `json:"token_ttl_seconds"`
-	Status          string     `json:"status"`
-	Disabled        bool       `json:"disabled"`
-	SponsorUserID   *uuid.UUID `json:"sponsor_user_id,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	Secret          string     `json:"secret,omitempty"`
+	ID                      uuid.UUID  `json:"id"`
+	Name                    string     `json:"name"`
+	Scopes                  []string   `json:"scopes"`
+	TokenTTLSeconds         int        `json:"token_ttl_seconds"`
+	Status                  string     `json:"status"`
+	Disabled                bool       `json:"disabled"`
+	SponsorUserID           *uuid.UUID `json:"sponsor_user_id,omitempty"`
+	LastUsedAt              *time.Time `json:"last_used_at"`
+	PreviousSecretExpiresAt *time.Time `json:"previous_secret_expires_at,omitempty"`
+	CreatedAt               time.Time  `json:"created_at"`
+	Secret                  string     `json:"secret,omitempty"`
 }
 
 // pgUUID converts a non-nil uuid.UUID to pgtype.UUID for sqlc params.
@@ -284,7 +288,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Agent, error)
 	}
 	out := make([]Agent, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, Agent{
+		a := Agent{
 			ID:              row.ID,
 			Name:            row.Name,
 			Scopes:          row.Scopes,
@@ -292,8 +296,13 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Agent, error)
 			Status:          row.Status,
 			Disabled:        row.Status != "active",
 			SponsorUserID:   uuidFromPg(row.SponsorUserID),
+			LastUsedAt:      tsPtr(row.LastUsedAt),
 			CreatedAt:       row.CreatedAt,
-		})
+		}
+		if until := tsPtr(row.PreviousSecretExpiresAt); until != nil && until.After(time.Now()) {
+			a.PreviousSecretExpiresAt = until
+		}
+		out = append(out, a)
 	}
 	return out, nil
 }
@@ -448,7 +457,10 @@ func (s *Service) IssueToken(ctx context.Context, agentID, secret string) (*Toke
 	// The secret first, so only its holder learns the agent's status.
 	ok, rehash := password.VerifySecret(row.SecretHash, secret)
 	if !ok {
-		return nil, errs.ErrAgentTokenInvalid
+		if !previousSecretWorks(row.PreviousSecretHash, row.PreviousSecretExpiresAt, secret) {
+			return nil, errs.ErrAgentTokenInvalid
+		}
+		rehash = false
 	}
 	if rehash {
 		if err := s.q.UpgradeAgentSecretHash(ctx, dbgen.UpgradeAgentSecretHashParams{
@@ -459,6 +471,9 @@ func (s *Service) IssueToken(ctx context.Context, agentID, secret string) (*Toke
 	}
 	if row.Status != "active" {
 		return nil, errs.ErrAgentInactive
+	}
+	if err := s.q.TouchAgent(ctx, dbgen.TouchAgentParams{ID: id, TenantID: row.TenantID}); err != nil {
+		slog.Warn("agent last use not recorded", "err", err, "agent_id", id)
 	}
 
 	now := time.Now().UTC()
@@ -504,6 +519,9 @@ func (s *Service) IssueToken(ctx context.Context, agentID, secret string) (*Toke
 // Handler serves the agent HTTP API.
 type Handler struct {
 	Service *Service
+	// GrantCheck refuses a credential carrying a scope the caller doesn't hold
+	// (rbac.Repository.CheckGrantScopes). Without it creating one is refused.
+	GrantCheck func(ctx context.Context, caller *httpx.Principal, tenantID uuid.UUID, scopes []string) error
 }
 
 // Mount registers tenant-scoped admin endpoints (require a user JWT/API key).
@@ -511,6 +529,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/agents", h.list)
 	r.Post("/tenants/{tenantID}/agents", h.create)
 	r.Post("/tenants/{tenantID}/agents/kill-all", h.killAll)
+	r.Post("/tenants/{tenantID}/agents/resume-all", h.resumeAll)
+	r.Post("/tenants/{tenantID}/agents/{id}/rotate-secret", h.rotateSecret)
 	r.Delete("/tenants/{tenantID}/agents/{id}", h.del)
 	r.Patch("/tenants/{tenantID}/agents/{id}", h.patch)
 	r.Post("/tenants/{tenantID}/agents/{id}/suspend", h.suspend)
@@ -557,6 +577,14 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		SponsorUserID   uuid.UUID `json:"sponsor_user_id"`
 	}
 	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if h.GrantCheck == nil {
+		httpx.WriteError(w, r, errs.ErrNotImplemented)
+		return
+	}
+	if err := h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, in.Scopes); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

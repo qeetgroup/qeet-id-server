@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -429,6 +430,13 @@ func TestAuthorizeRemembersConsentAndHonoursPrompt(t *testing.T) {
 		!strings.Contains(q.Get("return_to"), loginAfterParam+"=") {
 		t.Errorf("prompt=login: sent to %s %v, want a fresh hosted sign-in that comes back", to, q)
 	}
+	// A marker added by hand doesn't stand for the forced sign-in.
+	for _, forged := range []string{"0", strconv.FormatInt(time.Now().Add(-time.Hour).Unix(), 10)} {
+		target, _ = authorizeURL(t, client.ClientID, "scope", "openid email", "prompt", "login", loginAfterParam, forged)
+		if to, _ := redirected(t, browse(t, p.public, http.MethodGet, target, cookie, nil)); to != loginBase+"/sign-in" {
+			t.Errorf("prompt=login with login_after=%s added by hand: sent to %s, want the sign-in again", forged, to)
+		}
+	}
 
 	target, _ = authorizeURL(t, client.ClientID, "scope", "openid email", "prompt", "consent")
 	to, q = redirected(t, browse(t, p.public, http.MethodGet, target, cookie, nil))
@@ -486,7 +494,6 @@ func TestAuthorizeAnswersOnlyRegisteredRedirects(t *testing.T) {
 		{"a fragment response mode", []string{"response_mode", "fragment"}, cookie, "invalid_request"},
 		{"no PKCE challenge", []string{"code_challenge", ""}, cookie, "invalid_request"},
 		{"a plain PKCE challenge", []string{"code_challenge_method", "plain"}, cookie, "invalid_request"},
-		{"openid without a nonce", []string{"nonce", ""}, cookie, "invalid_request"},
 		{"an unregistered resource", []string{"resource", "https://api.example.test"}, cookie, "invalid_target"},
 		{"a person of another organisation", nil, outsiderCookie, "access_denied"},
 	} {
@@ -498,6 +505,194 @@ func TestAuthorizeAnswersOnlyRegisteredRedirects(t *testing.T) {
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM auth.oidc_consent_requests WHERE client_id = $1`, client.ClientID); n != 0 {
 		t.Errorf("refused requests stored %d consent requests, want none", n)
+	}
+}
+
+// TestCodeFlowWithPKCENeedsNoNonce checks that an OpenID request with a PKCE
+// challenge and no nonce, as Auth.js sends it, gets a code that redeems for an
+// ID token without a nonce claim.
+func TestCodeFlowWithPKCENeedsNoNonce(t *testing.T) {
+	ctx := dbtest.Context(t)
+	p := newProvider(t)
+	tenant := dbtest.Tenant(t)
+	person := dbtest.User(t, tenant, tenant)
+	client, secret := registerClient(t, p.svc, tenant)
+	cookie, _ := p.signIn(t, person.ID)
+	if err := p.svc.GrantConsent(ctx, person.ID, client.ClientID, []string{"openid"}); err != nil {
+		t.Fatalf("consent: %v", err)
+	}
+
+	target, verifier := authorizeURL(t, client.ClientID, "nonce", "")
+	to, q := redirected(t, browse(t, p.public, http.MethodGet, target, cookie, nil))
+	if to != testRedirect || q.Get("code") == "" || q.Get("error") != "" {
+		t.Fatalf("authorize without a nonce: sent to %s %v, want a code", to, q)
+	}
+	issued, err := p.svc.ExchangeCode(ctx, client.ClientID, secret, q.Get("code"), testRedirect, verifier, "")
+	if err != nil {
+		t.Fatalf("redeem the code: %v", err)
+	}
+	id, err := p.svc.issuer.VerifySigned(issued.IDToken)
+	if err != nil {
+		t.Fatalf("verify the ID token: %v", err)
+	}
+	if _, ok := id["nonce"]; ok || id["sub"] != person.ID.String() {
+		t.Errorf("ID token %v, want the person's without a nonce", id)
+	}
+}
+
+// TestLoopbackRedirectOnAnyPort checks that a native application registered
+// with a loopback redirect gets its code on whatever port it asks for (RFC 8252
+// §7.3) and redeems it only with that same redirect_uri, while another path or
+// host on the loopback is still refused.
+func TestLoopbackRedirectOnAnyPort(t *testing.T) {
+	ctx := dbtest.Context(t)
+	p := newProvider(t)
+	tenant := dbtest.Tenant(t)
+	person := dbtest.User(t, tenant, tenant)
+	native, _ := registerClientWith(t, p.svc, CreateClientInput{TenantID: tenant, Type: "public", RedirectURIs: []string{"http://127.0.0.1/callback"}})
+	cookie, _ := p.signIn(t, person.ID)
+	if err := p.svc.GrantConsent(ctx, person.ID, native.ClientID, []string{"openid"}); err != nil {
+		t.Fatalf("consent: %v", err)
+	}
+
+	const asked = "http://127.0.0.1:49152/callback"
+	target, verifier := authorizeURL(t, native.ClientID, "redirect_uri", asked)
+	to, q := redirected(t, browse(t, p.public, http.MethodGet, target, cookie, nil))
+	if to != asked || q.Get("code") == "" {
+		t.Fatalf("authorize on port 49152: sent to %s %v, want a code at that port", to, q)
+	}
+	if _, err := p.svc.ExchangeCode(ctx, native.ClientID, "", q.Get("code"), "http://127.0.0.1:49153/callback", verifier, ""); !errors.Is(err, errs.ErrOIDCRedirectURIMismatch) {
+		t.Errorf("redeem at another port: %v, want %v", err, errs.ErrOIDCRedirectURIMismatch)
+	}
+	if issued, err := p.svc.ExchangeCode(ctx, native.ClientID, "", q.Get("code"), asked, verifier, ""); err != nil || issued.AccessToken == "" {
+		t.Errorf("redeem at the port it asked for: %+v, %v", issued, err)
+	}
+
+	for _, redirect := range []string{"http://127.0.0.1:49152/other", "http://127.0.0.2:49152/callback", "http://localhost:49152/callback"} {
+		target, _ := authorizeURL(t, native.ClientID, "redirect_uri", redirect)
+		rec := browse(t, p.public, http.MethodGet, target, cookie, nil)
+		if rec.Header().Get("Location") != "" || !strings.Contains(rec.Body.String(), errs.CodeOIDCRedirectURINotRegistered) {
+			t.Errorf("redirect_uri %q: %d to %q, want the error shown here", redirect, rec.Code, rec.Header().Get("Location"))
+		}
+	}
+}
+
+// TestOfflineAccessControlsRefreshTokens checks that offline_access is
+// accepted from any application registered for refresh, that one which didn't
+// register it gets a refresh token with every grant as before, that one which
+// did gets one only when it asks, on the code and device flows alike, and that
+// an application not registered for refresh is refused the scope.
+func TestOfflineAccessControlsRefreshTokens(t *testing.T) {
+	ctx := dbtest.Context(t)
+	p := newProvider(t)
+	tenant := dbtest.Tenant(t)
+	person := dbtest.User(t, tenant, tenant)
+	standard, standardSecret := registerClient(t, p.svc, tenant)
+	optedIn, optedInSecret := registerClientWith(t, p.svc, CreateClientInput{TenantID: tenant, Scopes: []string{"openid", "email", "offline_access"}})
+	codeOnly, _ := registerClientWith(t, p.svc, CreateClientInput{TenantID: tenant, GrantTypes: []string{"authorization_code"}})
+	redeem := func(c *Client, secret string, scopes ...string) *TokenResponse {
+		t.Helper()
+		verifier, challenge, _ := codes.URLToken()
+		code, _, err := p.svc.Authorize(ctx, person.ID, c.ClientID, testRedirect, scopes, "", challenge, "S256")
+		if err != nil {
+			t.Fatalf("authorize %v: %v", scopes, err)
+		}
+		issued, err := p.svc.ExchangeCode(ctx, c.ClientID, secret, code, testRedirect, verifier, "")
+		if err != nil {
+			t.Fatalf("redeem %v: %v", scopes, err)
+		}
+		return issued
+	}
+
+	for _, tc := range []struct {
+		name    string
+		client  *Client
+		secret  string
+		scopes  []string
+		refresh bool
+	}{
+		{"an application that didn't register offline_access, asking for it", standard, standardSecret, []string{"openid", "offline_access"}, true},
+		{"an application that didn't register offline_access, not asking", standard, standardSecret, []string{"openid"}, true},
+		{"an application that registered offline_access, asking for it", optedIn, optedInSecret, []string{"openid", "offline_access"}, true},
+		{"an application that registered offline_access, not asking", optedIn, optedInSecret, []string{"openid"}, false},
+	} {
+		issued := redeem(tc.client, tc.secret, tc.scopes...)
+		if (issued.RefreshToken != "") != tc.refresh || issued.Scope != strings.Join(tc.scopes, " ") {
+			t.Errorf("%s: refresh token %q, scope %q; want one %v, scope %v", tc.name, issued.RefreshToken, issued.Scope, tc.refresh, tc.scopes)
+			continue
+		}
+		if tc.refresh {
+			if renewed, err := p.svc.RefreshToken(ctx, tc.client.ClientID, tc.secret, issued.RefreshToken, ""); err != nil || renewed.RefreshToken == "" || renewed.Scope != issued.Scope {
+				t.Errorf("%s: renew %+v, %v; want a new pair for the same scope", tc.name, renewed, err)
+			}
+		}
+	}
+	_, challenge, _ := codes.URLToken()
+	if _, _, err := p.svc.Authorize(ctx, person.ID, codeOnly.ClientID, testRedirect, []string{"openid", "offline_access"}, "", challenge, "S256"); !errors.Is(err, errs.ErrOIDCScopeNotPermitted) {
+		t.Errorf("offline_access from an application not registered for refresh: %v, want %v", err, errs.ErrOIDCScopeNotPermitted)
+	}
+
+	device, _ := registerClientWith(t, p.svc, CreateClientInput{
+		TenantID: tenant, Type: "public", GrantTypes: []string{grantTypeDeviceCode, "refresh_token"}, Scopes: []string{"openid", "offline_access"},
+	})
+	cookie, _ := p.signIn(t, person.ID)
+	for scope, refresh := range map[string]bool{"openid": false, "openid offline_access": true, "": true} {
+		rec := postForm(t, p.public, "/oauth/device_authorization", url.Values{"client_id": {device.ClientID}, "scope": {scope}}, "", "")
+		var started DeviceAuthResponse
+		dbtest.Decode(t, rec, &started)
+		if rec := browse(t, p.public, http.MethodPost, "/oauth/device/decision", cookie, map[string]any{"user_code": started.UserCode, "approve": true}); rec.Code != http.StatusOK {
+			t.Fatalf("device scope %q: approve: %d %s", scope, rec.Code, rec.Body.String())
+		}
+		rec = postForm(t, p.public, "/oauth/token-code", url.Values{"grant_type": {grantTypeDeviceCode}, "client_id": {device.ClientID}, "device_code": {started.DeviceCode}}, "", "")
+		var issued TokenResponse
+		dbtest.Decode(t, rec, &issued)
+		if rec.Code != http.StatusOK || (issued.RefreshToken != "") != refresh {
+			t.Errorf("device scope %q: %d %s, want a refresh token %v", scope, rec.Code, rec.Body.String(), refresh)
+		}
+	}
+}
+
+// TestRefreshedIDTokenKeepsTheSignIn checks that an ID token issued again on a
+// refresh, and on the refresh after it, reports the original sign-in's
+// auth_time and hosted-login session (OIDC Core 12.2), and no nonce.
+func TestRefreshedIDTokenKeepsTheSignIn(t *testing.T) {
+	ctx := dbtest.Context(t)
+	p := newProvider(t)
+	tenant := dbtest.Tenant(t)
+	person := dbtest.User(t, tenant, tenant)
+	client, secret := registerClient(t, p.svc, tenant)
+	cookie, sessionID := p.signIn(t, person.ID)
+	if err := p.svc.GrantConsent(ctx, person.ID, client.ClientID, []string{"openid"}); err != nil {
+		t.Fatalf("consent: %v", err)
+	}
+	target, verifier := authorizeURL(t, client.ClientID)
+	_, q := redirected(t, browse(t, p.public, http.MethodGet, target, cookie, nil))
+	issued, err := p.svc.ExchangeCode(ctx, client.ClientID, secret, q.Get("code"), testRedirect, verifier, "")
+	if err != nil {
+		t.Fatalf("redeem the code: %v", err)
+	}
+	first, err := p.svc.issuer.VerifySigned(issued.IDToken)
+	if err != nil || first["auth_time"] == nil || first["sid"] != sessionID.String() {
+		t.Fatalf("first ID token %v, %v; want auth_time and the session", first, err)
+	}
+
+	refresh := issued.RefreshToken
+	for i := 1; i <= 2; i++ {
+		renewed, err := p.svc.RefreshToken(ctx, client.ClientID, secret, refresh, "")
+		if err != nil {
+			t.Fatalf("refresh %d: %v", i, err)
+		}
+		id, err := p.svc.issuer.VerifySigned(renewed.IDToken)
+		if err != nil {
+			t.Fatalf("refresh %d: verify the ID token: %v", i, err)
+		}
+		if id["auth_time"] != first["auth_time"] || id["sid"] != first["sid"] || id["sub"] != first["sub"] || id["aud"] != first["aud"] {
+			t.Errorf("refresh %d: ID token %v, want the first one's auth_time, sid, sub and aud (%v)", i, id, first)
+		}
+		if _, ok := id["nonce"]; ok {
+			t.Errorf("refresh %d: the ID token carries a nonce", i)
+		}
+		refresh = renewed.RefreshToken
 	}
 }
 

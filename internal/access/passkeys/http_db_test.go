@@ -103,6 +103,13 @@ func TestPasskeysOverHTTP(t *testing.T) {
 	}
 	send(t, signedIn, http.MethodPatch, "/passkeys/"+phone.String(), map[string]string{"name": "Old phone"}, nil, http.StatusOK)
 	send(t, signedIn, http.MethodDelete, "/passkeys/"+phone.String(), nil, nil, http.StatusNoContent)
+	// An account in no organisation: its changes are on the platform's record.
+	if n := dbtest.Count(t, `
+		SELECT count(*) FROM audit.events
+		WHERE tenant_id IS NULL AND actor_user_id = $1 AND resource_id = $1 AND metadata->>'passkey_id' = $2
+		  AND action IN ('passkey.registered', 'passkey.renamed', 'passkey.deleted')`, created.UserID, phone.String()); n != 3 {
+		t.Errorf("%d audit records of adding, renaming and removing the phone's passkey, want 3", n)
+	}
 
 	login := send(t, public, http.MethodPost, "/passkeys/login/begin", map[string]string{"email": email}, nil, http.StatusOK)
 	challenge := begun(t, login)

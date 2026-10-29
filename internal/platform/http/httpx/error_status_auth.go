@@ -28,5 +28,6 @@ func init() {
 		errs.CodeAuthTenantInactive:              http.StatusForbidden,
 		errs.CodeAuthSignInUnavailable:           http.StatusServiceUnavailable,
 		errs.CodeAuthAddressNotAllowed:           http.StatusForbidden,
+		errs.CodeAuthSSORequired:                 http.StatusForbidden,
 	})
 }

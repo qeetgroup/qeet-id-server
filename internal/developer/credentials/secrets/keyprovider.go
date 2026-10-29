@@ -6,8 +6,8 @@ import (
 )
 
 // KeyProvider supplies the vault's AES data-encryption key (DEK) at startup;
-// NewService unwraps it once and caches the AEAD cipher. Two implementations ship:
-// StaticKeyProvider (key from config/secret manager) and AWSKMSProvider (kms.go).
+// it is unwrapped once into the deployment's envelope cipher. Two implementations
+// ship: StaticKeyProvider (key from config/secret manager) and AWSKMSProvider (kms.go).
 type KeyProvider interface {
 	DataKey(ctx context.Context) ([]byte, error)
 }

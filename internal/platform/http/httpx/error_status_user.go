@@ -16,5 +16,6 @@ func init() {
 		errs.CodeUserManagedElsewhere:    http.StatusForbidden,
 		errs.CodeUserCredentialsShared:   http.StatusForbidden,
 		errs.CodeUserManagedHere:         http.StatusConflict,
+		errs.CodeUserDomainManaged:       http.StatusConflict,
 	})
 }

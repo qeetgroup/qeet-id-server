@@ -4,22 +4,28 @@ package tenant
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
@@ -53,6 +59,7 @@ func newHandler(t *testing.T) (*Handler, *auth.Service, *announced) {
 		Validate:    validator.New(validator.WithRequiredStructEnabled()),
 		AuthService: authSvc,
 		Signals:     sessionsignal.New(signals.enqueue),
+		OwnerCheck:  rbac.NewRepository(pool).IsOwner,
 	}, authSvc, signals
 }
 
@@ -65,6 +72,36 @@ func verifiedAccount(t *testing.T) dbtest.Account {
 		t.Fatal(err)
 	}
 	return a
+}
+
+// signedIn returns userID's principal in tenant (uuid.Nil: none) with a live
+// session that signed in an hour ago and ends in two.
+func signedIn(t *testing.T, userID, tenant uuid.UUID) *httpx.Principal {
+	t.Helper()
+	var tenantArg any
+	if tenant != uuid.Nil {
+		tenantArg = tenant
+	}
+	var session uuid.UUID
+	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `
+		INSERT INTO auth.sessions (user_id, tenant_id, signed_in_at, expires_at)
+		VALUES ($1, $2, NOW() - INTERVAL '1 hour', NOW() + INTERVAL '2 hours') RETURNING id
+	`, userID, tenantArg).Scan(&session); err != nil {
+		t.Fatal(err)
+	}
+	p := dbtest.Principal(userID, tenant)
+	p.SessionID = &session
+	return p
+}
+
+// continues reports whether session continues from's sign-in: the same
+// sign-in time, and an end no later.
+func continues(t *testing.T, session, from uuid.UUID) bool {
+	t.Helper()
+	return dbtest.Count(t, `
+		SELECT count(*) FROM auth.sessions s JOIN auth.sessions f ON f.id = $2
+		WHERE s.id = $1 AND s.signed_in_at = f.signed_in_at AND s.expires_at <= f.expires_at
+	`, session, from) == 1
 }
 
 // errorCode returns the error code of a JSON error answer.
@@ -105,7 +142,8 @@ func TestCreateOrganisation(t *testing.T) {
 	}
 
 	owner := verifiedAccount(t)
-	asOwner := dbtest.Serve(dbtest.Principal(owner.ID, uuid.Nil), h.Mount)
+	ownerP := signedIn(t, owner.ID, uuid.Nil)
+	asOwner := dbtest.Serve(ownerP, h.Mount)
 	rec := dbtest.Do(t, asOwner, http.MethodPost, "/tenants", map[string]any{"slug": slug, "name": "Acme"})
 	var created struct {
 		Tenant      Tenant    `json:"tenant"`
@@ -120,6 +158,9 @@ func TestCreateOrganisation(t *testing.T) {
 	}
 	if created.AccessToken == "" || dbtest.Count(t, `SELECT count(*) FROM auth.sessions WHERE id = $1 AND tenant_id = $2`, created.SessionID, id) != 1 {
 		t.Error("no token pair for a session in the new organisation")
+	}
+	if !continues(t, created.SessionID, *ownerP.SessionID) {
+		t.Error("the new organisation's session doesn't continue the caller's sign-in")
 	}
 	if missing := dbtest.Count(t, `
 		SELECT count(*) FROM rbac.permissions p WHERE NOT EXISTS (
@@ -144,12 +185,12 @@ func TestCreateOrganisation(t *testing.T) {
 	}
 }
 
-// TestSuspendAndDeleteEndSessions checks that suspending an organisation
-// ends and announces its sessions, so they can't be renewed, and is audited;
-// that reactivating it restores none; that a rename has no lifecycle effect;
-// that another organisation can't be changed; and that deleting it ends the
-// sessions opened since and hides it.
-func TestSuspendAndDeleteEndSessions(t *testing.T) {
+// TestOrganisationLifecycleIsTheOwners checks that only an owner changes an
+// organisation's status or deletes it; that it can't suspend itself; that a
+// suspension made another way ends and announces its sessions and is audited,
+// and reactivating restores none; and that deleting it is scheduled, can be
+// called off, and once due ends the sessions opened since and hides it.
+func TestOrganisationLifecycleIsTheOwners(t *testing.T) {
 	ctx := dbtest.Context(t)
 	h, authSvc, signals := newHandler(t)
 	owner := verifiedAccount(t)
@@ -158,7 +199,10 @@ func TestSuspendAndDeleteEndSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := dbtest.Tenant(t)
+	admin := dbtest.User(t, org.ID)
+	dbtest.Assign(t, admin.ID, org.ID, dbtest.Role(t, org.ID, "tenant.read", "tenant.write"))
 	asOwner := dbtest.Serve(dbtest.Principal(owner.ID, org.ID), h.Mount)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, org.ID), h.Mount)
 	path := "/tenants/" + org.ID.String()
 	signIn := func() *auth.TokenPair {
 		t.Helper()
@@ -174,10 +218,23 @@ func TestSuspendAndDeleteEndSessions(t *testing.T) {
 	audited := func(action string) int {
 		return dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = $1 AND resource_id = $2`, action, org.ID)
 	}
+	refused := func(name string, rec *httptest.ResponseRecorder, status int, code string) {
+		t.Helper()
+		if got := errorCode(t, rec); rec.Code != status || got != code {
+			t.Errorf("%s: %d %s, want %d %s", name, rec.Code, got, status, code)
+		}
+	}
+
+	refused("the owner suspends it", dbtest.Do(t, asOwner, http.MethodPatch, path, map[string]any{"status": "suspended"}), http.StatusForbidden, errs.CodeTenantSelfSuspend)
+	refused("an admin changes its status", dbtest.Do(t, asAdmin, http.MethodPatch, path, map[string]any{"status": "active"}), http.StatusForbidden, errs.CodeTenantOwnerOnly)
+	refused("an admin deletes it", dbtest.Do(t, asAdmin, http.MethodDelete, path, nil), http.StatusForbidden, errs.CodeTenantOwnerOnly)
+	if rec := dbtest.Do(t, asOwner, http.MethodPatch, "/tenants/"+other.String(), map[string]any{"status": "active"}); rec.Code != http.StatusForbidden {
+		t.Errorf("changing another organisation: %d, want 403", rec.Code)
+	}
 
 	before := signIn()
-	if rec := dbtest.Do(t, asOwner, http.MethodPatch, path, map[string]any{"status": "suspended"}); rec.Code != http.StatusOK {
-		t.Fatalf("suspend: %d %s", rec.Code, rec.Body.String())
+	if _, err := h.Repo.Update(ctx, org.ID, UpdateInput{Status: ptr("suspended")}, statusChange(h.Signals, org.ID, audit.Actor{Type: "system"}), nil); err != nil {
+		t.Fatalf("suspend: %v", err)
 	}
 	if !ended(before) {
 		t.Error("suspending the organisation left its session live")
@@ -191,32 +248,201 @@ func TestSuspendAndDeleteEndSessions(t *testing.T) {
 	if audited("tenant.suspended") != 1 || dbtest.Count(t, `SELECT count(*) FROM platform.outbox WHERE event_type = 'tenant.suspended' AND aggregate_id = $1`, org.ID) != 1 {
 		t.Error("the suspension was not audited and queued as an event")
 	}
-
 	if rec := dbtest.Do(t, asOwner, http.MethodPatch, path, map[string]any{"status": "active"}); rec.Code != http.StatusOK || audited("tenant.reactivated") != 1 {
 		t.Fatalf("reactivate: %d %s, audited %d times", rec.Code, rec.Body.String(), audited("tenant.reactivated"))
 	}
 	if !ended(before) {
 		t.Error("reactivating the organisation restored a session it ended")
 	}
-	rec := dbtest.Do(t, asOwner, http.MethodPatch, path, map[string]any{"name": "Acme Ltd"})
+	rec := dbtest.Do(t, asAdmin, http.MethodPatch, path, map[string]any{"name": "Acme Ltd"})
 	var renamed Tenant
 	dbtest.Decode(t, rec, &renamed)
 	if rec.Code != http.StatusOK || renamed.Name != "Acme Ltd" || len(signals.reasons) != 1 {
-		t.Errorf("rename: %d %s, %d announcements; want the new name and no lifecycle effect", rec.Code, rec.Body.String(), len(signals.reasons))
-	}
-	if rec := dbtest.Do(t, asOwner, http.MethodPatch, "/tenants/"+other.String(), map[string]any{"status": "suspended"}); rec.Code != http.StatusForbidden {
-		t.Errorf("suspending another organisation: %d, want 403", rec.Code)
+		t.Errorf("an admin renames it: %d %s, %d announcements; want the new name and no lifecycle effect", rec.Code, rec.Body.String(), len(signals.reasons))
 	}
 
 	since := signIn()
-	if rec := dbtest.Do(t, asOwner, http.MethodDelete, path, nil); rec.Code != http.StatusNoContent {
+	if rec := dbtest.Do(t, asOwner, http.MethodDelete, path, nil); rec.Code != http.StatusAccepted || audited("tenant.deletion_scheduled") != 1 {
 		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
+	}
+	var scheduled Tenant
+	dbtest.Decode(t, dbtest.Do(t, asOwner, http.MethodGet, path, nil), &scheduled)
+	if scheduled.DeletionDueAt == nil || ended(since) {
+		t.Errorf("after scheduling: %+v, session ended %v; want it working with its deletion due", scheduled, ended(since))
+	}
+	// The list of a member's organisations shows the same date.
+	listed := func() *time.Time {
+		var page struct {
+			Items []Tenant `json:"items"`
+		}
+		dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodGet, "/tenants", nil), &page)
+		for _, it := range page.Items {
+			if it.ID == org.ID {
+				return it.DeletionDueAt
+			}
+		}
+		t.Fatal("the organisation is missing from its admin's list")
+		return nil
+	}
+	if due := listed(); due == nil || !due.Equal(*scheduled.DeletionDueAt) {
+		t.Errorf("listed deletion_due_at %v, want %v as the organisation itself says", due, scheduled.DeletionDueAt)
+	}
+	refused("delete it twice", dbtest.Do(t, asOwner, http.MethodDelete, path, nil), http.StatusConflict, errs.CodeTenantDeletionScheduled)
+	refused("an admin calls it off", dbtest.Do(t, asAdmin, http.MethodPost, path+"/deletion/cancel", nil), http.StatusForbidden, errs.CodeTenantOwnerOnly)
+	rec = dbtest.Do(t, asOwner, http.MethodPost, path+"/deletion/cancel", nil)
+	var kept Tenant
+	dbtest.Decode(t, rec, &kept)
+	if rec.Code != http.StatusOK || kept.DeletionDueAt != nil || audited("tenant.deletion_cancelled") != 1 {
+		t.Errorf("call it off: %d %s", rec.Code, rec.Body.String())
+	}
+	if due := listed(); due != nil {
+		t.Errorf("listed deletion_due_at %v once called off, want none", due)
+	}
+	refused("call it off twice", dbtest.Do(t, asOwner, http.MethodPost, path+"/deletion/cancel", nil), http.StatusConflict, errs.CodeTenantDeletionNotScheduled)
+
+	if rec := dbtest.Do(t, asOwner, http.MethodDelete, path, nil); rec.Code != http.StatusAccepted {
+		t.Fatalf("delete again: %d %s", rec.Code, rec.Body.String())
+	}
+	if n, err := DeleteDue(ctx, h.Repo, h.Signals); err != nil || n != 0 || ended(since) {
+		t.Errorf("before it is due: deleted %d, %v, session ended %v; want nothing deleted", n, err, ended(since))
+	}
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE tenant.tenants SET deletion_due_at = NOW() - INTERVAL '1 minute' WHERE id = $1`, org.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := DeleteDue(ctx, h.Repo, h.Signals); err != nil || n != 1 {
+		t.Fatalf("once due: deleted %d, %v; want the organisation", n, err)
 	}
 	if !ended(since) || audited("tenant.deleted") != 1 {
 		t.Error("deleting the organisation left its session live or was not audited")
 	}
 	if rec := dbtest.Do(t, asOwner, http.MethodGet, path, nil); rec.Code != http.StatusNotFound {
 		t.Errorf("a deleted organisation: %d, want 404", rec.Code)
+	}
+}
+
+// ptr is a pointer to v.
+func ptr[T any](v T) *T { return &v }
+
+// TestANewOrganisationHasItsBuiltinRoles checks that creating an organisation
+// gives it built-in admin, member and viewer roles beside owner: admin holding
+// all but tenant.delete, viewer only reads and not secret.read, member nothing.
+func TestANewOrganisationHasItsBuiltinRoles(t *testing.T) {
+	ctx := dbtest.Context(t)
+	h, _, _ := newHandler(t)
+	keys := []string{"tenant.delete", "secret.read", "audit.read", "user.write"}
+	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO rbac.permissions (key) SELECT unnest($1::text[]) ON CONFLICT (key) DO NOTHING`, keys); err != nil {
+		t.Fatal(err)
+	}
+	org, err := h.Repo.CreateWithOwner(ctx, CreateInput{Slug: dbtest.Unique("org"), Name: "Acme"}, verifiedAccount(t).ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string][]string{
+		"owner":  keys,
+		"admin":  {"secret.read", "audit.read", "user.write"},
+		"member": {},
+		"viewer": {"audit.read"},
+	} {
+		var held []string
+		if err := dbtest.Pool(t).QueryRow(ctx, `
+			SELECT coalesce(array_agg(p.key) FILTER (WHERE p.key = ANY($3)), '{}')
+			FROM rbac.roles ro
+			LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
+			LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
+			WHERE ro.tenant_id = $1 AND ro.is_system AND ro.name = $2`, org.ID, name, keys).Scan(&held); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		slices.Sort(held)
+		want = slices.Sorted(slices.Values(want))
+		if !slices.Equal(held, want) {
+			t.Errorf("the built-in %s role holds %v of %v, want %v", name, held, keys, want)
+		}
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.role_permissions rp JOIN rbac.roles ro ON ro.id = rp.role_id WHERE ro.tenant_id = $1 AND ro.name = 'member'`, org.ID); n != 0 {
+		t.Errorf("the built-in member role holds %d permissions, want none", n)
+	}
+}
+
+// TestOrganisationProfileChangesAreAudited checks that an update to an
+// organisation's name, region, logo or metadata is recorded as one
+// tenant.updated naming every field that changed (the name and region with
+// their old and new values, the logo and metadata by name only); that an update
+// changing nothing records nothing; and that a status change is recorded as
+// such, not as an update.
+func TestOrganisationProfileChangesAreAudited(t *testing.T) {
+	ctx := dbtest.Context(t)
+	h, _, _ := newHandler(t)
+	owner := verifiedAccount(t)
+	org, err := h.Repo.CreateWithOwner(ctx, CreateInput{Slug: dbtest.Unique("org"), Name: "Acme", Metadata: map[string]any{"tier": "gold"}}, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := dbtest.User(t, org.ID)
+	dbtest.Assign(t, admin.ID, org.ID, dbtest.Role(t, org.ID, "tenant.read", "tenant.write"))
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, org.ID), h.Mount)
+	path := "/tenants/" + org.ID.String()
+	type record struct {
+		Changed []string                  `json:"changed"`
+		Changes map[string]map[string]any `json:"changes"`
+	}
+	updates := func() []record {
+		t.Helper()
+		rows, err := dbtest.Pool(t).Query(ctx, `
+			SELECT metadata FROM audit.events
+			WHERE tenant_id = $1 AND action = 'tenant.updated' AND resource_id = $1 AND actor_user_id = $2
+			ORDER BY created_at`, org.ID, admin.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []record
+		for rows.Next() {
+			var raw []byte
+			var r record
+			if err := rows.Scan(&raw); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(raw, &r); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, r)
+		}
+		return out
+	}
+	patch := func(body map[string]any) {
+		t.Helper()
+		if rec := dbtest.Do(t, asAdmin, http.MethodPatch, path, body); rec.Code != http.StatusOK {
+			t.Fatalf("update %v: %d %s", body, rec.Code, rec.Body.String())
+		}
+	}
+
+	patch(map[string]any{"name": "Acme Ltd", "region": org.Region, "logo_url": "data:image/png;base64,AAAA", "metadata": map[string]any{"tier": "platinum"}})
+	got := updates()
+	want := record{
+		Changed: []string{"name", "logo_url", "metadata"},
+		Changes: map[string]map[string]any{"name": {"from": "Acme", "to": "Acme Ltd"}},
+	}
+	if len(got) != 1 || !reflect.DeepEqual(got[0], want) {
+		t.Fatalf("recorded %+v, want %+v", got, want)
+	}
+	patch(map[string]any{"name": "Acme Ltd", "metadata": map[string]any{"tier": "platinum"}})
+	if got := updates(); len(got) != 1 {
+		t.Errorf("an update changing nothing was recorded: %+v", got)
+	}
+	patch(map[string]any{"logo_url": ""})
+	if got := updates(); len(got) != 2 || !reflect.DeepEqual(got[1].Changed, []string{"logo_url"}) || len(got[1].Changes) != 0 {
+		t.Errorf("recorded %+v, want a second naming only the logo", got)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE resource_id = $1 AND strpos(metadata::text, 'base64') > 0`, org.ID); n != 0 {
+		t.Errorf("%d audit records hold the logo itself", n)
+	}
+
+	asOwner := dbtest.Serve(dbtest.Principal(owner.ID, org.ID), h.Mount)
+	if rec := dbtest.Do(t, asOwner, http.MethodPatch, path, map[string]any{"status": "active"}); rec.Code != http.StatusOK {
+		t.Fatalf("set the status: %d %s", rec.Code, rec.Body.String())
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'tenant.updated' AND resource_id = $1`, org.ID); n != 2 {
+		t.Errorf("%d tenant.updated records after an unchanged status, want 2", n)
 	}
 }
 
@@ -228,7 +454,7 @@ func TestCreateOrganisationFromAnother(t *testing.T) {
 	home := dbtest.Tenant(t)
 	a := verifiedAccount(t)
 	dbtest.Assign(t, a.ID, home, dbtest.Role(t, home))
-	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, home), h.Mount), http.MethodPost, "/tenants",
+	rec := dbtest.Do(t, dbtest.Serve(signedIn(t, a.ID, home), h.Mount), http.MethodPost, "/tenants",
 		map[string]any{"slug": dbtest.Unique("org"), "name": "Second"})
 	var created struct {
 		TenantID    uuid.UUID `json:"tenant_id"`
@@ -243,6 +469,12 @@ func TestCreateOrganisationFromAnother(t *testing.T) {
 		WHERE ur.user_id = $1 AND ur.tenant_id = $2 AND r.name = 'owner'
 	`, a.ID, created.TenantID); n != 1 {
 		t.Error("the creator is not the new organisation's owner")
+	}
+
+	rec = dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, home), h.Mount), http.MethodPost, "/tenants",
+		map[string]any{"slug": dbtest.Unique("org"), "name": "Third"})
+	if rec.Code != http.StatusCreated || strings.Contains(rec.Body.String(), "access_token") {
+		t.Errorf("create without a session: %d %s; want the organisation and no token pair", rec.Code, rec.Body.String())
 	}
 }
 
@@ -264,8 +496,72 @@ func TestOrganisationPickerListsEveryOrganisation(t *testing.T) {
 	if strings.Contains(rec.Body.String(), `"roles":null`) {
 		t.Errorf("picker gives a member with no role null roles, want []: %s", rec.Body.String())
 	}
+	// A sign-in to the other organisation outlasts its session: the picker
+	// still shows when it was last used.
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
+		INSERT INTO audit.events (tenant_id, actor_user_id, actor_type, action, resource_type, created_at)
+		VALUES ($1, $2, 'user', 'auth.login_succeeded', 'session', NOW() - interval '10 days')`, other, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	var picker struct {
+		Items []EligibleOrganization `json:"items"`
+	}
+	dbtest.Decode(t, dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, home), h.Mount), http.MethodGet, "/me/organizations", nil), &picker)
+	for _, o := range picker.Items {
+		if o.ID == other && (o.LastUsedAt == nil || time.Since(*o.LastUsedAt) < 9*24*time.Hour) {
+			t.Errorf("the other organisation's last use %v, want the sign-in 10 days ago", o.LastUsedAt)
+		}
+	}
 	listed, _, err := h.Repo.List(dbtest.Context(t), a.ID, 50, "")
 	if err != nil || len(listed) != 2 || !slices.ContainsFunc(listed, func(o Tenant) bool { return o.ID == home }) {
 		t.Errorf("organisation list %+v, %v; want %s and %s", listed, err, home, other)
+	}
+}
+
+// TestRegionIsTheDeployments checks that an organisation is created in the
+// region the deployment runs in, that asking to create one elsewhere is
+// refused and creates nothing, and that the region can't be changed, though
+// sending it back unchanged with other fields is accepted.
+func TestRegionIsTheDeployments(t *testing.T) {
+	h, _, _ := newHandler(t)
+	h.Repo.SetHostingRegion("ap-south-2")
+	a := verifiedAccount(t)
+	create := func(region string) *httptest.ResponseRecorder {
+		body := map[string]any{"slug": dbtest.Unique("org"), "name": "Acme"}
+		if region != "" {
+			body["region"] = region
+		}
+		return dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, uuid.Nil), h.Mount), http.MethodPost, "/tenants", body)
+	}
+
+	if rec := create("eu-west-1"); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), errs.CodeTenantRegionUnavailable) || !strings.Contains(rec.Body.String(), "ap-south-2") {
+		t.Errorf("create in another region: %d %s, want 422 %s naming ap-south-2", rec.Code, rec.Body.String(), errs.CodeTenantRegionUnavailable)
+	}
+	var created struct {
+		TenantID uuid.UUID `json:"tenant_id"`
+	}
+	for _, region := range []string{"", "ap-south-2"} {
+		rec := create(region)
+		dbtest.Decode(t, rec, &created)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create with region %q: %d %s", region, rec.Code, rec.Body.String())
+		}
+		if n := dbtest.Count(t, `SELECT count(*) FROM tenant.tenants WHERE id = $1 AND region = 'ap-south-2'`, created.TenantID); n != 1 {
+			t.Errorf("an organisation created with region %q isn't in ap-south-2", region)
+		}
+	}
+
+	admin := dbtest.User(t, created.TenantID)
+	dbtest.Assign(t, admin.ID, created.TenantID, dbtest.Role(t, created.TenantID, "tenant.read", "tenant.write"))
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, created.TenantID), h.Mount)
+	path := "/tenants/" + created.TenantID.String()
+	if rec := dbtest.Do(t, asAdmin, http.MethodPatch, path, map[string]any{"region": "eu-west-1"}); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), errs.CodeTenantRegionReadOnly) {
+		t.Errorf("change the region: %d %s, want 422 %s", rec.Code, rec.Body.String(), errs.CodeTenantRegionReadOnly)
+	}
+	if rec := dbtest.Do(t, asAdmin, http.MethodPatch, path, map[string]any{"region": "ap-south-2", "name": "Acme Ltd"}); rec.Code != http.StatusOK {
+		t.Errorf("an update sending the region back unchanged: %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.tenants WHERE id = $1 AND region = 'ap-south-2' AND name = 'Acme Ltd'`, created.TenantID); n != 1 {
+		t.Error("the organisation's region or name isn't what the updates left")
 	}
 }

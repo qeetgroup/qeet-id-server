@@ -68,8 +68,9 @@ func (h *Handler) serverMetadata(r *http.Request) map[string]any {
 	}
 }
 
-// scopesSupported is every scope an application may request.
-var scopesSupported = []string{"openid", "profile", "email", "phone"}
+// scopesSupported is every scope an application may request; offline_access
+// asks for a refresh token (see issuesRefreshToken).
+var scopesSupported = []string{"openid", "profile", "email", "phone", scopeOfflineAccess}
 
 // protectedResourceMetadata implements RFC 9728 §3 — OAuth 2.0 Protected
 // Resource Metadata. MCP authorization servers must advertise this document

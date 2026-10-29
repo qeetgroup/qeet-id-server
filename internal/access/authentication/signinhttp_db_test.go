@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -289,6 +290,32 @@ func TestSignInLockoutOverHTTP(t *testing.T) {
 	}
 	if rec := attacker.do(http.MethodPost, "/auth/login", loginBody(a.Email, testPassword)); rec.Code != http.StatusOK {
 		t.Errorf("right password once the lock has lifted: %d %s, want 200", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSignInWhileTheHasherIsFull checks that a password sign-in the hasher has
+// no room for is answered 503 server.overloaded with Retry-After, for an
+// account and an address with none alike, and is not counted as a failure.
+func TestSignInWhileTheHasherIsFull(t *testing.T) {
+	b := newBrowser(t, publicRoutes(newHandler(newService(t))))
+	a, _ := member(t)
+	nobody := dbtest.Unique("nobody") + "@example.test"
+
+	release := password.FillForTest()
+	for _, email := range []string{a.Email, nobody} {
+		rec := b.do(http.MethodPost, "/auth/login", loginBody(email, "Wrong-password-1"))
+		if !answered(rec, http.StatusServiceUnavailable, errs.CodeServerOverloaded) || rec.Header().Get("Retry-After") == "" {
+			t.Errorf("sign in as %s with the hasher full: %d %s (Retry-After %q), want 503 %s with Retry-After",
+				email, rec.Code, rec.Body.String(), rec.Header().Get("Retry-After"), errs.CodeServerOverloaded)
+		}
+	}
+	release()
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.login_attempts_by_network WHERE email = ANY($1)`,
+		[]string{strings.ToLower(a.Email), nobody}); n != 0 {
+		t.Errorf("refused sign-ins counted as %d failures, want none", n)
+	}
+	if rec := b.do(http.MethodPost, "/auth/login", loginBody(a.Email, testPassword)); rec.Code != http.StatusOK {
+		t.Errorf("right password once the hasher has room: %d %s, want 200", rec.Code, rec.Body.String())
 	}
 }
 

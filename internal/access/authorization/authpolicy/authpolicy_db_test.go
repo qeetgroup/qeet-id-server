@@ -227,3 +227,118 @@ func TestPolicyRefusalsStoreNothing(t *testing.T) {
 		t.Errorf("auth_policy.updated events: %d here, %d for the other organisation; want one each", a, b)
 	}
 }
+
+// TestUsageCountsHowPeopleSignIn checks that the usage counts the
+// organisation's live people by way of signing in, and those each way alone
+// lets in, and leaves out other organisations' people.
+func TestUsageCountsHowPeopleSignIn(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	passwordOnly, both, passkeyOnly, googleOnly := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
+	elsewhere := dbtest.User(t, other, other)
+	for _, u := range []uuid.UUID{passwordOnly.ID, both.ID, elsewhere.ID} {
+		dbtest.SetPassword(t, u, "Kx7mQ2vLp9Wz")
+	}
+	for _, u := range []uuid.UUID{both.ID, passkeyOnly.ID} {
+		if _, err := pool.Exec(ctx, `INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, sign_count) VALUES ($1, $2, $3, 0)`,
+			u, []byte(uuid.NewString()), []byte("key")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant.social_providers (tenant_id, provider, client_id, client_secret, encryption_version) VALUES ($1, 'google', 'cid', 'legacy-secret', 0)`, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject) VALUES ($1, $2, 'google', $3), ($4, $2, 'google', $5)`,
+		googleOnly.ID, tenant, uuid.NewString(), both.ID, uuid.NewString()); err != nil {
+		t.Fatal(err)
+	}
+	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: NewService(pool)}).Mount)
+	var got MethodUsage
+	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, "/tenants/"+tenant.String()+"/auth-policy/usage", nil), &got)
+	if got.People != 5 || got.Password != (MethodCount{People: 2, Only: 1}) || got.Passkey != (MethodCount{People: 2, Only: 1}) {
+		t.Errorf("usage %+v; want 5 people, 2 with a password (1 only), 2 with a passkey (1 only)", got)
+	}
+	if len(got.Social) != 1 || got.Social[0] != (SocialCount{Provider: "google", Linked: 2, Only: 1}) || !got.MagicLinkEnabled {
+		t.Errorf("social %+v, magic link %v; want google with 2 linked, 1 only, and magic links on", got.Social, got.MagicLinkEnabled)
+	}
+}
+
+// TestEveryMethodOffNeedsSingleSignOn checks that an organisation may switch
+// every first-factor method off only while it has an active SAML or LDAP
+// connection of its own: a draft or disabled one, or another organisation's
+// active one, doesn't count.
+func TestEveryMethodOffNeedsSingleSignOn(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := NewService(pool)
+	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
+	path := "/tenants/" + tenant.String() + "/auth-policy"
+	ssoOnly := map[string]any{"password_enabled": false, "passkey_enabled": false, "magic_link_enabled": false}
+	refused := func(when string) {
+		t.Helper()
+		if rec := dbtest.Do(t, h, http.MethodPut, path, ssoOnly); rec.Code != http.StatusUnprocessableEntity ||
+			!strings.Contains(rec.Body.String(), `"code":"no_sign_in_method"`) {
+			t.Errorf("every method off %s: %d %s, want 422 no_sign_in_method", when, rec.Code, rec.Body.String())
+		}
+	}
+	saml := func(tenant uuid.UUID, status string) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO tenant.saml_connections (tenant_id, name, idp_entity_id, idp_sso_url, idp_certificate, status)
+			VALUES ($1, 'Okta', 'https://idp.example.test', 'https://idp.example.test/sso', 'cert', $2)
+		`, tenant, status); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	refused("with no connection")
+	saml(tenant, "draft")
+	saml(tenant, "disabled")
+	saml(other, "active")
+	refused("with a draft and a disabled connection, and another organisation's active one")
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO tenant.ldap_connections (tenant_id, name, server_url, bind_dn, bind_password, base_dn, status)
+		VALUES ($1, 'Directory', 'ldaps://ldap.example.test', 'cn=service', 'secret', 'dc=example', 'active')
+	`, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if rec := dbtest.Do(t, h, http.MethodPut, path, ssoOnly); rec.Code != http.StatusOK {
+		t.Fatalf("every method off with an active LDAP connection: %d %s", rec.Code, rec.Body.String())
+	}
+	if m, err := svc.SignInMethodsFor(ctx, tenant); err != nil || m != (SignInMethods{}) {
+		t.Errorf("sign-in methods of a single-sign-on-only organisation: %+v, %v; want none", m, err)
+	}
+}
+
+// TestEveryMethodOffWithOpenIDConnect checks that an active OpenID Connect
+// connection lets an organisation switch every other method off, as SAML and
+// LDAP do, and a draft one doesn't.
+func TestEveryMethodOffWithOpenIDConnect(t *testing.T) {
+	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
+	tenant := dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: NewService(pool)}).Mount)
+	path := "/tenants/" + tenant.String() + "/auth-policy"
+	ssoOnly := map[string]any{"password_enabled": false, "passkey_enabled": false, "magic_link_enabled": false}
+	connect := func(status string) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO tenant.oidc_connections (tenant_id, name, issuer, client_id, client_secret_ct, client_secret_nonce, status)
+			VALUES ($1, 'Entra ID', 'https://login.example.test', 'client', '\x00', '\x00', $2)`, tenant, status); err != nil {
+			t.Fatal(err)
+		}
+	}
+	connect("draft")
+	if rec := dbtest.Do(t, h, http.MethodPut, path, ssoOnly); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("every method off with a draft OpenID Connect connection: %d, want 422", rec.Code)
+	}
+	connect("active")
+	if rec := dbtest.Do(t, h, http.MethodPut, path, ssoOnly); rec.Code != http.StatusOK {
+		t.Errorf("every method off with an active OpenID Connect connection: %d %s", rec.Code, rec.Body.String())
+	}
+}

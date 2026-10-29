@@ -98,7 +98,56 @@ func (service *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connect
 	if err := service.enrichConnections(ctx, tenantID, records); err != nil {
 		return nil, err
 	}
+	if err := service.countConnections(ctx, tenantID, records); err != nil {
+		return nil, err
+	}
 	return records, nil
+}
+
+// countConnections sets each LDAP connection's user count, the people with an
+// identity it signed in, and SCIM's group count, the groups it provisioned.
+func (service *Service) countConnections(ctx context.Context, tenantID uuid.UUID, records []Connection) error {
+	if service.pool == nil {
+		return nil
+	}
+	people := map[string]int{}
+	rows, err := service.pool.Query(ctx, `
+		SELECT ei.connection_id::text, count(DISTINCT ei.user_id)::int
+		FROM "user".external_identities ei
+		JOIN "user".users u ON u.id = ei.user_id AND u.deleted_at IS NULL
+		WHERE ei.tenant_id = $1 AND ei.provider = 'ldap' AND ei.connection_id IS NOT NULL
+		GROUP BY ei.connection_id`, tenantID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			rows.Close()
+			return err
+		}
+		people[id] = n
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	var groups int
+	if err := service.pool.QueryRow(ctx, `SELECT count(*)::int FROM tenant.groups WHERE tenant_id = $1 AND provisioned_via = 'scim'`, tenantID).Scan(&groups); err != nil {
+		return err
+	}
+	for i := range records {
+		switch records[i].Type {
+		case "ldap":
+			n := people[records[i].ID]
+			records[i].UserCount = &n
+		case "scim":
+			g := groups
+			records[i].GroupCount = &g
+		}
+	}
+	return nil
 }
 
 // Handler serves the directory HTTP API.
@@ -109,8 +158,12 @@ type Handler struct {
 // Mount registers the directory routes on r.
 func (handler *Handler) Mount(router chi.Router) {
 	router.Get("/tenants/{tenantID}/directory/connections", handler.list)
+	router.Get("/tenants/{tenantID}/directory/profiles/{userID}", handler.profiles)
 	router.Get("/tenants/{tenantID}/directory/activity", handler.events)
 	router.Post("/tenants/{tenantID}/directory/alerts", handler.createAlert)
+	router.Get("/tenants/{tenantID}/directory/alerts", handler.listAlerts)
+	router.Patch("/tenants/{tenantID}/directory/alerts/{alertID}", handler.updateAlert)
+	router.Delete("/tenants/{tenantID}/directory/alerts/{alertID}", handler.deleteAlert)
 	router.Get("/tenants/{tenantID}/directory/errors", handler.errors)
 	router.Post("/tenants/{tenantID}/directory/errors/{eventID}/resolve", handler.resolveError)
 	router.Post("/tenants/{tenantID}/directory/errors/{eventID}/retry", handler.retryError)

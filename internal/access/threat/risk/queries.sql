@@ -6,6 +6,14 @@ SELECT medium_threshold, high_threshold, force_mfa_at_level,
        impossible_travel_enabled, min_travel_hours, device_reputation_enabled
 FROM auth.risk_settings WHERE tenant_id = $1;
 
+-- LockRiskSettings is GetRiskSettings holding the row until the update that
+-- replaces it commits.
+-- name: LockRiskSettings :one
+SELECT medium_threshold, high_threshold, force_mfa_at_level,
+       impossible_travel_enabled, min_travel_hours, device_reputation_enabled
+FROM auth.risk_settings WHERE tenant_id = $1
+FOR UPDATE;
+
 -- name: UpsertRiskSettings :exec
 INSERT INTO auth.risk_settings (
     tenant_id, medium_threshold, high_threshold, force_mfa_at_level,

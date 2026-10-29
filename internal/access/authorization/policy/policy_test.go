@@ -2,6 +2,7 @@ package policy
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -40,7 +41,7 @@ func TestDurationJSON(t *testing.T) {
 // maximum age, and that out-of-range values are named.
 func TestNormalizeFillsDefaultsAndRefusesOutOfRange(t *testing.T) {
 	r := &Repository{sessionMaxAge: 720 * time.Hour, sessionIdle: 24 * time.Hour}
-	p := Policy{PasswordMinLength: 8, PasswordComplexity: "standard", MFAEnforcement: "optional", SessionMaxAge: Duration(2 * time.Hour)}
+	p := Policy{MFAEnforcement: "optional", SessionMaxAge: Duration(2 * time.Hour)}
 	if bad := r.normalize(&p); len(bad) != 0 {
 		t.Fatalf("valid policy refused: %+v", bad)
 	}
@@ -53,10 +54,34 @@ func TestNormalizeFillsDefaultsAndRefusesOutOfRange(t *testing.T) {
 	for _, f := range r.normalize(&p) {
 		got[f.Field] = true
 	}
-	for _, want := range []string{"session_max_age", "session_idle_timeout", "password_min_length", "password_complexity", "mfa_enforcement", "mfa_grace_days"} {
+	for _, want := range []string{"session_max_age", "session_idle_timeout", "mfa_enforcement", "mfa_grace_days"} {
 		if !got[want] {
 			t.Errorf("%s out of range was not named (named: %v)", want, got)
 		}
+	}
+	if got["password_min_length"] || got["password_complexity"] {
+		t.Errorf("the ignored password fields were judged: %v", got)
+	}
+}
+
+// TestPasswordFieldsAreIgnored checks that a client still sending the old
+// password fields is accepted, and that the policy never returns them: the
+// password rules are the auth policy's.
+func TestPasswordFieldsAreIgnored(t *testing.T) {
+	var p Policy
+	if err := json.Unmarshal([]byte(`{"password_min_length": 4, "password_complexity": "basic", "mfa_enforcement": "optional"}`), &p); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	r := &Repository{sessionMaxAge: 720 * time.Hour, sessionIdle: 24 * time.Hour}
+	if bad := r.normalize(&p); len(bad) != 0 {
+		t.Errorf("a policy carrying the old password fields was refused: %+v", bad)
+	}
+	out, err := json.Marshal(Policy{MFAEnforcement: "optional"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "password") {
+		t.Errorf("a policy returned %s; want no password fields", out)
 	}
 }
 
@@ -66,7 +91,7 @@ func TestNormalizeFillsDefaultsAndRefusesOutOfRange(t *testing.T) {
 func TestNormalizeStepUp(t *testing.T) {
 	r := &Repository{sessionMaxAge: 720 * time.Hour, sessionIdle: 24 * time.Hour}
 	base := func() Policy {
-		return Policy{PasswordMinLength: 8, PasswordComplexity: "standard", MFAEnforcement: "optional"}
+		return Policy{MFAEnforcement: "optional"}
 	}
 	p := base()
 	p.StepUpMethods = []string{}

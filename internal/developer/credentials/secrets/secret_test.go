@@ -2,24 +2,25 @@ package secret
 
 import (
 	"bytes"
-	"context"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 )
 
-func testService(t *testing.T) *Service {
+func testService(t *testing.T, key byte) *Service {
 	t.Helper()
-	s, err := NewService(context.Background(), nil, StaticKeyProvider{Key: bytes.Repeat([]byte("k"), 32)})
+	box, err := envelope.New(bytes.Repeat([]byte{key}, 32))
 	if err != nil {
-		t.Fatalf("NewService: %v", err)
+		t.Fatalf("envelope.New: %v", err)
 	}
-	return s
+	return NewService(nil, box)
 }
 
 func TestEncryptDecryptRoundTrip(t *testing.T) {
-	s := testService(t)
+	s := testService(t, 'k')
 	tenantID := uuid.New()
 	for _, plain := range []string{"", "short", "sk_live_0123456789abcdef", strings.Repeat("x", 4096)} {
 		ct, nonce, err := s.encrypt(tenantID, "api-key", plain)
@@ -40,18 +41,18 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 }
 
 func TestDecryptRejectsTamperedCiphertext(t *testing.T) {
-	s := testService(t)
+	s := testService(t, 'k')
 	tenantID := uuid.New()
 	ct, nonce, _ := s.encrypt(tenantID, "api-key", "sk_live_secret_value")
-	ct[0] ^= 0xff // flip a byte
+	ct[len(ct)-1] ^= 0xff // flip a byte
 	if _, err := s.decrypt(tenantID, "api-key", ct, nonce); err == nil {
 		t.Error("GCM must reject tampered ciphertext")
 	}
 }
 
 func TestDecryptRejectsWrongKey(t *testing.T) {
-	s1 := testService(t)
-	s2, _ := NewService(context.Background(), nil, StaticKeyProvider{Key: bytes.Repeat([]byte("z"), 32)})
+	s1 := testService(t, 'k')
+	s2 := testService(t, 'z')
 	tenantID := uuid.New()
 	ct, nonce, _ := s1.encrypt(tenantID, "api-key", "secret")
 	if _, err := s2.decrypt(tenantID, "api-key", ct, nonce); err == nil {
@@ -60,7 +61,7 @@ func TestDecryptRejectsWrongKey(t *testing.T) {
 }
 
 func TestDecryptRejectsWrongTenantOrName(t *testing.T) {
-	s := testService(t)
+	s := testService(t, 'k')
 	tenantID := uuid.New()
 	ct, nonce, _ := s.encrypt(tenantID, "api-key", "secret")
 	if _, err := s.decrypt(uuid.New(), "api-key", ct, nonce); err == nil {
@@ -68,12 +69,6 @@ func TestDecryptRejectsWrongTenantOrName(t *testing.T) {
 	}
 	if _, err := s.decrypt(tenantID, "other", ct, nonce); err == nil {
 		t.Error("ciphertext transplanted to another secret must fail")
-	}
-}
-
-func TestNewServiceRejectsBadKeyLength(t *testing.T) {
-	if _, err := NewService(context.Background(), nil, StaticKeyProvider{Key: []byte("too-short")}); err == nil {
-		t.Error("AES requires 16/24/32-byte keys")
 	}
 }
 

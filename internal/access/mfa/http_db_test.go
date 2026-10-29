@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
@@ -124,5 +126,29 @@ func TestFactorsOverHTTP(t *testing.T) {
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE actor_user_id = $1 AND action LIKE 'mfa.%'`, a.ID); n < 5 {
 		t.Errorf("%d MFA changes audited, want each one", n)
+	}
+
+	// Each change told the person, by email, with nothing in it to sign in with.
+	var notices []string
+	for _, m := range mail.Messages() {
+		if !strings.Contains(m.Body, "If this wasn't you") {
+			continue
+		}
+		notices = append(notices, m.Subject)
+		if m.To != a.Email || m.Channel != "email" || sixDigits.MatchString(m.Body) || strings.Contains(m.Body, secret) {
+			t.Errorf("notice %q to %s: %q; want it to the person, holding no code or secret", m.Subject, m.To, m.Body)
+		}
+	}
+	want := []string{
+		"Two-step verification was turned on",
+		"New recovery codes were made for your account",
+		"A way to get sign-in codes was added to your account",
+		"A way to get sign-in codes was removed from your account",
+		"A phone was linked to approve your sign-ins",
+		"A phone was unlinked from your account",
+		"Two-step verification was turned off",
+	}
+	if !slices.Equal(notices, want) {
+		t.Errorf("notices sent %q, want %q", notices, want)
 	}
 }

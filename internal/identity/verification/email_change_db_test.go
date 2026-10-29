@@ -58,3 +58,35 @@ func TestEmailChangeToAddressInUse(t *testing.T) {
 		t.Error("the account's address changed")
 	}
 }
+
+// TestEmailChangeEndsLinksToTheOldAddress checks that a confirmed change of
+// address ends the reset and sign-in links already sent to the old one.
+func TestEmailChangeEndsLinksToTheOldAddress(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	mail := &dbtest.Mailbox{}
+	svc := NewService(pool, mail, 10*time.Minute)
+	tenant := dbtest.Tenant(t)
+	a := dbtest.User(t, tenant, tenant)
+	who := Requester{Actor: audit.Actor{UserID: &a.ID, Type: "user"}, TenantID: &tenant}
+	if _, err := pool.Exec(ctx, `
+		WITH r AS (INSERT INTO auth.password_resets (user_id, token_hash, expires_at) VALUES ($1, $2, NOW() + INTERVAL '1 hour'))
+		INSERT INTO auth.magic_links (email, token_hash, expires_at, app) VALUES ($3, $4, NOW() + INTERVAL '1 hour', 'console')
+	`, a.ID, dbtest.Unique("reset"), strings.ToUpper(a.Email), dbtest.Unique("link")); err != nil {
+		t.Fatal(err)
+	}
+	as := dbtest.Serve(dbtest.Principal(a.ID, tenant), (&Handler{Service: svc}).Mount)
+	if rec := dbtest.Do(t, as, http.MethodPost, "/me/email/change/start", map[string]any{"email": dbtest.Unique("moved") + "@example.test"}); rec.Code != http.StatusOK {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
+	}
+	code := regexp.MustCompile(`\b\d{6}\b`).FindString(mail.Last(t).Body)
+	if _, err := svc.ConfirmEmailChange(ctx, a.ID, code, who); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if n := dbtest.Count(t, `
+		SELECT (SELECT count(*) FROM auth.password_resets WHERE user_id = $1 AND expires_at > NOW())
+		     + (SELECT count(*) FROM auth.magic_links WHERE LOWER(email) = LOWER($2) AND expires_at > NOW())
+	`, a.ID, a.Email); n != 0 {
+		t.Errorf("%d links to the old address still work", n)
+	}
+}

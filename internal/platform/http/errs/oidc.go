@@ -11,6 +11,7 @@ const (
 
 	// Redirect URIs & scopes.
 	CodeOIDCRedirectURIInvalid       = "oidc.redirect_uri_invalid"
+	CodeOIDCWebOriginInvalid         = "oidc.web_origin_invalid"
 	CodeOIDCRedirectURIMismatch      = "oidc.redirect_uri_mismatch"
 	CodeOIDCRedirectURINotRegistered = "oidc.redirect_uri_not_registered"
 	CodeOIDCConsentRequestInvalid    = "oidc.consent_request_invalid"
@@ -38,6 +39,7 @@ const (
 	CodeOIDCExchangeDepthExceeded          = "oidc.exchange_depth_exceeded"
 	CodeOIDCInsufficientScope              = "oidc.insufficient_scope"
 	CodeOIDCResourceExists                 = "oidc.resource_exists"
+	CodeOIDCResourceDomainTaken            = "oidc.resource_domain_taken"
 	CodeOIDCResourceNotFound               = "oidc.resource_not_found"
 
 	// Token exchange (RFC 8693) subject/actor tokens.
@@ -96,6 +98,7 @@ var (
 
 	// Redirect URIs & scopes.
 	ErrOIDCRedirectURIInvalid       = New(CodeOIDCRedirectURIInvalid, "That redirect URI is not registered for this client.")
+	ErrOIDCWebOriginInvalid         = New(CodeOIDCWebOriginInvalid, "A web origin is a scheme, host and optional port, such as https://app.example.com: https, or http only for localhost.")
 	ErrOIDCRedirectURIMismatch      = New(CodeOIDCRedirectURIMismatch, "The redirect URI doesn't match the one used to obtain this code.")
 	ErrOIDCRedirectURINotRegistered = New(CodeOIDCRedirectURINotRegistered, "This application didn't register that return address, so we can't send you back to it.")
 	ErrOIDCConsentRequestInvalid    = New(CodeOIDCConsentRequestInvalid, "This sign-in request has expired or isn't valid. Start signing in again from the application.")
@@ -122,6 +125,7 @@ var (
 	ErrOIDCExchangeDepthExceeded          = New(CodeOIDCExchangeDepthExceeded, "This token was already exchanged as many times as allowed.")
 	ErrOIDCResourceInvalid                = New(CodeOIDCResourceInvalid, "A resource identifier is an absolute URI without a fragment, such as https://api.example.com.")
 	ErrOIDCResourceExists                 = New(CodeOIDCResourceExists, "That resource is already registered.")
+	ErrOIDCResourceDomainTaken            = New(CodeOIDCResourceDomainTaken, "That resource is on a domain another organization has verified.")
 	ErrOIDCResourceNotFound               = New(CodeOIDCResourceNotFound, "We couldn't find that resource.")
 	ErrOIDCPKCEExemptionInvalid           = New(CodeOIDCPKCEExemptionInvalid, "A PKCE exemption is for a confidential application, and must end in the future and within 90 days.")
 

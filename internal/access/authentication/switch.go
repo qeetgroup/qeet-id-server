@@ -96,7 +96,7 @@ func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*Toke
 	if err != nil {
 		return nil, s.signInFailed(ctx, tx, err)
 	}
-	if err := carrySecondFactor(ctx, tx, pair.SessionID, carried); err != nil {
+	if err := continueSession(ctx, tx, pair.SessionID, in.FromSessionID, carried); err != nil {
 		return nil, err
 	}
 	left, err := q.SupersedeSession(ctx, dbgen.SupersedeSessionParams{
@@ -149,6 +149,20 @@ func (s *Service) SignInInvitedAccount(ctx context.Context, userID, tenantID uui
 // organisation's second-factor requirement isn't met; the invitation stays
 // accepted so the user can step up and switch in.
 func (s *Service) EnterInvitedTenant(ctx context.Context, userID, tenantID, fromSessionID uuid.UUID, ip, ua string) (*TokenPair, error) {
+	return s.enterTenant(ctx, userID, tenantID, fromSessionID, ip, ua, "invite_accept")
+}
+
+// EnterCreatedTenant opens a session in tenantID, which userID has just
+// created, continuing their session fromSessionID: it ends when that one
+// would, and carries its sign-in and second factor.
+func (s *Service) EnterCreatedTenant(ctx context.Context, userID, tenantID, fromSessionID uuid.UUID, ip, ua string) (*TokenPair, error) {
+	return s.enterTenant(ctx, userID, tenantID, fromSessionID, ip, ua, "tenant_create")
+}
+
+// enterTenant opens a session in tenantID continuing userID's session
+// fromSessionID (uuid.Nil: none), which stays open, recorded as a method
+// sign-in.
+func (s *Service) enterTenant(ctx context.Context, userID, tenantID, fromSessionID uuid.UUID, ip, ua, method string) (*TokenPair, error) {
 	carried := ""
 	if fromSessionID != uuid.Nil {
 		var err error
@@ -159,7 +173,7 @@ func (s *Service) EnterInvitedTenant(ctx context.Context, userID, tenantID, from
 	if err := s.tenantFactorShortfall(ctx, userID, tenantID, carried); err != nil {
 		return nil, err
 	}
-	if err := s.refuseSignIn(ctx, userID, tenantID, "invite_accept", ip, ua); err != nil {
+	if err := s.refuseSignIn(ctx, userID, tenantID, method, ip, ua); err != nil {
 		return nil, err
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -167,13 +181,25 @@ func (s *Service) EnterInvitedTenant(ctx context.Context, userID, tenantID, from
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	pair, err := s.issuePairTx(ctx, tx, userID, tenantID, ip, ua, "invite_accept", nil,
-		map[string]any{"previous_session_id": fromSessionID, "second_factor": carried}, time.Time{})
+	// The same sign-in, so the new session ends when this one would.
+	var ends time.Time
+	if fromSessionID != uuid.Nil {
+		if ends, err = s.q.WithTx(tx).SessionEnd(ctx, dbgen.SessionEndParams{SessionID: fromSessionID, UserID: userID}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, errs.ErrUnauthorized
+			}
+			return nil, err
+		}
+	}
+	pair, err := s.issuePairTx(ctx, tx, userID, tenantID, ip, ua, method, nil,
+		map[string]any{"previous_session_id": fromSessionID, "second_factor": carried}, ends)
 	if err != nil {
 		return nil, s.signInFailed(ctx, tx, err)
 	}
-	if err := carrySecondFactor(ctx, tx, pair.SessionID, carried); err != nil {
-		return nil, err
+	if fromSessionID != uuid.Nil {
+		if err := continueSession(ctx, tx, pair.SessionID, fromSessionID, carried); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
@@ -202,12 +228,13 @@ func (s *Service) carriedSecondFactor(ctx context.Context, sessionID, userID uui
 	return "", nil
 }
 
-// carrySecondFactor records on a session opened from another the second
-// factor carried from it ("": none, nothing to record).
-func carrySecondFactor(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID, factor string) error {
-	if factor == "" {
-		return nil
-	}
-	_, err := tx.Exec(ctx, `UPDATE auth.sessions SET second_factor = $2 WHERE id = $1`, sessionID, factor)
+// continueSession records on sessionID, opened from fromSessionID, that it
+// continues that session's sign-in: when it happened, and the second factor
+// carried from it ("": none).
+func continueSession(ctx context.Context, tx pgx.Tx, sessionID, fromSessionID uuid.UUID, factor string) error {
+	_, err := tx.Exec(ctx, `
+		UPDATE auth.sessions s SET signed_in_at = f.signed_in_at, second_factor = COALESCE(NULLIF($3, ''), s.second_factor)
+		FROM auth.sessions f
+		WHERE s.id = $1 AND f.id = $2 AND f.user_id = s.user_id`, sessionID, fromSessionID, factor)
 	return err
 }

@@ -92,6 +92,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | ABAC | `internal/access/authorization/abac/` |
 | ReBAC (Zanzibar-style) | `internal/access/authorization/rebac/` |
 | AuthZEN PDP/PEP | `internal/access/authorization/authzen/` |
+| Access decision log | `internal/access/authorization/decisionlog/` |
 | Tenant security policy | `internal/access/authorization/policy/` |
 | Password rules, login methods | `internal/access/authorization/authpolicy/` |
 | **Route → permission map** | `internal/bootstrap/permissions.go` |
@@ -147,6 +148,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Retention auto-purge | `internal/operations/retention/` |
 | SIEM streaming | `internal/operations/siem/` |
 | Analytics | `internal/operations/analytics/` |
+| Service health and incidents | `internal/operations/servicehealth/` |
 | Live activity feed (SSE) | `internal/operations/activity/` |
 | In-app notifications | `internal/operations/notifications/` |
 | Plan entitlements | `internal/operations/entitlements/` |
@@ -159,7 +161,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 |---|---|
 | Postgres pool | `internal/platform/database/postgres/` |
 | pgx error mapping | `internal/platform/database/postgres/pgxerr/` |
-| **Migrations (0001–0164; 0082 absent)** | `internal/platform/database/migrations/` |
+| **Migrations (0001–0229; 0082 absent)** | `internal/platform/database/migrations/` |
 | Migration runner (`//go:embed`) | `internal/platform/database/migrations/runner.go` |
 | Per-domain queries | `internal/<context>/<domain>/queries.sql` (48) |
 | sqlc config | `internal/<context>/<domain>/sqlc.yaml` (48) |

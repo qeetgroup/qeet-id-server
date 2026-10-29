@@ -8,6 +8,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -80,6 +82,7 @@ type serviceStore interface {
 	PatchConversation(ctx context.Context, tenantID, userID, conversationID uuid.UUID, in PatchConversationInput) (*Conversation, error)
 	DeleteConversation(ctx context.Context, tenantID, userID, conversationID uuid.UUID) error
 	AppendMessage(ctx context.Context, tenantID, conversationID uuid.UUID, role string, content json.RawMessage) (*Message, error)
+	BeginTurn(ctx context.Context, tenantID, conversationID uuid.UUID) (release func(), err error)
 }
 
 // Service owns conversation and message persistence via sqlc-generated queries.
@@ -222,6 +225,58 @@ func (s *Service) AppendMessage(ctx context.Context, tenantID, conversationID uu
 		return nil, err
 	}
 	return msgFromRow(msgRow), nil
+}
+
+// turnTimeout is the longest a turn may run; a turn's hold on its
+// conversation older than this, and a minute more, was left by one that never
+// finished.
+const turnTimeout = 10 * time.Minute
+
+// BeginTurn starts a turn of the conversation, which answers one at a time: it
+// returns errs.ErrQeetAITurnInProgress while another runs, on any instance.
+// Call release when the turn ends.
+func (s *Service) BeginTurn(ctx context.Context, tenantID, conversationID uuid.UUID) (release func(), err error) {
+	startedAt, err := s.q.ClaimConversationTurn(ctx, dbgen.ClaimConversationTurnParams{
+		ConversationID: conversationID, TenantID: tenantID, StaleAfterSeconds: (turnTimeout + time.Minute).Seconds(),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrQeetAITurnInProgress
+	}
+	if err != nil {
+		return nil, err
+	}
+	return func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := s.q.ReleaseConversationTurn(ctx, dbgen.ReleaseConversationTurnParams{
+			ConversationID: conversationID, TenantID: tenantID, StartedAt: startedAt,
+		}); err != nil {
+			slog.Warn("qeetai: end the turn", "conversation_id", conversationID, "err", err)
+		}
+	}, nil
+}
+
+// TurnHistory returns the conversation's latest maxMessages messages, oldest
+// first: the most of its history one turn reads. Returns errs.ErrNotFound
+// when the conversation does not exist or belongs to another tenant or user.
+func (s *Service) TurnHistory(ctx context.Context, tenantID, userID, conversationID uuid.UUID, maxMessages int) ([]Message, error) {
+	if _, err := s.q.GetConversation(ctx, dbgen.GetConversationParams{ID: conversationID, TenantID: tenantID, UserID: userID}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errs.ErrNotFound
+		}
+		return nil, err
+	}
+	rows, err := s.q.ListRecentMessages(ctx, dbgen.ListRecentMessagesParams{
+		ConversationID: conversationID, TenantID: tenantID, MaxMessages: int32(min(maxMessages, math.MaxInt32)), // #nosec G115 -- clamped
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Message, len(rows))
+	for i, r := range rows {
+		out[len(rows)-1-i] = *msgFromRow(r)
+	}
+	return out, nil
 }
 
 // listMessages returns all messages for a conversation in chronological order.

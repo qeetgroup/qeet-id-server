@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -121,7 +122,8 @@ const suspendedDataset = `WITH suspended AS (
  CASE WHEN u.tenant_id=$1 THEN COALESCE(u.suspension_risk,'unknown') ELSE 'unknown' END AS risk,
  CASE WHEN u.tenant_id=$1 THEN COALESCE(u.suspension_review,'pending') ELSE 'external' END AS review,
  CASE WHEN u.tenant_id=$1 THEN u.suspended_at ELSE NULL END AS suspended_at,
- (SELECT max(s.created_at) FROM auth.sessions s WHERE s.tenant_id=$1 AND s.user_id=u.id) AS last_sign_in,
+ GREATEST((SELECT max(s.created_at) FROM auth.sessions s WHERE s.tenant_id=$1 AND s.user_id=u.id),
+  (SELECT max(e.created_at) FROM audit.events e WHERE e.tenant_id=$1 AND e.actor_user_id=u.id AND e.action='auth.login_succeeded')) AS last_sign_in,
  COALESCE(u.tenant_id=$1,false) AS can_manage
  FROM "user".users u WHERE u.status='suspended' AND u.deleted_at IS NULL
  AND (u.tenant_id=$1 OR EXISTS(SELECT 1 FROM rbac.user_roles roles WHERE roles.tenant_id=$1 AND roles.user_id=u.id))
@@ -237,7 +239,11 @@ func (handler *Handler) listSuspended(response http.ResponseWriter, request *htt
 	httpx.WriteJSON(response, http.StatusOK, page)
 }
 
-func (handler *Handler) updateStatusWithEvidence(request *http.Request, tenantID, userID uuid.UUID, input UpdateInput) (*User, error) {
+// updateWithEvidence applies an administrator's update to an account of
+// tenantID in one transaction with its evidence: user.updated naming the
+// profile fields it changed, and a status change's own record, event and
+// ended sign-ins.
+func (handler *Handler) updateWithEvidence(request *http.Request, tenantID, userID uuid.UUID, input UpdateInput) (*User, error) {
 	ctx := request.Context()
 	tx, err := handler.Repo.pool.Begin(ctx)
 	if err != nil {
@@ -253,9 +259,19 @@ func (handler *Handler) updateStatusWithEvidence(request *http.Request, tenantID
 			return nil, errs.ErrForbidden
 		}
 	}
+	before, err := handler.Repo.GetTx(ctx, tx, userID)
+	if err != nil {
+		return nil, err
+	}
 	user, err := handler.Repo.UpdateTx(ctx, tx, userID, input)
 	if err != nil {
 		return nil, err
+	}
+	if changed := profileChanges(before, input); len(changed) > 0 {
+		if err := audit.Record(ctx, tx, audit.ActorOf(request).Event(tenantID, "user.updated", "user", userID,
+			map[string]any{"changed": changed})); err != nil {
+			return nil, err
+		}
 	}
 	if input.Status != nil && previous != *input.Status {
 		action := "user.reactivated"
@@ -282,6 +298,32 @@ func (handler *Handler) updateStatusWithEvidence(request *http.Request, tenantID
 	return user, nil
 }
 
+// profileChanges names the profile fields input changes on before, the
+// account as it was: names only, as a phone number or metadata may be
+// personal. A field set to what it holds is not a change.
+func profileChanges(before *User, input UpdateInput) []string {
+	value := func(s *string) string {
+		if s == nil {
+			return ""
+		}
+		return *s
+	}
+	var changed []string
+	if input.DisplayName != nil && *input.DisplayName != value(before.DisplayName) {
+		changed = append(changed, "display_name")
+	}
+	if input.AvatarURL != nil && *input.AvatarURL != value(before.AvatarURL) {
+		changed = append(changed, "avatar_url")
+	}
+	if input.Phone != nil && *input.Phone != value(before.Phone) {
+		changed = append(changed, "phone")
+	}
+	if input.Metadata != nil && (len(input.Metadata) > 0 || len(before.Metadata) > 0) && !reflect.DeepEqual(input.Metadata, before.Metadata) {
+		changed = append(changed, "metadata")
+	}
+	return changed
+}
+
 func recordSuspensionEvidence(ctx context.Context, tx pgx.Tx, request *http.Request, tenantID, userID uuid.UUID, action string) error {
 	principal := httpx.PrincipalFromCtx(ctx)
 	var actor *uuid.UUID
@@ -297,7 +339,7 @@ func recordSuspensionEvidence(ctx context.Context, tx pgx.Tx, request *http.Requ
 }
 
 func (handler *Handler) reactivateUser(response http.ResponseWriter, request *http.Request) {
-	userID, tenantID, err := handler.scopedID(request)
+	userID, tenantID, err := handler.actOnID(request)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return

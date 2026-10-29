@@ -47,7 +47,15 @@ const (
 	EventToolCallDelta EventType = "tool_call_delta" // a fragment of a tool call's JSON input
 	EventToolCallStop  EventType = "tool_call_stop"  // a tool call's input is complete; optional
 	EventStop          EventType = "stop"            // the turn is done (StopReason)
+	EventUsage         EventType = "usage"           // the tokens the turn used (InputTokens, OutputTokens)
 	EventProviderError EventType = "error"           // a terminal provider error (ErrorMessage)
+)
+
+// Bounds on the tool calls of one turn. Every provider's stream is held to
+// them: one that sends more calls, or a larger input, has the turn refused.
+const (
+	MaxToolCalls      = 16       // tool calls in one turn
+	MaxToolInputBytes = 64 << 10 // the JSON input of one tool call
 )
 
 // Event is a normalized streaming event from a Provider. Only the fields for
@@ -56,12 +64,14 @@ type Event struct {
 	Type EventType
 
 	TextDelta      string // EventTextDelta: the text fragment
-	ToolIndex      int    // tool-call events: 0-based slot shared by start, delta and stop
+	ToolIndex      int    // tool-call events: slot shared by start, delta and stop, 0, 1, 2… in the order calls start
 	ToolID         string // EventToolCallStart: the provider's call ID (e.g. "toolu_abc123")
 	ToolName       string // EventToolCallStart: the manifest tool name (e.g. "search_users")
 	ToolInputDelta string // EventToolCallDelta: a fragment of the JSON input
 	StopReason     string // EventStop: "end_turn" or "tool_use"
 	ErrorMessage   string // EventProviderError: a message with no key material
+	InputTokens    int    // EventUsage: the prompt's tokens
+	OutputTokens   int    // EventUsage: the reply's tokens
 }
 
 // Provider streams one inference turn. Stream returns an event channel and an

@@ -90,6 +90,33 @@ func (h *history) billingHistory() {
 		}
 		h.invoices(o)
 	}
+	numberInvoices(w)
+}
+
+// numberInvoices numbers every invoice that charges something in its GST
+// series, by the Indian financial year it was issued in: the history was
+// issued today and dated back afterwards, and the census's first invoices were
+// reissued, so the numbers the service gave run out of order.
+func numberInvoices(w *world.World) {
+	w.Exec("clear invoice numbers", `UPDATE tenant.invoices SET invoice_number = NULL WHERE invoice_number IS NOT NULL`)
+	w.Exec("number invoices", `
+		WITH dated AS (
+			SELECT id, issued_at,
+			       date_trunc('year', (issued_at AT TIME ZONE 'Asia/Kolkata') - interval '3 months') AS fy_start
+			FROM tenant.invoices WHERE amount_minor > 0
+		), numbered AS (
+			SELECT id, to_char(fy_start, 'YYYY') || '-' || to_char(fy_start + interval '1 year', 'YY') AS fy,
+			       row_number() OVER (PARTITION BY fy_start ORDER BY issued_at, id) AS n
+			FROM dated
+		)
+		UPDATE tenant.invoices i SET invoice_number = numbered.fy || '/' || lpad(numbered.n::text, 6, '0')
+		FROM numbered WHERE i.id = numbered.id`)
+	w.Exec("reset invoice series", `DELETE FROM platform.invoice_number_series`)
+	w.Exec("invoice series", `
+		INSERT INTO platform.invoice_number_series (financial_year, last_number)
+		SELECT split_part(invoice_number, '/', 1), max(split_part(invoice_number, '/', 2)::bigint)
+		FROM tenant.invoices WHERE invoice_number IS NOT NULL
+		GROUP BY 1`)
 }
 
 // invoices issues o's monthly invoices from the day it subscribed, each
@@ -122,9 +149,10 @@ func (h *history) invoices(o *world.Org) {
 			})
 		})
 	}
-	// ChangePlan dates a period's end a month from the real now; the
+	// ChangePlan dates a period's end a month from the real now, and takes no
+	// payment, so it leaves each invoice open: these were paid. The
 	// subscription's current period is its latest invoice's.
-	w.Exec("invoice periods of "+s.Slug, `UPDATE tenant.invoices SET period_end = period_start + interval '1 month' WHERE tenant_id = $1`, o.ID)
+	w.Exec("invoice periods of "+s.Slug, `UPDATE tenant.invoices SET period_end = period_start + interval '1 month', status = 'paid' WHERE tenant_id = $1`, o.ID)
 	w.Exec("period of "+s.Slug, `
 		UPDATE tenant.subscriptions s SET current_period_start = i.period_start, current_period_end = i.period_end
 		FROM (SELECT period_start, period_end FROM tenant.invoices WHERE tenant_id = $1 ORDER BY period_start DESC LIMIT 1) i
@@ -142,10 +170,15 @@ func (h *history) invoices(o *world.Org) {
 		if s.Currency == "INR" {
 			provider, ref = "razorpay", "order_"+token(w, 14)
 		}
+		// The checkout charged what its first invoice shows, tax included.
 		w.Exec("checkout of "+s.Slug, `
-			INSERT INTO tenant.billing_checkouts (tenant_id, provider, provider_ref, plan_code, currency, amount_minor, status, created_at, completed_at)
-			VALUES ($1, $2, $3, $4, $5, $6, 'completed', $7, $7::timestamptz + interval '3 minutes')`,
-			o.ID, provider, ref, s.Plan, s.Currency, price, start.Add(-5*time.Minute))
+			INSERT INTO tenant.billing_checkouts (tenant_id, provider, provider_ref, plan_code, currency, amount_minor,
+			    taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply, status, created_at, completed_at)
+			SELECT $1::uuid, $2::text, $3::text, $4::text, $5::text, i.amount_minor, i.taxable_amount_minor, i.tax_amount_minor, i.tax_rate_bps, i.tax_type,
+			       i.place_of_supply, 'completed', $6, $6::timestamptz + interval '3 minutes'
+			FROM tenant.invoices i WHERE i.tenant_id = $1
+			ORDER BY i.period_start LIMIT 1`,
+			o.ID, provider, ref, s.Plan, s.Currency, start.Add(-5*time.Minute))
 	}
 
 	switch s.Billing {
@@ -157,9 +190,13 @@ func (h *history) invoices(o *world.Org) {
 		w.Exec("past due "+s.Slug, `UPDATE tenant.subscriptions SET status = 'past_due', updated_at = $2 WHERE tenant_id = $1`,
 			o.ID, last.Add(26*time.Hour))
 		w.Exec("failed checkout of "+s.Slug, `
-			INSERT INTO tenant.billing_checkouts (tenant_id, provider, provider_ref, plan_code, currency, amount_minor, status, created_at)
-			VALUES ($1, 'razorpay', $2, $3, $4, $5, 'failed', $6)`,
-			o.ID, "order_"+token(w, 14), s.Plan, s.Currency, price, w.WorkHours(last.Add(5*24*time.Hour), o.Loc))
+			INSERT INTO tenant.billing_checkouts (tenant_id, provider, provider_ref, plan_code, currency, amount_minor,
+			    taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply, status, created_at)
+			SELECT $1::uuid, 'razorpay', $2::text, $3::text, $4::text, i.amount_minor, i.taxable_amount_minor, i.tax_amount_minor, i.tax_rate_bps,
+			       i.tax_type, i.place_of_supply, 'failed', $5::timestamptz
+			FROM tenant.invoices i WHERE i.tenant_id = $1
+			ORDER BY i.period_start DESC LIMIT 1`,
+			o.ID, "order_"+token(w, 14), s.Plan, s.Currency, w.WorkHours(last.Add(5*24*time.Hour), o.Loc))
 	case "canceled":
 		at := w.WorkHours(last.Add(13*24*time.Hour), o.Loc)
 		w.Audit(at, audit.Event{TenantID: &o.ID, ActorUserID: &owner.ID, Action: "billing.subscription_canceled",

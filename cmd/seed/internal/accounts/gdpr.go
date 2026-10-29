@@ -99,20 +99,17 @@ func (s *seeder) erasures(o *world.Org) {
 	}
 }
 
-// purged marks request id completed at done and erases p's account the way
-// the API's purge does: personal data redacted, password and second factors
-// deleted. The census's record of p's factors is cleared so later steps don't
-// give the erased account new ones.
+// purged marks request id completed at done and erases p's account at done
+// with the API's own erasure: personal data redacted, everything else the
+// account left deleted. The census's record of p's factors is cleared so later
+// steps don't give the erased account new ones.
 func (s *seeder) purged(o *world.Org, p *world.Person, id uuid.UUID, done time.Time) {
 	w := s.w
 	w.Exec("complete erasure", `UPDATE "user".purge_requests SET status = 'completed', completed_at = $3
 		WHERE id = $1 AND tenant_id = $2`, id, o.ID, done)
-	w.Exec("erase "+p.Email, `UPDATE "user".users
-		SET email = 'redacted-' || id::text || '@gdpr.invalid', phone = NULL, display_name = NULL, metadata = '{}'::jsonb,
-		    email_verified_at = NULL, phone_verified_at = NULL, status = 'deleted',
-		    deleted_at = COALESCE(deleted_at, $3), updated_at = $3
-		WHERE id = $1 AND tenant_id = $2`, p.ID, o.ID, done)
-	w.Exec("erase credentials of "+p.Email, `DELETE FROM auth.password_credentials WHERE user_id = $1`, p.ID)
+	w.At(done, func() {
+		w.Check(w.Deps.GDPR.Service.PurgeSelf(w.Ctx, p.ID), "erase "+p.Email)
+	})
 	p.MFA, p.MFASince = nil, time.Time{}
 }
 
@@ -169,4 +166,9 @@ func (s *seeder) exports(o *world.Org) {
 	w.Check(err, "encode export of "+subject.Email)
 	w.Exec("export ready", `UPDATE "user".export_requests SET status = 'ready', payload = $3, completed_at = $4
 		WHERE id = $1 AND tenant_id = $2`, req.ID, o.ID, raw, done)
+	// The API deletes a payload once it has been downloadable for the retention window.
+	if done.Before(w.Now.Add(-gdpr.ExportRetention)) {
+		w.Exec("export expired", `UPDATE "user".export_requests SET status = 'expired', payload = NULL
+			WHERE id = $1 AND tenant_id = $2`, req.ID, o.ID)
+	}
 }

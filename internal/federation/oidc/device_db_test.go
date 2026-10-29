@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
@@ -177,6 +178,30 @@ func TestDeviceFlow(t *testing.T) {
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'oauth.device_revoked'`, tenant); n != 1 {
 		t.Errorf("the revocation was audited %d times, want once", n)
 	}
+
+	// The approved code that bought tokens names its application and when it
+	// was spent, and revoking it ends the grant it bought.
+	approved := list.Items[slices.IndexFunc(list.Items, func(d DeviceAuthorization) bool { return d.UserCode == started.UserCode })]
+	if approved.ClientName != "TV" || approved.ConsumedAt == nil || list.Items[at].ConsumedAt != nil {
+		t.Errorf("devices %+v, want the application's name and when an approval was spent", list.Items)
+	}
+	renew := url.Values{"grant_type": {"refresh_token"}, "client_id": {device.ClientID}, "refresh_token": {issued.RefreshToken}}
+	if rec := postForm(t, p.public, "/oauth/token-code", renew, "", ""); rec.Code != http.StatusOK {
+		t.Fatalf("renew the device's tokens: %d %s", rec.Code, rec.Body.String())
+	} else {
+		dbtest.Decode(t, rec, &issued)
+	}
+	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/tenants/"+tenant.String()+"/oauth/devices/"+approved.ID.String(), nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("revoke the approved device: %d %s", rec.Code, rec.Body.String())
+	}
+	renew.Set("refresh_token", issued.RefreshToken)
+	if code, _ := decodeTokenError(t, postForm(t, p.public, "/oauth/token-code", renew, "", "")); code != "invalid_grant" {
+		t.Errorf("renew after the device was revoked: %s, want invalid_grant", code)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'oauth.device_revoked'
+		AND (metadata->>'grant_ended')::boolean`, tenant); n != 1 {
+		t.Errorf("%d revocations recorded ending a grant, want one", n)
+	}
 }
 
 // TestDeviceAuthorizationNeedsTheDeviceGrant checks that only an application
@@ -236,8 +261,64 @@ func TestDeviceAndBackchannelJudgeMembershipLikeSignIn(t *testing.T) {
 		if err := svc.DecideDevice(ctx, tc.account.ID, userCode, true, deviceIP); (err == nil) != tc.member {
 			t.Errorf("%s approving a device: %v, want admitted %t", tc.name, err, tc.member)
 		}
+		want := 0
+		if tc.member {
+			want = 1
+		}
+		if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'oauth.device_approved'
+			AND actor_user_id = $2 AND resource_type = 'oidc_device_code' AND host(ip) = $3 AND metadata->>'client_id' = $4`,
+			tenant, tc.account.ID, deviceIP, device.ClientID); n != want {
+			t.Errorf("%s: %d approval records, want %d", tc.name, n, want)
+		}
 		if _, err := svc.BackchannelAuthorize(ctx, ciba.ClientID, cibaSecret, tc.account.Email, "openid", ""); (err == nil) != tc.member {
 			t.Errorf("%s as a backchannel login_hint: %v, want admitted %t", tc.name, err, tc.member)
 		}
+	}
+}
+
+// TestDeviceDenialIsAudited checks that denying a device code is recorded in
+// the code's organisation, naming the person, the code and the client.
+func TestDeviceDenialIsAudited(t *testing.T) {
+	ctx := dbtest.Context(t)
+	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	tenant := dbtest.Tenant(t)
+	device, _ := registerClientWith(t, svc, CreateClientInput{TenantID: tenant, Type: "public", GrantTypes: []string{grantTypeDeviceCode}})
+	person := dbtest.User(t, tenant, tenant)
+	_, userCode, _, err := svc.DeviceAuthorize(ctx, device.ClientID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DecideDevice(ctx, person.ID, userCode, false, deviceIP); err != nil {
+		t.Fatalf("deny: %v", err)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events e JOIN auth.oidc_device_codes d ON d.id = e.resource_id
+		WHERE e.tenant_id = $1 AND e.action = 'oauth.device_denied' AND e.actor_user_id = $2 AND d.status = 'denied'
+		AND e.metadata->>'client_id' = $3 AND host(e.ip) = $4`, tenant, person.ID, device.ClientID, deviceIP); n != 1 {
+		t.Errorf("%d denial records, want 1", n)
+	}
+}
+
+// TestSigningKeysAreDated checks that the signing-key list dates a key the
+// registry holds, and leaves a key it doesn't hold undated.
+func TestSigningKeysAreDated(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := NewService(pool, dbtest.Issuer(t))
+	keys, err := svc.SigningKeys(ctx)
+	if err != nil || len(keys) == 0 {
+		t.Fatalf("signing keys: %v, %v", keys, err)
+	}
+	if keys[0].CreatedAt != nil {
+		t.Errorf("a key the registry doesn't hold is dated %v", keys[0].CreatedAt)
+	}
+	activated := time.Now().Add(-time.Hour).UTC().Truncate(time.Microsecond)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO platform.jwt_signing_keys (kid, algorithm, state, public_key_pem, activated_at, retire_at)
+		VALUES ($1, 'ES256', 'retired', 'pem', $2, NOW() + INTERVAL '1 day')`, keys[0].Kid, activated); err != nil {
+		t.Fatal(err)
+	}
+	keys, err = svc.SigningKeys(ctx)
+	if err != nil || keys[0].CreatedAt == nil || keys[0].ActivatedAt == nil || !keys[0].ActivatedAt.Equal(activated) {
+		t.Errorf("signing key %+v (%v), want it dated from the registry", keys[0], err)
 	}
 }

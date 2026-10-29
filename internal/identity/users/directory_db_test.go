@@ -9,10 +9,12 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
@@ -50,6 +52,7 @@ func testHandler(t *testing.T, mailbox *dbtest.Mailbox) *Handler {
 		MFA:            clearTOTP{},
 		SignIns:        endSessions{},
 		Mailer:         mailbox,
+		ActOnCheck:     rbac.NewRepository(dbtest.Pool(t)).CheckActOn,
 	}
 }
 
@@ -353,6 +356,64 @@ func TestPeopleEditOnlyTheirOwnProfile(t *testing.T) {
 	}
 }
 
+// TestAdminProfileEditsAreAudited checks that an administrator's edit of a
+// person's profile is recorded as user.updated naming the fields it changed,
+// never their values; that an edit changing nothing records nothing; and that
+// a suspension made in the same edit keeps its own record.
+func TestAdminProfileEditsAreAudited(t *testing.T) {
+	ctx := dbtest.Context(t)
+	tenant := dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	target := dbtest.User(t, tenant, tenant)
+	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)
+	path := "/users/" + target.ID.String()
+	edits := func() [][]string {
+		t.Helper()
+		rows, err := dbtest.Pool(t).Query(ctx, `
+			SELECT metadata->'changed' FROM audit.events
+			WHERE tenant_id = $1 AND action = 'user.updated' AND resource_id = $2 AND actor_user_id = $3
+			ORDER BY created_at`, tenant, target.ID, admin.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out [][]string
+		for rows.Next() {
+			var changed []string
+			if err := rows.Scan(&changed); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, changed)
+		}
+		return out
+	}
+	patch := func(body map[string]any) {
+		t.Helper()
+		if rec := dbtest.Do(t, as, http.MethodPatch, path, body); rec.Code != http.StatusOK {
+			t.Fatalf("update %v: %d %s", body, rec.Code, rec.Body.String())
+		}
+	}
+
+	patch(map[string]any{"display_name": "Pat", "phone": "+14155550177", "metadata": map[string]any{"team": "red"}})
+	if got, want := edits(), [][]string{{"display_name", "phone", "metadata"}}; !slices.EqualFunc(got, want, slices.Equal) {
+		t.Fatalf("recorded %v, want %v", got, want)
+	}
+	patch(map[string]any{"display_name": "Pat", "phone": "+14155550177"})
+	if got := edits(); len(got) != 1 {
+		t.Errorf("an edit changing nothing was recorded: %v", got)
+	}
+	patch(map[string]any{"status": "suspended", "display_name": "Pat Lee"})
+	if got := edits(); len(got) != 2 || !slices.Equal(got[1], []string{"display_name"}) {
+		t.Errorf("recorded %v, want a second naming only the display name", got)
+	}
+	if n := audited(t, tenant, "user.suspended", target.ID); n != 1 {
+		t.Errorf("%d user.suspended records, want 1", n)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE resource_id = $1 AND strpos(metadata::text, '4155550177') > 0`, target.ID); n != 0 {
+		t.Errorf("%d audit records hold the phone number", n)
+	}
+}
+
 // TestAvatarCanBeCleared checks that an empty avatar_url removes the avatar, as
 // UpdateInput documents.
 func TestAvatarCanBeCleared(t *testing.T) {
@@ -411,5 +472,51 @@ func TestBulkImportStaysInTheCallersOrganisation(t *testing.T) {
 		if rec := dbtest.Do(t, as, tc.method, tc.path, tc.body); !strings.Contains(rec.Body.String(), tc.want) {
 			t.Errorf("bulk import with %s: %d %s, want %s", tc.name, rec.Code, rec.Body.String(), tc.want)
 		}
+	}
+}
+
+// TestLastSignInOutlastsTheSessions checks that the user list and the
+// suspended list still show when and from where someone last signed in to the
+// organisation once their sessions are gone, from the sign-in log, and never a
+// sign-in to another organisation.
+func TestLastSignInOutlastsTheSessions(t *testing.T) {
+	ctx := dbtest.Context(t)
+	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	member := dbtest.User(t, tenant, tenant, other)
+	signIn := func(org uuid.UUID, ago time.Duration, ip string) {
+		t.Helper()
+		if _, err := dbtest.Pool(t).Exec(ctx, `
+			INSERT INTO audit.events (tenant_id, actor_user_id, actor_type, action, resource_type, ip, created_at)
+			VALUES ($1, $2, 'user', 'auth.login_succeeded', 'session', $3::inet, NOW() - $4::interval)`,
+			org, member.ID, ip, ago.String()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	signIn(tenant, 20*24*time.Hour, "203.0.113.9")
+	signIn(other, 2*24*time.Hour, "198.51.100.40")
+
+	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)
+	var page struct {
+		Items []User `json:"items"`
+	}
+	dbtest.Decode(t, dbtest.Do(t, as, http.MethodGet, "/users", nil), &page)
+	i := slices.IndexFunc(page.Items, func(u User) bool { return u.ID == member.ID })
+	if i < 0 {
+		t.Fatal("the member isn't listed")
+	}
+	got := page.Items[i]
+	if got.LastSeenAt == nil || time.Since(*got.LastSeenAt) < 19*24*time.Hour || time.Since(*got.LastSeenAt) > 21*24*time.Hour ||
+		got.LastSeenIP == nil || *got.LastSeenIP != "203.0.113.9" {
+		t.Errorf("last seen %v from %v, want the sign-in here 20 days ago from 203.0.113.9", got.LastSeenAt, got.LastSeenIP)
+	}
+
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1 AND tenant_id = $2`, member.ID, tenant); err != nil {
+		t.Fatal(err)
+	}
+	suspended, err := testHandler(t, nil).Repo.ListSuspended(ctx, tenant, SuspensionFilters{Limit: 10})
+	if err != nil || len(suspended.Items) != 1 || suspended.Items[0].LastSignIn == nil ||
+		time.Since(*suspended.Items[0].LastSignIn) < 19*24*time.Hour {
+		t.Errorf("suspended list %+v, %v; want the member, last signed in here 20 days ago", suspended.Items, err)
 	}
 }

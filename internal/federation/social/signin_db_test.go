@@ -267,6 +267,9 @@ func TestOrganisationSocialSignIn(t *testing.T) {
 	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/social/providers/okta", nil); !strings.Contains(rec.Body.String(), errs.CodeSocialProviderInUse) {
 		t.Errorf("delete a provider people sign in with only: %d %s", rec.Code, rec.Body.String())
 	}
+	if rec := dbtest.Do(t, asAdmin, http.MethodPatch, "/social/providers/okta", map[string]bool{"enabled": false}); !strings.Contains(rec.Body.String(), errs.CodeSocialProviderInUse) || !strings.Contains(rec.Body.String(), `"people":`) {
+		t.Errorf("switch off a provider people sign in with only: %d %s, want refused with the count", rec.Code, rec.Body.String())
+	}
 	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/social/identities/"+identities.Items[0].ID.String(), nil); !strings.Contains(rec.Body.String(), errs.CodeAuthLastSignInMethod) {
 		t.Errorf("unlink a member's only way to sign in: %d %s", rec.Code, rec.Body.String())
 	}

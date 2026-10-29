@@ -104,6 +104,50 @@ func TestDiscovery_AdvertisesAlgIssuerS256(t *testing.T) {
 	if len(actorTypes) != 3 || actorTypes[2] != "agent" {
 		t.Errorf("actor_types_supported = %v, want [user service agent]", actorTypes)
 	}
+	if scopes, _ := disc["scopes_supported"].([]any); !slices.Contains(scopes, any("offline_access")) || !slices.Contains(scopes, any("openid")) {
+		t.Errorf("scopes_supported = %v, want openid and offline_access among them", scopes)
+	}
+}
+
+// TestOfflineAccess checks that any client registered for refresh may ask for
+// offline_access, and that a refresh token comes with every grant unless the
+// client registered offline_access, which then makes it come only when granted.
+func TestOfflineAccess(t *testing.T) {
+	renews := []string{"authorization_code", "refresh_token"}
+	codeOnly := []string{"authorization_code"}
+	standard := []string{"openid", "profile"}
+	optedIn := []string{"openid", "profile", "offline_access"}
+	for _, tc := range []struct {
+		name               string
+		scopes, grantTypes []string
+		scope              string
+		want               bool
+	}{
+		{"a registered scope", standard, codeOnly, "profile", true},
+		{"an unregistered scope", standard, renews, "email", false},
+		{"offline_access from a client that renews", standard, renews, "offline_access", true},
+		{"offline_access from a client that doesn't", standard, codeOnly, "offline_access", false},
+		{"offline_access registered by a client that doesn't renew", optedIn, codeOnly, "offline_access", true},
+	} {
+		if got := scopePermitted(tc.scopes, tc.grantTypes, tc.scope); got != tc.want {
+			t.Errorf("scopePermitted, %s: %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	for _, tc := range []struct {
+		name                        string
+		scopes, grantTypes, granted []string
+		want                        bool
+	}{
+		{"no refresh grant", standard, codeOnly, []string{"openid", "offline_access"}, false},
+		{"a client that didn't register offline_access, without it", standard, renews, []string{"openid"}, true},
+		{"a client that didn't register offline_access, with it", standard, renews, []string{"openid", "offline_access"}, true},
+		{"a client that registered offline_access, without it", optedIn, renews, []string{"openid"}, false},
+		{"a client that registered offline_access, with it", optedIn, renews, []string{"openid", "offline_access"}, true},
+	} {
+		if got := issuesRefreshToken(tc.scopes, tc.grantTypes, tc.granted); got != tc.want {
+			t.Errorf("issuesRefreshToken, %s: %v, want %v", tc.name, got, tc.want)
+		}
+	}
 }
 
 func TestClientAuthenticatedEndpointsRejectOversizedForms(t *testing.T) {
@@ -278,6 +322,81 @@ func TestValidateRegisteredRedirectURI(t *testing.T) {
 	for _, uri := range invalid {
 		if err := validateRegisteredRedirectURI(uri); err == nil {
 			t.Errorf("validateRegisteredRedirectURI(%q) = nil, want error", uri)
+		}
+	}
+}
+
+// TestRedirectRegistered checks that a redirect matches a registered one
+// exactly, except that an http redirect to a loopback IP literal may name any
+// port (RFC 8252 §7.3), and nothing else about it may differ.
+func TestRedirectRegistered(t *testing.T) {
+	registered := []string{
+		"https://app.example.test/callback",
+		"http://127.0.0.1/cb",
+		"http://[::1]:8080/cb?app=1",
+		"http://localhost:3000/cb",
+	}
+	for _, uri := range []string{
+		"https://app.example.test/callback",
+		"http://127.0.0.1/cb",
+		"http://127.0.0.1:53682/cb",
+		"http://127.0.0.1:1/cb",
+		"http://[::1]/cb?app=1",
+		"http://[::1]:61000/cb?app=1",
+		"http://localhost:3000/cb",
+	} {
+		if !redirectRegistered(registered, uri) {
+			t.Errorf("%s: not matched", uri)
+		}
+	}
+	for _, uri := range []string{
+		"https://app.example.test:8443/callback", // not loopback: the port must match
+		"http://127.0.0.1:53682/cb/",
+		"http://127.0.0.1:53682/other",
+		"http://127.0.0.1:53682/cb?x=1",
+		"http://127.0.0.1:53682/cb#frag",
+		"http://127.0.0.2:53682/cb",
+		"http://[::1]:61000/cb",
+		"https://127.0.0.1:53682/cb",
+		"HTTP://127.0.0.1:53682/cb",
+		"http://localhost:4000/cb", // a name, not an IP literal
+		"http://user@127.0.0.1:53682/cb",
+		"http://127.0.0.1:/cb",
+		"http://127.0.0.1:65536/cb",
+		"http://127.0.0.1:+80/cb",
+		"http://127.0.0.1.evil.test:53682/cb",
+		"http://[::1]x:61000/cb?app=1",
+	} {
+		if redirectRegistered(registered, uri) {
+			t.Errorf("%s: matched", uri)
+		}
+	}
+}
+
+// TestValidateSignInRequest checks that an authorization request needs an S256
+// challenge unless a confidential application is exempt, and that a nonce is
+// optional either way but bounded when sent.
+func TestValidateSignInRequest(t *testing.T) {
+	challenge := strings.Repeat("c", 43)
+	for _, tc := range []struct {
+		name                     string
+		clientType               string
+		exempt                   bool
+		nonce, challenge, method string
+		want                     error
+	}{
+		{"a public application with PKCE and a nonce", "public", false, "n-1", challenge, "S256", nil},
+		{"a public application with PKCE and no nonce", "public", false, "", challenge, "S256", nil},
+		{"a confidential application with PKCE and no nonce", "confidential", false, "", challenge, "S256", nil},
+		{"an exempt confidential application with neither", "confidential", true, "", "", "", nil},
+		{"no challenge", "confidential", false, "n-1", "", "", errs.ErrOIDCCodeChallengeRequired},
+		{"no challenge from an exempt public application", "public", true, "n-1", "", "", errs.ErrOIDCCodeChallengeRequired},
+		{"a plain challenge", "public", false, "", challenge, "plain", errs.ErrOIDCCodeChallengeMethodUnsupported},
+		{"a method without a challenge", "confidential", true, "", "", "S256", errs.ErrOIDCCodeChallengeInvalid},
+		{"a nonce too long", "public", false, strings.Repeat("n", maxNonceLength+1), challenge, "S256", errs.ErrOIDCNonceInvalid},
+	} {
+		if err := validateSignInRequest(tc.clientType, tc.exempt, tc.nonce, tc.challenge, tc.method); !errors.Is(err, tc.want) {
+			t.Errorf("%s: %v, want %v", tc.name, err, tc.want)
 		}
 	}
 }

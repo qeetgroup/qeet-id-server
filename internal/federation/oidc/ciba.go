@@ -75,7 +75,7 @@ func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecr
 		scopes = dbScopes
 	}
 	for _, sc := range scopes {
-		if !contains(dbScopes, sc) {
+		if !scopePermitted(dbScopes, cinfo.GrantTypes, sc) {
 			return nil, oauthErr("invalid_scope", "scope not permitted: "+sc)
 		}
 	}
@@ -292,7 +292,7 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, clientSecret, 
 		}
 		return nil, oauthErr("invalid_grant", "account_suspended")
 	}
-	grantTypes, err := q.GetClientGrantTypes(ctx, clientID)
+	registered, err := q.GetClientTenantAndScopes(ctx, clientID)
 	if err != nil {
 		return nil, err
 	}
@@ -317,8 +317,8 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, clientSecret, 
 		idTok = t
 	}
 	refresh := ""
-	if contains(grantTypes, "refresh_token") {
-		refresh, err = s.issueRefreshToken(ctx, s.q, clientID, userID, tenantID, scopes, "", pgtype.UUID{}, "")
+	if issuesRefreshToken(registered.Scopes, registered.GrantTypes, scopes) {
+		refresh, err = s.issueRefreshToken(ctx, s.q, clientID, userID, tenantID, scopes, "", pgtype.UUID{}, "", pgtype.Timestamptz{})
 		if err != nil {
 			return nil, err
 		}

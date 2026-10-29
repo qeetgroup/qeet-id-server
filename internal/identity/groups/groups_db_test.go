@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -44,7 +45,7 @@ func TestGroupsStayInTheirTenant(t *testing.T) {
 		t.Fatalf("create group in B: %v", err)
 	}
 
-	asB := dbtest.Serve(dbtest.Principal(adminB.ID, tenantB), (&Handler{Service: svc}).Mount)
+	asB := dbtest.Serve(dbtest.Principal(adminB.ID, tenantB), (&Handler{Service: svc, GrantCheck: rbac.NewRepository(dbtest.Pool(t)).CheckGrantGroup}).Mount)
 	path := "/groups/" + groupA.ID.String()
 	for _, tc := range []struct {
 		method, path string
@@ -128,7 +129,7 @@ func TestGroupNamesAreUniquePerOrganization(t *testing.T) {
 		t.Errorf("rename Platform to a blank name: %v, want %v", err, errs.ErrValidationFailed)
 	}
 
-	asA := dbtest.Serve(dbtest.Principal(adminA.ID, tenantA), (&Handler{Service: svc}).Mount)
+	asA := dbtest.Serve(dbtest.Principal(adminA.ID, tenantA), (&Handler{Service: svc, GrantCheck: rbac.NewRepository(dbtest.Pool(t)).CheckGrantGroup}).Mount)
 	rec := dbtest.Do(t, asA, http.MethodPost, "/groups", map[string]string{"name": "Engineering"})
 	var body struct {
 		Error struct {
@@ -152,7 +153,7 @@ func TestGroupNamesAreUniquePerOrganization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create template: %v", err)
 	}
-	if _, err := svc.ApplyTemplate(ctx, tmpl.ID, tenantA, nil, actor); !errors.Is(err, errs.ErrGroupNameExists) {
+	if _, err := svc.ApplyTemplate(ctx, tmpl.ID, tenantA, ApplyOptions{}, actor); !errors.Is(err, errs.ErrGroupNameExists) {
 		t.Errorf("apply a template naming Ops: %v, want %v", err, errs.ErrGroupNameExists)
 	}
 }
@@ -180,15 +181,35 @@ func TestTemplateGroupNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("save template: %v", err)
 	}
-	if _, err := svc.ApplyTemplate(ctx, tmpl.ID, tenant, nil, actor); err != nil {
+	if _, err := svc.ApplyTemplate(ctx, tmpl.ID, tenant, ApplyOptions{}, actor); err != nil {
 		t.Fatalf("apply the template: %v", err)
 	}
-	_, err = svc.ApplyTemplate(ctx, tmpl.ID, tenant, nil, actor)
+	_, err = svc.ApplyTemplate(ctx, tmpl.ID, tenant, ApplyOptions{}, actor)
 	if e := errs.As(err); !errors.Is(err, errs.ErrGroupNameExists) || e == nil || !strings.Contains(e.Detail, `"Sales"`) {
 		t.Errorf("apply the template again: %v, want %v naming Sales", err, errs.ErrGroupNameExists)
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.groups WHERE tenant_id = $1`, tenant); n != 2 {
 		t.Errorf("tenant has %d groups after applying twice, want 2", n)
+	}
+
+	// A prefix, or a new name for the top group, applies it again elsewhere.
+	created, err := svc.ApplyTemplate(ctx, tmpl.ID, tenant, ApplyOptions{Prefix: "Pune · "}, actor)
+	if err != nil || len(created) != 2 || created[0].Name != "Pune · Sales" || created[1].Name != "Pune · Sales leads" {
+		t.Fatalf("apply with a prefix: %+v, %v; want both groups prefixed", created, err)
+	}
+	created, err = svc.ApplyTemplate(ctx, tmpl.ID, tenant, ApplyOptions{Prefix: "Mumbai · ", RootName: "Office"}, actor)
+	if err != nil || len(created) != 2 || created[0].Name != "Mumbai · Office" || created[1].Name != "Mumbai · Sales leads" {
+		t.Errorf("apply with a prefix and a top name: %+v, %v", created, err)
+	}
+	_, err = svc.ApplyTemplate(ctx, tmpl.ID, tenant, ApplyOptions{Prefix: strings.Repeat("x", 199)}, actor)
+	if e := errs.As(err); e == nil || e.Code != errs.CodeValidation {
+		t.Errorf("a prefix making names too long: %v, want a validation error", err)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.groups WHERE tenant_id = $1`, tenant); n != 6 {
+		t.Errorf("tenant has %d groups, want 6: the refused apply made none", n)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'group_template.applied' AND metadata->>'prefix' = 'Pune · '`, tenant); n != 1 {
+		t.Errorf("%d applies audited with their prefix, want 1", n)
 	}
 }
 
@@ -301,5 +322,81 @@ func TestImportRowCodes(t *testing.T) {
 	}
 	if res.Created != 3 || res.Skipped != 1 || res.Failed != 3 {
 		t.Errorf("totals: created %d, skipped %d, failed %d; want 3, 1, 3", res.Created, res.Skipped, res.Failed)
+	}
+}
+
+// TestGroupsListTheirRoles checks that the list carries each group's roles,
+// from one organisation only, for a caller who may read roles; that it filters
+// by role; and that without role.read neither roles nor role filters are given.
+func TestGroupsListTheirRoles(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	svc := NewService(pool)
+	group := func(tenantID uuid.UUID, name string) uuid.UUID {
+		var id uuid.UUID
+		if err := pool.QueryRow(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, $2) RETURNING id`, tenantID, name).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	role := func(tenantID uuid.UUID, name string) uuid.UUID {
+		var id uuid.UUID
+		if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name) VALUES ($1, $2) RETURNING id`, tenantID, name).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	grant := func(tenantID, groupID, roleID uuid.UUID) {
+		if _, err := pool.Exec(ctx, `INSERT INTO rbac.group_roles (tenant_id, group_id, role_id) VALUES ($1, $2, $3)`, tenantID, groupID, roleID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	engineering := group(tenant, "Engineering")
+	group(tenant, "Sales")
+	editor, viewer := role(tenant, "Editor"), role(tenant, "Viewer")
+	grant(tenant, engineering, editor)
+	grant(tenant, engineering, viewer)
+	elsewhere := group(other, "Elsewhere")
+	grant(other, elsewhere, role(other, "Owner elsewhere"))
+
+	serve := func(readsRoles bool) http.Handler {
+		return dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc, ReadsRoles: func(*http.Request) bool { return readsRoles }}).Mount)
+	}
+	list := func(h http.Handler, query string) (map[string]string, int) {
+		rec := dbtest.Do(t, h, http.MethodGet, "/tenants/"+tenant.String()+"/groups"+query, nil)
+		var page struct {
+			Items []Group `json:"items"`
+		}
+		dbtest.Decode(t, rec, &page)
+		out := map[string]string{}
+		for _, g := range page.Items {
+			roles := "absent"
+			if g.Roles != nil {
+				names := []string{}
+				for _, r := range *g.Roles {
+					names = append(names, r.Name)
+				}
+				roles = strings.Join(names, "+")
+			}
+			out[g.Name] = roles
+		}
+		return out, rec.Code
+	}
+	if got, _ := list(serve(true), ""); got["Engineering"] != "Editor+Viewer" || got["Sales"] != "" || len(got) != 2 {
+		t.Errorf("with role.read: %v; want Engineering's two roles, Sales none, and nothing of another organisation", got)
+	}
+	if got, _ := list(serve(true), "?grants=none"); len(got) != 1 || got["Sales"] != "" {
+		t.Errorf("grants=none: %v, want Sales only", got)
+	}
+	if got, _ := list(serve(true), "?role="+viewer.String()); len(got) != 1 || got["Engineering"] == "absent" {
+		t.Errorf("role filter: %v, want Engineering only", got)
+	}
+	if got, _ := list(serve(false), ""); got["Engineering"] != "absent" || got["Sales"] != "absent" {
+		t.Errorf("without role.read: %v, want no roles", got)
+	}
+	if _, code := list(serve(false), "?grants=some"); code != http.StatusForbidden {
+		t.Errorf("a role filter without role.read: %d, want 403", code)
 	}
 }

@@ -4,12 +4,14 @@ package directory
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
@@ -32,12 +36,14 @@ func TestDirectoryMigrationsRoundTrip(test *testing.T) {
 	_, source, _, _ := runtime.Caller(0)
 	directory := filepath.Join(filepath.Dir(source), "..", "..", "platform", "database", "migrations")
 	for _, migration := range []string{
+		"0225_directory_event_reasons.down.sql",
 		"0111_suspension_review.down.sql",
 		"0110_directory_mappings.down.sql",
 		"0109_directory_events.down.sql",
 		"0109_directory_events.up.sql",
 		"0110_directory_mappings.up.sql",
 		"0111_suspension_review.up.sql",
+		"0225_directory_event_reasons.up.sql",
 	} {
 		script, err := os.ReadFile(filepath.Join(directory, migration))
 		if err != nil {
@@ -286,7 +292,7 @@ func TestSuspendedDirectoryPrivacyReviewAndReactivation(test *testing.T) {
 		}
 	}
 	router := chi.NewRouter()
-	(&user.Handler{Repo: repository}).Mount(router)
+	(&user.Handler{Repo: repository, ActOnCheck: rbac.NewRepository(dbtest.Pool(test)).CheckActOn}).Mount(router)
 	call := func(method, path string, body any) *httptest.ResponseRecorder {
 		raw, _ := json.Marshal(body)
 		request := httptest.NewRequest(method, path, bytes.NewReader(raw))
@@ -323,5 +329,307 @@ func TestSuspendedDirectoryPrivacyReviewAndReactivation(test *testing.T) {
 	page, err = repository.ListSuspended(ctx, tenantID, user.SuspensionFilters{Limit: 25})
 	if err != nil || page.Total != 1 || page.Items[0].ID != foreignID {
 		test.Fatalf("reactivated user remained listed: %+v %v", page, err)
+	}
+}
+
+// TestRefusedSignInIsNotASyncError checks that a person's refused LDAP
+// password is recorded as a warning in Sync activity, never an open sync
+// error or an alert, while the service account being refused still is both.
+func TestRefusedSignInIsNotASyncError(test *testing.T) {
+	pool := dbtest.Pool(test)
+	ctx := dbtest.Context(test)
+	tenantID, userID, connection := uuid.New(), uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant.tenants(id,slug,name) VALUES($1,$2,'Directory test')`, tenantID, tenantID.String()); err != nil {
+		test.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO "user".users(id,tenant_id,email,status) VALUES($1,$2,$3,'active')`, userID, tenantID, userID.String()+"@example.test"); err != nil {
+		test.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant.directory_alerts(id,tenant_id,user_id,name,threshold) VALUES($1,$2,$3,'Directory failures',1)`, uuid.New(), tenantID, userID); err != nil {
+		test.Fatal(err)
+	}
+	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{})
+	service.SetEventStore(pool)
+	notifications := func() int {
+		return dbtest.Count(test, `SELECT count(*) FROM auth.notifications WHERE tenant_id=$1 AND user_id=$2`, tenantID, userID)
+	}
+	since := eventFilter{Since: time.Now().Add(-time.Hour), Limit: 25}
+
+	if err := service.RecordOperation(ctx, tenantID, connection.String(), "sign-in", "user", "", http.StatusUnauthorized, time.Now(), time.Second); err != nil {
+		test.Fatal(err)
+	}
+	page, err := service.Events(ctx, tenantID, since)
+	if err != nil || page.Total != 1 || page.Summary.Warnings != 1 || page.Summary.Failed != 0 {
+		test.Fatalf("a refused password in Sync activity: %+v %v, want one warning", page.Summary, err)
+	}
+	errorsPage, err := service.Errors(ctx, tenantID, errorFilter{eventFilter: since})
+	if err != nil || errorsPage.Total != 0 || notifications() != 0 {
+		test.Fatalf("a refused password: %d sync errors, %d alerts (%v); want none", errorsPage.Total, notifications(), err)
+	}
+
+	if err := service.RecordOperation(ctx, tenantID, connection.String(), "sign-in", "user", "", http.StatusForbidden, time.Now(), time.Second); err != nil {
+		test.Fatal(err)
+	}
+	errorsPage, err = service.Errors(ctx, tenantID, errorFilter{eventFilter: since})
+	if err != nil || errorsPage.Total != 1 || errorsPage.Summary.Critical != 1 || notifications() != 1 {
+		test.Fatalf("the service account refused: %+v, %d alerts (%v); want one critical error and an alert", errorsPage.Summary, notifications(), err)
+	}
+	if err := service.RecordLDAPOperation(ctx, ldap.Operation{TenantID: tenantID, ConnectionID: connection, Operation: "sign-in", Resource: "user",
+		Status: http.StatusBadGateway, Started: time.Now(), Duration: time.Second, Reason: "ldap.dial_failed",
+		Params: map[string]string{"host": "ldap.example.test:636"}, Subject: "asha", UserID: &userID}); err != nil {
+		test.Fatal(err)
+	}
+	errorsPage, err = service.Errors(ctx, tenantID, errorFilter{eventFilter: eventFilter{Since: since.Since, Limit: 25, Search: "dial_failed"}})
+	if err != nil || errorsPage.Total != 1 {
+		test.Fatalf("errors searched by their reason: %+v %v; want the unreachable directory", errorsPage, err)
+	}
+	if got := errorsPage.Items[0]; got.Reason != "ldap.dial_failed" || got.Params["host"] != "ldap.example.test:636" || got.Subject != "asha" || got.UserID == nil || *got.UserID != userID {
+		test.Errorf("an unreachable directory at sign-in listed as %+v; want its reason, host, login name and person", got)
+	}
+}
+
+// recordingTester checks a connection as the LDAP service does: it records the
+// check as an operation, within two seconds, carrying the retried error.
+type recordingTester struct{ service *Service }
+
+func (r *recordingTester) TestConnection(ctx context.Context, tenantID, connectionID uuid.UUID) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	return r.service.RecordOperation(ctx, tenantID, connectionID.String(), "test", "connection", "", http.StatusOK, time.Now(), time.Second)
+}
+
+func (*recordingTester) List(context.Context, uuid.UUID) ([]ldap.Connection, error) { return nil, nil }
+
+// TestRetryRecordsItsOwnCheck checks that retrying a failed connection check
+// records the new check, pointing back at the error, and marks the error
+// retried: the error's row isn't held while the check runs.
+func TestRetryRecordsItsOwnCheck(test *testing.T) {
+	pool := dbtest.Pool(test)
+	ctx := dbtest.Context(test)
+	tenantID, userID, connection := uuid.New(), uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant.tenants(id,slug,name) VALUES($1,$2,'Directory test')`, tenantID, tenantID.String()); err != nil {
+		test.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO "user".users(id,tenant_id,email,status) VALUES($1,$2,$3,'active')`, userID, tenantID, userID.String()+"@example.test"); err != nil {
+		test.Fatal(err)
+	}
+	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{})
+	service.SetEventStore(pool)
+	service.ldap = &recordingTester{service: service}
+	if err := service.RecordOperation(ctx, tenantID, connection.String(), "test", "connection", "", http.StatusBadGateway, time.Now(), time.Second); err != nil {
+		test.Fatal(err)
+	}
+	var failed uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM tenant.directory_events WHERE tenant_id=$1 AND status='failed'`, tenantID).Scan(&failed); err != nil {
+		test.Fatal(err)
+	}
+
+	router := chi.NewRouter()
+	(&Handler{Service: service}).Mount(router)
+	request := httptest.NewRequest(http.MethodPost, "/tenants/"+tenantID.String()+"/directory/errors/"+failed.String()+"/retry", nil)
+	request = request.WithContext(httpx.WithPrincipal(ctx, &httpx.Principal{ActorType: "user", UserID: &userID, TenantID: &tenantID}))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"succeeded":true`) {
+		test.Fatalf("retry: %d %s, want the check to succeed", response.Code, response.Body.String())
+	}
+	if n := dbtest.Count(test, `SELECT count(*) FROM tenant.directory_events WHERE tenant_id=$1 AND retry_of=$2 AND status='success'`, tenantID, failed); n != 1 {
+		test.Errorf("%d checks recorded for the retry, want 1", n)
+	}
+	if n := dbtest.Count(test, `SELECT count(*) FROM tenant.directory_events WHERE tenant_id=$1 AND id=$2 AND resolution='retried'`, tenantID, failed); n != 1 {
+		test.Error("the failure was not marked retried")
+	}
+}
+
+// TestSuccessResolvesTheConnectionsFailures checks that a successful operation
+// resolves its connection's open connection and permission failures, by the
+// system and audited, and leaves other kinds and other connections open.
+func TestSuccessResolvesTheConnectionsFailures(test *testing.T) {
+	pool := dbtest.Pool(test)
+	ctx := dbtest.Context(test)
+	tenantID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant.tenants(id,slug,name) VALUES($1,$2,'Directory test')`, tenantID, tenantID.String()); err != nil {
+		test.Fatal(err)
+	}
+	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{})
+	service.SetEventStore(pool)
+	connection, other := uuid.New().String(), uuid.New().String()
+	record := func(conn, operation string, status int) {
+		if err := service.RecordOperation(ctx, tenantID, conn, operation, "connection", "", status, time.Now(), time.Second); err != nil {
+			test.Fatal(err)
+		}
+	}
+	record(connection, "test", http.StatusBadGateway)
+	record(connection, "test", http.StatusForbidden)
+	record(connection, "sync", http.StatusUnprocessableEntity)
+	record(other, "test", http.StatusBadGateway)
+	open := func(conn string) int {
+		return dbtest.Count(test, `SELECT count(*) FROM tenant.directory_events WHERE tenant_id=$1 AND connection_id=$2 AND status='failed' AND resolution='open'`, tenantID, conn)
+	}
+
+	record(connection, "test", http.StatusOK)
+	if n := open(connection); n != 1 {
+		test.Errorf("%d open failures left on the connection, want only the validation one", n)
+	}
+	if n := dbtest.Count(test, `SELECT count(*) FROM tenant.directory_events WHERE tenant_id=$1 AND connection_id=$2 AND resolution='resolved' AND resolved_by IS NULL`, tenantID, connection); n != 2 {
+		test.Errorf("%d failures resolved by the system, want 2", n)
+	}
+	if n := open(other); n != 1 {
+		test.Errorf("another connection's failure was resolved: %d open, want 1", n)
+	}
+	if n := dbtest.Count(test, `SELECT count(*) FROM audit.events WHERE tenant_id=$1 AND action='directory.errors_resolved' AND actor_type='system' AND metadata->>'connection_id'=$2`, tenantID, connection); n != 1 {
+		test.Errorf("%d audit records of the resolution, want 1", n)
+	}
+	record(connection, "test", http.StatusOK)
+	if n := dbtest.Count(test, `SELECT count(*) FROM audit.events WHERE tenant_id=$1 AND action='directory.errors_resolved'`, tenantID); n != 1 {
+		test.Errorf("a success with nothing to resolve was audited: %d records, want 1", n)
+	}
+}
+
+// TestAlertsCanBeListedChangedPausedAndRemoved checks the directory alert
+// routes: a paused alert notifies nobody, changes and removals stay in the
+// organisation, and each is audited.
+func TestAlertsCanBeListedChangedPausedAndRemoved(test *testing.T) {
+	pool := dbtest.Pool(test)
+	ctx := dbtest.Context(test)
+	tenantID, other := dbtest.Tenant(test), dbtest.Tenant(test)
+	admin, otherAdmin := dbtest.User(test, tenantID, tenantID), dbtest.User(test, other, other)
+	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{})
+	service.SetEventStore(pool)
+	as := func(user, tenant uuid.UUID) http.Handler {
+		return dbtest.Serve(dbtest.Principal(user, tenant), (&Handler{Service: service}).Mount)
+	}
+	h := as(admin.ID, tenantID)
+	base := "/tenants/" + tenantID.String() + "/directory/alerts"
+	var alert Alert
+	dbtest.Decode(test, dbtest.Do(test, h, http.MethodPost, base, map[string]any{"name": "Any failure", "threshold": 1}), &alert)
+	var list struct {
+		Items []Alert `json:"items"`
+	}
+	dbtest.Decode(test, dbtest.Do(test, h, http.MethodGet, base, nil), &list)
+	if len(list.Items) != 1 || list.Items[0].ID != alert.ID || list.Items[0].UserID != admin.ID {
+		test.Fatalf("list %+v, want the one alert, for its maker", list.Items)
+	}
+
+	if rec := dbtest.Do(test, h, http.MethodPatch, base+"/"+alert.ID.String(), map[string]any{"enabled": false}); rec.Code != http.StatusOK {
+		test.Fatalf("pause: %d %s", rec.Code, rec.Body.String())
+	}
+	if err := service.RecordOperation(ctx, tenantID, uuid.NewString(), "test", "connection", "", http.StatusBadGateway, time.Now(), time.Second); err != nil {
+		test.Fatal(err)
+	}
+	if n := dbtest.Count(test, `SELECT count(*) FROM auth.notifications WHERE tenant_id=$1`, tenantID); n != 0 {
+		test.Errorf("a paused alert sent %d notifications, want none", n)
+	}
+	dbtest.Decode(test, dbtest.Do(test, h, http.MethodPatch, base+"/"+alert.ID.String(), map[string]any{"threshold": 5, "name": "Bursts"}), &alert)
+	if alert.Threshold != 5 || alert.Name != "Bursts" || alert.Enabled {
+		test.Errorf("after changing: %+v, want threshold 5, renamed, still paused", alert)
+	}
+	if rec := dbtest.Do(test, h, http.MethodPatch, base+"/"+alert.ID.String(), map[string]any{"connection_id": uuid.NewString()}); rec.Code != http.StatusNotFound {
+		test.Errorf("an unknown connection: %d, want 404", rec.Code)
+	}
+	otherBase := "/tenants/" + other.String() + "/directory/alerts/" + alert.ID.String()
+	if rec := dbtest.Do(test, as(otherAdmin.ID, other), http.MethodDelete, otherBase, nil); rec.Code != http.StatusNotFound {
+		test.Errorf("another organisation removing the alert: %d, want 404", rec.Code)
+	}
+	if rec := dbtest.Do(test, h, http.MethodDelete, base+"/"+alert.ID.String(), nil); rec.Code != http.StatusNoContent {
+		test.Errorf("remove: %d", rec.Code)
+	}
+	dbtest.Decode(test, dbtest.Do(test, h, http.MethodGet, base, nil), &list)
+	if len(list.Items) != 0 {
+		test.Errorf("after removing: %+v, want none", list.Items)
+	}
+	for action, want := range map[string]int{"directory.alert_created": 1, "directory.alert_updated": 2, "directory.alert_deleted": 1} {
+		if n := dbtest.Count(test, `SELECT count(*) FROM audit.events WHERE tenant_id=$1 AND action=$2`, tenantID, action); n != want {
+			test.Errorf("%d %s records, want %d", n, action, want)
+		}
+	}
+}
+
+// TestConnectionsCountTheirPeopleAndGroups checks that each LDAP connection
+// counts the people it signed in, not deleted ones or another connection's,
+// and that SCIM counts the groups it provisioned, in this organisation only.
+func TestConnectionsCountTheirPeopleAndGroups(test *testing.T) {
+	pool := dbtest.Pool(test)
+	ctx := dbtest.Context(test)
+	tenantID, other := dbtest.Tenant(test), dbtest.Tenant(test)
+	first, second := uuid.New(), uuid.New()
+	service := NewService(&scimFixture{config: &scim.ConfigView{TokenSet: true}}, &ldapFixture{records: []ldap.Connection{
+		{ID: first, TenantID: tenantID, Name: "Head office"}, {ID: second, TenantID: tenantID, Name: "Branch"},
+	}})
+	service.SetEventStore(pool)
+	link := func(tenant uuid.UUID, connection uuid.UUID) uuid.UUID {
+		person := dbtest.User(test, tenant, tenant)
+		if _, err := pool.Exec(ctx, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, connection_id) VALUES ($1, $2, 'ldap', $3, $4)`,
+			person.ID, tenant, uuid.NewString(), connection); err != nil {
+			test.Fatal(err)
+		}
+		return person.ID
+	}
+	link(tenantID, first)
+	link(tenantID, first)
+	gone := link(tenantID, first)
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET deleted_at = NOW() WHERE id = $1`, gone); err != nil {
+		test.Fatal(err)
+	}
+	link(other, first) // another organisation's identity naming the same id
+	for _, tenant := range []uuid.UUID{tenantID, tenantID, other} {
+		if _, err := pool.Exec(ctx, `INSERT INTO tenant.groups (tenant_id, name, provisioned_via) VALUES ($1, $2, 'scim')`, tenant, uuid.NewString()); err != nil {
+			test.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Made by an admin')`, tenantID); err != nil {
+		test.Fatal(err)
+	}
+
+	connections, err := service.List(ctx, tenantID)
+	if err != nil {
+		test.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, c := range connections {
+		users, groups := "nil", "nil"
+		if c.UserCount != nil {
+			users = strconv.Itoa(*c.UserCount)
+		}
+		if c.GroupCount != nil {
+			groups = strconv.Itoa(*c.GroupCount)
+		}
+		got[c.Type+":"+c.Name] = users + "/" + groups
+	}
+	if got["ldap:Head office"] != "2/nil" || got["ldap:Branch"] != "0/nil" || got["scim:SCIM"] != "0/2" {
+		test.Errorf("counts %v; want Head office 2 people, Branch 0, SCIM 2 groups", got)
+	}
+}
+
+// TestPersonsDirectoryProfileIsReturned checks that a person's mapped profile
+// comes back per connection, named, and that another organisation's person
+// has none here.
+func TestPersonsDirectoryProfileIsReturned(test *testing.T) {
+	pool := dbtest.Pool(test)
+	ctx := dbtest.Context(test)
+	tenantID, other := dbtest.Tenant(test), dbtest.Tenant(test)
+	admin, person, elsewhere := dbtest.User(test, tenantID, tenantID), dbtest.User(test, tenantID, tenantID), dbtest.User(test, other, other)
+	connection := uuid.New()
+	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{records: []ldap.Connection{{ID: connection, TenantID: tenantID, Name: "Head office"}}})
+	service.SetEventStore(pool)
+	for _, row := range []struct {
+		tenant, user uuid.UUID
+	}{{tenantID, person.ID}, {other, elsewhere.ID}} {
+		if _, err := pool.Exec(ctx, `INSERT INTO tenant.directory_profiles (tenant_id, user_id, connection_id, profile) VALUES ($1, $2, $3, '{"title": "Engineer", "groups": ["eng"]}')`,
+			row.tenant, row.user, connection.String()); err != nil {
+			test.Fatal(err)
+		}
+	}
+	h := dbtest.Serve(dbtest.Principal(admin.ID, tenantID), (&Handler{Service: service}).Mount)
+	var got struct {
+		Items []Profile `json:"items"`
+	}
+	dbtest.Decode(test, dbtest.Do(test, h, http.MethodGet, "/tenants/"+tenantID.String()+"/directory/profiles/"+person.ID.String(), nil), &got)
+	if len(got.Items) != 1 || got.Items[0].ConnectionName != "Head office" || got.Items[0].Fields["title"] != "Engineer" {
+		test.Errorf("profile %+v; want one from Head office with the title", got.Items)
+	}
+	dbtest.Decode(test, dbtest.Do(test, h, http.MethodGet, "/tenants/"+tenantID.String()+"/directory/profiles/"+elsewhere.ID.String(), nil), &got)
+	if len(got.Items) != 0 {
+		test.Errorf("another organisation's person: %+v, want nothing", got.Items)
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	goldap "github.com/go-ldap/ldap/v3"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -23,8 +24,11 @@ import (
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/ssosync"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
@@ -33,6 +37,7 @@ import (
 const (
 	provider    = "ldap"
 	dialTimeout = 6 * time.Second
+	groupsAttr  = "memberOf" // the groups read when no mapping targets groups
 )
 
 // Connection is the API-facing view — bind_password is deliberately omitted.
@@ -110,6 +115,22 @@ func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 // Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
+// requireLDAP refuses with errs.ErrUpgradeRequired when the gate, if set,
+// finds that the tenant's plan doesn't include LDAP.
+func (s *Service) requireLDAP(ctx context.Context, tenantID uuid.UUID) error {
+	if s.gate == nil {
+		return nil
+	}
+	ok, err := s.gate.FeatureAllowed(ctx, tenantID, "ldap")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "ldap"})
+	}
+	return nil
+}
+
 // pgLastLogin converts a nullable timestamptz to *time.Time for LastLoginAt.
 func pgLastLogin(t pgtype.Timestamptz) *time.Time {
 	if !t.Valid {
@@ -172,14 +193,8 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 		return nil, err
 	}
 	// Plan gate: LDAP/AD directory sync is an Enterprise feature.
-	if s.gate != nil {
-		ok, err := s.gate.FeatureAllowed(ctx, tenantID, "ldap")
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "ldap"})
-		}
+	if err := s.requireLDAP(ctx, tenantID); err != nil {
+		return nil, err
 	}
 	if s.box == nil {
 		return nil, errs.ErrInternalServer.WithDetail("LDAP secret encryption is unavailable")
@@ -473,6 +488,7 @@ type ldapUser struct {
 	Name         string
 	ConnectionID string
 	Profile      map[string]any
+	Groups       []string // the connection's groups mapping's values, else memberOf's
 }
 
 // authenticate binds the service account, finds the user, then verifies the
@@ -492,7 +508,7 @@ func (s *Service) authenticate(ctx context.Context, c *connFull, username, passw
 	}
 
 	filter := strings.ReplaceAll(c.UserFilter, "%s", goldap.EscapeFilter(username))
-	attributes := []string{c.EmailAttribute, c.NameAttribute}
+	attributes := []string{c.EmailAttribute, c.NameAttribute, groupsAttr}
 	if s.mapper != nil {
 		mapped, err := s.mapper.SourceAttributes(ctx, c.TenantID, c.ID.String())
 		if err != nil {
@@ -527,6 +543,7 @@ func (s *Service) authenticate(ctx context.Context, c *connFull, username, passw
 
 	email := strings.ToLower(strings.TrimSpace(entry.GetAttributeValue(c.EmailAttribute)))
 	name := entry.GetAttributeValue(c.NameAttribute)
+	groups := entry.GetAttributeValues(groupsAttr)
 	var profile map[string]any
 	if s.mapper != nil {
 		source := map[string]any{}
@@ -546,29 +563,54 @@ func (s *Service) authenticate(ctx context.Context, c *connFull, username, passw
 		if mapped, ok := profile["display_name"].(string); ok {
 			name = mapped
 		}
+		if mapped, ok := profile["groups"].([]string); ok {
+			groups = mapped
+		}
 	}
 	if email == "" {
 		return nil, errs.ErrLDAPEmailAttributeMissing
 	}
-	return &ldapUser{DN: entry.DN, Email: email, Name: name, ConnectionID: c.ID.String(), Profile: profile}, nil
+	return &ldapUser{DN: entry.DN, Email: email, Name: name, ConnectionID: c.ID.String(), Profile: profile, Groups: groups}, nil
 }
 
-// findOrCreateUser returns the user linked to the directory DN, else the user
-// with the directory's email, else a new user, then links the DN and stores the
-// mapped profile, in one transaction. The account must have tenantID as its
-// home, and an adopted one a verified address.
-func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *ldapUser) (uuid.UUID, error) {
+// findOrCreateUser returns the user the connection linked to the directory
+// DN, else the user with the directory's email, else a new user, then links
+// the DN to the connection, brings the account's profile and groups in step
+// with the directory (ssosync.Apply, recorded as actor's) and stores the
+// mapped profile, in one transaction. An address is adopted or given an
+// account only on a domain the organisation manages, a new account only where
+// that domain has just-in-time provisioning on, and an adopted account must
+// have tenantID as its home, a verified address, and not administer the
+// organisation.
+func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UUID, u *ldapUser, actor audit.Actor) (uuid.UUID, error) {
+	// Read before the transaction: it reads every organisation's domains.
+	domain, managed, err := domainverify.ManagingDomain(postgres.AcrossTenants(ctx), s.pool, u.Email)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	manager := domain.TenantID
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
+	sync := func(userID uuid.UUID) error {
+		if err := ssosync.Apply(ctx, tx, ssosync.SignIn{
+			TenantID: tenantID, UserID: userID, ConnectionID: connID, Provider: provider,
+			DisplayName: u.Name, Email: u.Email, EmailManaged: managed && manager == tenantID,
+			Groups: u.Groups, Actor: actor,
+		}); err != nil {
+			return err
+		}
+		return s.storeMappedProfile(ctx, tx, tenantID, userID, u)
+	}
 
 	userID, err := q.GetExternalIdentityUser(ctx, dbgen.GetExternalIdentityUserParams{
-		TenantID: tenantID,
-		Provider: provider,
-		Subject:  u.DN,
+		TenantID:     tenantID,
+		Provider:     provider,
+		ConnectionID: connID,
+		Subject:      u.DN,
 	})
 	if err == nil {
 		// A linked DN signs in only while this organisation is still the
@@ -580,7 +622,7 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *l
 		if !home {
 			return uuid.Nil, errs.ErrLDAPAccountNotInTenant
 		}
-		if err := s.storeMappedProfile(ctx, tx, tenantID, userID, u); err != nil {
+		if err := sync(userID); err != nil {
 			return uuid.Nil, err
 		}
 		return userID, tx.Commit(ctx)
@@ -588,9 +630,18 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *l
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, err
 	}
+	// A bind proves only that this connection's directory accepted the
+	// credentials. Anyone who can configure a connection can point it at a
+	// directory they run, so it speaks only for the organisation's own domains.
+	if !managed || manager != tenantID {
+		return uuid.Nil, errs.ErrLDAPEmailDomainUnverified
+	}
 
 	userID, err = q.GetUserByEmail(ctx, u.Email)
 	if errors.Is(err, pgx.ErrNoRows) {
+		if !domain.JIT {
+			return uuid.Nil, errs.ErrLDAPJITNotAllowed
+		}
 		var displayName *string
 		if u.Name != "" {
 			displayName = &u.Name
@@ -606,10 +657,9 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *l
 	} else if err != nil {
 		return uuid.Nil, err
 	} else {
-		// The email may be another tenant's user's (emails are globally unique), and a
-		// bind only proves this connection's directory accepted the credentials.
-		// Otherwise an admin pointing a connection at a directory they run could assert
-		// a victim's address and receive the victim's tokens.
+		// Emails are globally unique, so the address may be another tenant's
+		// user's; and an administrator keeps the credentials they have, or the
+		// connection's directory could take over an owner.
 		home, herr := identitylink.HomeIn(ctx, tx, userID, tenantID)
 		if herr != nil {
 			return uuid.Nil, herr
@@ -624,19 +674,30 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *l
 		if !verified {
 			return uuid.Nil, errs.ErrLDAPAccountUnverified
 		}
+		if err := identitylink.MarkAddressVerified(ctx, tx, userID); err != nil {
+			return uuid.Nil, err
+		}
+		admin, aerr := identitylink.Administers(ctx, tx, userID, tenantID)
+		if aerr != nil {
+			return uuid.Nil, aerr
+		}
+		if admin {
+			return uuid.Nil, errs.ErrLDAPAccountAdministers
+		}
 	}
 
 	email := u.Email
 	if err := q.LinkExternalIdentity(ctx, dbgen.LinkExternalIdentityParams{
-		UserID:   userID,
-		TenantID: tenantID,
-		Provider: provider,
-		Subject:  u.DN,
-		Email:    &email,
+		UserID:       userID,
+		TenantID:     tenantID,
+		Provider:     provider,
+		ConnectionID: connID,
+		Subject:      u.DN,
+		Email:        &email,
 	}); err != nil {
 		return uuid.Nil, err
 	}
-	if err := s.storeMappedProfile(ctx, tx, tenantID, userID, u); err != nil {
+	if err := sync(userID); err != nil {
 		return uuid.Nil, err
 	}
 	return userID, tx.Commit(ctx)
@@ -652,9 +713,21 @@ func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, passwor
 		return nil, err
 	}
 	started := time.Now()
-	defer func() { s.recordOperation(ctx, c.TenantID, connID, "sign-in", "user", started, resultError) }()
-	if c.Status == "disabled" {
+	var signedIn *uuid.UUID
+	defer func() { s.recordOperation(ctx, c, "sign-in", "user", started, resultError, username, signedIn) }()
+	// A draft connection is still being set up: it signs nobody in until an
+	// administrator turns it on.
+	switch c.Status {
+	case "active":
+	case "draft":
+		return nil, errs.ErrLDAPConnectionDraft
+	default:
 		return nil, errs.ErrLDAPConnectionDisabled
+	}
+	// The plan is checked at every sign-in, not only when the connection was
+	// set up, so one set up on a plan that has since lapsed signs no one in.
+	if err := s.requireLDAP(ctx, c.TenantID); err != nil {
+		return nil, err
 	}
 	if username == "" || password == "" {
 		return nil, errs.ErrLDAPCredentialsRequired
@@ -670,7 +743,11 @@ func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, passwor
 		if err != nil {
 			return uuid.Nil, errors.Is(err, errs.ErrLDAPInvalidCredentials), err
 		}
-		userID, err := s.findOrCreateUser(ctx, c.TenantID, du)
+		userID, err := s.findOrCreateUser(ctx, c.TenantID, connID, du,
+			audit.Actor{Type: provider, IP: ip, UserAgent: ua, RequestID: middleware.GetReqID(ctx)})
+		if err == nil {
+			signedIn = &userID
+		}
 		return userID, false, err
 	})
 	if err != nil {

@@ -49,6 +49,12 @@ type PaymentProvider interface {
 	SignatureHeader() string
 }
 
+// paymentMethodReader is a provider that can say what a payment was made
+// with, from its verified success webhook.
+type paymentMethodReader interface {
+	PaymentMethod(ctx context.Context, body []byte) (*PaymentMethod, error)
+}
+
 // Payments chooses a configured provider for a checkout, by billing country or
 // else by currency, and looks providers up by name for webhooks.
 type Payments struct {
@@ -65,7 +71,7 @@ func NewPayments(stripeKey, stripeWebhookSecret, razorpayKeyID, razorpayKeySecre
 	client := &http.Client{Timeout: 15 * time.Second}
 	p := &Payments{}
 	if stripeKey != "" {
-		p.stripe = &stripeProvider{secretKey: stripeKey, webhookSecret: stripeWebhookSecret, client: client}
+		p.stripe = &stripeProvider{secretKey: stripeKey, webhookSecret: stripeWebhookSecret, client: client, apiBase: stripeAPI}
 	}
 	if razorpayKeyID != "" && razorpayKeySecret != "" {
 		p.razorpay = &razorpayProvider{keyID: razorpayKeyID, keySecret: razorpayKeySecret, webhookSecret: razorpayWebhookSecret, client: client}
@@ -190,10 +196,14 @@ func (p *Payments) byName(name string) PaymentProvider {
 
 // --- Stripe ---
 
+// stripeAPI is Stripe's API origin.
+const stripeAPI = "https://api.stripe.com"
+
 type stripeProvider struct {
 	secretKey     string
 	webhookSecret string
 	client        *http.Client
+	apiBase       string // stripeAPI, except in tests
 }
 
 func (s *stripeProvider) Name() string            { return "stripe" }
@@ -210,13 +220,13 @@ func (s *stripeProvider) CreateCheckout(ctx context.Context, in CheckoutInput) (
 	form.Set("line_items[0][price_data][unit_amount]", strconv.FormatInt(in.AmountMinor, 10))
 	form.Set("line_items[0][price_data][product_data][name]", in.PlanName)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.stripe.com/v1/checkout/sessions", strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.apiBase+"/v1/checkout/sessions", strings.NewReader(form.Encode())) // #nosec G704 -- apiBase is stripeAPI; only tests change it
 	if err != nil {
 		return "", "", err
 	}
 	req.SetBasicAuth(s.secretKey, "")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := s.client.Do(req)
+	resp, err := s.client.Do(req) // #nosec G704 -- apiBase is stripeAPI; only tests change it
 	if err != nil {
 		return "", "", err
 	}
@@ -258,6 +268,58 @@ func (s *stripeProvider) VerifyAndParse(body []byte, signature string) (string, 
 		return evt.Data.Object.ClientReferenceID, true, nil
 	}
 	return "", false, nil
+}
+
+// PaymentMethod looks up the card or other method that paid the completed
+// checkout session in body, which a session's event doesn't carry itself.
+func (s *stripeProvider) PaymentMethod(ctx context.Context, body []byte) (*PaymentMethod, error) {
+	var evt struct {
+		Data struct {
+			Object struct {
+				PaymentIntent string `json:"payment_intent"`
+			} `json:"object"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &evt); err != nil {
+		return nil, err
+	}
+	if evt.Data.Object.PaymentIntent == "" {
+		return nil, nil
+	}
+	u := s.apiBase + "/v1/payment_intents/" + url.PathEscape(evt.Data.Object.PaymentIntent) + "?expand[]=payment_method"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil) // #nosec G704 -- apiBase is stripeAPI; only tests change it
+	if err != nil {
+		return nil, err
+	}
+	req.SetBasicAuth(s.secretKey, "")
+	resp, err := s.client.Do(req) // #nosec G704 -- apiBase is stripeAPI; only tests change it
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("stripe payment intent lookup failed: %d", resp.StatusCode)
+	}
+	var pi struct {
+		PaymentMethod struct {
+			Type string `json:"type"`
+			Card struct {
+				Brand    string `json:"brand"`
+				Last4    string `json:"last4"`
+				ExpMonth int    `json:"exp_month"`
+				ExpYear  int    `json:"exp_year"`
+			} `json:"card"`
+		} `json:"payment_method"`
+	}
+	if err := json.Unmarshal(rb, &pi); err != nil {
+		return nil, err
+	}
+	m := pi.PaymentMethod
+	if m.Type == "" {
+		return nil, nil
+	}
+	return &PaymentMethod{Type: m.Type, Brand: m.Card.Brand, Last4: m.Card.Last4, ExpMonth: m.Card.ExpMonth, ExpYear: m.Card.ExpYear}, nil
 }
 
 // verifyStripeSignature checks a `t=...,v1=...` Stripe-Signature header: the v1
@@ -367,6 +429,42 @@ func (r *razorpayProvider) VerifyAndParse(body []byte, signature string) (string
 	return "", false, nil
 }
 
+// PaymentMethod reads what paid a payment link from its paid webhook in body.
+// Razorpay gives a card's network and last four digits, not its expiry.
+func (r *razorpayProvider) PaymentMethod(_ context.Context, body []byte) (*PaymentMethod, error) {
+	var evt struct {
+		Payload struct {
+			Payment struct {
+				Entity struct {
+					Method string `json:"method"`
+					Bank   string `json:"bank"`
+					Wallet string `json:"wallet"`
+					Card   struct {
+						Network string `json:"network"`
+						Last4   string `json:"last4"`
+					} `json:"card"`
+				} `json:"entity"`
+			} `json:"payment"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(body, &evt); err != nil {
+		return nil, err
+	}
+	e := evt.Payload.Payment.Entity
+	switch e.Method {
+	case "":
+		return nil, nil
+	case "card":
+		return &PaymentMethod{Type: "card", Brand: e.Card.Network, Last4: e.Card.Last4}, nil
+	case "netbanking":
+		return &PaymentMethod{Type: e.Method, Brand: e.Bank}, nil
+	case "wallet":
+		return &PaymentMethod{Type: e.Method, Brand: e.Wallet}, nil
+	default:
+		return &PaymentMethod{Type: e.Method}, nil
+	}
+}
+
 // VerifyCallback authenticates a Razorpay payment-link redirect and returns our
 // checkout ref and whether it was paid. Unlike the webhook, it needs no publicly
 // reachable server. The signature is the hex HMAC-SHA256, keyed by the API
@@ -445,4 +543,14 @@ func (s *sandboxProvider) VerifyAndParse(body []byte, signature string) (string,
 		return "", false, err
 	}
 	return evt.Ref, evt.Paid, nil
+}
+
+// PaymentMethod is the sandbox's test card.
+func (s *sandboxProvider) PaymentMethod(context.Context, []byte) (*PaymentMethod, error) {
+	return SandboxCard(), nil
+}
+
+// SandboxCard is the test card the sandbox reports every payment was made with.
+func SandboxCard() *PaymentMethod {
+	return &PaymentMethod{Type: "card", Brand: "visa", Last4: "4242", ExpMonth: 12, ExpYear: time.Now().Year() + 3}
 }

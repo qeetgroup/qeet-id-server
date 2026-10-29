@@ -286,7 +286,7 @@ environment.
 
 - Passwords and MFA recovery codes use Argon2id, with transparent verification and upgrade of legacy bcrypt hashes; random machine secrets (API keys, service-principal, agent and OAuth client secrets) are stored as their SHA-256.
 - Passkeys use `go-webauthn`; access and ID tokens use ES256 with `kid`-based JWKS verification and retired-key support.
-- The secrets vault uses AES-GCM with a static key or AWS KMS-backed data-key provider.
+- The secrets vault uses AES-GCM with a static key or AWS KMS-backed data-key provider. Every stored value names the data key that sealed it, so the key can be rotated: previous keys stay readable (`SECRETS_PREVIOUS_KEYS`) while a background job moves stored values to the current one (steps on `SecretsKey` in `internal/platform/config/config.go`).
 - Tenant routes are checked against the authenticated principal and persistence queries carry tenant scope.
 - Audit events are transactionally recorded in per-tenant SHA-256 hash chains; webhooks use HMAC-SHA256 signatures.
 - CSRF/origin checks, security headers, login lockout, and per-IP/principal/tenant rate limits provide request-layer defenses.

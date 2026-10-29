@@ -124,6 +124,72 @@ func (fixture *templateFixture) Get(_ context.Context, tenantID uuid.UUID, key s
 	return &Resolved{Key: key, Subject: "Custom sign-in", Body: "Use {{magic_url}}", Options: EditorOptions{HTML: `<p><strong>Use</strong> <a href="{{magic_url}}">Sign in</a></p>`}, Custom: true}, nil
 }
 
+func (fixture *templateFixture) RecipientLocale(context.Context, uuid.UUID, string) (string, error) {
+	return "", nil
+}
+
+// localizedTemplates serves a custom magic-link template with a French
+// translation, and each recipient's profile locale by address.
+type localizedTemplates struct {
+	defaultLocale string
+	locales       map[string]string
+}
+
+func (templates localizedTemplates) Get(_ context.Context, _ uuid.UUID, key string) (*Resolved, error) {
+	return &Resolved{Key: key, Custom: true, Subject: "Sign in", Body: "Use {{magic_url}}", Options: EditorOptions{
+		DefaultLocale: templates.defaultLocale,
+		Translations:  map[string]LocalizedContent{"fr": {Subject: "Connexion", Body: "Utilisez {{magic_url}}"}},
+	}}, nil
+}
+
+func (templates localizedTemplates) RecipientLocale(_ context.Context, _ uuid.UUID, address string) (string, error) {
+	return templates.locales[address], nil
+}
+
+// TestTemplateSenderUsesRecipientLocale checks that a customised email is
+// rendered in the recipient's profile language when the template has it, and
+// otherwise in the template's default locale.
+func TestTemplateSenderUsesRecipientLocale(t *testing.T) {
+	locales := map[string]string{"anne@example.test": "fr", "dirk@example.test": "de", "emma@example.test": "en"}
+	for _, test := range []struct {
+		to, defaultLocale, subject string
+	}{
+		{"anne@example.test", "en", "Connexion"},   // French profile, French translation
+		{"dirk@example.test", "en", "Sign in"},     // German profile, no German translation
+		{"dirk@example.test", "fr", "Connexion"},   // ... so the organisation's default
+		{"emma@example.test", "fr", "Sign in"},     // English profile, the base content
+		{"nobody@example.test", "fr", "Connexion"}, // no account: the organisation's default
+	} {
+		sink := &emailSink{}
+		sender := TemplateSender{Templates: localizedTemplates{defaultLocale: test.defaultLocale, locales: locales}, Next: sink}
+		message := notifier.Message{TenantID: uuid.NewString(), Channel: "email", To: test.to, TemplateKey: "magic_link", TemplateVariables: map[string]string{"magic_url": "https://example.test/once"}, Subject: "Original", Body: "Original"}
+		if err := sender.Send(context.Background(), message); err != nil {
+			t.Fatal(err)
+		}
+		if sink.last.Subject != test.subject {
+			t.Errorf("to %s with default %s: subject = %q, want %q", test.to, test.defaultLocale, sink.last.Subject, test.subject)
+		}
+	}
+}
+
+func TestTemplateLocale(t *testing.T) {
+	options := EditorOptions{Translations: map[string]LocalizedContent{"fr": {}, "pt-BR": {}, "zh-Hant": {}}}
+	for preferred, want := range map[string]string{
+		"":      "",
+		"fr":    "fr",
+		"fr-CA": "fr",
+		"pt":    "pt-BR",
+		"en":    "en",
+		"de":    "",
+		"zh":    "",
+		"!":     "",
+	} {
+		if got := templateLocale(options, preferred); got != want {
+			t.Errorf("templateLocale(%q) = %q, want %q", preferred, got, want)
+		}
+	}
+}
+
 type emailSink struct{ last notifier.Message }
 
 func (sink *emailSink) Send(_ context.Context, message notifier.Message) error {

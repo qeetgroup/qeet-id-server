@@ -16,6 +16,7 @@ func init() {
 
 		// Redirect URIs & scopes.
 		errs.CodeOIDCRedirectURIInvalid:       http.StatusBadRequest,
+		errs.CodeOIDCWebOriginInvalid:         http.StatusUnprocessableEntity,
 		errs.CodeOIDCRedirectURIMismatch:      http.StatusBadRequest,
 		errs.CodeOIDCRedirectURINotRegistered: http.StatusBadRequest,
 		errs.CodeOIDCConsentRequestInvalid:    http.StatusBadRequest,
@@ -43,6 +44,7 @@ func init() {
 		errs.CodeOIDCExchangeDepthExceeded:          http.StatusBadRequest,
 		errs.CodeOIDCInsufficientScope:              http.StatusForbidden,
 		errs.CodeOIDCResourceExists:                 http.StatusConflict,
+		errs.CodeOIDCResourceDomainTaken:            http.StatusConflict,
 		errs.CodeOIDCResourceNotFound:               http.StatusNotFound,
 
 		// Token exchange (RFC 8693) subject/actor tokens.

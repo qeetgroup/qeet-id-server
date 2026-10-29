@@ -14,5 +14,6 @@ func init() {
 		errs.CodeDomainVerifyDNSRecordMissing: http.StatusUnprocessableEntity,
 		errs.CodeDomainVerifyClaimedByOther:   http.StatusConflict,
 		errs.CodeDomainVerifyNotFound:         http.StatusNotFound,
+		errs.CodeDomainVerifyNotMember:        http.StatusNotFound,
 	})
 }

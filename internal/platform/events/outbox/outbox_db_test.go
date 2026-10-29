@@ -55,7 +55,7 @@ func TestPurgePublishedKeepsPendingEvents(t *testing.T) {
 }
 
 // TestLagCollectorReportsTheBacklog checks that the lag metrics count the
-// unpublished events and age the oldest.
+// unpublished events and the dead letters, and age the oldest.
 func TestLagCollectorReportsTheBacklog(t *testing.T) {
 	ctx := dbtest.Context(t)
 	pool := dbtest.Pool(t)
@@ -65,6 +65,7 @@ func TestLagCollectorReportsTheBacklog(t *testing.T) {
 	`, uuid.New()); err != nil {
 		t.Fatal(err)
 	}
+	deadLetter(t, "test.lag", time.Now())
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(LagCollector(pool))
 	families, err := reg.Gather()
@@ -75,7 +76,7 @@ func TestLagCollectorReportsTheBacklog(t *testing.T) {
 	for _, f := range families {
 		got[f.GetName()] = f.GetMetric()[0].GetGauge().GetValue()
 	}
-	if got["outbox_unpublished_events"] < 1 || got["outbox_oldest_unpublished_age_seconds"] < 90 {
-		t.Errorf("lag metrics %v, want at least one event at least 90s old", got)
+	if got["outbox_unpublished_events"] < 1 || got["outbox_oldest_unpublished_age_seconds"] < 90 || got["outbox_dead_letters"] < 1 {
+		t.Errorf("lag metrics %v, want at least one event at least 90s old and one dead letter", got)
 	}
 }

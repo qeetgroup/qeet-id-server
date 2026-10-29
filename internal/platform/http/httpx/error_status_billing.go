@@ -24,5 +24,7 @@ func init() {
 		errs.CodeBillingCheckoutRequired:          http.StatusPaymentRequired,
 		errs.CodeBillingTaxIDInvalid:              http.StatusUnprocessableEntity,
 		errs.CodeBillingTrialNotEligible:          http.StatusConflict,
+		errs.CodeBillingInvoiceNotOpen:            http.StatusConflict,
+		errs.CodeBillingInvoiceNotFound:           http.StatusNotFound,
 	})
 }

@@ -14,14 +14,41 @@ WHERE @role_id::uuid IS NULL
 RETURNING id, tenant_id, email, role_id, status, expires_at, accepted_at, created_at;
 
 -- CountSeats returns the tenant's seats in use = distinct members (users holding
--- any role in the tenant) plus still-actionable pending invites. Backs the plan
--- seat limit checked before an invite/user is created.
+-- any role in the tenant, directly or through a group that carries one) plus
+-- still-actionable pending invites. Backs the plan seat limit and the usage
+-- display; CountSeatHolders and CountPendingInvites are its two halves.
 -- name: CountSeats :one
 SELECT (
-    (SELECT COUNT(DISTINCT user_id) FROM rbac.user_roles WHERE tenant_id = @tenant_id::uuid)
+    (SELECT COUNT(*) FROM (
+        SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = @tenant_id::uuid
+        UNION
+        SELECT gm.user_id FROM tenant.group_members gm
+        JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+        WHERE gm.tenant_id = @tenant_id::uuid
+    ) holders)
     + (SELECT COUNT(*) FROM tenant.invites
         WHERE tenant_id = @tenant_id::uuid AND status = 'pending' AND expires_at > NOW())
 )::bigint AS seats;
+
+-- CountSeatHolders counts the people holding a role in the tenant, directly or
+-- through a group that carries one: one seat each, however many roles.
+-- name: CountSeatHolders :one
+SELECT COUNT(*)::bigint AS holders FROM (
+    SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = @tenant_id::uuid
+    UNION
+    SELECT gm.user_id FROM tenant.group_members gm
+    JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+    WHERE gm.tenant_id = @tenant_id::uuid
+) holders;
+
+-- name: CountPendingInvites :one
+SELECT COUNT(*)::bigint AS pending FROM tenant.invites
+WHERE tenant_id = @tenant_id::uuid AND status = 'pending' AND expires_at > NOW();
+
+-- LockSeats holds the tenant's seats until the transaction ends, so two
+-- changes can't each take the last one.
+-- name: LockSeats :exec
+SELECT pg_advisory_xact_lock(hashtext('seats'), hashtext(sqlc.arg(tenant_id)::uuid::text));
 
 -- name: ListInvites :many
 SELECT id, tenant_id, email, role_id, status, expires_at, accepted_at, created_at
@@ -67,7 +94,7 @@ FOR UPDATE;
 -- their own email (scoped by email so one user can't decline another's).
 -- name: DeclineInviteForEmail :one
 UPDATE tenant.invites SET status = 'declined'
-WHERE id = @id AND email = @email AND status = 'pending'
+WHERE id = @id AND LOWER(email) = LOWER(@email) AND status = 'pending'
 RETURNING tenant_id, role_id;
 
 -- name: ListInvitesForEmail :many
@@ -75,7 +102,7 @@ SELECT i.id, i.tenant_id, i.email, i.role_id, i.expires_at, i.created_at,
        t.name AS tenant_name, t.slug AS tenant_slug
 FROM tenant.invites i
 JOIN tenant.tenants t ON t.id = i.tenant_id
-WHERE i.email = @email AND i.status = 'pending' AND i.expires_at > NOW()
+WHERE LOWER(i.email) = LOWER(@email) AND i.status = 'pending' AND i.expires_at > NOW()
 ORDER BY i.created_at DESC
 LIMIT 50;
 
@@ -89,7 +116,17 @@ UPDATE tenant.invites SET status = 'accepted', accepted_at = NOW() WHERE id = $1
 -- pgx.ErrNoRows means no account exists yet. Used by Accept to branch between
 -- creating a new user and attaching a membership to an existing one.
 -- name: FindUserIDByEmail :one
-SELECT id FROM "user".users WHERE email = @email;
+SELECT id FROM "user".users WHERE LOWER(email) = LOWER(@email);
+
+-- AccountHomeElsewhere reports whether an account holds @email and has a home
+-- other than @tenant_id, so an invitation with no role would join it to
+-- nothing.
+-- name: AccountHomeElsewhere :one
+SELECT EXISTS (
+    SELECT 1 FROM "user".users u
+    WHERE LOWER(u.email) = LOWER(@email) AND u.deleted_at IS NULL
+      AND u.tenant_id IS DISTINCT FROM @tenant_id::uuid
+)::bool;
 
 -- GetUserEmailByID returns the caller's email so an authenticated accept can
 -- confirm the invite was addressed to them.
@@ -130,7 +167,7 @@ ON CONFLICT (user_id, tenant_id, role_id) DO NOTHING;
 -- name: LookupInvite :one
 SELECT i.id, i.tenant_id, i.email, i.status, i.expires_at,
        t.name AS tenant_name, t.slug AS tenant_slug,
-       EXISTS (SELECT 1 FROM "user".users u WHERE u.email = i.email) AS account_exists
+       EXISTS (SELECT 1 FROM "user".users u WHERE LOWER(u.email) = LOWER(i.email)) AS account_exists
 FROM tenant.invites i
 JOIN tenant.tenants t ON t.id = i.tenant_id
 WHERE i.token_hash = @token_hash;

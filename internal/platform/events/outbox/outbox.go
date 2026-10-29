@@ -13,6 +13,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 // Event is one message to publish once the enqueuing transaction commits.
@@ -102,12 +104,44 @@ type Dispatcher struct {
 	maxAttempts int
 	workerID    uuid.UUID
 	lease       time.Duration
+	budget      time.Duration
 }
 
-// DefaultMaxAttempts is how many publishes are tried before a row moves to the
-// dead-letter table: about 14 minutes of backoff, enough to ride out a
-// publisher outage without retrying a malformed payload forever.
-const DefaultMaxAttempts = 10
+const (
+	retryCap            = 5 * time.Minute     // longest wait between two attempts at an event
+	DeadLetterAfter     = 24 * time.Hour      // how long an event keeps being retried before it is dead-lettered
+	DeadLetterRetention = 90 * 24 * time.Hour // how long a dead letter is kept, to look into or replay
+	drainBudget         = 30 * time.Second    // one tick's round of batches
+)
+
+// DefaultMaxAttempts is how many publishes are tried before an event moves to
+// the dead-letter table: enough for its retries to span DeadLetterAfter, so a
+// publisher outage of up to a day dead-letters nothing.
+var DefaultMaxAttempts = attemptsSpanning(DeadLetterAfter)
+
+// retryDelay is how long an event waits after its nth failed attempt: 2^n
+// seconds, at most retryCap. The lease query computes the same.
+func retryDelay(attempts int) time.Duration {
+	if attempts >= 30 {
+		return retryCap
+	}
+	return min(time.Duration(1<<attempts)*time.Second, retryCap)
+}
+
+// attemptsSpanning is the fewest attempts whose waits between them add up to d.
+func attemptsSpanning(d time.Duration) int {
+	n, waited := 1, time.Duration(0)
+	for waited < d {
+		waited += retryDelay(n)
+		n++
+	}
+	return n
+}
+
+var deadLettered = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "outbox_dead_lettered_total",
+	Help: "Outbox events moved to the dead-letter table after a day of failed publishes.",
+})
 
 // NewDispatcher returns a Dispatcher polling every interval (default 2s) in
 // batches of batchSize (default 50).
@@ -120,7 +154,7 @@ func NewDispatcher(pool *pgxpool.Pool, pub Publisher, interval time.Duration, ba
 	}
 	return &Dispatcher{
 		pool: pool, pub: pub, interval: interval, batchSize: batchSize,
-		maxAttempts: DefaultMaxAttempts, workerID: uuid.New(), lease: 2 * time.Minute,
+		maxAttempts: DefaultMaxAttempts, workerID: uuid.New(), lease: 2 * time.Minute, budget: drainBudget,
 	}
 }
 
@@ -133,16 +167,31 @@ func (d *Dispatcher) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := d.tick(ctx); err != nil {
+			if err := d.drain(ctx); err != nil {
 				slog.Warn("outbox tick", "err", err)
 			}
 		}
 	}
 }
 
-func (d *Dispatcher) tick(ctx context.Context) error {
-	// Lease unleased rows that are new or whose backoff (2^attempts seconds,
-	// capped at 300) has elapsed.
+// drain publishes due events a batch at a time while the batches come full and
+// every event in them is published, for at most d.budget, so a backlog clears
+// faster than a batch per tick.
+func (d *Dispatcher) drain(ctx context.Context) error {
+	deadline := time.Now().Add(d.budget)
+	for {
+		leased, failed, err := d.tick(ctx)
+		if err != nil || leased < d.batchSize || failed > 0 || ctx.Err() != nil || time.Now().After(deadline) {
+			return err
+		}
+	}
+}
+
+// tick publishes one batch of due events and returns how many it leased and
+// how many of them failed.
+func (d *Dispatcher) tick(ctx context.Context) (leased, failed int, err error) {
+	// Lease unleased rows that are new or whose backoff (retryDelay) has
+	// elapsed.
 	rows, err := d.pool.Query(ctx, `
 		WITH candidates AS (
 			SELECT id
@@ -150,7 +199,7 @@ func (d *Dispatcher) tick(ctx context.Context) error {
 			WHERE published_at IS NULL
 			  AND (lease_until IS NULL OR lease_until <= NOW())
 			  AND (last_attempt_at IS NULL
-			       OR last_attempt_at < NOW() - (LEAST(POWER(2, attempts), 300) || ' seconds')::interval)
+			       OR last_attempt_at < NOW() - make_interval(secs => LEAST(POWER(2, attempts), $4)))
 			ORDER BY created_at
 			LIMIT $1
 			FOR UPDATE SKIP LOCKED
@@ -160,9 +209,9 @@ func (d *Dispatcher) tick(ctx context.Context) error {
 		FROM candidates
 		WHERE event.id = candidates.id
 		RETURNING event.id, event.topic, event.event_type, event.payload, event.created_at, event.attempts
-	`, d.batchSize, d.workerID, time.Now().UTC().Add(d.lease))
+	`, d.batchSize, d.workerID, time.Now().UTC().Add(d.lease), retryCap.Seconds())
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
 	type row struct {
 		Message
@@ -173,7 +222,7 @@ func (d *Dispatcher) tick(ctx context.Context) error {
 		var r row
 		if err := rows.Scan(&r.ID, &r.Topic, &r.EventType, &r.Payload, &r.OccurredAt, &r.Attempts); err != nil {
 			rows.Close()
-			return err
+			return 0, 0, err
 		}
 		batch = append(batch, r)
 	}
@@ -183,13 +232,11 @@ func (d *Dispatcher) tick(ctx context.Context) error {
 	// leased. Dropping unread rows silently strands those events until the lease
 	// expires; surface it so the tick is retried instead.
 	if err != nil {
-		return err
-	}
-	if len(batch) == 0 {
-		return nil
+		return 0, 0, err
 	}
 	for _, r := range batch {
 		if err := d.pub.Publish(ctx, r.Message); err != nil {
+			failed++
 			d.recordFailure(ctx, r.ID, r.Attempts+1, err)
 			continue
 		}
@@ -201,7 +248,7 @@ func (d *Dispatcher) tick(ctx context.Context) error {
 			slog.Warn("outbox mark published", "id", r.ID, "err", err)
 		}
 	}
-	return nil
+	return len(batch), failed, nil
 }
 
 // recordFailure either bumps attempts + last_error, or — if we've hit
@@ -244,5 +291,60 @@ func (d *Dispatcher) recordFailure(ctx context.Context, id uuid.UUID, attempts i
 		slog.Error("outbox dlq commit", "id", id, "err", err)
 		return
 	}
+	deadLettered.Inc()
 	slog.Warn("outbox event dead-lettered", "id", id, "attempts", attempts)
+}
+
+// PurgeDeadLetters deletes events dead-lettered more than retention ago and
+// returns how many.
+func PurgeDeadLetters(ctx context.Context, pool *pgxpool.Pool, retention time.Duration) (int64, error) {
+	cutoff := time.Now().UTC().Add(-retention)
+	var total int64
+	for {
+		tag, err := pool.Exec(ctx, `
+			DELETE FROM platform.outbox_dead_letter
+			WHERE id IN (SELECT id FROM platform.outbox_dead_letter WHERE dead_lettered_at < $1 LIMIT $2)
+		`, cutoff, purgeBatch)
+		if err != nil {
+			return total, err
+		}
+		total += tag.RowsAffected()
+		if tag.RowsAffected() < int64(purgeBatch) {
+			return total, nil
+		}
+	}
+}
+
+// ReplayFilter picks the dead letters ReplayDeadLetters replays: those of
+// EventType, and those dead-lettered at or after Since. Zero values pick all.
+type ReplayFilter struct {
+	EventType string
+	Since     time.Time
+}
+
+// ReplayDeadLetters moves the dead letters f picks back to the outbox, as new
+// events keeping their ID and creation time, so the dispatcher publishes them
+// again, and returns how many it moved.
+func ReplayDeadLetters(ctx context.Context, pool *pgxpool.Pool, f ReplayFilter) (int64, error) {
+	var total int64
+	for {
+		tag, err := pool.Exec(ctx, `
+			WITH moved AS (
+				DELETE FROM platform.outbox_dead_letter
+				WHERE id IN (SELECT id FROM platform.outbox_dead_letter
+				             WHERE ($1 = '' OR event_type = $1) AND dead_lettered_at >= $2
+				             ORDER BY dead_lettered_at LIMIT $3)
+				RETURNING id, aggregate_id, topic, event_type, payload, created_at
+			)
+			INSERT INTO platform.outbox (id, aggregate_id, topic, event_type, payload, created_at)
+			SELECT id, aggregate_id, topic, event_type, payload, created_at FROM moved
+		`, f.EventType, f.Since, purgeBatch)
+		if err != nil {
+			return total, err
+		}
+		total += tag.RowsAffected()
+		if tag.RowsAffected() < int64(purgeBatch) {
+			return total, nil
+		}
+	}
 }

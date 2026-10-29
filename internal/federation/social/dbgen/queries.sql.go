@@ -39,7 +39,7 @@ func (q *Queries) ConsumeSocialLoginCode(ctx context.Context, codeHash string) (
 
 const consumeSocialOAuthState = `-- name: ConsumeSocialOAuthState :one
 DELETE FROM auth.social_oauth_states WHERE state_hash = $1
-RETURNING tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at
+RETURNING tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at, nonce_hash
 `
 
 type ConsumeSocialOAuthStateRow struct {
@@ -49,6 +49,7 @@ type ConsumeSocialOAuthStateRow struct {
 	RedirectUri  string
 	ReturnTo     string
 	ExpiresAt    time.Time
+	NonceHash    *string
 }
 
 func (q *Queries) ConsumeSocialOAuthState(ctx context.Context, stateHash string) (ConsumeSocialOAuthStateRow, error) {
@@ -61,6 +62,7 @@ func (q *Queries) ConsumeSocialOAuthState(ctx context.Context, stateHash string)
 		&i.RedirectUri,
 		&i.ReturnTo,
 		&i.ExpiresAt,
+		&i.NonceHash,
 	)
 	return i, err
 }
@@ -147,6 +149,7 @@ const getExternalIdentityUser = `-- name: GetExternalIdentityUser :one
 
 SELECT user_id FROM "user".external_identities
 WHERE tenant_id = $1 AND provider = $2 AND subject = $3
+  AND connection_id IS NULL
 `
 
 type GetExternalIdentityUserParams struct {
@@ -158,6 +161,8 @@ type GetExternalIdentityUserParams struct {
 // ==========================================================================
 // findOrCreateUser — same cross-schema "user" pattern as ldap/saml
 // ==========================================================================
+// A social identity names no connection; a single sign-on connection's links,
+// whose provider a social one could be named after, are not looked at.
 func (q *Queries) GetExternalIdentityUser(ctx context.Context, arg GetExternalIdentityUserParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, getExternalIdentityUser, arg.TenantID, arg.Provider, arg.Subject)
 	var user_id uuid.UUID
@@ -230,8 +235,8 @@ func (q *Queries) InsertSocialLoginCode(ctx context.Context, arg InsertSocialLog
 
 const insertSocialOAuthState = `-- name: InsertSocialOAuthState :exec
 INSERT INTO auth.social_oauth_states
-    (state_hash, tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+    (state_hash, tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at, nonce_hash)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 `
 
 type InsertSocialOAuthStateParams struct {
@@ -242,6 +247,7 @@ type InsertSocialOAuthStateParams struct {
 	RedirectUri  string
 	ReturnTo     string
 	ExpiresAt    time.Time
+	NonceHash    *string
 }
 
 func (q *Queries) InsertSocialOAuthState(ctx context.Context, arg InsertSocialOAuthStateParams) error {
@@ -253,6 +259,7 @@ func (q *Queries) InsertSocialOAuthState(ctx context.Context, arg InsertSocialOA
 		arg.RedirectUri,
 		arg.ReturnTo,
 		arg.ExpiresAt,
+		arg.NonceHash,
 	)
 	return err
 }
@@ -279,7 +286,7 @@ func (q *Queries) InsertUserWithEmail(ctx context.Context, arg InsertUserWithEma
 const linkExternalIdentity = `-- name: LinkExternalIdentity :exec
 INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email)
 VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (tenant_id, provider, subject) DO NOTHING
+ON CONFLICT (tenant_id, provider, connection_id, subject) DO NOTHING
 `
 
 type LinkExternalIdentityParams struct {
@@ -437,7 +444,7 @@ func (q *Queries) ListPlatformSocialIdentitiesForUser(ctx context.Context, userI
 
 const listSocialProviders = `-- name: ListSocialProviders :many
 
-SELECT id, tenant_id, provider, client_id, discovery_url, enabled, created_at
+SELECT id, tenant_id, provider, client_id, discovery_url, enabled, created_at, apple_team_id, apple_key_id
 FROM tenant.social_providers WHERE tenant_id = $1 ORDER BY provider
 `
 
@@ -449,6 +456,8 @@ type ListSocialProvidersRow struct {
 	DiscoveryUrl *string
 	Enabled      bool
 	CreatedAt    time.Time
+	AppleTeamID  *string
+	AppleKeyID   *string
 }
 
 // Queries for the social domain.
@@ -470,6 +479,8 @@ func (q *Queries) ListSocialProviders(ctx context.Context, tenantID uuid.UUID) (
 			&i.DiscoveryUrl,
 			&i.Enabled,
 			&i.CreatedAt,
+			&i.AppleTeamID,
+			&i.AppleKeyID,
 		); err != nil {
 			return nil, err
 		}

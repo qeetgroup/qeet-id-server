@@ -199,6 +199,16 @@ func (s *Service) Get(ctx context.Context, tenantID uuid.UUID, key string) (*Res
 	return &r, nil
 }
 
+// RecipientLocale returns the profile language of the account at address, or ""
+// when it has none or doesn't belong to the tenant.
+func (s *Service) RecipientLocale(ctx context.Context, tenantID uuid.UUID, address string) (string, error) {
+	locale, err := s.q.GetRecipientLocale(ctx, dbgen.GetRecipientLocaleParams{TenantID: tenantID, Email: address})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return locale, err
+}
+
 // Upsert is UpsertEditor with only a subject and body.
 func (s *Service) Upsert(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key, subject, body string) (*Resolved, error) {
 	return s.UpsertEditor(ctx, tx, tenantID, key, EditorInput{Subject: subject, Body: body})

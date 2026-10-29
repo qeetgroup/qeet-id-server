@@ -13,6 +13,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -85,7 +86,31 @@ type CreateResourceInput struct {
 	ServerClientID string `json:"server_client_id"`
 }
 
-// CreateResource registers a resource for the organisation.
+// CheckResourceDomain refuses, with ErrOIDCResourceDomainTaken, a resource
+// identifier on a domain another organisation has verified: only it may name
+// a service there. It reads every organisation's domains, so it runs before
+// the registration's transaction; CreateResource rejects a malformed one.
+func (s *Service) CheckResourceDomain(ctx context.Context, tenantID uuid.UUID, identifier string) error {
+	host := ""
+	if u, perr := url.Parse(strings.TrimSpace(identifier)); perr == nil {
+		host = u.Hostname()
+	}
+	if host == "" {
+		return nil
+	}
+	taken, err := s.q.ResourceHostClaimedElsewhere(postgres.AcrossTenants(ctx), dbgen.ResourceHostClaimedElsewhereParams{TenantID: tenantID, Host: host})
+	if err != nil {
+		return err
+	}
+	if taken {
+		return errs.ErrOIDCResourceDomainTaken
+	}
+	return nil
+}
+
+// CreateResource registers a resource for the organisation. An identifier is
+// unique across the platform (ErrOIDCResourceExists); callers check its domain
+// first with CheckResourceDomain.
 func (s *Service) CreateResource(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in CreateResourceInput) (*Resource, error) {
 	in.Identifier = strings.TrimSpace(in.Identifier)
 	if !wellFormedResource(in.Identifier) {
@@ -152,6 +177,10 @@ func (h *Handler) createResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	if err := h.Service.CheckResourceDomain(ctx, tenantID, in.Identifier); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	tx, err := h.Service.Pool().Begin(ctx)
 	if err != nil {
 		httpx.WriteError(w, r, err)

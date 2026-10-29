@@ -101,3 +101,46 @@ func TestOwnOrganisationNeedsNoRole(t *testing.T) {
 		t.Errorf("a suspended account switching into its own organisation: %+v, %v; want %v", next, err, errs.ErrAuthNotTenantMember)
 	}
 }
+
+// TestOpenedSessionsContinueTheirSignIn checks that a session opened by
+// switching to, joining or creating an organisation keeps the sign-in it came
+// from: when it happened and when it ends, so none lengthens a sign-in or
+// makes it look recent.
+func TestOpenedSessionsContinueTheirSignIn(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := newService(t)
+	a, home := member(t)
+	other, invited, created := dbtest.Tenant(t), dbtest.Tenant(t), dbtest.Tenant(t)
+	for _, tenant := range []uuid.UUID{other, invited, created} {
+		dbtest.Assign(t, a.ID, tenant, dbtest.Role(t, tenant))
+	}
+	from := signIn(t, svc, a)
+	if _, err := pool.Exec(ctx, `
+		UPDATE auth.sessions SET signed_in_at = NOW() - INTERVAL '3 hours', expires_at = NOW() + INTERVAL '1 hour' WHERE id = $1
+	`, from.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	continues := func(name string, pair *TokenPair, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if n := dbtest.Count(t, `
+			SELECT count(*) FROM auth.sessions s JOIN auth.sessions f ON f.id = $2
+			WHERE s.id = $1 AND s.signed_in_at = f.signed_in_at AND s.expires_at <= f.expires_at
+		`, pair.SessionID, from.SessionID); n != 1 {
+			t.Errorf("%s: the session doesn't continue the sign-in it came from", name)
+		}
+	}
+
+	joined, err := svc.EnterInvitedTenant(ctx, a.ID, invited, from.SessionID, "192.0.2.1", "test")
+	continues("joining an organisation", joined, err)
+	founded, err := svc.EnterCreatedTenant(ctx, a.ID, created, from.SessionID, "192.0.2.1", "test")
+	continues("creating an organisation", founded, err)
+	switched, err := svc.SwitchTenant(ctx, SwitchTenantInput{UserID: a.ID, FromSessionID: from.SessionID, TenantID: other})
+	continues("switching organisation", switched, err)
+	if *switched.TenantID == home {
+		t.Errorf("switched into the home organisation, want %s", other)
+	}
+}

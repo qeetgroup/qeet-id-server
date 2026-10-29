@@ -63,21 +63,55 @@ func (q *Queries) GetBotSettings(ctx context.Context, tenantID uuid.UUID) (GetBo
 
 const getUserTenantByEmail = `-- name: GetUserTenantByEmail :one
 
-SELECT tenant_id FROM "user".users
+SELECT id, tenant_id FROM "user".users
 WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND tenant_id IS NOT NULL
 LIMIT 1
 `
+
+type GetUserTenantByEmailRow struct {
+	ID       uuid.UUID
+	TenantID pgtype.UUID
+}
 
 // Queries for the threat-detection/bot domain.
 // Static queries are compiled by sqlc into ./dbgen.
 // InsertBotEvent is intentionally hand-written in bot.go because it uses
 // NULLIF($2,”)::inet — the inet cast makes sqlc parameter-type inference
 // ambiguous; correctness takes priority over coverage.
-func (q *Queries) GetUserTenantByEmail(ctx context.Context, lower string) (pgtype.UUID, error) {
+func (q *Queries) GetUserTenantByEmail(ctx context.Context, lower string) (GetUserTenantByEmailRow, error) {
 	row := q.db.QueryRow(ctx, getUserTenantByEmail, lower)
-	var tenant_id pgtype.UUID
-	err := row.Scan(&tenant_id)
-	return tenant_id, err
+	var i GetUserTenantByEmailRow
+	err := row.Scan(&i.ID, &i.TenantID)
+	return i, err
+}
+
+const lockBotSettings = `-- name: LockBotSettings :one
+SELECT ua_check, honeypot, captcha, signature, score_threshold
+FROM auth.bot_settings WHERE tenant_id = $1
+FOR UPDATE
+`
+
+type LockBotSettingsRow struct {
+	UaCheck        bool
+	Honeypot       bool
+	Captcha        bool
+	Signature      bool
+	ScoreThreshold float32
+}
+
+// LockBotSettings is GetBotSettings holding the row until the update that
+// replaces it commits.
+func (q *Queries) LockBotSettings(ctx context.Context, tenantID uuid.UUID) (LockBotSettingsRow, error) {
+	row := q.db.QueryRow(ctx, lockBotSettings, tenantID)
+	var i LockBotSettingsRow
+	err := row.Scan(
+		&i.UaCheck,
+		&i.Honeypot,
+		&i.Captcha,
+		&i.Signature,
+		&i.ScoreThreshold,
+	)
+	return i, err
 }
 
 const upsertBotSettings = `-- name: UpsertBotSettings :exec

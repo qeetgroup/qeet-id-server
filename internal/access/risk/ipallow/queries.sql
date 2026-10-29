@@ -18,5 +18,6 @@ INSERT INTO tenant.ip_rules (tenant_id, cidr, label, action)
 VALUES ($1, $2, $3, $4)
 RETURNING id, tenant_id, cidr, label, action, created_at;
 
--- name: DeleteIPRule :execrows
-DELETE FROM tenant.ip_rules WHERE id = $1 AND tenant_id = $2;
+-- name: DeleteIPRule :one
+DELETE FROM tenant.ip_rules WHERE id = $1 AND tenant_id = $2
+RETURNING id, tenant_id, cidr, label, action, created_at;

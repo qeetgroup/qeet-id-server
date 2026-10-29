@@ -98,6 +98,35 @@ type MappingPreview struct {
 	Values  map[string]any `json:"values"`
 	Issues  []MappingIssue `json:"issues"`
 	Valid   bool           `json:"valid"`
+	// Effective is each field the person would get, with where it came from:
+	// a mapping, or the connection's own default where no mapping sets it.
+	Effective map[string]EffectiveField `json:"effective,omitempty"`
+}
+
+// EffectiveField is a field's value in a preview and where it came from.
+type EffectiveField struct {
+	Value     any    `json:"value"`
+	From      string `json:"from"`      // "mapping" or "default"
+	Attribute string `json:"attribute"` // the source attribute it was read from
+}
+
+// withDefaults sets p.Effective: the mapped fields, and each field defaults
+// names (target to source attribute) that no mapping set, read from source.
+func (p *MappingPreview) withDefaults(mappings []Mapping, defaults map[string]string, source map[string]any) {
+	p.Effective = map[string]EffectiveField{}
+	for _, mapping := range mappings {
+		if value, set := p.Profile[mapping.Target]; set && mapping.Enabled {
+			p.Effective[mapping.Target] = EffectiveField{Value: value, From: "mapping", Attribute: mapping.Source}
+		}
+	}
+	for target, attribute := range defaults {
+		if _, set := p.Effective[target]; set {
+			continue
+		}
+		if value, exists := sourceAttribute(source, attribute); exists && value != nil {
+			p.Effective[target] = EffectiveField{Value: value, From: "default", Attribute: attribute}
+		}
+	}
 }
 
 var profileTargets = map[string]string{

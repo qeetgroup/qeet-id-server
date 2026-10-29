@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS tenant.saml_service_providers_tenant_id_id_key;

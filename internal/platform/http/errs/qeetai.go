@@ -8,6 +8,8 @@ const (
 	CodeQeetAIProviderKeyInvalid   = "qeetai_provider_key_invalid"
 	CodeQeetAIProviderModelInvalid = "qeetai_provider_model_invalid"
 	CodeQeetAIProviderError        = "qeetai_provider_error"
+
+	CodeQeetAITurnInProgress = "qeetai.turn_in_progress"
 )
 
 // Qeet AI errors. The provider errors answer a test of a tenant's provider
@@ -19,3 +21,7 @@ var (
 	ErrQeetAIProviderModelInvalid = New(CodeQeetAIProviderModelInvalid, "the key authenticated but the model was rejected — check the model id")
 	ErrQeetAIProviderError        = New(CodeQeetAIProviderError, "the provider returned an error")
 )
+
+// ErrQeetAITurnInProgress refuses a message to a conversation whose previous
+// turn is still running: a conversation answers one turn at a time.
+var ErrQeetAITurnInProgress = New(CodeQeetAITurnInProgress, "Qeet AI is still answering in this conversation. Wait for it to finish, then try again.").AsRetryable()

@@ -42,18 +42,18 @@ func (s *Service) StartConsentRequest(ctx context.Context, loginSessionID, userI
 		return uuid.Nil, errs.ErrOIDCRedirectURINotRegistered
 	}
 	// A request the authorization would refuse (a scope the client isn't
-	// registered for, no proof key, no nonce) is refused now, not after the
-	// person has been asked to consent to it.
+	// registered for, no proof key) is refused now, not after the person has
+	// been asked to consent to it.
 	info, err := s.q.GetClientRedirectInfo(ctx, in.ClientID)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	for _, sc := range in.Scopes {
-		if !contains(info.Scopes, sc) {
+		if !scopePermitted(info.Scopes, info.GrantTypes, sc) {
 			return uuid.Nil, errs.ErrOIDCScopeNotPermitted
 		}
 	}
-	if err := validateSignInRequest(info.Type, info.PkceExempt, in.Scopes, in.Nonce, in.CodeChallenge, in.CodeChallengeMethod); err != nil {
+	if err := validateSignInRequest(info.Type, info.PkceExempt, in.Nonce, in.CodeChallenge, in.CodeChallengeMethod); err != nil {
 		return uuid.Nil, err
 	}
 	if err := checkResource(ctx, s.q, info.TenantID, in.Resource); err != nil {

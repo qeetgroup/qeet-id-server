@@ -6,15 +6,20 @@ package rebac
 
 import (
 	"context"
+	"encoding/base64"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decide"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decisionlog"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rebac/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
@@ -153,6 +158,8 @@ type Tuple struct {
 	Object   string    `json:"object"`
 	Relation string    `json:"relation"`
 	Subject  string    `json:"subject"`
+	// SubjectName names a user: subject who belongs to the organisation.
+	SubjectName string `json:"subject_name,omitempty"`
 }
 
 func subjectString(typ, id, rel string) string {
@@ -214,14 +221,19 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audi
 		return err
 	}
 	defer tx.Rollback(ctx)
-	n, err := s.q.WithTx(tx).DeleteRelationTuple(ctx, dbgen.DeleteRelationTupleParams{ID: id, TenantID: tenantID})
+	row, err := s.q.WithTx(tx).DeleteRelationTuple(ctx, dbgen.DeleteRelationTupleParams{ID: id, TenantID: tenantID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errs.ErrNotFound
+	}
 	if err != nil {
 		return err
 	}
-	if n == 0 {
-		return errs.ErrNotFound
+	metadata := map[string]any{
+		"object":   row.ObjectType + ":" + row.ObjectID,
+		"relation": row.Relation,
+		"subject":  subjectString(row.SubjectType, row.SubjectID, row.SubjectRelation),
 	}
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "rebac.tuple_deleted", "relation_tuple", id, nil)); err != nil {
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "rebac.tuple_deleted", "relation_tuple", id, metadata)); err != nil {
 		return err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "authorization.events", EventType: "rebac.tuple_deleted", Payload: map[string]any{"tuple_id": id, "tenant_id": tenantID}}); err != nil {
@@ -245,6 +257,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, object string) (
 		return nil, err
 	}
 	out := make([]Tuple, 0, len(rows))
+	people := make([]string, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, Tuple{
 			ID:       row.ID,
@@ -252,8 +265,115 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, object string) (
 			Relation: row.Relation,
 			Subject:  subjectString(row.SubjectType, row.SubjectID, row.SubjectRelation),
 		})
+		if row.SubjectType == "user" {
+			people = append(people, row.SubjectID)
+		}
+	}
+	names, err := s.namePeople(ctx, tenantID, people)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if id, ok := strings.CutPrefix(out[i].Subject, "user:"); ok {
+			out[i].SubjectName = names[id]
+		}
 	}
 	return out, nil
+}
+
+// namePeople names those of ids, user: subject ids, who belong to tenantID.
+func (s *Service) namePeople(ctx context.Context, tenantID uuid.UUID, ids []string) (map[string]string, error) {
+	parsed := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if u, err := uuid.Parse(id); err == nil {
+			parsed = append(parsed, u)
+		}
+	}
+	names := map[string]string{}
+	if len(parsed) == 0 {
+		return names, nil
+	}
+	rows, err := s.q.NamePeople(ctx, dbgen.NamePeopleParams{Ids: parsed, TenantID: pgtype.UUID{Bytes: tenantID, Valid: true}})
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		names[r.ID.String()] = r.Name
+	}
+	return names, nil
+}
+
+// ObjectType is a type of object the tenant's tuples name, with how many
+// objects of it they name and how many tuples.
+type ObjectType struct {
+	Type    string `json:"type"`
+	Objects int    `json:"objects"`
+	Tuples  int    `json:"tuples"`
+}
+
+// ObjectTypes returns the types of object the tenant's tuples name.
+func (s *Service) ObjectTypes(ctx context.Context, tenantID uuid.UUID) ([]ObjectType, error) {
+	rows, err := s.q.ListRelationObjectTypes(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ObjectType, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ObjectType{Type: r.ObjectType, Objects: int(r.Objects), Tuples: int(r.Tuples)})
+	}
+	return out, nil
+}
+
+// Object is an object the tenant's tuples name, with how many.
+type Object struct {
+	Object string `json:"object"`
+	ID     string `json:"id"`
+	Tuples int    `json:"tuples"`
+}
+
+// ObjectPage is a page of objects: NextCursor fetches the next, "" on the last.
+type ObjectPage struct {
+	Items      []Object `json:"items"`
+	NextCursor string   `json:"next_cursor,omitempty"`
+	Total      int      `json:"total"`
+}
+
+// Objects returns a page of up to limit (1..500, default 100) of the objects
+// of objType the tenant's tuples name, by id, after cursor.
+func (s *Service) Objects(ctx context.Context, tenantID uuid.UUID, objType string, limit int, cursor string) (*ObjectPage, error) {
+	if strings.TrimSpace(objType) == "" {
+		return nil, errs.ErrBadRequest.WithMessage("Name the type of object to list.")
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	after := ""
+	if cursor != "" {
+		raw, err := base64.RawURLEncoding.DecodeString(cursor)
+		if err != nil {
+			return nil, errs.ErrBadRequest.WithDetail("invalid cursor")
+		}
+		after = string(raw)
+	}
+	total, err := s.q.CountRelationObjects(ctx, dbgen.CountRelationObjectsParams{TenantID: tenantID, ObjectType: objType})
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.q.ListRelationObjects(ctx, dbgen.ListRelationObjectsParams{
+		TenantID: tenantID, ObjectType: objType, After: after, RowLimit: int32(limit + 1), // #nosec G115 -- limit is at most 500
+	})
+	if err != nil {
+		return nil, err
+	}
+	page := &ObjectPage{Items: make([]Object, 0, len(rows)), Total: int(total)}
+	for _, r := range rows {
+		page.Items = append(page.Items, Object{Object: graphNodeID(objType, r.ObjectID), ID: r.ObjectID, Tuples: int(r.Tuples)})
+	}
+	if len(page.Items) > limit {
+		page.Items = page.Items[:limit]
+		page.NextCursor = base64.RawURLEncoding.EncodeToString([]byte(page.Items[limit-1].ID))
+	}
+	return page, nil
 }
 
 // tupleFetcher returns a fetcher scoped to one tenant, backed by the database
@@ -313,9 +433,10 @@ func (s *Service) CheckExplain(ctx context.Context, tenantID uuid.UUID, object, 
 
 // GraphNode is a vertex in a relationship graph (a "type:id" identity).
 type GraphNode struct {
-	ID    string `json:"id"`    // e.g. "document:readme"
-	Type  string `json:"type"`  // e.g. "document"
-	Label string `json:"label"` // e.g. "readme"
+	ID    string `json:"id"`             // e.g. "document:readme"
+	Type  string `json:"type"`           // e.g. "document"
+	Label string `json:"label"`          // e.g. "readme"
+	Name  string `json:"name,omitempty"` // a user node's person, when they belong to the organisation
 }
 
 // GraphEdge is a directed relationship between two nodes.
@@ -405,8 +526,21 @@ func (s *Service) Expand(ctx context.Context, tenantID uuid.UUID, object, relati
 		return nil, err
 	}
 
+	people := []string{}
+	for _, n := range nodes {
+		if n.Type == "user" {
+			people = append(people, n.Label)
+		}
+	}
+	names, err := s.namePeople(ctx, tenantID, people)
+	if err != nil {
+		return nil, err
+	}
 	nodeList := make([]GraphNode, 0, len(nodes))
 	for _, n := range nodes {
+		if n.Type == "user" {
+			n.Name = names[n.Label]
+		}
 		nodeList = append(nodeList, n)
 	}
 	return &Graph{Nodes: nodeList, Edges: edges}, nil
@@ -427,13 +561,22 @@ func (s *Service) ListBySubject(ctx context.Context, tenantID uuid.UUID, subject
 	if err != nil {
 		return nil, err
 	}
+	name := ""
+	if subj.Type == "user" {
+		names, err := s.namePeople(ctx, tenantID, []string{subj.ID})
+		if err != nil {
+			return nil, err
+		}
+		name = names[subj.ID]
+	}
 	out := make([]Tuple, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, Tuple{
-			ID:       row.ID,
-			Object:   graphNodeID(row.ObjectType, row.ObjectID),
-			Relation: row.Relation,
-			Subject:  subjectString(subj.Type, subj.ID, row.SubjectRelation),
+			ID:          row.ID,
+			Object:      graphNodeID(row.ObjectType, row.ObjectID),
+			Relation:    row.Relation,
+			Subject:     subjectString(subj.Type, subj.ID, row.SubjectRelation),
+			SubjectName: name,
 		})
 	}
 	return out, nil
@@ -447,6 +590,8 @@ func (s *Service) ListBySubject(ctx context.Context, tenantID uuid.UUID, subject
 type Handler struct {
 	Service *Service
 	Decider *decide.Decider
+	// Decisions keeps the decisions the check answers (nil: none).
+	Decisions *decisionlog.Log
 }
 
 // Mount registers the relationship routes on r.
@@ -456,6 +601,38 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Delete("/tenants/{tenantID}/relation-tuples/{id}", h.del)
 	r.Post("/tenants/{tenantID}/relation-tuples/check", h.check)
 	r.Get("/tenants/{tenantID}/relation-tuples/graph", h.graph)
+	r.Get("/tenants/{tenantID}/relation-tuples/types", h.objectTypes)
+	r.Get("/tenants/{tenantID}/relation-tuples/objects", h.objects)
+}
+
+func (h *Handler) objectTypes(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := httpx.PathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Service.ObjectTypes(r.Context(), tenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (h *Handler) objects(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := httpx.PathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	out, err := h.Service.Objects(r.Context(), tenantID, q.Get("type"), limit, q.Get("cursor"))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -558,6 +735,8 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	h.Decisions.Record(r.Context(), decisionlog.Entry{TenantID: tenantID, Source: decisionlog.SourceRelationCheck, Subject: in.UserID,
+		Resource: in.Object, Action: in.Relation, Allowed: dec.Allow, Model: dec.Model, Rule: dec.Rule, ReasonCode: dec.ReasonCode})
 	dec = h.Decider.ForViewer(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, dec)
 	out := map[string]any{"allowed": dec.Allow, "decided_by": dec.DecidedBy()}
 	if r.URL.Query().Get("explain") == "true" {

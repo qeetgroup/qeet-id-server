@@ -15,8 +15,8 @@ import (
 
 const createCredential = `-- name: CreateCredential :one
 
-INSERT INTO auth.credentials (tenant_id, subject, type, claims, expires_at)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO auth.credentials (tenant_id, subject, type, claims, expires_at, user_id)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, issued_at
 `
 
@@ -26,6 +26,7 @@ type CreateCredentialParams struct {
 	Type      string
 	Claims    []byte
 	ExpiresAt pgtype.Timestamptz
+	UserID    pgtype.UUID
 }
 
 type CreateCredentialRow struct {
@@ -42,6 +43,7 @@ func (q *Queries) CreateCredential(ctx context.Context, arg CreateCredentialPara
 		arg.Type,
 		arg.Claims,
 		arg.ExpiresAt,
+		arg.UserID,
 	)
 	var i CreateCredentialRow
 	err := row.Scan(&i.ID, &i.IssuedAt)
@@ -61,18 +63,43 @@ func (q *Queries) GetCredentialRevocation(ctx context.Context, id uuid.UUID) (pg
 	return revoked_at, err
 }
 
+const isOrganisationMember = `-- name: IsOrganisationMember :one
+SELECT (EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = $1 AND ur.tenant_id = $2)
+     OR EXISTS (SELECT 1 FROM "user".users u WHERE u.id = $1 AND u.tenant_id = $2 AND u.deleted_at IS NULL))::bool
+`
+
+type IsOrganisationMemberParams struct {
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+}
+
+// IsOrganisationMember says whether the person belongs to the organisation:
+// holds a role in it, or has it as their home organisation.
+func (q *Queries) IsOrganisationMember(ctx context.Context, arg IsOrganisationMemberParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isOrganisationMember, arg.UserID, arg.TenantID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const listCredentials = `-- name: ListCredentials :many
-SELECT id, subject, type, issued_at, expires_at, revoked_at
-FROM auth.credentials WHERE tenant_id = $1 ORDER BY issued_at DESC LIMIT 200
+SELECT c.id, c.subject, c.type, c.issued_at, c.expires_at, c.revoked_at,
+       c.user_id, u.email AS user_email, u.display_name AS user_display_name
+FROM auth.credentials c
+LEFT JOIN "user".users u ON u.id = c.user_id
+WHERE c.tenant_id = $1 ORDER BY c.issued_at DESC LIMIT 200
 `
 
 type ListCredentialsRow struct {
-	ID        uuid.UUID
-	Subject   string
-	Type      string
-	IssuedAt  time.Time
-	ExpiresAt pgtype.Timestamptz
-	RevokedAt pgtype.Timestamptz
+	ID              uuid.UUID
+	Subject         string
+	Type            string
+	IssuedAt        time.Time
+	ExpiresAt       pgtype.Timestamptz
+	RevokedAt       pgtype.Timestamptz
+	UserID          pgtype.UUID
+	UserEmail       *string
+	UserDisplayName *string
 }
 
 func (q *Queries) ListCredentials(ctx context.Context, tenantID uuid.UUID) ([]ListCredentialsRow, error) {
@@ -91,6 +118,9 @@ func (q *Queries) ListCredentials(ctx context.Context, tenantID uuid.UUID) ([]Li
 			&i.IssuedAt,
 			&i.ExpiresAt,
 			&i.RevokedAt,
+			&i.UserID,
+			&i.UserEmail,
+			&i.UserDisplayName,
 		); err != nil {
 			return nil, err
 		}

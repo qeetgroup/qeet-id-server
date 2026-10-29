@@ -19,19 +19,35 @@ type User struct {
 	PhoneVerifiedAt *time.Time `json:"phone_verified_at"`
 	DisplayName     *string    `json:"display_name"`
 	AvatarURL       *string    `json:"avatar_url"`
-	// Roles holds the user's role names in the listed tenant. Populated only by
-	// ListByTenant (the members list); empty on single-user fetches.
-	Roles     []string       `json:"roles,omitempty"`
-	Status    string         `json:"status"`
-	Metadata  map[string]any `json:"metadata"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	// List-only enrichment (populated by ListByTenant, nil on single-user
-	// fetches): a security/access snapshot for the Users admin table.
-	MfaEnabled  *bool      `json:"mfa_enabled,omitempty"`
-	GroupsCount *int       `json:"groups_count,omitempty"`
-	LastSeenAt  *time.Time `json:"last_seen_at,omitempty"`
-	LastSeenIP  *string    `json:"last_seen_ip,omitempty"`
+	// Roles holds the user's role names in the organisation reading them, and
+	// AssignedRoles the same roles with their IDs. Set on the members list and
+	// a member's own record, not on account-level reads.
+	Roles         []string       `json:"roles,omitempty"`
+	AssignedRoles []RoleRef      `json:"assigned_roles,omitempty"`
+	Status        string         `json:"status"`
+	Metadata      map[string]any `json:"metadata"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	// A member's standing in the organisation reading them, set where the
+	// roles are: a confirmed second factor, its groups they're in, when and
+	// from where they were last seen there, the name of the organisation that
+	// manages their account, and, for its own suspended people, why and by whom.
+	MfaEnabled     *bool       `json:"mfa_enabled,omitempty"`
+	GroupsCount    *int        `json:"groups_count,omitempty"`
+	LastSeenAt     *time.Time  `json:"last_seen_at,omitempty"`
+	LastSeenIP     *string     `json:"last_seen_ip,omitempty"`
+	HomeTenantName *string     `json:"home_tenant_name,omitempty"`
+	Suspension     *Suspension `json:"suspension,omitempty"`
+}
+
+// SeenBy is u as organisation tenantID sees it: a person whose home is
+// another organisation keeps their metadata from it, as that organisation
+// keeps it about them. It returns u, changed in place.
+func (u *User) SeenBy(tenantID uuid.UUID) *User {
+	if u.TenantID != tenantID {
+		u.Metadata = map[string]any{}
+	}
+	return u
 }
 
 // DeletedUser is the soft-deleted view shown in the recycle bin — enough to
@@ -79,6 +95,8 @@ type BulkUserInput struct {
 type BulkCreateInput struct {
 	TenantID uuid.UUID       `json:"tenant_id"`
 	Users    []BulkUserInput `json:"users" validate:"required,min=1,max=1000"`
+	// RoleID, when set, is given to every user the import makes.
+	RoleID *uuid.UUID `json:"role_id"`
 }
 
 // BulkImportError describes why a single row failed. Line is the row's 1-based
@@ -98,6 +116,14 @@ type BulkImportResult struct {
 	Succeeded int               `json:"succeeded"`
 	Failed    int               `json:"failed"`
 	Errors    []BulkImportError `json:"errors,omitempty"`
+	Created   []BulkCreatedUser `json:"created"`
+}
+
+// BulkCreatedUser is a user a bulk import made, by its row.
+type BulkCreatedUser struct {
+	Line  int       `json:"line"`
+	Email string    `json:"email"`
+	ID    uuid.UUID `json:"id"`
 }
 
 // UpdateInput is what Update takes.

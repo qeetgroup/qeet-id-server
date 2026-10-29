@@ -83,8 +83,8 @@ func TestLoginRecordsAreDeterministic(t *testing.T) {
 	if a[0].Name != "auth.acme.com" || a[0].Value != "fa139717.tenants.id.qeet.in" {
 		t.Errorf("CNAME = %s -> %s", a[0].Name, a[0].Value)
 	}
-	if a[1].Value != "qeetid-verify=fa139717" {
-		t.Errorf("TXT value = %s", a[1].Value)
+	if a[1].Name != "_qeetid-verify.auth.acme.com" || a[1].Value != "qeetid-verify=fa139717" {
+		t.Errorf("TXT = %s -> %s", a[1].Name, a[1].Value)
 	}
 	if a[0] != b[0] || a[1] != b[1] {
 		t.Error("records must be identical across calls")

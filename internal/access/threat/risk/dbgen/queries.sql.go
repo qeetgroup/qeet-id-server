@@ -109,6 +109,38 @@ func (q *Queries) InsertLoginContext(ctx context.Context, arg InsertLoginContext
 	return err
 }
 
+const lockRiskSettings = `-- name: LockRiskSettings :one
+SELECT medium_threshold, high_threshold, force_mfa_at_level,
+       impossible_travel_enabled, min_travel_hours, device_reputation_enabled
+FROM auth.risk_settings WHERE tenant_id = $1
+FOR UPDATE
+`
+
+type LockRiskSettingsRow struct {
+	MediumThreshold         float64
+	HighThreshold           float64
+	ForceMfaAtLevel         string
+	ImpossibleTravelEnabled bool
+	MinTravelHours          float64
+	DeviceReputationEnabled bool
+}
+
+// LockRiskSettings is GetRiskSettings holding the row until the update that
+// replaces it commits.
+func (q *Queries) LockRiskSettings(ctx context.Context, tenantID uuid.UUID) (LockRiskSettingsRow, error) {
+	row := q.db.QueryRow(ctx, lockRiskSettings, tenantID)
+	var i LockRiskSettingsRow
+	err := row.Scan(
+		&i.MediumThreshold,
+		&i.HighThreshold,
+		&i.ForceMfaAtLevel,
+		&i.ImpossibleTravelEnabled,
+		&i.MinTravelHours,
+		&i.DeviceReputationEnabled,
+	)
+	return i, err
+}
+
 const upsertRiskSettings = `-- name: UpsertRiskSettings :exec
 INSERT INTO auth.risk_settings (
     tenant_id, medium_threshold, high_threshold, force_mfa_at_level,

@@ -15,6 +15,7 @@ var statusByCode = map[string]int{
 	errs.CodeUnauthorized:        http.StatusUnauthorized,
 	errs.CodeForbidden:           http.StatusForbidden,
 	errs.CodeStepUpRequired:      http.StatusForbidden,
+	errs.CodeRecentSignIn:        http.StatusForbidden,
 	errs.CodeNotFound:            http.StatusNotFound,
 	errs.CodeConflict:            http.StatusConflict,
 	errs.CodeUnprocessable:       http.StatusUnprocessableEntity,
@@ -24,6 +25,7 @@ var statusByCode = map[string]int{
 	errs.CodeUnsupportedMedia:    http.StatusUnsupportedMediaType,
 	errs.CodeInternal:            http.StatusInternalServerError,
 	errs.CodeNotImplemented:      http.StatusNotImplemented,
+	errs.CodeServerOverloaded:    http.StatusServiceUnavailable,
 
 	// MFA.
 	errs.CodeMFATOTPCodeInvalid:     http.StatusBadRequest,
@@ -63,14 +65,21 @@ var statusByCode = map[string]int{
 	errs.CodeInviteAccountExists:    http.StatusConflict,
 	errs.CodeInviteEmailMismatch:    http.StatusForbidden,
 	errs.CodeInviteEmailNotVerified: http.StatusForbidden,
+	errs.CodeInviteRoleRequired:     http.StatusUnprocessableEntity,
 
 	// Passkeys.
 	errs.CodePasskeyExists:      http.StatusConflict,
 	errs.CodePasskeyLoginFailed: http.StatusUnauthorized,
 
 	// Organization / tenant.
-	errs.CodeOrgSlugTaken:    http.StatusConflict,
-	errs.CodeTenantLastOwner: http.StatusConflict,
+	errs.CodeOrgSlugTaken:               http.StatusConflict,
+	errs.CodeTenantLastOwner:            http.StatusConflict,
+	errs.CodeTenantOwnerOnly:            http.StatusForbidden,
+	errs.CodeTenantSelfSuspend:          http.StatusForbidden,
+	errs.CodeTenantDeletionScheduled:    http.StatusConflict,
+	errs.CodeTenantDeletionNotScheduled: http.StatusConflict,
+	errs.CodeTenantRegionReadOnly:       http.StatusUnprocessableEntity,
+	errs.CodeTenantRegionUnavailable:    http.StatusUnprocessableEntity,
 }
 
 // registerStatuses adds a domain's code→status entries to statusByCode; each
@@ -81,6 +90,10 @@ func registerStatuses(m map[string]int) {
 	}
 }
 
+// ErrorStatus is the HTTP status WriteError would answer e with, for a handler
+// that reports an error inside its response rather than as one.
+func ErrorStatus(e *errs.Error) int { return statusForCode(e.Code) }
+
 // statusForCode returns the HTTP status for a canonical error code. An unmapped
 // code falls back to 400 (client error) — a forgotten mapping should never
 // surface to a user as a 500.
@@ -90,3 +103,7 @@ func statusForCode(code string) int {
 	}
 	return http.StatusBadRequest
 }
+
+// StatusForCode is the HTTP status WriteError answers an error code with, for
+// a handler that shows the error on a page of its own.
+func StatusForCode(code string) int { return statusForCode(code) }

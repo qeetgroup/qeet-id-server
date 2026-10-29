@@ -13,6 +13,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const accountHomeElsewhere = `-- name: AccountHomeElsewhere :one
+SELECT EXISTS (
+    SELECT 1 FROM "user".users u
+    WHERE LOWER(u.email) = LOWER($1) AND u.deleted_at IS NULL
+      AND u.tenant_id IS DISTINCT FROM $2::uuid
+)::bool
+`
+
+type AccountHomeElsewhereParams struct {
+	Email    string
+	TenantID uuid.UUID
+}
+
+// AccountHomeElsewhere reports whether an account holds @email and has a home
+// other than @tenant_id, so an invitation with no role would join it to
+// nothing.
+func (q *Queries) AccountHomeElsewhere(ctx context.Context, arg AccountHomeElsewhereParams) (bool, error) {
+	row := q.db.QueryRow(ctx, accountHomeElsewhere, arg.Email, arg.TenantID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const activateInvitedAccount = `-- name: ActivateInvitedAccount :exec
 UPDATE "user".users SET status = 'active'
 WHERE id = $1
@@ -26,17 +49,55 @@ func (q *Queries) ActivateInvitedAccount(ctx context.Context, userID uuid.UUID) 
 	return err
 }
 
+const countPendingInvites = `-- name: CountPendingInvites :one
+SELECT COUNT(*)::bigint AS pending FROM tenant.invites
+WHERE tenant_id = $1::uuid AND status = 'pending' AND expires_at > NOW()
+`
+
+func (q *Queries) CountPendingInvites(ctx context.Context, tenantID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countPendingInvites, tenantID)
+	var pending int64
+	err := row.Scan(&pending)
+	return pending, err
+}
+
+const countSeatHolders = `-- name: CountSeatHolders :one
+SELECT COUNT(*)::bigint AS holders FROM (
+    SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1::uuid
+    UNION
+    SELECT gm.user_id FROM tenant.group_members gm
+    JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+    WHERE gm.tenant_id = $1::uuid
+) holders
+`
+
+// CountSeatHolders counts the people holding a role in the tenant, directly or
+// through a group that carries one: one seat each, however many roles.
+func (q *Queries) CountSeatHolders(ctx context.Context, tenantID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countSeatHolders, tenantID)
+	var holders int64
+	err := row.Scan(&holders)
+	return holders, err
+}
+
 const countSeats = `-- name: CountSeats :one
 SELECT (
-    (SELECT COUNT(DISTINCT user_id) FROM rbac.user_roles WHERE tenant_id = $1::uuid)
+    (SELECT COUNT(*) FROM (
+        SELECT ur.user_id FROM rbac.user_roles ur WHERE ur.tenant_id = $1::uuid
+        UNION
+        SELECT gm.user_id FROM tenant.group_members gm
+        JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+        WHERE gm.tenant_id = $1::uuid
+    ) holders)
     + (SELECT COUNT(*) FROM tenant.invites
         WHERE tenant_id = $1::uuid AND status = 'pending' AND expires_at > NOW())
 )::bigint AS seats
 `
 
 // CountSeats returns the tenant's seats in use = distinct members (users holding
-// any role in the tenant) plus still-actionable pending invites. Backs the plan
-// seat limit checked before an invite/user is created.
+// any role in the tenant, directly or through a group that carries one) plus
+// still-actionable pending invites. Backs the plan seat limit and the usage
+// display; CountSeatHolders and CountPendingInvites are its two halves.
 func (q *Queries) CountSeats(ctx context.Context, tenantID uuid.UUID) (int64, error) {
 	row := q.db.QueryRow(ctx, countSeats, tenantID)
 	var seats int64
@@ -46,7 +107,7 @@ func (q *Queries) CountSeats(ctx context.Context, tenantID uuid.UUID) (int64, er
 
 const declineInviteForEmail = `-- name: DeclineInviteForEmail :one
 UPDATE tenant.invites SET status = 'declined'
-WHERE id = $1 AND email = $2 AND status = 'pending'
+WHERE id = $1 AND LOWER(email) = LOWER($2) AND status = 'pending'
 RETURNING tenant_id, role_id
 `
 
@@ -73,7 +134,7 @@ func (q *Queries) DeclineInviteForEmail(ctx context.Context, arg DeclineInviteFo
 }
 
 const findUserIDByEmail = `-- name: FindUserIDByEmail :one
-SELECT id FROM "user".users WHERE email = $1
+SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1)
 `
 
 // FindUserIDByEmail resolves an existing account by its (globally-unique) email;
@@ -353,7 +414,7 @@ SELECT i.id, i.tenant_id, i.email, i.role_id, i.expires_at, i.created_at,
        t.name AS tenant_name, t.slug AS tenant_slug
 FROM tenant.invites i
 JOIN tenant.tenants t ON t.id = i.tenant_id
-WHERE i.email = $1 AND i.status = 'pending' AND i.expires_at > NOW()
+WHERE LOWER(i.email) = LOWER($1) AND i.status = 'pending' AND i.expires_at > NOW()
 ORDER BY i.created_at DESC
 LIMIT 50
 `
@@ -398,10 +459,21 @@ func (q *Queries) ListInvitesForEmail(ctx context.Context, email string) ([]List
 	return items, nil
 }
 
+const lockSeats = `-- name: LockSeats :exec
+SELECT pg_advisory_xact_lock(hashtext('seats'), hashtext($1::uuid::text))
+`
+
+// LockSeats holds the tenant's seats until the transaction ends, so two
+// changes can't each take the last one.
+func (q *Queries) LockSeats(ctx context.Context, tenantID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockSeats, tenantID)
+	return err
+}
+
 const lookupInvite = `-- name: LookupInvite :one
 SELECT i.id, i.tenant_id, i.email, i.status, i.expires_at,
        t.name AS tenant_name, t.slug AS tenant_slug,
-       EXISTS (SELECT 1 FROM "user".users u WHERE u.email = i.email) AS account_exists
+       EXISTS (SELECT 1 FROM "user".users u WHERE LOWER(u.email) = LOWER(i.email)) AS account_exists
 FROM tenant.invites i
 JOIN tenant.tenants t ON t.id = i.tenant_id
 WHERE i.token_hash = $1

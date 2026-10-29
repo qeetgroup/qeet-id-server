@@ -18,7 +18,9 @@ UPDATE tenant.log_sinks
 SET cursor_created_at = $1,
     cursor_id         = $2,
     last_forwarded_at = NOW(),
-    last_error        = ''
+    last_error        = '',
+    failures          = 0,
+    next_attempt_at   = NULL
 WHERE id = $3
 `
 
@@ -32,6 +34,35 @@ type AdvanceLogSinkCursorParams struct {
 func (q *Queries) AdvanceLogSinkCursor(ctx context.Context, arg AdvanceLogSinkCursorParams) error {
 	_, err := q.db.Exec(ctx, advanceLogSinkCursor, arg.CursorCreatedAt, arg.CursorID, arg.ID)
 	return err
+}
+
+const claimLogSink = `-- name: ClaimLogSink :one
+UPDATE tenant.log_sinks
+SET leased_until = $1::timestamptz
+WHERE id = $2 AND enabled
+  AND (leased_until IS NULL OR leased_until < NOW())
+  AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+RETURNING cursor_created_at, cursor_id
+`
+
+type ClaimLogSinkParams struct {
+	LeasedUntil time.Time
+	ID          uuid.UUID
+}
+
+type ClaimLogSinkRow struct {
+	CursorCreatedAt pgtype.Timestamptz
+	CursorID        pgtype.UUID
+}
+
+// ClaimLogSink leases an enabled sink due an attempt to this instance until
+// @leased_until, and returns its cursor. No row: another instance holds it,
+// or it is backing off.
+func (q *Queries) ClaimLogSink(ctx context.Context, arg ClaimLogSinkParams) (ClaimLogSinkRow, error) {
+	row := q.db.QueryRow(ctx, claimLogSink, arg.LeasedUntil, arg.ID)
+	var i ClaimLogSinkRow
+	err := row.Scan(&i.CursorCreatedAt, &i.CursorID)
+	return i, err
 }
 
 const deleteLogSink = `-- name: DeleteLogSink :execrows
@@ -54,7 +85,8 @@ func (q *Queries) DeleteLogSink(ctx context.Context, arg DeleteLogSinkParams) (i
 
 const fetchAuditEventsAfterCursor = `-- name: FetchAuditEventsAfterCursor :many
 SELECT id, tenant_id, actor_user_id, actor_type, action, resource_type,
-       resource_id, COALESCE(host(ip), '')::text AS host, request_id, created_at
+       resource_id, COALESCE(host(ip), '')::text AS host, request_id, created_at,
+       user_agent, metadata
 FROM audit.events
 WHERE tenant_id = $1
   AND (created_at > $2 OR (created_at = $2 AND id > $3))
@@ -80,6 +112,8 @@ type FetchAuditEventsAfterCursorRow struct {
 	Host         string
 	RequestID    *string
 	CreatedAt    time.Time
+	UserAgent    *string
+	Metadata     []byte
 }
 
 // Fetch audit events strictly after (after_at, after_id) for a tenant.
@@ -112,6 +146,8 @@ func (q *Queries) FetchAuditEventsAfterCursor(ctx context.Context, arg FetchAudi
 			&i.Host,
 			&i.RequestID,
 			&i.CreatedAt,
+			&i.UserAgent,
+			&i.Metadata,
 		); err != nil {
 			return nil, err
 		}
@@ -171,6 +207,16 @@ func (q *Queries) ListLogSinks(ctx context.Context, tenantID uuid.UUID) ([]ListL
 	return items, nil
 }
 
+const releaseLogSink = `-- name: ReleaseLogSink :exec
+UPDATE tenant.log_sinks SET leased_until = NULL WHERE id = $1
+`
+
+// ReleaseLogSink ends this instance's lease on a sink.
+func (q *Queries) ReleaseLogSink(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, releaseLogSink, id)
+	return err
+}
+
 const setLogSinkEnabled = `-- name: SetLogSinkEnabled :execrows
 UPDATE tenant.log_sinks
 SET enabled = $1
@@ -193,7 +239,9 @@ func (q *Queries) SetLogSinkEnabled(ctx context.Context, arg SetLogSinkEnabledPa
 
 const setLogSinkError = `-- name: SetLogSinkError :exec
 UPDATE tenant.log_sinks
-SET last_error = $1
+SET last_error      = $1,
+    failures        = failures + 1,
+    next_attempt_at = NOW() + LEAST(INTERVAL '1 hour', INTERVAL '10 seconds' * power(2, LEAST(failures, 12)))
 WHERE id = $2
 `
 
@@ -202,7 +250,9 @@ type SetLogSinkErrorParams struct {
 	ID        uuid.UUID
 }
 
-// Record a delivery error on a sink without advancing its cursor.
+// Record a delivery error on a sink without advancing its cursor, and put
+// its next attempt off: twice as long after each failure in a row, from 10
+// seconds up to an hour.
 func (q *Queries) SetLogSinkError(ctx context.Context, arg SetLogSinkErrorParams) error {
 	_, err := q.db.Exec(ctx, setLogSinkError, arg.LastError, arg.ID)
 	return err

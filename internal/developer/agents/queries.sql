@@ -24,7 +24,7 @@ RETURNING id, name, scopes, token_ttl_seconds, sponsor_user_id, created_at;
 
 -- name: ListAgents :many
 -- At most paging.MaxListItems+1 rows: the API truncates the rest.
-SELECT id, name, scopes, token_ttl_seconds, status, sponsor_user_id, created_at
+SELECT id, name, scopes, token_ttl_seconds, status, sponsor_user_id, created_at, last_used_at, previous_secret_expires_at
 FROM auth.agents
 WHERE tenant_id = $1 AND status <> 'decommissioned'
 ORDER BY created_at DESC
@@ -50,8 +50,25 @@ UPDATE auth.agents SET status = 'suspended', disabled_at = NOW()
 WHERE tenant_id = $1 AND status = 'active';
 
 -- name: GetAgentForToken :one
-SELECT tenant_id, secret_hash, scopes, token_ttl_seconds, status
+SELECT tenant_id, secret_hash, scopes, token_ttl_seconds, status, previous_secret_hash, previous_secret_expires_at
 FROM auth.agents WHERE id = $1;
+
+-- TouchAgent notes a token issued to the agent, at most once a minute.
+-- name: TouchAgent :exec
+UPDATE auth.agents SET last_used_at = NOW()
+WHERE id = @id AND tenant_id = @tenant_id AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '1 minute');
+
+-- RotateAgentSecret makes the new secret current and keeps the old one
+-- working until previous_expires_at.
+-- name: RotateAgentSecret :one
+UPDATE auth.agents
+SET previous_secret_hash = secret_hash, previous_secret_expires_at = @previous_expires_at, secret_hash = @secret_hash
+WHERE id = @id AND tenant_id = @tenant_id AND status <> 'decommissioned'
+RETURNING name;
+
+-- name: ResumeAllAgents :execrows
+UPDATE auth.agents SET status = 'active', disabled_at = NULL
+WHERE tenant_id = $1 AND status = 'suspended';
 
 -- Transition helpers: resume sets status active and clears disabled_at;
 -- suspend/decommission sets the given status and stamps disabled_at = NOW().

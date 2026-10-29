@@ -1,6 +1,10 @@
 package risk
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+)
 
 func TestDeviceKey(t *testing.T) {
 	cases := []struct {
@@ -71,5 +75,19 @@ func TestComputeLevel_SignalsOffWhenFlagsFalse(t *testing.T) {
 	}
 	if withoutSignals != Low {
 		t.Errorf("botScore=0.10 alone = %v, want Low", withoutSignals)
+	}
+}
+
+// TestSettingsReportTheCountrySignal checks that the risk settings say whether
+// a country header is configured, whatever a client sent for that field.
+func TestSettingsReportTheCountrySignal(t *testing.T) {
+	httpx.SetGeoCountryHeader("")
+	if st := withCountrySignal(Settings{CountryHeaderConfigured: true}); st.CountryHeaderConfigured {
+		t.Error("no header configured, but the settings say there is")
+	}
+	httpx.SetGeoCountryHeader("CloudFront-Viewer-Country")
+	defer httpx.SetGeoCountryHeader("")
+	if st := withCountrySignal(Settings{}); !st.CountryHeaderConfigured {
+		t.Error("a header configured, but the settings say there isn't")
 	}
 }

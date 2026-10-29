@@ -57,12 +57,13 @@ func threatSettings(w *world.World) {
 		if at.After(w.Now) {
 			at = w.Now.Add(-day)
 		}
+		by := first(o, at, withRole(world.RoleSecurity, world.RoleAdmin))
 		w.At(at, func() {
 			if s.risk.HighThreshold > 0 {
-				_, err := w.Deps.Risk.Service.UpdateSettings(w.Ctx, o.ID, s.risk)
+				_, err := w.Deps.Risk.Service.UpdateSettings(w.Ctx, o.ID, s.risk, by.Actor())
 				w.Check(err, "risk settings for "+s.slug)
 			}
-			_, err := w.Deps.Bot.Service.UpdateSettings(w.Ctx, o.ID, s.bot)
+			_, err := w.Deps.Bot.Service.UpdateSettings(w.Ctx, o.ID, s.bot, by.Actor())
 			w.Check(err, "bot settings for "+s.slug)
 		})
 		if s.risk.HighThreshold > 0 {
@@ -299,9 +300,10 @@ func resolveAttack(w *world.World, a attack, t time.Time) {
 		events = append(events, id)
 	}
 	rows.Close()
+	by := first(a.o, t, withRole(world.RoleSecurity, world.RoleAdmin))
 	w.At(t, func() {
 		for _, id := range events {
-			w.Check(w.Deps.Threat.Service.Resolve(w.Ctx, id, a.o.ID), "resolve a security event")
+			w.Check(w.Deps.Threat.Service.Resolve(w.Ctx, id, a.o.ID, by.Actor()), "resolve a security event")
 		}
 	})
 	w.Exec("read lock alerts", `

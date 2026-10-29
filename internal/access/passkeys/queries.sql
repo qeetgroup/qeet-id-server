@@ -5,8 +5,16 @@
 SELECT id, user_id, name, transports, last_used_at, created_at
 FROM auth.passkey_credentials WHERE user_id = $1 ORDER BY created_at DESC;
 
--- name: DeletePasskeyCredential :execrows
-DELETE FROM auth.passkey_credentials WHERE id = $1 AND user_id = $2;
+-- DeletePasskeyCredential returns the removed passkey's name; another user's
+-- passkey matches no row.
+-- name: DeletePasskeyCredential :one
+DELETE FROM auth.passkey_credentials WHERE id = $1 AND user_id = $2
+RETURNING name;
+
+-- LockPasskeyCredentialName locks one of the user's passkeys for a rename and
+-- returns its current name.
+-- name: LockPasskeyCredentialName :one
+SELECT name FROM auth.passkey_credentials WHERE id = $1 AND user_id = $2 FOR UPDATE;
 
 -- RenamePasskeyCredential is scoped to the owner like the delete: another
 -- user's passkey matches no row.
@@ -87,9 +95,10 @@ INSERT INTO "user".users (id, tenant_id, email, display_name)
 VALUES ($1, $2, $3, $4)
 RETURNING id;
 
--- name: InsertPasskeyCredential :exec
+-- name: InsertPasskeyCredential :one
 INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, sign_count, aaguid, transports, name, backup_eligible, backup_state)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id;
 
 -- name: UpdatePasskeySignCount :exec
 -- After a verified assertion: the new counter and the current backup state

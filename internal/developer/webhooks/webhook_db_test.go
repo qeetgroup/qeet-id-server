@@ -267,6 +267,24 @@ func TestOutboxEventsReachWebhooksOnce(t *testing.T) {
 	`, refused.ID); n != 1 {
 		t.Error("a delivery the endpoint refused with 410 was not dead-lettered after one attempt")
 	}
+
+	// A delivery that used up its attempts gets a fresh budget when retried.
+	var gaveUp uuid.UUID
+	if err := dbtest.Pool(t).QueryRow(ctx, `
+		UPDATE tenant.webhook_deliveries SET attempt = $2 WHERE event_id = $1 RETURNING id
+	`, refused.ID, maxDeliveryAttempts).Scan(&gaveUp); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RetryDelivery(ctx, gaveUp, tenant); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	ep.answer(http.StatusServiceUnavailable)
+	dispatch(t, svc)
+	if n := dbtest.Count(t, `
+		SELECT count(*) FROM tenant.webhook_deliveries WHERE id = $1 AND dead_at IS NULL AND attempt = 1 AND next_attempt_at > NOW()
+	`, gaveUp); n != 1 {
+		t.Error("a retried delivery that had used its attempts gave up again at once, want it retrying from its first attempt")
+	}
 }
 
 // alerts records the in-app alerts sent.
@@ -403,5 +421,47 @@ func TestRotatedSecretOverlaps(t *testing.T) {
 	got, _ = ep.last("group.created")
 	if want := "sha256=" + sign(rotated.Secret, got.header.Get("X-Qeet-Timestamp"), got.body); got.header.Get("X-Qeet-Signature") != want {
 		t.Errorf("after the overlap: signature %q; want the new secret's alone", got.header.Get("X-Qeet-Signature"))
+	}
+}
+
+// planGate includes webhooks in the plans of the tenants it holds.
+type planGate map[uuid.UUID]bool
+
+func (g planGate) FeatureAllowed(_ context.Context, tenantID uuid.UUID, _ string) (bool, error) {
+	return g[tenantID], nil
+}
+
+// TestLapsedPlanStopsDeliveries checks that a subscription set up while the
+// plan included webhooks delivers nothing once the plan has lapsed: its
+// deliveries are dead-lettered unsent, and one sent again after paying again
+// goes out.
+func TestLapsedPlanStopsDeliveries(t *testing.T) {
+	ctx := dbtest.Context(t)
+	svc, ep := dispatchService(t), newEndpoint(t)
+	tenant := dbtest.Tenant(t)
+	plans := planGate{tenant: true}
+	svc.SetPlanGate(plans)
+	subscribe(t, svc, tenant, ep.URL, "group.created")
+
+	delete(plans, tenant) // the plan lapses
+	event := groupCreated(tenant)
+	dispatch(t, svc, event)
+	if _, n := ep.last("group.created"); n != 0 {
+		t.Fatalf("endpoint received %d deliveries after the plan lapsed, want none", n)
+	}
+	var id uuid.UUID
+	if err := dbtest.Pool(t).QueryRow(ctx, `
+		SELECT id FROM tenant.webhook_deliveries WHERE event_id = $1 AND dead_at IS NOT NULL AND attempt = 0 AND error = $2
+	`, event.ID, errNotInPlan).Scan(&id); err != nil {
+		t.Fatalf("the delivery was not dead-lettered unsent: %v", err)
+	}
+
+	plans[tenant] = true // paid again
+	if err := svc.RetryDelivery(ctx, id, tenant); err != nil {
+		t.Fatal(err)
+	}
+	dispatch(t, svc)
+	if _, n := ep.last("group.created"); n != 1 {
+		t.Errorf("endpoint received %d deliveries once paid again, want 1", n)
 	}
 }

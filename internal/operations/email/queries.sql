@@ -24,3 +24,13 @@ ON CONFLICT (tenant_id, template_key) DO UPDATE
 -- name: DeleteEmailTemplate :exec
 DELETE FROM tenant.email_templates
 WHERE tenant_id = @tenant_id AND template_key = @template_key;
+
+-- GetRecipientLocale is the language the account at an address chose for its
+-- profile, empty for none, if the account belongs to the organisation: its home
+-- or one where it holds a role.
+-- name: GetRecipientLocale :one
+SELECT COALESCE(u.metadata->>'locale', '')::text AS locale
+FROM "user".users u
+WHERE LOWER(u.email) = LOWER(@email) AND u.deleted_at IS NULL
+  AND (u.tenant_id = @tenant_id::uuid
+       OR EXISTS (SELECT 1 FROM rbac.user_roles r WHERE r.user_id = u.id AND r.tenant_id = @tenant_id::uuid));

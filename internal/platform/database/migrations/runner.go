@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -131,12 +132,27 @@ func Latest() (uint, error) {
 	return latest, nil
 }
 
+// lockTimeout bounds how long a migration waits for a table another
+// connection holds. Waiting longer would queue every query to that table
+// behind the migration and stall the application, so the migration fails
+// instead and runs again at the next start. A test shortens it.
+var lockTimeout = "10s"
+
 func open(dbURL string) (*migrate.Migrate, error) {
 	d, err := iofs.New(sqlFiles, ".")
 	if err != nil {
 		return nil, fmt.Errorf("migration source: %w", err)
 	}
-	m, err := migrate.NewWithSourceInstance("iofs", d, dbURL)
+	u, err := url.Parse(dbURL)
+	if err != nil {
+		return nil, fmt.Errorf("migration database url: %w", err)
+	}
+	q := u.Query()
+	if q.Get("lock_timeout") == "" {
+		q.Set("lock_timeout", lockTimeout) // a server setting, passed at connection start
+	}
+	u.RawQuery = q.Encode()
+	m, err := migrate.NewWithSourceInstance("iofs", d, u.String())
 	if err != nil {
 		return nil, fmt.Errorf("migration init: %w", err)
 	}

@@ -213,6 +213,8 @@ func (h *Handler) confirmEnroll(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	h.Service.tellAccountChange(ctx, *p.UserID, "Two-step verification was turned on",
+		"An authenticator app was set up for two-step verification on your Qeet ID account; its codes are now asked for when you sign in.")
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"recovery_codes": codes,
 		"warning":        "store these once; they will not be shown again",
@@ -332,6 +334,8 @@ func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	h.Service.tellAccountChange(ctx, *p.UserID, "Two-step verification was turned off",
+		"The authenticator app was removed from your Qeet ID account, with its recovery codes, so its codes are no longer asked for when you sign in.")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -402,6 +406,8 @@ func (h *Handler) regenerateRecovery(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	h.Service.tellAccountChange(ctx, *p.UserID, "New recovery codes were made for your account",
+		"New two-step verification recovery codes were made for your Qeet ID account. The ones you had before no longer work.")
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"recovery_codes": out,
 		"warning":        "store these once; they will not be shown again",
@@ -502,6 +508,8 @@ func (h *Handler) enrollOTPConfirm(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	h.Service.tellAccountChange(ctx, *p.UserID, "A way to get sign-in codes was added to your account",
+		"A phone number or email address that receives two-step verification codes was added to your Qeet ID account.")
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"verified": true})
 }
 
@@ -565,6 +573,8 @@ func (h *Handler) deleteOTPFactor(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	h.Service.tellAccountChange(ctx, *p.UserID, "A way to get sign-in codes was removed from your account",
+		"A phone number or email address that received two-step verification codes was removed from your Qeet ID account.")
 	w.WriteHeader(http.StatusNoContent)
 }
 

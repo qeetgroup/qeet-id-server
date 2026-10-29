@@ -21,6 +21,8 @@ type Tenant struct {
 	Metadata  map[string]any `json:"metadata"`
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
+	// DeletionDueAt is when a scheduled deletion takes effect; nil: none.
+	DeletionDueAt *time.Time `json:"deletion_due_at"`
 	// List-only enrichment (populated by List; nil on single-tenant fetches):
 	// per-org member counts for the Organizations admin table.
 	MemberCount     *int64 `json:"member_count,omitempty"`

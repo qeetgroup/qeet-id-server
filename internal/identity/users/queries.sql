@@ -137,7 +137,8 @@ LIMIT 1;
 -- timeout. Sessions in no tenant belong to the account, so only its home tenant
 -- sees them. ip goes through host() and COALESCE to scan as a plain string.
 -- name: ListUserActiveSessions :many
-SELECT s.id, COALESCE(host(s.ip), '')::text AS ip, s.user_agent, s.created_at, s.last_seen_at
+SELECT s.id, COALESCE(host(s.ip), '')::text AS ip, s.user_agent, s.created_at, s.last_seen_at,
+       COALESCE(s.country, '')::text AS country, COALESCE(s.city, '')::text AS city
 FROM auth.sessions s
 JOIN "user".users u ON u.id = s.user_id
 WHERE s.user_id = @user_id AND s.revoked_at IS NULL
@@ -315,3 +316,25 @@ WHERE user_id = @user_id AND tenant_id = @tenant_id AND revoked_at IS NULL;
 -- name: RevokeUserAPIKeysInTenant :exec
 UPDATE auth.api_keys SET revoked_at = NOW()
 WHERE user_id = @user_id AND tenant_id = @tenant_id AND revoked_at IS NULL;
+
+-- name: ListUserPasskeys :many
+SELECT id, name, created_at, last_used_at
+FROM auth.passkey_credentials
+WHERE user_id = @user_id
+ORDER BY created_at;
+
+-- name: DeleteUserPasskey :one
+DELETE FROM auth.passkey_credentials WHERE id = @id AND user_id = @user_id
+RETURNING name;
+
+-- EndMemberSession ends one of a person's live sessions in the tenant, as
+-- ListUserActiveSessions shows them, and returns its organisation for the
+-- session.revoked signal (the nil UUID for none). No row: it isn't theirs
+-- there, or has already ended.
+-- name: EndMemberSession :one
+UPDATE auth.sessions s SET revoked_at = NOW()
+WHERE s.id = @id AND s.user_id = @user_id AND s.revoked_at IS NULL
+  AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
+  AND (s.tenant_id = @tenant_id::uuid
+       OR (s.tenant_id IS NULL AND EXISTS (SELECT 1 FROM "user".users u WHERE u.id = s.user_id AND u.tenant_id = @tenant_id::uuid)))
+RETURNING COALESCE(s.tenant_id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS tenant_id;

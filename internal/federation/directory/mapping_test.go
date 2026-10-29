@@ -2,7 +2,9 @@ package directory
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -240,5 +242,39 @@ func TestSaveRefusesAnInvalidMappingWithItsCode(test *testing.T) {
 				test.Errorf("field error = %+v, want field %q code %q", got, scenario.field, scenario.code)
 			}
 		})
+	}
+}
+
+// TestPreviewShowsTheEffectiveProfile checks that a preview names, for every
+// field, its value and whether a mapping or the connection's default set it,
+// a mapping winning over a default.
+func TestPreviewShowsTheEffectiveProfile(test *testing.T) {
+	title := Mapping{ID: uuid.New(), Source: "title", Target: "title", ValueType: "string", Transform: "trim", Enabled: true}
+	email := Mapping{ID: uuid.New(), Source: "workEmail", Target: "email", ValueType: "string", Transform: "lowercase", Enabled: true}
+	source := map[string]any{"userName": "jo@example.test", "displayName": "Jo", "title": " Lead ", "workEmail": "JO.WORK@example.test"}
+	defaults := map[string]string{"email": "userName", "display_name": "displayName"}
+
+	preview := PreviewMappings([]Mapping{title}, source, false)
+	preview.withDefaults([]Mapping{title}, defaults, source)
+	want := map[string]EffectiveField{
+		"title":        {Value: "Lead", From: "mapping", Attribute: "title"},
+		"email":        {Value: "jo@example.test", From: "default", Attribute: "userName"},
+		"display_name": {Value: "Jo", From: "default", Attribute: "displayName"},
+	}
+	if fmt.Sprint(preview.Effective) != fmt.Sprint(want) {
+		test.Errorf("effective %v, want %v", preview.Effective, want)
+	}
+
+	preview = PreviewMappings([]Mapping{title, email}, source, false)
+	preview.withDefaults([]Mapping{title, email}, defaults, source)
+	if got := preview.Effective["email"]; got.From != "mapping" || got.Value != "jo.work@example.test" {
+		test.Errorf("a mapped email: %+v, want the mapping's value over the default", got)
+	}
+
+	connection := uuid.New()
+	service := NewService(&scimFixture{config: &scim.ConfigView{}}, &ldapFixture{records: []ldap.Connection{{ID: connection, NameAttribute: "displayName"}}})
+	got, err := service.defaultAttributes(context.Background(), uuid.New(), connection.String())
+	if err != nil || got["email"] != "mail" || got["display_name"] != "displayName" {
+		test.Errorf("an LDAP connection's defaults: %v, %v; want mail and its own name attribute", got, err)
 	}
 }

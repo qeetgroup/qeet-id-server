@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -36,18 +37,43 @@ type Group struct {
 	CreatedAt   time.Time  `json:"created_at"`
 	// MemberCount is set by List only; Create and Update leave it zero.
 	MemberCount int `json:"member_count"`
+	// Roles are the roles granted to the group itself, set by List only for a
+	// caller who may read roles; absent otherwise.
+	Roles *[]GroupRole `json:"roles,omitempty"`
 }
 
-// Service manages the groups.
+// GroupRole is a role granted to a group.
+type GroupRole struct {
+	RoleID uuid.UUID `json:"role_id"`
+	Name   string    `json:"name"`
+}
+
+// Service manages the groups. seats keeps the people holding a role, which a
+// group can carry, within the plan's seats; nil turns that off.
 type Service struct {
-	pool *pgxpool.Pool
-	q    *dbgen.Queries
+	pool  *pgxpool.Pool
+	q     *dbgen.Queries
+	seats SeatGuard
 }
 
 // NewService returns the group service.
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool)}
 }
+
+// SeatGuard keeps the people holding a role in a tenant within its plan's
+// seats. Satisfied by *invite.Service.
+type SeatGuard interface {
+	// SeatLimit returns the tenant's seat cap, negative for none; it reads on
+	// the pool, so it is asked before the transaction.
+	SeatLimit(ctx context.Context, tenantID uuid.UUID) (int, error)
+	// WithinSeats runs change in tx and refuses it when it gives someone a
+	// first role beyond limit.
+	WithinSeats(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, limit int, change func() error) error
+}
+
+// SetSeatGuard wires the seat limit (nil disables it).
+func (s *Service) SetSeatGuard(g SeatGuard) { s.seats = g }
 
 // CreateInput is what Create takes.
 type CreateInput struct {
@@ -211,6 +237,59 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Group, error)
 	return out, rows.Err()
 }
 
+// WithRoles sets on each of the tenant's groups the roles granted to it, all
+// read in one query.
+func (s *Service) WithRoles(ctx context.Context, tenantID uuid.UUID, groups []Group) error {
+	rows, err := s.pool.Query(ctx, `
+		SELECT gr.group_id, gr.role_id, ro.name
+		FROM rbac.group_roles gr
+		JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.tenant_id = gr.tenant_id
+		WHERE gr.tenant_id = $1
+		ORDER BY ro.name, gr.role_id
+	`, tenantID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	byGroup := map[uuid.UUID][]GroupRole{}
+	for rows.Next() {
+		var groupID uuid.UUID
+		var role GroupRole
+		if err := rows.Scan(&groupID, &role.RoleID, &role.Name); err != nil {
+			return err
+		}
+		byGroup[groupID] = append(byGroup[groupID], role)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range groups {
+		roles := byGroup[groups[i].ID]
+		if roles == nil {
+			roles = []GroupRole{}
+		}
+		groups[i].Roles = &roles
+	}
+	return nil
+}
+
+// filterByRoles keeps the groups that grant role (when set) and that grant some
+// or no role (grants "some" or "none"; "" for either).
+func filterByRoles(groups []Group, role *uuid.UUID, grants string) []Group {
+	out := groups[:0]
+	for _, g := range groups {
+		roles := *g.Roles
+		if grants == "some" && len(roles) == 0 || grants == "none" && len(roles) > 0 {
+			continue
+		}
+		if role != nil && !slices.ContainsFunc(roles, func(r GroupRole) bool { return r.RoleID == *role }) {
+			continue
+		}
+		out = append(out, g)
+	}
+	return out
+}
+
 // Delete removes one of the tenant's groups and its subgroups, recorded as
 // actor's.
 func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
@@ -304,7 +383,16 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 }
 
 // AddMember adds a user to one of the tenant's groups, recorded as actor's.
+// Joining a group that carries a role gives a user holding none a seat,
+// refused with errs.ErrPlanLimit once the plan's seats are all taken.
 func (s *Service) AddMember(ctx context.Context, groupID, userID, tenantID uuid.UUID, actor audit.Actor) error {
+	limit := -1
+	if s.seats != nil {
+		var err error
+		if limit, err = s.seats.SeatLimit(ctx, tenantID); err != nil {
+			return err
+		}
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -320,14 +408,22 @@ func (s *Service) AddMember(ctx context.Context, groupID, userID, tenantID uuid.
 		return errs.ErrGroupNotFound
 	}
 	// Only add someone who is a live member of this tenant; the insert checks it.
-	valid, err := s.q.WithTx(tx).InsertGroupMember(ctx, dbgen.InsertGroupMemberParams{
-		GroupID: groupID, UserID: userID, TenantID: tenantID,
-	})
-	if err != nil {
+	insert := func() error {
+		valid, err := s.q.WithTx(tx).InsertGroupMember(ctx, dbgen.InsertGroupMemberParams{
+			GroupID: groupID, UserID: userID, TenantID: tenantID,
+		})
+		if err == nil && !valid {
+			err = errs.ErrGroupUserNotFound
+		}
 		return err
 	}
-	if !valid {
-		return errs.ErrGroupUserNotFound
+	if s.seats != nil {
+		err = s.seats.WithinSeats(ctx, tx, tenantID, limit, insert)
+	} else {
+		err = insert()
+	}
+	if err != nil {
+		return err
 	}
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "group.member_added", "group", groupID,
 		map[string]any{"user_id": userID})); err != nil {
@@ -395,6 +491,13 @@ func (s *Service) ListMembers(ctx context.Context, groupID, tenantID uuid.UUID) 
 // Handler serves the group HTTP API.
 type Handler struct {
 	Service *Service
+	// GrantCheck refuses adding someone to a group whose roles carry authority
+	// the caller doesn't hold (rbac.Repository.CheckGrantGroup). Without it
+	// adding a member is refused.
+	GrantCheck func(ctx context.Context, caller *httpx.Principal, tenantID, groupID uuid.UUID) error
+	// ReadsRoles reports whether the caller may read roles (role.read), and so
+	// sees each listed group's roles. Without it no one does.
+	ReadsRoles func(r *http.Request) bool
 }
 
 // Mount registers the group routes on r.
@@ -443,10 +546,37 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("tenant mismatch"))
 		return
 	}
+	query := r.URL.Query()
+	var role *uuid.UUID
+	if raw := query.Get("role"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid role"))
+			return
+		}
+		role = &id
+	}
+	grants := query.Get("grants")
+	if grants != "" && grants != "some" && grants != "none" {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("grants must be some or none"))
+		return
+	}
+	readsRoles := h.ReadsRoles != nil && h.ReadsRoles(r)
+	if !readsRoles && (role != nil || grants != "") {
+		httpx.WriteError(w, r, errs.ErrRBACPermissionDenied.WithDetail("filtering by role needs role.read"))
+		return
+	}
 	out, err := h.Service.List(r.Context(), tenantID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
+	}
+	if readsRoles {
+		if err := h.Service.WithRoles(r.Context(), tenantID, out); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		out = filterByRoles(out, role, grants)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }
@@ -506,6 +636,14 @@ func (h *Handler) addMember(w http.ResponseWriter, r *http.Request) {
 	}
 	tenantID, err := httpx.RequireTenant(r)
 	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if h.GrantCheck == nil {
+		httpx.WriteError(w, r, errs.ErrNotImplemented)
+		return
+	}
+	if err := h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, id); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

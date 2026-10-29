@@ -48,7 +48,7 @@ type errorFilter struct {
 	Resolution string
 }
 
-const errorWhere = `tenant_id=$1 AND started_at >= $2 AND ($3='' OR connection_id=$3) AND ($4='' OR severity=$4) AND ($5='' OR resolution=$5) AND ($6='' OR message ILIKE '%'||$6||'%' OR error_code ILIKE '%'||$6||'%' OR resource_id ILIKE '%'||$6||'%') AND status <> 'success'`
+const errorWhere = `tenant_id=$1 AND started_at >= $2 AND ($3='' OR connection_id=$3) AND ($4='' OR severity=$4) AND ($5='' OR resolution=$5) AND ($6='' OR message ILIKE '%'||$6||'%' OR error_code ILIKE '%'||$6||'%' OR reason ILIKE '%'||$6||'%' OR subject ILIKE '%'||$6||'%' OR resource_id ILIKE '%'||$6||'%') AND status <> 'success' AND status <> 'warning'`
 
 // Errors returns one page of the tenant's directory errors.
 func (service *Service) Errors(ctx context.Context, tenantID uuid.UUID, filter errorFilter) (ErrorPage, error) {
@@ -189,13 +189,39 @@ func (handler *Handler) changeError(response http.ResponseWriter, request *http.
 		return
 	}
 	ctx := request.Context()
+	const openError = `SELECT ` + eventColumns + ` FROM tenant.directory_events WHERE tenant_id=$1 AND id=$2 AND status = 'failed'`
+	resolution, action, success := "resolved", "directory.error_resolved", true
+	if retry {
+		// The check runs before the error's row is locked: it records its own
+		// event, pointing back at this error, which a held lock would block.
+		event, err := scanEvent(handler.Service.pool.QueryRow(ctx, openError, tenantID, eventID))
+		if errors.Is(err, pgx.ErrNoRows) {
+			httpx.WriteError(response, request, errs.ErrNotFound)
+			return
+		}
+		if err != nil {
+			httpx.WriteError(response, request, err)
+			return
+		}
+		tester, ok := handler.Service.ldap.(LDAPTester)
+		connectionID, parseErr := uuid.Parse(event.ConnectionID)
+		if !ok || parseErr != nil || !canRetry(event) {
+			httpx.WriteError(response, request, errs.ErrConflict)
+			return
+		}
+		err = tester.TestConnection(context.WithValue(ctx, retryContextKey{}, eventID), tenantID, connectionID)
+		success = err == nil
+		resolution, action = "retried", "directory.error_retried"
+	}
 	tx, err := handler.Service.pool.Begin(ctx)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
 	}
 	defer tx.Rollback(ctx)
-	event, err := scanEvent(tx.QueryRow(ctx, `SELECT `+eventColumns+` FROM tenant.directory_events WHERE tenant_id=$1 AND id=$2 AND status <> 'success' FOR UPDATE`, tenantID, eventID))
+	// NO KEY UPDATE still stops two requests settling the error, and lets a
+	// new event that refers to it be inserted meanwhile.
+	event, err := scanEvent(tx.QueryRow(ctx, openError+` FOR NO KEY UPDATE`, tenantID, eventID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		httpx.WriteError(response, request, errs.ErrNotFound)
 		return
@@ -207,18 +233,6 @@ func (handler *Handler) changeError(response http.ResponseWriter, request *http.
 	if event.Resolution != "open" {
 		httpx.WriteError(response, request, errs.ErrConflict)
 		return
-	}
-	resolution, action, success := "resolved", "directory.error_resolved", true
-	if retry {
-		tester, ok := handler.Service.ldap.(LDAPTester)
-		connectionID, parseErr := uuid.Parse(event.ConnectionID)
-		if !ok || parseErr != nil || !canRetry(event) {
-			httpx.WriteError(response, request, errs.ErrConflict)
-			return
-		}
-		err = tester.TestConnection(context.WithValue(ctx, retryContextKey{}, eventID), tenantID, connectionID)
-		success = err == nil
-		resolution, action = "retried", "directory.error_retried"
 	}
 	if success {
 		var actor *uuid.UUID

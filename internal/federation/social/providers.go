@@ -74,20 +74,39 @@ type UpdateProviderInput struct {
 	ClientID     *string `json:"client_id"`
 	ClientSecret *string `json:"client_secret"`
 	DiscoveryURL *string `json:"discovery_url"`
+	AppleTeamID  *string `json:"apple_team_id"`
+	AppleKeyID   *string `json:"apple_key_id"`
 	Enabled      *bool   `json:"enabled"`
 }
 
 // UpdateProvider changes the given fields of the organisation's provider and
 // returns it. ErrNotFound when the organisation has no such provider —
-// including one that belongs to another organisation.
+// including one that belongs to another organisation. Switching it off is
+// refused with ErrSocialProviderInUse, as deleting it is, while anyone can
+// sign in only through it.
 func (s *Service) UpdateProvider(ctx context.Context, tenantID uuid.UUID, provider string, in UpdateProviderInput, by ChangedBy) (*Provider, error) {
 	var bad []errs.FieldError
 	if in.ClientID != nil && strings.TrimSpace(*in.ClientID) == "" {
 		bad = append(bad, errs.FieldError{Field: "client_id", Code: "required", Message: "Enter the client ID."})
 	}
+	kind := adapterKind(provider)
+	if kind != kindOIDC {
+		in.DiscoveryURL = nil
+	}
+	if kind != kindApple {
+		in.AppleTeamID, in.AppleKeyID = nil, nil
+	}
 	if in.DiscoveryURL != nil && *in.DiscoveryURL != "" {
 		if _, err := s.egress.ValidateHTTPURL(*in.DiscoveryURL); err != nil {
 			bad = append(bad, errs.FieldError{Field: "discovery_url", Code: "invalid", Message: "Enter a public https discovery URL."})
+		}
+	}
+	for _, f := range []struct {
+		name string
+		v    *string
+	}{{"apple_team_id", in.AppleTeamID}, {"apple_key_id", in.AppleKeyID}} {
+		if f.v != nil && strings.TrimSpace(*f.v) == "" {
+			bad = append(bad, errs.FieldError{Field: f.name, Code: "required", Message: "Enter Apple's team ID and key ID."})
 		}
 	}
 	if len(bad) > 0 {
@@ -109,12 +128,41 @@ func (s *Service) UpdateProvider(ctx context.Context, tenantID uuid.UUID, provid
 	defer tx.Rollback(ctx)
 	var wasEnabled bool
 	var id uuid.UUID
+	var clientID string
+	var teamID, keyID *string
 	if err := tx.QueryRow(ctx, `
-		SELECT id, enabled FROM tenant.social_providers
-		WHERE tenant_id = $1 AND provider = $2 FOR UPDATE`, tenantID, provider).Scan(&id, &wasEnabled); errors.Is(err, pgx.ErrNoRows) {
+		SELECT id, enabled, client_id, apple_team_id, apple_key_id FROM tenant.social_providers
+		WHERE tenant_id = $1 AND provider = $2 FOR UPDATE`, tenantID, provider).Scan(&id, &wasEnabled, &clientID, &teamID, &keyID); errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	} else if err != nil {
 		return nil, err
+	}
+	// A new Apple key must sign with the team and key ids it will be used with.
+	if kind == kindApple && replaceSecret {
+		pick := func(given, stored *string) string {
+			if given != nil {
+				return *given
+			}
+			if stored != nil {
+				return *stored
+			}
+			return ""
+		}
+		if in.ClientID != nil {
+			clientID = *in.ClientID
+		}
+		if err := checkAppleKey(clientID, pick(in.AppleTeamID, teamID), pick(in.AppleKeyID, keyID), *in.ClientSecret); err != nil {
+			return nil, err
+		}
+	}
+	if wasEnabled && in.Enabled != nil && !*in.Enabled {
+		dependent, _, err := providerDependents(ctx, tx, tenantID, provider)
+		if err != nil {
+			return nil, err
+		}
+		if dependent > 0 {
+			return nil, errs.ErrSocialProviderInUse.WithMetadata(map[string]any{"people": dependent})
+		}
 	}
 	var p Provider
 	if err := tx.QueryRow(ctx, `
@@ -125,13 +173,16 @@ func (s *Service) UpdateProvider(ctx context.Context, tenantID uuid.UUID, provid
 		    client_secret = CASE WHEN $6::boolean THEN '' ELSE client_secret END,
 		    client_secret_ct = CASE WHEN $6::boolean THEN $7 ELSE client_secret_ct END,
 		    client_secret_nonce = CASE WHEN $6::boolean THEN $8 ELSE client_secret_nonce END,
-		    encryption_version = CASE WHEN $6::boolean THEN 1 ELSE encryption_version END
+		    encryption_version = CASE WHEN $6::boolean THEN 1 ELSE encryption_version END,
+		    apple_team_id = COALESCE($9, apple_team_id),
+		    apple_key_id = COALESCE($10, apple_key_id)
 		WHERE id = $1
-		RETURNING id, tenant_id, provider, client_id, discovery_url, enabled, created_at`,
-		id, in.ClientID, in.DiscoveryURL != nil, in.DiscoveryURL, in.Enabled, replaceSecret, ciphertext, nonce).
-		Scan(&p.ID, &p.TenantID, &p.Provider, &p.ClientID, &p.DiscoveryURL, &p.Enabled, &p.CreatedAt); err != nil {
+		RETURNING id, tenant_id, provider, client_id, discovery_url, enabled, created_at, apple_team_id, apple_key_id`,
+		id, in.ClientID, in.DiscoveryURL != nil, in.DiscoveryURL, in.Enabled, replaceSecret, ciphertext, nonce, in.AppleTeamID, in.AppleKeyID).
+		Scan(&p.ID, &p.TenantID, &p.Provider, &p.ClientID, &p.DiscoveryURL, &p.Enabled, &p.CreatedAt, &p.AppleTeamID, &p.AppleKeyID); err != nil {
 		return nil, err
 	}
+	p.Kind = kind
 
 	var changed []string
 	if in.ClientID != nil {
@@ -139,6 +190,12 @@ func (s *Service) UpdateProvider(ctx context.Context, tenantID uuid.UUID, provid
 	}
 	if in.DiscoveryURL != nil {
 		changed = append(changed, "discovery_url")
+	}
+	if in.AppleTeamID != nil {
+		changed = append(changed, "apple_team_id")
+	}
+	if in.AppleKeyID != nil {
+		changed = append(changed, "apple_key_id")
 	}
 	if replaceSecret {
 		changed = append(changed, "client_secret")
@@ -182,19 +239,8 @@ func (s *Service) DeleteProvider(ctx context.Context, tenantID uuid.UUID, provid
 	} else if err != nil {
 		return err
 	}
-	var dependent, linked int64
-	if err := tx.QueryRow(ctx, `
-		SELECT count(*) FILTER (WHERE
-		           NOT EXISTS (SELECT 1 FROM auth.password_credentials pc WHERE pc.user_id = ei.user_id)
-		       AND NOT EXISTS (SELECT 1 FROM auth.passkey_credentials pk WHERE pk.user_id = ei.user_id)
-		       AND NOT EXISTS (SELECT 1 FROM "user".external_identities other
-		                       WHERE other.user_id = ei.user_id AND other.id <> ei.id
-		                         AND NOT (other.tenant_id = ei.tenant_id AND other.provider = ei.provider))
-		       AND NOT EXISTS (SELECT 1 FROM auth.platform_social_identities ps WHERE ps.user_id = ei.user_id)),
-		       count(*)
-		FROM "user".external_identities ei
-		JOIN "user".users u ON u.id = ei.user_id AND u.deleted_at IS NULL
-		WHERE ei.tenant_id = $1 AND ei.provider = $2`, tenantID, provider).Scan(&dependent, &linked); err != nil {
+	dependent, linked, err := providerDependents(ctx, tx, tenantID, provider)
+	if err != nil {
 		return err
 	}
 	if dependent > 0 {
@@ -209,6 +255,24 @@ func (s *Service) DeleteProvider(ctx context.Context, tenantID uuid.UUID, provid
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// providerDependents counts, on tx, the people who can sign in to the
+// organisation only through provider, and every identity linked to it.
+func providerDependents(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, provider string) (dependent, linked int64, err error) {
+	err = tx.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE
+		           NOT EXISTS (SELECT 1 FROM auth.password_credentials pc WHERE pc.user_id = ei.user_id)
+		       AND NOT EXISTS (SELECT 1 FROM auth.passkey_credentials pk WHERE pk.user_id = ei.user_id)
+		       AND NOT EXISTS (SELECT 1 FROM "user".external_identities other
+		                       WHERE other.user_id = ei.user_id AND other.id <> ei.id
+		                         AND NOT (other.tenant_id = ei.tenant_id AND other.provider = ei.provider))
+		       AND NOT EXISTS (SELECT 1 FROM auth.platform_social_identities ps WHERE ps.user_id = ei.user_id)),
+		       count(*)
+		FROM "user".external_identities ei
+		JOIN "user".users u ON u.id = ei.user_id AND u.deleted_at IS NULL
+		WHERE ei.tenant_id = $1 AND ei.provider = $2`, tenantID, provider).Scan(&dependent, &linked)
+	return dependent, linked, err
 }
 
 func (h *Handler) updateProvider(w http.ResponseWriter, r *http.Request) {

@@ -40,6 +40,15 @@ type session struct {
 	previous *session
 }
 
+// signedIn is when the sign-in s continues happened: a switch of
+// organisation carries its first session's.
+func (s *session) signedIn() time.Time {
+	for s.previous != nil {
+		s = s.previous
+	}
+	return s.created
+}
+
 // idleEnd is when s ends unless renewed first.
 func (s *session) idleEnd() time.Time {
 	end := s.lastSeen.Add(s.idle)

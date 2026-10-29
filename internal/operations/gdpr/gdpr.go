@@ -16,6 +16,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/gdpr/dbgen"
@@ -24,6 +26,13 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
+
+// erasureFailures counts erasures the sweep could not carry out; each is
+// retried once its lease runs out.
+var erasureFailures = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "gdpr_erasure_failures_total",
+	Help: "Erasure requests the background sweep failed to carry out (retried after their lease), such as the organisation's last active owner.",
+})
 
 // Request is a right-to-erasure request.
 type Request struct {
@@ -36,6 +45,13 @@ type Request struct {
 	GraceUntil  time.Time  `json:"grace_until"`
 	CompletedAt *time.Time `json:"completed_at"`
 	CreatedAt   time.Time  `json:"created_at"`
+	// The person's email and name as the request was filed, until they are
+	// erased; Redacted says they were.
+	SubjectEmail *string `json:"subject_email"`
+	SubjectName  *string `json:"subject_name"`
+	Redacted     bool    `json:"subject_redacted"`
+	// GraceDays is how long a request waits before the erasure runs.
+	GraceDays int `json:"grace_period_days"`
 }
 
 // Service handles erasure and data-export requests; Run is its background
@@ -103,7 +119,7 @@ func (s *Service) Request(ctx context.Context, in CreateInput, actor audit.Actor
 	defer tx.Rollback(ctx)
 	row, err := s.q.WithTx(tx).InsertPurgeRequest(ctx, dbgen.InsertPurgeRequestParams{
 		TenantID:    in.TenantID,
-		UserID:      in.UserID,
+		SubjectID:   in.UserID,
 		RequestedBy: pgUUIDNullable(actor.UserID),
 		Reason:      reason,
 		GraceUntil:  time.Now().UTC().Add(s.grace),
@@ -112,6 +128,7 @@ func (s *Service) Request(ctx context.Context, in CreateInput, actor audit.Actor
 		return nil, err
 	}
 	req := purgeRequestFromRow(dbgen.ListPurgeRequestsRow(row))
+	req.GraceDays = s.GraceDays()
 	if err := audit.Record(ctx, tx, actor.Event(req.TenantID, "gdpr.erasure_requested", "purge_request", req.ID,
 		map[string]any{"user_id": req.UserID, "grace_until": req.GraceUntil})); err != nil {
 		return nil, err
@@ -173,23 +190,31 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Request, erro
 	}
 	out := make([]Request, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, *purgeRequestFromRow(r))
+		req := purgeRequestFromRow(r)
+		req.GraceDays = s.GraceDays()
+		out = append(out, *req)
 	}
 	return out, nil
 }
 
+// GraceDays is how many days an erasure request waits before it runs.
+func (s *Service) GraceDays() int { return int(s.grace / (24 * time.Hour)) }
+
 // purgeRequestFromRow converts a purge-request row to a Request.
 func purgeRequestFromRow(r dbgen.ListPurgeRequestsRow) *Request {
 	return &Request{
-		ID:          r.ID,
-		TenantID:    r.TenantID,
-		UserID:      r.UserID,
-		RequestedBy: toUUIDPtr(r.RequestedBy),
-		Reason:      r.Reason,
-		Status:      r.Status,
-		GraceUntil:  r.GraceUntil,
-		CompletedAt: toTimePtr(r.CompletedAt),
-		CreatedAt:   r.CreatedAt,
+		ID:           r.ID,
+		TenantID:     r.TenantID,
+		UserID:       r.SubjectID,
+		RequestedBy:  toUUIDPtr(r.RequestedBy),
+		Reason:       r.Reason,
+		Status:       r.Status,
+		GraceUntil:   r.GraceUntil,
+		CompletedAt:  toTimePtr(r.CompletedAt),
+		CreatedAt:    r.CreatedAt,
+		SubjectEmail: r.SubjectEmail,
+		SubjectName:  r.SubjectName,
+		Redacted:     r.Status == "completed",
 	}
 }
 
@@ -228,7 +253,7 @@ func (s *Service) tick(ctx context.Context) error {
 		SET lease_owner = $1, lease_until = $2
 		FROM candidates
 		WHERE request.id = candidates.id
-		RETURNING request.id, request.user_id
+		RETURNING request.id, request.subject_id
 	`, s.workerID, time.Now().UTC().Add(s.lease))
 	if err != nil {
 		return err
@@ -250,6 +275,7 @@ func (s *Service) tick(ctx context.Context) error {
 	rows.Close()
 	for _, e := range batch {
 		if err := s.purgeOne(ctx, e.ID, e.UserID); err != nil {
+			erasureFailures.Inc()
 			slog.Warn("gdpr purge", "user", e.UserID, "err", err)
 		}
 	}
@@ -257,7 +283,8 @@ func (s *Service) tick(ctx context.Context) error {
 }
 
 // purgeOne erases the user of one leased request. If the user's home tenant
-// does not match the request's, the request is quarantined instead.
+// does not match the request's, the request is quarantined instead; if the
+// account is already gone, the request is completed.
 func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -265,12 +292,11 @@ func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) err
 	}
 	defer tx.Rollback(ctx)
 
-	qTx := dbgen.New(tx)
 	var requestTenant uuid.UUID
 	if err := tx.QueryRow(ctx, `
 		SELECT tenant_id
 		FROM "user".purge_requests
-		WHERE id = $1 AND user_id = $2 AND status = 'pending' AND lease_owner = $3
+		WHERE id = $1 AND subject_id = $2 AND status = 'pending' AND lease_owner = $3
 		FOR UPDATE
 	`, requestID, userID, s.workerID).Scan(&requestTenant); errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -279,12 +305,14 @@ func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) err
 	}
 
 	var userTenant *uuid.UUID
-	if err := tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT tenant_id FROM "user".users WHERE id = $1 FOR UPDATE
-	`, userID).Scan(&userTenant); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	`, userID).Scan(&userTenant)
+	gone := errors.Is(err, pgx.ErrNoRows)
+	if err != nil && !gone {
 		return err
 	}
-	if userTenant == nil || *userTenant != requestTenant {
+	if !gone && (userTenant == nil || *userTenant != requestTenant) {
 		if _, err := tx.Exec(ctx, `
 			UPDATE "user".purge_requests
 			SET status = 'quarantined', quarantined_at = NOW(),
@@ -301,12 +329,15 @@ func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) err
 		return tx.Commit(ctx)
 	}
 
-	if err := s.purgeTenantUserData(ctx, tx, qTx, requestTenant, userID); err != nil {
-		return err
+	if !gone {
+		if err := s.eraseAccount(ctx, tx, userID); err != nil {
+			return err
+		}
 	}
 	tag, err := tx.Exec(ctx, `
 		UPDATE "user".purge_requests
-		SET status = 'completed', completed_at = NOW(), lease_owner = NULL, lease_until = NULL
+		SET status = 'completed', completed_at = NOW(), lease_owner = NULL, lease_until = NULL,
+		    subject_email = NULL, subject_name = NULL
 		WHERE id = $1 AND status = 'pending' AND lease_owner = $2
 	`, requestID, s.workerID)
 	if err != nil {
@@ -321,75 +352,34 @@ func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) err
 	return tx.Commit(ctx)
 }
 
-func (s *Service) purgeTenantUserData(ctx context.Context, tx pgx.Tx, qTx *dbgen.Queries, tenantID, userID uuid.UUID) error {
+// eraseAccount ends the account's sessions, redacts its user row and deletes
+// the rest of its data (see accountData and addressData), in tx. The redacted
+// user row and the audit trail are kept, so past events stay verifiable. The
+// caller has checked that the account may be erased.
+func (s *Service) eraseAccount(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
 	// Sessions first, announced before anything about the account is redacted.
 	if err := s.endSessions(ctx, tx, userID); err != nil {
 		return err
 	}
-	tag, err := tx.Exec(ctx, `
-		UPDATE "user".users
-		SET email              = 'redacted-' || id::text || '@gdpr.invalid',
-		    phone              = NULL,
-		    display_name       = NULL,
-		    metadata           = '{}'::jsonb,
-		    email_verified_at  = NULL,
-		    phone_verified_at  = NULL,
-		    status             = 'deleted',
-		    deleted_at         = COALESCE(deleted_at, NOW()),
-		    updated_at         = NOW()
-		WHERE id = $1 AND tenant_id = $2
-	`, userID, tenantID)
+	email, err := dbgen.New(tx).PurgeUserPII(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errs.ErrNotFound
+	}
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() != 1 {
-		return errs.ErrNotFound
-	}
-	if err := qTx.DeletePasswordCredentials(ctx, userID); err != nil {
-		return err
-	}
-	if err := qTx.DeleteMFATOTP(ctx, userID); err != nil {
-		return err
-	}
-	if err := qTx.DeleteMFARecoveryCodes(ctx, userID); err != nil {
-		return err
-	}
-	return nil
+	return eraseAccountData(ctx, tx, userID, email)
 }
 
-// purgeUserData ends the user's sessions, redacts their PII and deletes their
-// password, TOTP and recovery codes. The redacted user row and the audit rows
-// are kept, so past events stay verifiable.
-func (s *Service) purgeUserData(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
-	// Sessions first, announced before anything about the account is redacted.
-	if err := s.endSessions(ctx, tx, userID); err != nil {
-		return err
-	}
-	qTx := dbgen.New(tx)
-	if err := qTx.PurgeUserPII(ctx, userID); err != nil {
-		return err
-	}
-	if err := qTx.DeletePasswordCredentials(ctx, userID); err != nil {
-		return err
-	}
-	if err := qTx.DeleteMFATOTP(ctx, userID); err != nil {
-		return err
-	}
-	if err := qTx.DeleteMFARecoveryCodes(ctx, userID); err != nil {
-		return err
-	}
-	return nil
-}
-
-// PurgeSelf erases the current user's PII and credentials at once, with no grace
-// period, for self-service account deletion. Audit references are kept.
+// PurgeSelf erases the current user's account at once, with no grace period,
+// for self-service account deletion (see eraseAccount).
 func (s *Service) PurgeSelf(ctx context.Context, userID uuid.UUID) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if err := s.purgeUserData(ctx, tx, userID); err != nil {
+	if err := s.eraseAccount(ctx, tx, userID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -433,14 +423,14 @@ func (s *Service) RequestExport(ctx context.Context, in ExportInput, actor audit
 	defer tx.Rollback(ctx)
 	row, err := s.q.WithTx(tx).InsertExportRequest(ctx, dbgen.InsertExportRequestParams{
 		TenantID:    in.TenantID,
-		UserID:      in.UserID,
+		SubjectID:   in.UserID,
 		RequestedBy: pgUUIDNullable(actor.UserID),
 	})
 	if err != nil {
 		return nil, err
 	}
 	if err := audit.Record(ctx, tx, actor.Event(row.TenantID, "gdpr.export_requested", "export_request", row.ID,
-		map[string]any{"user_id": row.UserID})); err != nil {
+		map[string]any{"user_id": row.SubjectID})); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -449,7 +439,7 @@ func (s *Service) RequestExport(ctx context.Context, in ExportInput, actor audit
 	return &ExportRequest{
 		ID:          row.ID,
 		TenantID:    row.TenantID,
-		UserID:      row.UserID,
+		UserID:      row.SubjectID,
 		RequestedBy: toUUIDPtr(row.RequestedBy),
 		Status:      row.Status,
 		CompletedAt: toTimePtr(row.CompletedAt),
@@ -469,7 +459,7 @@ func (s *Service) ListExports(ctx context.Context, tenantID uuid.UUID) ([]Export
 		out = append(out, ExportRequest{
 			ID:          r.ID,
 			TenantID:    r.TenantID,
-			UserID:      r.UserID,
+			UserID:      r.SubjectID,
 			RequestedBy: toUUIDPtr(r.RequestedBy),
 			Status:      r.Status,
 			Error:       r.Error,
@@ -496,7 +486,7 @@ func (s *Service) GetExport(ctx context.Context, tenantID, id uuid.UUID) (*Expor
 	out := &ExportRequest{
 		ID:          r.ID,
 		TenantID:    r.TenantID,
-		UserID:      r.UserID,
+		UserID:      r.SubjectID,
 		RequestedBy: toUUIDPtr(r.RequestedBy),
 		Status:      r.Status,
 		Error:       r.Error,
@@ -527,7 +517,7 @@ func (s *Service) exportSweepTick(ctx context.Context) error {
 		SET lease_owner = $1, lease_until = $2
 		FROM candidates
 		WHERE request.id = candidates.id
-		RETURNING request.id, request.tenant_id, request.user_id
+		RETURNING request.id, request.tenant_id, request.subject_id
 	`, s.workerID, time.Now().UTC().Add(s.lease))
 	if err != nil {
 		return err
@@ -617,13 +607,15 @@ func (s *Service) failExport(ctx context.Context, requestID, tenantID, userID uu
 }
 
 type exportProfile struct {
-	Email           string     `json:"email"`
-	Phone           *string    `json:"phone,omitempty"`
-	DisplayName     *string    `json:"display_name,omitempty"`
-	Status          string     `json:"status"`
-	EmailVerifiedAt *time.Time `json:"email_verified_at,omitempty"`
-	PhoneVerifiedAt *time.Time `json:"phone_verified_at,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
+	Email           string         `json:"email"`
+	Phone           *string        `json:"phone,omitempty"`
+	DisplayName     *string        `json:"display_name,omitempty"`
+	AvatarURL       *string        `json:"avatar_url,omitempty"`
+	Metadata        map[string]any `json:"metadata"`
+	Status          string         `json:"status"`
+	EmailVerifiedAt *time.Time     `json:"email_verified_at,omitempty"`
+	PhoneVerifiedAt *time.Time     `json:"phone_verified_at,omitempty"`
+	CreatedAt       time.Time      `json:"created_at"`
 }
 
 type exportSession struct {
@@ -649,8 +641,8 @@ type exportRole struct {
 }
 
 // collectUserData assembles one user's portable data in a tenant: profile,
-// sessions, passkeys, MFA status and roles. Credentials (password hashes, TOTP
-// secrets, recovery codes) are excluded.
+// sessions, passkeys, MFA status, roles and the sections of exportSections.
+// Credentials (password hashes, TOTP secrets, recovery codes) are excluded.
 func (s *Service) collectUserData(ctx context.Context, tenantID, userID uuid.UUID) (map[string]any, error) {
 	// user.users.tenant_id is nullable, so it takes a pgtype.UUID.
 	profileRow, err := s.q.GetUserProfileForExport(ctx, dbgen.GetUserProfileForExportParams{
@@ -664,6 +656,8 @@ func (s *Service) collectUserData(ctx context.Context, tenantID, userID uuid.UUI
 		Email:           profileRow.Email,
 		Phone:           profileRow.Phone,
 		DisplayName:     profileRow.DisplayName,
+		AvatarURL:       profileRow.AvatarUrl,
+		Metadata:        metadataOf(profileRow.Metadata),
 		Status:          profileRow.Status,
 		EmailVerifiedAt: toTimePtr(profileRow.EmailVerifiedAt),
 		PhoneVerifiedAt: toTimePtr(profileRow.PhoneVerifiedAt),
@@ -728,14 +722,18 @@ func (s *Service) collectUserData(ctx context.Context, tenantID, userID uuid.UUI
 		return nil, err
 	}
 
-	return map[string]any{
+	out := map[string]any{
 		"profile":          profile,
 		"sessions":         sessions,
 		"passkeys":         passkeys,
 		"roles":            roles,
 		"mfa_totp_enabled": mfaEnabled,
 		"generated_at":     time.Now().UTC(),
-	}, nil
+	}
+	if err := exportSections(ctx, s.q, userID, &tenantID, out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 type exportSelfRole struct {
@@ -749,17 +747,19 @@ type exportSelfRole struct {
 // Credentials are excluded.
 func (s *Service) ExportSelf(ctx context.Context, userID uuid.UUID) (map[string]any, error) {
 	var profile exportProfile
+	var metadata []byte
 	if err := s.pool.QueryRow(ctx, `
-		SELECT email, phone, display_name, status, email_verified_at, phone_verified_at, created_at
+		SELECT email, phone, display_name, avatar_url, metadata, status, email_verified_at, phone_verified_at, created_at
 		FROM "user".users
 		WHERE id = $1`, userID,
-	).Scan(&profile.Email, &profile.Phone, &profile.DisplayName, &profile.Status,
+	).Scan(&profile.Email, &profile.Phone, &profile.DisplayName, &profile.AvatarURL, &metadata, &profile.Status,
 		&profile.EmailVerifiedAt, &profile.PhoneVerifiedAt, &profile.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrNotFound
 		}
 		return nil, err
 	}
+	profile.Metadata = metadataOf(metadata)
 
 	sessRows, err := s.pool.Query(ctx, `
 		SELECT id, COALESCE(host(ip), '') AS ip, user_agent, created_at, last_seen_at, revoked_at
@@ -831,14 +831,18 @@ func (s *Service) ExportSelf(ctx context.Context, userID uuid.UUID) (map[string]
 		return nil, err
 	}
 
-	return map[string]any{
+	out := map[string]any{
 		"profile":          profile,
 		"sessions":         sessions,
 		"passkeys":         passkeys,
 		"roles":            roles,
 		"mfa_totp_enabled": mfaEnabled,
 		"generated_at":     time.Now().UTC(),
-	}, nil
+	}
+	if err := exportSections(ctx, s.q, userID, nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // ReauthChecker re-verifies a user's password before an irreversible action.

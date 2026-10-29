@@ -14,6 +14,9 @@ func init() {
 		errs.CodeAdminPortalCapabilityUnknown:    http.StatusUnprocessableEntity,
 		errs.CodeAdminPortalCapabilityNotGranted: http.StatusForbidden,
 
+		// Link lifetime.
+		errs.CodeAdminPortalTTLOutOfRange: http.StatusUnprocessableEntity,
+
 		// Link lifecycle.
 		errs.CodeAdminPortalLinkNotFound:   http.StatusNotFound,
 		errs.CodeAdminPortalTokenMissing:   http.StatusUnauthorized,

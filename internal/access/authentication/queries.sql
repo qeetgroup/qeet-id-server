@@ -214,10 +214,11 @@ UPDATE auth.trusted_devices SET last_used_at = NOW()
 WHERE token_hash = @token_hash AND user_id = @user_id AND tenant_id = @tenant_id AND expires_at > NOW()
 RETURNING id;
 
--- PurgeExpiredTrustedDevices deletes remembered devices that expired before
--- the cutoff; they no longer skip anything.
+-- PurgeExpiredTrustedDevices deletes at most @max_rows remembered devices that
+-- expired before the cutoff; they no longer skip anything.
 -- name: PurgeExpiredTrustedDevices :execrows
-DELETE FROM auth.trusted_devices WHERE expires_at < @cutoff;
+DELETE FROM auth.trusted_devices WHERE ctid = ANY(ARRAY(
+    SELECT d.ctid FROM auth.trusted_devices d WHERE d.expires_at < @cutoff LIMIT @max_rows));
 
 -- CheckTenantMembership reports whether an active account is a member of an
 -- active organisation: the organisation's own account, or holding a role there.
@@ -360,47 +361,53 @@ RETURNING id, created_at, updated_at;
 -- NULLIF so an empty string stores as SQL NULL, matching InsertLoginSession.
 -- With no organisation, the platform's session bounds apply. Returns when it
 -- ends however active, and when it ends unless renewed.
-INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, expires_at, idle_timeout, country)
+INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, expires_at, idle_timeout, country, city)
 VALUES (@id, @user_id, NULL, NULLIF(@ip::text, '')::inet, @user_agent,
         NOW() + make_interval(secs => @max_age_seconds::float8),
         make_interval(secs => @idle_seconds::float8),
-        NULLIF(@country::text, ''))
+        NULLIF(@country::text, ''), NULLIF(@city::text, ''))
 RETURNING expires_at, LEAST(last_seen_at + idle_timeout, expires_at)::timestamptz AS idle_expires_at;
 
 -- name: DeleteMFALoginChallenge :exec
 DELETE FROM auth.mfa_login_challenges WHERE id = @id;
 
--- PurgeEndedSessions deletes API and console sessions past retention: ended
--- (revoked) before the cutoff, or never ended but past its maximum age or idle
--- timeout before the cutoff, or with every refresh token expired before it
--- (none was usable after it). A session opened after the cutoff is always kept.
--- Their refresh tokens go with them (cascade). Returns what it deleted;
--- expired marks the sessions that were never ended, which are announced as
--- expired.
+-- PurgeEndedSessions deletes at most @max_rows API and console sessions past
+-- retention: ended (revoked) before the cutoff, or never ended but past its
+-- maximum age or idle timeout before the cutoff, or with every refresh token
+-- expired before it (none was usable after it). A session opened after the
+-- cutoff is always kept. Their refresh tokens go with them (cascade). Returns
+-- what it deleted; expired marks the sessions that were never ended, which are
+-- announced as expired.
 -- name: PurgeEndedSessions :many
 DELETE FROM auth.sessions s
-WHERE s.created_at < @cutoff
-  AND (
-      (s.revoked_at IS NOT NULL AND s.revoked_at < @cutoff)
-      OR (s.revoked_at IS NULL AND (
-          s.expires_at < @cutoff
-          OR s.last_seen_at + s.idle_timeout < @cutoff
-          OR NOT EXISTS (
-              SELECT 1 FROM auth.refresh_tokens rt
-              WHERE rt.session_id = s.id AND rt.expires_at >= @cutoff)))
-  )
+WHERE s.ctid = ANY(ARRAY(
+    SELECT e.ctid FROM auth.sessions e
+    WHERE e.created_at < @cutoff
+      AND (
+          (e.revoked_at IS NOT NULL AND e.revoked_at < @cutoff)
+          OR (e.revoked_at IS NULL AND (
+              e.expires_at < @cutoff
+              OR e.last_seen_at + e.idle_timeout < @cutoff
+              OR NOT EXISTS (
+                  SELECT 1 FROM auth.refresh_tokens rt
+                  WHERE rt.session_id = e.id AND rt.expires_at >= @cutoff)))
+      )
+    LIMIT @max_rows))
 RETURNING s.id, s.user_id, s.tenant_id, (s.revoked_at IS NULL)::boolean AS expired;
 
 -- PurgeExpiredCeremonies deletes passkey ceremony state that has expired
 -- unfinished — every sign-in page now starts one in the background, and most
 -- are never completed. An expired ceremony can no longer be finished.
 -- name: PurgeExpiredCeremonies :execrows
-DELETE FROM auth.webauthn_sessions WHERE expires_at < NOW();
+DELETE FROM auth.webauthn_sessions WHERE ctid = ANY(ARRAY(
+    SELECT w.ctid FROM auth.webauthn_sessions w WHERE w.expires_at < NOW() LIMIT @max_rows));
 
--- PurgeExpiredLoginSessions deletes hosted-login sessions that expired before
--- the cutoff. Their cookie stopped being sent when they expired.
+-- PurgeExpiredLoginSessions deletes at most @max_rows hosted-login sessions
+-- that expired before the cutoff. Their cookie stopped being sent when they
+-- expired.
 -- name: PurgeExpiredLoginSessions :execrows
-DELETE FROM auth.login_sessions WHERE expires_at < @cutoff;
+DELETE FROM auth.login_sessions WHERE ctid = ANY(ARRAY(
+    SELECT l.ctid FROM auth.login_sessions l WHERE l.expires_at < @cutoff LIMIT @max_rows));
 
 -- DeleteTrustedDevicesForUser forgets every device remembered for the user, so
 -- each is asked for the second factor again at its next sign-in.
@@ -471,3 +478,37 @@ SELECT u.mfa_required,
 FROM "user".users u
 LEFT JOIN tenant.security_policies sp ON sp.tenant_id = @tenant_id
 WHERE u.id = @user_id;
+
+-- ExpireRecoveryLinksForUser ends the user's unused password-reset links and
+-- the unused sign-in links to their address, set a minute back so a clock
+-- behind the database's sees them ended too.
+-- name: ExpireRecoveryLinksForUser :exec
+WITH resets AS (
+    UPDATE auth.password_resets SET expires_at = NOW() - INTERVAL '1 minute'
+    WHERE user_id = @user_id AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute'
+)
+UPDATE auth.magic_links SET expires_at = NOW() - INTERVAL '1 minute'
+WHERE LOWER(email) = (SELECT LOWER(u.email) FROM "user".users u WHERE u.id = @user_id)
+  AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute';
+
+-- CountMFAAttempt counts one more second-factor attempt in the user's run of
+-- wrong answers, which a right one ends, and returns the run and whether
+-- their second-factor sign-in is already locked.
+-- name: CountMFAAttempt :one
+INSERT INTO auth.mfa_failure_streaks (user_id, failures) VALUES (@user_id, 1)
+ON CONFLICT (user_id) DO UPDATE SET failures = auth.mfa_failure_streaks.failures + 1
+RETURNING failures, (locked_at IS NOT NULL)::bool AS locked;
+
+-- LockMFASignIn locks the user's second-factor sign-in, at the end of a run of
+-- wrong answers.
+-- name: LockMFASignIn :exec
+UPDATE auth.mfa_failure_streaks SET locked_at = NOW() WHERE user_id = @user_id;
+
+-- EndMFAFailureStreak ends the user's run of wrong answers, and any lock it
+-- set.
+-- name: EndMFAFailureStreak :exec
+DELETE FROM auth.mfa_failure_streaks WHERE user_id = @user_id;
+
+-- SignInClientName is the name of the application a hosted sign-in is for.
+-- name: SignInClientName :one
+SELECT name FROM auth.oidc_clients WHERE client_id = @client_id;

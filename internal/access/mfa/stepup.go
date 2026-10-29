@@ -86,13 +86,13 @@ func RequireRecentMFA(svc *Service) func(http.Handler) http.Handler {
 }
 
 // StepUpRule says when a route needs a step-up of the calling session. Under
-// StepUpWhenFactorHeld a person holding no counted factor can set one up, as
-// they have nothing to step up with.
+// StepUpOrRecentSignIn a person holding no counted factor has nothing to step
+// up with, so a sign-in within the step-up window stands in for one.
 type StepUpRule int
 
 const (
 	StepUpAlways         StepUpRule = iota + 1 // every call needs one
-	StepUpWhenFactorHeld                       // needed while the person holds a factor that counts
+	StepUpOrRecentSignIn                       // a step-up while the person holds a factor that counts, else a recent sign-in
 )
 
 // StepUpGate refuses a call to a listed route ("METHOD /pattern", chi syntax)
@@ -100,7 +100,7 @@ const (
 // route's rule says. Unlisted routes pass. Mount it on the authenticated group
 // after authorization, so only an authorized caller is ever asked.
 func (s *Service) StepUpGate(routes map[string]StepUpRule) func(http.Handler) http.Handler {
-	always, whenHeld := chi.NewRouter(), chi.NewRouter()
+	always, orRecent := chi.NewRouter(), chi.NewRouter()
 	noop := func(http.ResponseWriter, *http.Request) {}
 	for route, rule := range routes {
 		method, pattern, ok := strings.Cut(route, " ")
@@ -110,8 +110,8 @@ func (s *Service) StepUpGate(routes map[string]StepUpRule) func(http.Handler) ht
 		switch rule {
 		case StepUpAlways:
 			always.MethodFunc(method, pattern, noop)
-		case StepUpWhenFactorHeld:
-			whenHeld.MethodFunc(method, pattern, noop)
+		case StepUpOrRecentSignIn:
+			orRecent.MethodFunc(method, pattern, noop)
 		default:
 			panic("mfa: step-up route without a rule: " + route)
 		}
@@ -123,16 +123,23 @@ func (s *Service) StepUpGate(routes map[string]StepUpRule) func(http.Handler) ht
 				if !s.passStepUp(w, r) {
 					return
 				}
-			case whenHeld.Match(chi.NewRouteContext(), r.Method, r.URL.Path):
-				if p := httpx.PrincipalFromCtx(r.Context()); p != nil && p.UserID != nil {
-					held, err := s.HoldsStepUpFactor(r.Context(), *p.UserID, p.TenantID)
-					if err != nil {
-						httpx.WriteError(w, r, err)
-						return
-					}
-					if held && !s.passStepUp(w, r) {
-						return
-					}
+			case orRecent.Match(chi.NewRouteContext(), r.Method, r.URL.Path):
+				p := httpx.PrincipalFromCtx(r.Context())
+				if p == nil || p.UserID == nil {
+					httpx.WriteError(w, r, errs.ErrUnauthorized)
+					return
+				}
+				held, err := s.HoldsStepUpFactor(r.Context(), *p.UserID, p.TenantID)
+				if err != nil {
+					httpx.WriteError(w, r, err)
+					return
+				}
+				pass := s.passRecentSignIn
+				if held {
+					pass = s.passStepUp
+				}
+				if !pass(w, r) {
+					return
 				}
 			}
 			next.ServeHTTP(w, r)
@@ -204,6 +211,43 @@ func (s *Service) passStepUp(w http.ResponseWriter, r *http.Request) bool {
 			meta["allowed_methods"] = st.Methods
 		}
 		httpx.WriteError(w, r, errs.ErrStepUpRequired.WithMetadata(meta))
+		return false
+	}
+	return true
+}
+
+// passRecentSignIn reports whether the request's principal signed in within
+// its organisation's step-up window: its session's sign-in, or a hosted-login
+// principal's. If not, it has already written an audited 403
+// recent_sign_in_required.
+func (s *Service) passRecentSignIn(w http.ResponseWriter, r *http.Request) bool {
+	p := httpx.PrincipalFromCtx(r.Context())
+	var recent bool
+	var window int64
+	switch {
+	case p.SessionID != nil:
+		row, err := s.q.SessionSignedInRecently(r.Context(), dbgen.SessionSignedInRecentlyParams{SessionID: *p.SessionID, UserID: *p.UserID})
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return false
+		}
+		recent, window = row.Recent, row.WindowSeconds
+	default:
+		tid := uuid.Nil
+		if p.TenantID != nil {
+			tid = *p.TenantID
+		}
+		org, err := s.q.OrgStepUpPolicy(r.Context(), tid)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return false
+		}
+		window = org.WindowSeconds
+		recent = p.SignedInAt != nil && time.Since(*p.SignedInAt) <= time.Duration(window)*time.Second
+	}
+	if !recent {
+		s.auditStepUp(r, "auth.recent_sign_in_required", map[string]any{"route": r.URL.Path})
+		httpx.WriteError(w, r, errs.ErrRecentSignIn.WithMetadata(map[string]any{"window_seconds": window}))
 		return false
 	}
 	return true

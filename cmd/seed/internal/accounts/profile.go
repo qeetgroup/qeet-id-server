@@ -30,17 +30,17 @@ func monogram(name string, b world.Brand) string {
 	return "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(svg))
 }
 
-// sender is the name and addresses an organisation's email goes out with.
-type sender struct{ name, from, replyTo string }
+// sender is the name an organisation's email goes out with, and where replies go.
+type sender struct{ name, replyTo string }
 
 var senders = map[string]sender{
-	"qeet":      {"Qeet Group", "accounts@qeet.in", "support@qeet.in"},
-	"northwind": {"Northwind Capital IT", "it-noreply@northwindcapital.in", "itservicedesk@northwindcapital.in"},
-	"meridian":  {"Meridian Health IT Service Desk", "noreply@meridianhealth.us", "servicedesk@meridianhealth.us"},
-	"lumen":     {"Lumen Labs", "hello@lumenlabshq.dev", "support@lumenlabshq.dev"},
-	"aster":     {"Aster Retail", "team@asterretail.in", "care@asterretail.in"},
-	"vertex":    {"Vertex Freight IT", "it@vertexfreightco.us", ""},
-	"kestrel":   {"Kestrel Insurance Brokers", "admin@kestrelinsurance.in", "operations@kestrelinsurance.in"},
+	"qeet":      {"Qeet Group", "support@qeet.in"},
+	"northwind": {"Northwind Capital IT", "itservicedesk@northwindcapital.in"},
+	"meridian":  {"Meridian Health IT Service Desk", "servicedesk@meridianhealth.us"},
+	"lumen":     {"Lumen Labs", "support@lumenlabshq.dev"},
+	"aster":     {"Aster Retail", "care@asterretail.in"},
+	"vertex":    {"Vertex Freight IT", ""},
+	"kestrel":   {"Kestrel Insurance Brokers", "operations@kestrelinsurance.in"},
 }
 
 // loginHosts are the custom hosted-login hostnames enterprise organisations
@@ -57,7 +57,7 @@ func (s *seeder) profile(o *world.Org) {
 	w := s.w
 	logo := monogram(o.Spec.Name, o.Spec.Brand)
 	w.At(o.Spec.Since.Add(5*time.Minute), func() {
-		_, err := w.Deps.Tenant.Repo.Update(w.Ctx, o.ID, tenant.UpdateInput{LogoURL: &logo}, nil)
+		_, err := w.Deps.Tenant.Repo.Update(w.Ctx, o.ID, tenant.UpdateInput{LogoURL: &logo}, nil, nil)
 		w.Check(err, "logo of "+o.Spec.Slug)
 	})
 	o.Tenant.LogoURL = logo
@@ -75,12 +75,11 @@ func (s *seeder) profile(o *world.Org) {
 		settings["email_reply_to"] = snd.replyTo
 	}
 	body := map[string]any{
-		"logo_url":           logo,
-		"primary_color":      o.Spec.Brand.Primary,
-		"secondary_color":    o.Spec.Brand.Secondary,
-		"email_from_name":    snd.name,
-		"email_from_address": snd.from,
-		"settings":           settings,
+		"logo_url":        logo,
+		"primary_color":   o.Spec.Brand.Primary,
+		"secondary_color": o.Spec.Brand.Secondary,
+		"email_from_name": snd.name,
+		"settings":        settings,
 	}
 	actor := by(o, at, world.RoleITAdmin)
 	w.At(at, func() { s.api.do(o, actor, "", "PUT", "/tenants/"+o.ID.String()+"/branding", body) })
@@ -99,34 +98,34 @@ func (s *seeder) profile(o *world.Org) {
 
 // domainPlan is a domain an organisation claims and how far it got.
 type domainPlan struct {
-	name, state   string // state: verified, pending or attention
-	def, sso, jit bool
-	added         float64 // days after the organisation signed up; negative: days ago
+	name, state string // state: verified, pending or attention
+	sso, jit    bool
+	added       float64 // days after the organisation signed up; negative: days ago
 }
 
 // domainPlans are each organisation's claimed email domains.
 var domainPlans = map[string][]domainPlan{
-	"qeet": {{name: "qeet.in", state: "verified", def: true, sso: true, jit: true, added: 1}},
+	"qeet": {{name: "qeet.in", state: "verified", sso: true, jit: true, added: 1}},
 	"northwind": {
-		{name: "northwindcapital.in", state: "verified", def: true, sso: true, jit: true, added: 1},
+		{name: "northwindcapital.in", state: "verified", sso: true, jit: true, added: 1},
 		{name: "northwind-capital.co.in", state: "verified", sso: true, added: 3},
 		{name: "nwcfinance.in", state: "attention", added: -12},
 	},
 	"meridian": {
-		{name: "meridianhealth.us", state: "verified", def: true, sso: true, jit: true, added: 2},
+		{name: "meridianhealth.us", state: "verified", sso: true, jit: true, added: 2},
 		{name: "meridianhealthcare-us.org", state: "verified", sso: true, added: 9},
 		{name: "mhn-clinics.us", state: "pending", added: -3},
 	},
 	"lumen": {
-		{name: "lumenlabshq.dev", state: "verified", def: true, sso: true, jit: true, added: 1},
+		{name: "lumenlabshq.dev", state: "verified", sso: true, jit: true, added: 1},
 		{name: "lumenlabs-cloud.io", state: "attention", added: -6},
 	},
 	"aster": {
-		{name: "asterretail.in", state: "verified", def: true, added: 2},
+		{name: "asterretail.in", state: "verified", added: 2},
 		{name: "asterfashionhouse.in", state: "pending", added: -1.5},
 	},
 	"vertex":  {{name: "vertexfreightco.us", state: "pending", added: 1}},
-	"kestrel": {{name: "kestrelinsurance.in", state: "verified", def: true, added: 4}},
+	"kestrel": {{name: "kestrelinsurance.in", state: "verified", added: 4}},
 }
 
 // domains claims the organisation's email domains: verified ones (a DNS check
@@ -160,9 +159,9 @@ func (s *seeder) domains(o *world.Org) {
 				WHERE id = $1 AND tenant_id = $2`, dom.ID, o.ID, checked)
 			e := actor.Actor().Event(o.ID, "domain.verified", "domain", dom.ID, map[string]any{"domain": d.name})
 			w.Audit(checked, e)
-			if d.def || d.sso || d.jit {
+			if d.sso || d.jit {
 				w.At(checked.Add(4*time.Minute), func() {
-					_, err := svc.UpdateSettings(w.Ctx, dom.ID, o.ID, &d.sso, &d.jit, &d.def, actor.Actor())
+					_, err := svc.UpdateSettings(w.Ctx, dom.ID, o.ID, &d.sso, &d.jit, actor.Actor())
 					w.Check(err, "domain settings "+d.name)
 				})
 			}

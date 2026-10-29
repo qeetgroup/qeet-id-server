@@ -11,9 +11,22 @@ import (
 	"github.com/google/uuid"
 )
 
+// Operation is one change an organisation's identity provider sent. Reason is
+// the SCIM error type the answer gave (scim.uniqueness, say), "" for none.
+type Operation struct {
+	TenantID   uuid.UUID
+	Operation  string
+	Resource   string
+	ResourceID string
+	Status     int
+	Reason     string
+	Started    time.Time
+	Duration   time.Duration
+}
+
 // OperationObserver records each provisioning operation.
 type OperationObserver interface {
-	RecordOperation(context.Context, uuid.UUID, string, string, string, string, int, time.Time, time.Duration) error
+	RecordSCIMOperation(context.Context, Operation) error
 }
 
 // SetOperationObserver sets where provisioning operations are recorded.
@@ -24,6 +37,23 @@ func (service *Service) SetOperationObserver(observer OperationObserver) {
 type outcomeWriter struct {
 	http.ResponseWriter
 	status int
+	reason string
+}
+
+// noteReason keeps the SCIM error type a response gives, for its operation's
+// record.
+func noteReason(w http.ResponseWriter, scimType string) {
+	for w != nil {
+		if o, ok := w.(*outcomeWriter); ok {
+			o.reason = "scim." + scimType
+			return
+		}
+		u, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return
+		}
+		w = u.Unwrap()
+	}
 }
 
 func (writer *outcomeWriter) WriteHeader(status int) {
@@ -71,7 +101,10 @@ func (handler *Handler) observeMutations(next http.Handler) http.Handler {
 		}
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(request.Context()), 2*time.Second)
 		defer cancel()
-		if err := handler.Service.observer.RecordOperation(ctx, tenantID, "scim:"+tenantID.String(), strings.ToLower(request.Method), resource, resourceID, status, started, time.Since(started)); err != nil {
+		if err := handler.Service.observer.RecordSCIMOperation(ctx, Operation{
+			TenantID: tenantID, Operation: strings.ToLower(request.Method), Resource: resource, ResourceID: resourceID,
+			Status: status, Reason: writer.reason, Started: started, Duration: time.Since(started),
+		}); err != nil {
 			slog.Warn("SCIM operation telemetry unavailable", "tenant_id", tenantID, "err", err)
 		}
 	})

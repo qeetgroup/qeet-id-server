@@ -152,6 +152,10 @@ type ParsedEvent struct {
 	// Set when Type == EventMessageDelta.
 	StopReason string
 
+	// Set when Type == EventMessageStart (InputTokens) or EventMessageDelta
+	// (OutputTokens, the reply's so far).
+	InputTokens, OutputTokens int
+
 	// Set when Type == EventError.
 	ErrorMessage string
 }
@@ -286,12 +290,26 @@ func parseEvent(t EventType, data string) (ParsedEvent, error) {
 			ev.InputJSONDelta = p.Delta.JSON
 		}
 
+	case EventMessageStart:
+		var p struct {
+			Message struct {
+				Usage struct {
+					InputTokens int `json:"input_tokens"`
+				} `json:"usage"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal([]byte(data), &p); err != nil {
+			return ev, err
+		}
+		ev.InputTokens = p.Message.Usage.InputTokens
+
 	case EventMessageDelta:
 		var p messageDeltaEvent
 		if err := json.Unmarshal([]byte(data), &p); err != nil {
 			return ev, err
 		}
 		ev.StopReason = p.Delta.StopReason
+		ev.OutputTokens = p.Usage.OutputTokens
 
 	case EventError:
 		var p struct {

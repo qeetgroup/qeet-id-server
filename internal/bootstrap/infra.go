@@ -14,6 +14,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/ratelimits"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
@@ -40,6 +41,10 @@ func newOutboundPolicy(cfg *config.Config) *egress.Policy {
 	}
 	return outboundPolicy
 }
+
+// OutboundPolicy is the outbound policy the API uses, for the standalone
+// scheduler's jobs.
+func OutboundPolicy(cfg *config.Config) *egress.Policy { return newOutboundPolicy(cfg) }
 
 // connectActivityNATS connects the Live Activity hub's subscriber to NATS_URL,
 // returning nil when it is unset; the hub then serves history alone. It exits
@@ -68,6 +73,7 @@ type rateLimits struct {
 	store                     ratelimit.Store // Redis, shared across replicas; nil keeps limits per instance
 	tenant, user, apiKey      *ratelimit.TenantLimiter
 	magicAddress, magicCaller *ratelimit.Limiter
+	resetAddress              *ratelimit.Limiter
 }
 
 // newRateLimits builds the limiters, exiting when REDIS_URL is set but
@@ -92,30 +98,32 @@ func newRateLimits(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Po
 	}
 
 	// Build tenant-aware limiters that allow per-tenant rate overrides stored in DB.
-	newTenantLim := func(defRate float64, defCap int, key string) *ratelimit.TenantLimiter {
+	newTenantLim := func(def ratelimits.Bucket, key string) *ratelimit.TenantLimiter {
 		var store ratelimit.Store
 		if rlStore != nil {
 			store = rlStore
 		} else {
 			store = ratelimit.NewMemStore()
 		}
-		lim := ratelimit.NewTenantLimiter(store, defRate, defCap, pool, key)
+		lim := ratelimit.NewTenantLimiter(store, def.Rate, def.Capacity, pool, key)
 		lim.LoadOverrides(rootCtx)
 		return lim
 	}
 	// Magic-link requests are bounded more tightly than sign-in: three per
 	// address, then one every five minutes; ten per caller, then one a minute.
+	// Password-reset requests share the per-address bound.
 	magicStore := rlStore
 	if magicStore == nil {
 		magicStore = ratelimit.NewMemStore()
 	}
 	return rateLimits{
 		store:        rlStore,
-		tenant:       newTenantLim(100, 500, "tenant"),
-		user:         newTenantLim(30, 100, "user"),
-		apiKey:       newTenantLim(50, 200, "api_key"),
-		magicAddress: ratelimit.NewWithStore(magicStore, 1.0/300, 3),
-		magicCaller:  ratelimit.NewWithStore(magicStore, 1.0/60, 10),
+		tenant:       newTenantLim(tenantLimitDefault, "tenant"),
+		user:         newTenantLim(userLimitDefault, "user"),
+		apiKey:       newTenantLim(apiKeyLimitDefault, "api_key"),
+		magicAddress: ratelimit.NewWithStore(magicStore, magicAddressLimit.Rate, magicAddressLimit.Capacity),
+		magicCaller:  ratelimit.NewWithStore(magicStore, magicCallerLimit.Rate, magicCallerLimit.Capacity),
+		resetAddress: ratelimit.NewWithStore(magicStore, resetAddressLimit.Rate, resetAddressLimit.Capacity),
 	}
 }
 

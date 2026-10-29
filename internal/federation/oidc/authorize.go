@@ -63,18 +63,18 @@ func (s *Service) AuthorizeInLoginSession(ctx context.Context, in AuthorizeInput
 	if !member {
 		return "", uuid.Nil, errs.ErrOIDCUserTenantMismatch
 	}
-	if !contains(info.RedirectUris, redirectURI) {
+	if !redirectRegistered(info.RedirectUris, redirectURI) {
 		return "", uuid.Nil, errs.ErrOIDCRedirectURIInvalid
 	}
 	if !contains(info.GrantTypes, "authorization_code") {
 		return "", uuid.Nil, errs.ErrOIDCGrantTypeNotAllowed
 	}
 	for _, sc := range scopes {
-		if !contains(info.Scopes, sc) {
+		if !scopePermitted(info.Scopes, info.GrantTypes, sc) {
 			return "", uuid.Nil, errs.ErrOIDCScopeNotPermitted
 		}
 	}
-	if err := validateSignInRequest(info.Type, info.PkceExempt, scopes, nonce, challenge, challengeMethod); err != nil {
+	if err := validateSignInRequest(info.Type, info.PkceExempt, nonce, challenge, challengeMethod); err != nil {
 		return "", uuid.Nil, err
 	}
 	if err := checkResource(ctx, s.q, info.TenantID, resource); err != nil {
@@ -106,6 +106,27 @@ func (s *Service) AuthorizeInLoginSession(ctx context.Context, in AuthorizeInput
 		return "", uuid.Nil, err
 	}
 	return raw, info.TenantID, nil
+}
+
+// scopeOfflineAccess is the OpenID scope that asks for a refresh token, to act
+// while the person is away (OIDC Core §11).
+const scopeOfflineAccess = "offline_access"
+
+// scopePermitted reports whether a client registered for scopes and grantTypes
+// may request scope: one it registered, or offline_access when it may renew.
+func scopePermitted(scopes, grantTypes []string, scope string) bool {
+	return contains(scopes, scope) || (scope == scopeOfflineAccess && contains(grantTypes, "refresh_token"))
+}
+
+// issuesRefreshToken reports whether a grant of granted to a client registered
+// for scopes and grantTypes comes with a refresh token. Never without the
+// refresh_token grant. A client that registered offline_access gets one only
+// when that was granted (OIDC Core §11); any other gets one with every grant.
+func issuesRefreshToken(scopes, grantTypes, granted []string) bool {
+	if !contains(grantTypes, "refresh_token") {
+		return false
+	}
+	return !contains(scopes, scopeOfflineAccess) || contains(granted, scopeOfflineAccess)
 }
 
 func validPKCEValue(value string, minLength, maxLength int) bool {

@@ -121,7 +121,7 @@ func (s *Service) DeviceAuthorize(ctx context.Context, clientID string, scopes [
 		scopes = dbScopes
 	}
 	for _, sc := range scopes {
-		if !contains(dbScopes, sc) {
+		if !scopePermitted(dbScopes, info.GrantTypes, sc) {
 			return "", "", uuid.Nil, errs.ErrOIDCScopeNotPermitted
 		}
 	}
@@ -193,7 +193,8 @@ func (s *Service) LookupDeviceByUserCode(ctx context.Context, userCode string) (
 // DecideDevice records the user's approve/deny decision against a pending device
 // row identified by user_code. On approval it binds the user (who must belong to
 // the row's tenant, and approve from an address its rules allow: ip) and marks
-// it authorized; on denial it marks it denied.
+// it authorized; on denial it marks it denied. Either is audited in the row's
+// organisation as oauth.device_approved or oauth.device_denied.
 func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode string, approve bool, ip string) error {
 	userCode = normalizeUserCode(userCode)
 	tx, err := s.pool.Begin(ctx)
@@ -219,6 +220,9 @@ func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode s
 
 	if !approve {
 		if err := q.DenyDevice(ctx, row.ID); err != nil {
+			return err
+		}
+		if err := recordDeviceDecision(ctx, tx, row, userID, "oauth.device_denied", ip); err != nil {
 			return err
 		}
 		return tx.Commit(ctx)
@@ -257,7 +261,21 @@ func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode s
 	}); err != nil {
 		return err
 	}
+	if err := recordDeviceDecision(ctx, tx, row, userID, "oauth.device_approved", ip); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
+}
+
+// recordDeviceDecision audits userID's decision on device code row, made from
+// ip, in the organisation the code was issued for.
+func recordDeviceDecision(ctx context.Context, tx pgx.Tx, row dbgen.LockDeviceByUserCodeRow, userID uuid.UUID, action, ip string) error {
+	tenantID, codeID := row.TenantID, row.ID
+	return audit.Record(ctx, tx, audit.Event{
+		TenantID: &tenantID, ActorUserID: &userID, ActorType: "user",
+		Action: action, ResourceType: "oidc_device_code", ResourceID: &codeID, IP: ip,
+		Metadata: map[string]any{"client_id": row.ClientID, "scopes": row.Scopes},
+	})
 }
 
 // DeviceToken implements the RFC 8628 §3.5 polling exchange: it enforces the
@@ -379,17 +397,28 @@ func (s *Service) DeviceToken(ctx context.Context, clientID, clientSecret, rawDe
 		}
 		return nil, oauthErr("access_denied", "address_not_allowed")
 	}
-	// The client's grant_types tell us whether to mint a refresh token, the same
-	// way ExchangeCode does.
-	grantTypes, err := q.GetClientGrantTypes(ctx, clientID)
+	// The client's registration tells whether to mint a refresh token, the same
+	// way ExchangeCode does. The grant remembers the device code, so revoking
+	// the device authorization ends it; issuing it here, under the code's lock,
+	// means a revocation can't slip between the two.
+	registered, err := q.GetClientTenantAndScopes(ctx, clientID)
 	if err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	tenantID := dc.TenantID
 	scopes := dc.Scopes
+	refresh := ""
+	if issuesRefreshToken(registered.Scopes, registered.GrantTypes, scopes) {
+		// Device grant doesn't collect a resource indicator today (RFC 8707
+		// support there is unscoped work) — issued with no bound resource.
+		refresh, err = s.issueRefreshToken(ctx, q, clientID, *userID, tenantID, scopes, "", pgtype.UUID{}, hash, pgtype.Timestamptz{})
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	access, _, err := s.issuer.IssueClientAccess(tokens.ClientAccess{
 		UserID: *userID, TenantID: tenantID, SessionID: uuid.New(), Scopes: strings.Join(scopes, " "), ClientID: clientID,
 	})
@@ -403,15 +432,6 @@ func (s *Service) DeviceToken(ctx context.Context, clientID, clientSecret, rawDe
 			return nil, err
 		}
 		idTok = t
-	}
-	refresh := ""
-	if contains(grantTypes, "refresh_token") {
-		// Device grant doesn't collect a resource indicator today (RFC 8707
-		// support there is unscoped work) — issued with no bound resource.
-		refresh, err = s.issueRefreshToken(ctx, s.q, clientID, *userID, tenantID, scopes, "", pgtype.UUID{}, "")
-		if err != nil {
-			return nil, err
-		}
 	}
 	return &TokenResponse{
 		AccessToken:  access,
@@ -436,9 +456,11 @@ func normalizeUserCode(in string) string {
 
 // DeviceAuthorization is the admin-facing view of a device-authorization row.
 // It deliberately omits device_code / device_code_hash.
+// ConsumedAt is when the device redeemed an approval for tokens.
 type DeviceAuthorization struct {
 	ID           uuid.UUID  `json:"id"`
 	ClientID     string     `json:"client_id"`
+	ClientName   string     `json:"client_name"`
 	UserCode     string     `json:"user_code"`
 	Status       string     `json:"status"`
 	UserID       *uuid.UUID `json:"user_id"`
@@ -447,6 +469,7 @@ type DeviceAuthorization struct {
 	CreatedAt    time.Time  `json:"created_at"`
 	ExpiresAt    time.Time  `json:"expires_at"`
 	LastPolledAt *time.Time `json:"last_polled_at"`
+	ConsumedAt   *time.Time `json:"consumed_at"`
 }
 
 // ListDevices returns the tenant's device-authorization rows, newest first.
@@ -462,34 +485,36 @@ func (s *Service) ListDevices(ctx context.Context, tenantID uuid.UUID) ([]Device
 			u := uuid.UUID(r.UserID.Bytes)
 			uid = &u
 		}
-		var lastPolledAt *time.Time
-		if r.LastPolledAt.Valid {
-			t := r.LastPolledAt.Time
-			lastPolledAt = &t
-		}
 		out[i] = DeviceAuthorization{
-			ID: r.ID, ClientID: r.ClientID, UserCode: r.UserCode, Status: r.Status,
+			ID: r.ID, ClientID: r.ClientID, ClientName: r.ClientName, UserCode: r.UserCode, Status: r.Status,
 			UserID: uid, UserEmail: r.UserEmail, Scopes: r.Scopes,
-			CreatedAt: r.CreatedAt, ExpiresAt: r.ExpiresAt, LastPolledAt: lastPolledAt,
+			CreatedAt: r.CreatedAt, ExpiresAt: r.ExpiresAt,
+			LastPolledAt: timePtr(r.LastPolledAt), ConsumedAt: timePtr(r.ConsumedAt),
 		}
 	}
 	return out, nil
 }
 
-// RevokeDevice marks a tenant's pending/authorized device authorization denied
-// so any in-flight or future token poll fails. (The status CHECK allows
-// 'pending'/'authorized'/'denied'; 'denied' is the terminal revoked state.)
-// Returns the client_id + user_code for the audit row. Tenant-scoped.
-func (s *Service) RevokeDevice(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (clientID, userCode string, err error) {
+// RevokeDevice marks a tenant's device authorization denied, so any in-flight
+// or future token poll fails, and ends the grant an approved one was redeemed
+// for. Access tokens already issued run out on their own. ('denied' is the
+// terminal revoked state.) Returns what the audit row records. Tenant-scoped.
+func (s *Service) RevokeDevice(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (clientID, userCode string, grantEnded bool, err error) {
 	q := s.q.WithTx(tx)
 	row, err := q.RevokeDevice(ctx, dbgen.RevokeDeviceParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", errs.ErrOIDCDeviceNotFound
+		return "", "", false, errs.ErrOIDCDeviceNotFound
 	}
 	if err != nil {
-		return "", "", err
+		return "", "", false, err
 	}
-	return row.ClientID, row.UserCode, nil
+	ended, err := q.RevokeDeviceGrant(ctx, dbgen.RevokeDeviceGrantParams{
+		TenantID: tenantID, ClientID: row.ClientID, DeviceCodeHash: &row.DeviceCodeHash,
+	})
+	if err != nil {
+		return "", "", false, err
+	}
+	return row.ClientID, row.UserCode, ended > 0, nil
 }
 
 func (h *Handler) listDevices(w http.ResponseWriter, r *http.Request) {
@@ -524,7 +549,7 @@ func (h *Handler) revokeDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	clientID, userCode, err := h.Service.RevokeDevice(ctx, tx, tenantID, id)
+	clientID, userCode, grantEnded, err := h.Service.RevokeDevice(ctx, tx, tenantID, id)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -536,7 +561,7 @@ func (h *Handler) revokeDevice(w http.ResponseWriter, r *http.Request) {
 		TenantID: &tid, ActorUserID: actorID, ActorType: actorType,
 		Action: "oauth.device_revoked", ResourceType: "oidc_device_code", ResourceID: &resourceID,
 		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
-		Metadata: map[string]any{"client_id": clientID, "user_code": userCode},
+		Metadata: map[string]any{"client_id": clientID, "user_code": userCode, "grant_ended": grantEnded},
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return

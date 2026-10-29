@@ -7,6 +7,7 @@ package rbac
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,8 +33,14 @@ type permissionDefinition struct{ Key, Description string }
 var builtinPermissionDefinitions = []permissionDefinition{
 	{"tenant.read", "Read tenant configuration"},
 	{"tenant.write", "Modify tenant configuration"},
+	{"tenant.delete", "Delete the organisation, or call its deletion off"},
 	{"user.read", "List and read users"},
-	{"user.write", "Create, update, delete users (incl. set password, reset MFA)"},
+	{"user.write", "Create and update people"},
+	{"user.delete", "Delete, restore and purge people, and remove them from the organisation"},
+	{"user.suspend", "Suspend and reactivate people"},
+	{"user.credentials", "Set people's passwords, reset their second factors and require them, remove their trusted and push devices"},
+	{"session.revoke", "End people's sessions"},
+	{"member.invite", "Invite people, and resend or withdraw invitations"},
 	{"role.read", "Read roles and assignments"},
 	{"role.write", "Manage roles and assignments"},
 	{"audit.read", "Read audit events"},
@@ -85,6 +92,39 @@ type Role struct {
 	Description string    `json:"description"`
 	IsSystem    bool      `json:"is_system"`
 	CreatedAt   time.Time `json:"created_at"`
+	// Holders counts who holds the role, set by the roles list only.
+	Holders *RoleHolderCounts `json:"holders,omitempty"`
+}
+
+// RoleHolderCounts is how many hold a role: people directly, people only
+// through a group, and groups.
+type RoleHolderCounts struct {
+	PeopleDirect        int `json:"people_direct"`
+	PeopleThroughGroups int `json:"people_through_groups"`
+	Groups              int `json:"groups"`
+}
+
+// RoleHolders is one page of the people holding a role, and every group it
+// is granted to.
+type RoleHolders struct {
+	People     []RoleHolder `json:"people"`
+	Groups     []HolderRef  `json:"groups"`
+	NextCursor string       `json:"next_cursor,omitempty"`
+}
+
+// RoleHolder is a person holding a role: directly, and through which groups.
+type RoleHolder struct {
+	UserID      uuid.UUID   `json:"user_id"`
+	Email       string      `json:"email"`
+	DisplayName string      `json:"display_name"`
+	Direct      bool        `json:"direct"`
+	ViaGroups   []HolderRef `json:"via_groups"`
+}
+
+// HolderRef names a group.
+type HolderRef struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
 }
 
 // Repository reads and writes roles, permissions and role assignments.
@@ -187,6 +227,56 @@ func (r *Repository) ListRoles(ctx context.Context, tenantID uuid.UUID) ([]Role,
 	return out, nil
 }
 
+// WithHolderCounts sets how many hold each of the tenant's roles, in one query.
+func (r *Repository) WithHolderCounts(ctx context.Context, tenantID uuid.UUID, roles []Role) error {
+	rows, err := r.q.RoleHolderCounts(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	counts := make(map[uuid.UUID]RoleHolderCounts, len(rows))
+	for _, row := range rows {
+		counts[row.RoleID] = RoleHolderCounts{PeopleDirect: int(row.PeopleDirect), PeopleThroughGroups: int(row.PeopleThroughGroups), Groups: int(row.Groups)}
+	}
+	for i := range roles {
+		c := counts[roles[i].ID]
+		roles[i].Holders = &c
+	}
+	return nil
+}
+
+// Holders returns limit people holding roleID of tenantID from offset, by
+// email, and every group it is granted to.
+func (r *Repository) Holders(ctx context.Context, tenantID, roleID uuid.UUID, offset, limit int) (*RoleHolders, error) {
+	groups, err := r.q.ListRoleHolderGroups(ctx, dbgen.ListRoleHolderGroupsParams{TenantID: tenantID, RoleID: roleID})
+	if err != nil {
+		return nil, err
+	}
+	out := &RoleHolders{People: []RoleHolder{}, Groups: make([]HolderRef, len(groups))}
+	names := make(map[uuid.UUID]string, len(groups))
+	for i, g := range groups {
+		out.Groups[i] = HolderRef{ID: g.ID, Name: g.Name}
+		names[g.ID] = g.Name
+	}
+	people, err := r.q.ListRoleHolderPeople(ctx, dbgen.ListRoleHolderPeopleParams{
+		TenantID: tenantID, RoleID: roleID, RowOffset: int32(offset), RowLimit: int32(limit + 1), // #nosec G115 -- bounded by the handler
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(people) > limit {
+		people = people[:limit]
+		out.NextCursor = strconv.Itoa(offset + limit)
+	}
+	for _, p := range people {
+		via := make([]HolderRef, 0, len(p.ViaGroups))
+		for _, id := range p.ViaGroups {
+			via = append(via, HolderRef{ID: id, Name: names[id]})
+		}
+		out.People = append(out.People, RoleHolder{UserID: p.ID, Email: p.Email, DisplayName: p.DisplayName, Direct: p.Direct, ViaGroups: via})
+	}
+	return out, nil
+}
+
 // RoleTenant returns the tenant a role belongs to, or ErrNotFound. Routes that
 // name only a {roleID} use it to keep callers to their own tenant's roles.
 func (r *Repository) RoleTenant(ctx context.Context, roleID uuid.UUID) (uuid.UUID, error) {
@@ -211,6 +301,16 @@ func (r *Repository) ListRolePermissions(ctx context.Context, roleID uuid.UUID) 
 		out[i] = toPermission(row)
 	}
 	return out, nil
+}
+
+// PermissionKey returns the key of permission permID, read through tx.
+// ErrNotFound when there is no such permission.
+func (r *Repository) PermissionKey(ctx context.Context, tx pgx.Tx, permID uuid.UUID) (string, error) {
+	key, err := r.q.WithTx(tx).GetPermissionKey(ctx, permID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errs.ErrNotFound
+	}
+	return key, err
 }
 
 // GrantPermission adds a permission to a role.
@@ -329,11 +429,41 @@ func (r *Repository) EffectivePermissions(ctx context.Context, userID, tenantID 
 // GrantStep is one link in an authorization decision's grant path: a role that
 // confers the requested permission, plus how that role reaches the user.
 type GrantStep struct {
-	Permission string     `json:"permission"`         // the permission key
-	GrantedBy  string     `json:"granted_by"`         // e.g. "role:admin"
-	Via        string     `json:"via"`                // "direct" or "group:<name>"
-	GroupID    *uuid.UUID `json:"group_id,omitempty"` // the group, when granted through one
-	RoleID     uuid.UUID  `json:"role_id"`            // the role that grants it
+	Permission string     `json:"permission"`           // the permission key
+	GrantedBy  string     `json:"granted_by"`           // e.g. "role:admin"
+	Via        string     `json:"via"`                  // "direct" or "group:<name>"
+	GroupID    *uuid.UUID `json:"group_id,omitempty"`   // the group, when granted through one
+	GroupName  string     `json:"group_name,omitempty"` // its name
+	RoleID     uuid.UUID  `json:"role_id"`              // the role that grants it
+	RoleName   string     `json:"role_name"`            // its name
+}
+
+// grantStep is one grant of permission: through role, held directly or (via
+// "group") through the group.
+func grantStep(permission, via string, groupID pgtype.UUID, groupName *string, roleID uuid.UUID, roleName string) GrantStep {
+	step := GrantStep{Permission: permission, GrantedBy: "role:" + roleName, Via: "direct", RoleID: roleID, RoleName: roleName}
+	if via == "group" && groupName != nil {
+		step.Via, step.GroupName = "group:"+*groupName, *groupName
+		if groupID.Valid {
+			gid := uuid.UUID(groupID.Bytes)
+			step.GroupID = &gid
+		}
+	}
+	return step
+}
+
+// Grants lists every grant behind userID's permissions in tenantID, by
+// permission: the role granting it, directly or through which group.
+func (r *Repository) Grants(ctx context.Context, userID, tenantID uuid.UUID) ([]GrantStep, error) {
+	rows, err := r.q.ExplainAllGrants(ctx, dbgen.ExplainAllGrantsParams{UserID: userID, TenantID: tenantID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]GrantStep, len(rows))
+	for i, row := range rows {
+		out[i] = grantStep(row.Permission, row.Via, row.GroupID, row.GroupName, row.RoleID, row.RoleName)
+	}
+	return out, nil
 }
 
 // Explanation is the structured "why?" for a single Check. Allowed is the same
@@ -366,21 +496,7 @@ func (r *Repository) Explain(ctx context.Context, userID, tenantID uuid.UUID, pe
 
 	exp := &Explanation{Paths: []GrantStep{}}
 	for _, row := range rows {
-		step := GrantStep{
-			Permission: permKey,
-			GrantedBy:  "role:" + row.RoleName,
-			RoleID:     row.RoleID,
-		}
-		if row.Via == "group" && row.GroupName != nil {
-			step.Via = "group:" + *row.GroupName
-			if row.GroupID.Valid {
-				gid := uuid.UUID(row.GroupID.Bytes)
-				step.GroupID = &gid
-			}
-		} else {
-			step.Via = "direct"
-		}
-		exp.Paths = append(exp.Paths, step)
+		exp.Paths = append(exp.Paths, grantStep(permKey, row.Via, row.GroupID, row.GroupName, row.RoleID, row.RoleName))
 	}
 
 	exp.Allowed = len(exp.Paths) > 0
@@ -391,8 +507,10 @@ func (r *Repository) Explain(ctx context.Context, userID, tenantID uuid.UUID, pe
 	return exp, nil
 }
 
-// SeedBuiltins upserts the built-in permissions in its own transaction. It is
-// idempotent and safe to run on every boot.
+// SeedBuiltins upserts the built-in permissions and gives every organisation's
+// built-in roles the ones their definitions cover, so a permission added in a
+// release reaches its owners, admins and viewers. It is idempotent and safe to
+// run on every boot.
 func (r *Repository) SeedBuiltins(ctx context.Context) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -403,6 +521,9 @@ func (r *Repository) SeedBuiltins(ctx context.Context) error {
 		if _, err := r.UpsertPermission(ctx, tx, permission.Key, permission.Description); err != nil {
 			return err
 		}
+	}
+	if err := r.q.WithTx(tx).GrantBuiltinRolePermissions(ctx); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
 }

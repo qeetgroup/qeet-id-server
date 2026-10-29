@@ -27,6 +27,7 @@ type Handler struct {
 	Resolver     ProviderResolver // the tenant's effective provider, for status and gating
 	Config       *ProviderConfig  // backs the BYOK admin endpoints; may be nil in tests
 	Plan         PlanGate         // plan gate for the platform key; nil means no gate
+	Admin        *Service         // usage and settings, for the organisation's admins
 }
 
 // PlanGate reports whether a boolean feature is included in a tenant's plan.
@@ -61,6 +62,11 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Put("/qeetai/provider-config", h.putProviderConfig)
 	r.Delete("/qeetai/provider-config", h.deleteProviderConfig)
 	r.Post("/qeetai/provider-config/test", h.testProviderConfig)
+
+	// The organisation's use and settings (org admins — see permission map).
+	r.Get("/tenants/{tenantID}/qeetai/usage", h.usage)
+	r.Get("/tenants/{tenantID}/qeetai/settings", h.settings)
+	r.Put("/tenants/{tenantID}/qeetai/settings", h.putSettings)
 }
 
 // status reports the tenant's Qeet AI state, never key material. source is
@@ -275,13 +281,24 @@ func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// One turn at a time in a conversation, on any instance: a second is
+	// refused before anything is stored.
+	release, err := h.Service.BeginTurn(r.Context(), tenantID, convID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(r.Context(), turnTimeout)
+	defer cancel()
+
 	// Extend write deadline: the default HTTP_WRITE_TIMEOUT (30s) is too short
-	// for a full streaming turn. Reset it to 10 minutes on this connection.
+	// for a full streaming turn. Reset it to turnTimeout on this connection.
 	if rc := http.NewResponseController(w); rc != nil {
 		if conn, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok && conn != nil {
 			_ = conn // addr obtained; deadline set below via ResponseController
 		}
-		if err := rc.SetWriteDeadline(time.Now().Add(10 * time.Minute)); err != nil {
+		if err := rc.SetWriteDeadline(time.Now().Add(turnTimeout)); err != nil {
 			// Not fatal — log and continue; worst case the connection times out.
 			slog.Warn("qeetai: extend write deadline", "err", err)
 		}
@@ -359,7 +376,7 @@ func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
 	if len(body.Context) > 0 && string(body.Context) != "null" {
 		pageCtx = string(body.Context)
 	}
-	h.Orchestrator.Run(r.Context(), turnContext{
+	h.Orchestrator.Run(ctx, turnContext{
 		tenantID:       tenantID,
 		userID:         userID,
 		conversationID: convID,

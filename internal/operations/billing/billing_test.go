@@ -30,6 +30,33 @@ func TestNormalizeCurrency(t *testing.T) {
 	}
 }
 
+func TestSubscriptionGrants(t *testing.T) {
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	before, after := now.Add(-time.Hour), now.Add(time.Hour)
+	cases := []struct {
+		name string
+		sub  Subscription
+		want bool
+	}{
+		{"active within its period", Subscription{Status: "active", CurrentPeriodEnd: &after}, true},
+		{"active past its period", Subscription{Status: "active", CurrentPeriodEnd: &before}, false},
+		{"cancel at period end, within it", Subscription{Status: "active", CancelAtPeriodEnd: true, CurrentPeriodEnd: &after}, true},
+		{"cancel at period end, past it", Subscription{Status: "active", CancelAtPeriodEnd: true, CurrentPeriodEnd: &before}, false},
+		{"past due within its period", Subscription{Status: "past_due", CurrentPeriodEnd: &after}, true},
+		{"past due past its period", Subscription{Status: "past_due", CurrentPeriodEnd: &before}, false},
+		{"trial running", Subscription{Status: "trialing", TrialEnd: &after, CurrentPeriodEnd: &after}, true},
+		{"trial ended", Subscription{Status: "trialing", TrialEnd: &before, CurrentPeriodEnd: &before}, false},
+		{"canceled", Subscription{Status: "canceled", CurrentPeriodEnd: &after}, false},
+		{"active with no period", Subscription{Status: "active"}, false},
+		{"none", Subscription{Status: "none"}, false},
+	}
+	for _, c := range cases {
+		if got := c.sub.Grants(now); got != c.want {
+			t.Errorf("%s: Grants = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestPeriodEnd(t *testing.T) {
 	start := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
 	if got := periodEnd(start, "month"); !got.Equal(start.AddDate(0, 1, 0)) {
@@ -68,8 +95,11 @@ func TestBuiltinPlansArePricedConsistently(t *testing.T) {
 func TestCostsNoMore(t *testing.T) {
 	starter := planPrice{code: "starter", interval: "month", currency: "USD", amountMinor: 2900}
 	active := func(interval, currency string, amount int64) dbgen.GetSubscriptionRow {
-		return dbgen.GetSubscriptionRow{Status: "active", Interval: interval, Currency: currency, AmountMinor: amount}
+		return dbgen.GetSubscriptionRow{Status: "active", Interval: interval, Currency: currency, AmountMinor: amount,
+			CurrentPeriodEnd: time.Now().Add(24 * time.Hour)}
 	}
+	lapsed := active("month", "USD", 9900)
+	lapsed.CurrentPeriodEnd = time.Now().Add(-time.Hour)
 	cases := []struct {
 		name    string
 		current dbgen.GetSubscriptionRow
@@ -82,6 +112,7 @@ func TestCostsNoMore(t *testing.T) {
 		{"another interval", active("year", "USD", 99000), false},
 		{"a trial", dbgen.GetSubscriptionRow{Status: "trialing", Interval: "month", Currency: "USD", AmountMinor: 9900}, false},
 		{"a past-due plan", dbgen.GetSubscriptionRow{Status: "past_due", Interval: "month", Currency: "USD", AmountMinor: 9900}, false},
+		{"a dearer plan whose period ended", lapsed, false},
 	}
 	for _, c := range cases {
 		if got := costsNoMore(starter, c.current); got != c.want {

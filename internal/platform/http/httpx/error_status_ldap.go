@@ -16,11 +16,15 @@ func init() {
 		errs.CodeLDAPInvalidCredentials:       http.StatusUnauthorized,
 		errs.CodeLDAPEmailAttributeMissing:    http.StatusUnprocessableEntity,
 		errs.CodeLDAPConnectionDisabled:       http.StatusForbidden,
+		errs.CodeLDAPConnectionDraft:          http.StatusForbidden,
 		errs.CodeLDAPConnectionFieldsRequired: http.StatusUnprocessableEntity,
 		errs.CodeLDAPServerURLInvalid:         http.StatusUnprocessableEntity,
 		errs.CodeLDAPAccountNotInTenant:       http.StatusForbidden,
 		errs.CodeLDAPAccountUnverified:        http.StatusForbidden,
+		errs.CodeLDAPEmailDomainUnverified:    http.StatusForbidden,
+		errs.CodeLDAPAccountAdministers:       http.StatusForbidden,
 		errs.CodeLDAPStatusInvalid:            http.StatusUnprocessableEntity,
 		errs.CodeLDAPTLSVerifyRequired:        http.StatusUnprocessableEntity,
+		errs.CodeLDAPJITNotAllowed:            http.StatusForbidden,
 	})
 }

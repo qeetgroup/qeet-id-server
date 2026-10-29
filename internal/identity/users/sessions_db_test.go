@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -32,7 +33,7 @@ func TestMemberSessionsStayInTheirTenant(t *testing.T) {
 	}
 	sessionA, sessionB, accountSession := session(tenantA), session(tenantB), session(nil)
 
-	h := &Handler{Repo: NewRepository(pool)}
+	h := &Handler{Repo: NewRepository(pool), ActOnCheck: rbac.NewRepository(pool).CheckActOn}
 	for _, tc := range []struct {
 		name  string
 		admin uuid.UUID

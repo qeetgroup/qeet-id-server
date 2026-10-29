@@ -57,6 +57,8 @@ func TestTokenAndSecretResponsesAreNotStored(t *testing.T) {
 		{http.MethodPost, "/v1/auth/session"},
 		{http.MethodPost, "/v1/api-keys"},
 		{http.MethodPost, tenant + "/oidc/clients/" + id + "/rotate-secret"},
+		{http.MethodPost, tenant + "/scim/tokens"},
+		{http.MethodPost, tenant + "/scim/tokens/" + id + "/rotate"},
 		{http.MethodPost, "/v1/mfa/recovery-codes/regenerate"},
 	} {
 		rec := httptest.NewRecorder()

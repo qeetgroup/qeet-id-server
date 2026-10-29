@@ -9,6 +9,7 @@ import (
 	"net/mail"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -59,6 +60,7 @@ type EmailAppearanceSource interface {
 
 type templateSource interface {
 	Get(context.Context, uuid.UUID, string) (*Resolved, error)
+	RecipientLocale(ctx context.Context, tenantID uuid.UUID, address string) (string, error)
 }
 
 // TemplateSender is a notifier.Sender that applies a tenant's customised invite
@@ -69,9 +71,10 @@ type TemplateSender struct {
 	Next       notifier.Sender
 }
 
-// Send renders the tenant's customised template into message and sends it
-// through Next. Other messages, uncustomised templates and render failures are
-// sent unchanged.
+// Send renders the tenant's customised template into message, in the
+// recipient's profile language when the template has it and else in the
+// template's default locale, and sends it through Next. Other messages,
+// uncustomised templates and render failures are sent unchanged.
 func (sender TemplateSender) Send(ctx context.Context, message notifier.Message) error {
 	if (message.Channel != "" && message.Channel != "email") || (message.TemplateKey != "invite" && message.TemplateKey != "magic_link") {
 		return sender.Next.Send(ctx, message)
@@ -89,11 +92,40 @@ func (sender TemplateSender) Send(ctx context.Context, message notifier.Message)
 	for key, value := range message.TemplateVariables {
 		variables[key] = value
 	}
-	preview, err := renderEditor(message.TemplateKey, EditorInput{Subject: template.Subject, Body: template.Body, Options: template.Options}, variables, "", appearance)
+	preferred, err := sender.Templates.RecipientLocale(ctx, tenantID, message.To)
+	if err != nil {
+		preferred = "" // the template's default locale
+	}
+	locale := templateLocale(template.Options, preferred)
+	preview, err := renderEditor(message.TemplateKey, EditorInput{Subject: template.Subject, Body: template.Body, Options: template.Options}, variables, locale, appearance)
 	if err == nil {
 		message.Subject, message.Body, message.HTML = preview.Subject, preview.Body, preview.HTML
 	}
 	return sender.Next.Send(ctx, message)
+}
+
+// templateLocale returns the template locale closest to preferred: "en" for
+// the base content or a translation's locale. It returns "", the template's
+// default locale, when preferred is empty, invalid or matches none closely.
+func templateLocale(options EditorOptions, preferred string) string {
+	want, err := language.Parse(preferred)
+	if preferred == "" || err != nil {
+		return ""
+	}
+	locales := []string{"en"}
+	for locale := range options.Translations {
+		locales = append(locales, locale)
+	}
+	slices.Sort(locales[1:])
+	tags := make([]language.Tag, len(locales))
+	for i, locale := range locales {
+		tags[i] = language.Make(locale)
+	}
+	_, index, confidence := language.NewMatcher(tags).Match(want)
+	if confidence < language.High {
+		return ""
+	}
+	return locales[index]
 }
 
 type emailAppearance struct{ name, logo, primary string }

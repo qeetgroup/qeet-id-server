@@ -481,9 +481,11 @@ func addGuests(w *world.World) {
 
 // permissions are each role's grants. Admin and the owner hold everything.
 var permissions = map[string][]string{
-	world.RoleITAdmin: {"tenant.read", "user.read", "user.write", "group.read", "group.write", "role.read", "role.write",
+	world.RoleITAdmin: {"tenant.read", "user.read", "user.write", "user.delete", "user.suspend", "user.credentials", "session.revoke",
+		"member.invite", "group.read", "group.write", "role.read", "role.write",
 		"connection.read", "connection.write", "policy.read", "policy.write", "branding.write", "audit.read", "analytics.read"},
-	world.RoleHelpdesk: {"tenant.read", "user.read", "user.write", "group.read", "role.read", "audit.read"},
+	world.RoleHelpdesk: {"tenant.read", "user.read", "user.write", "user.suspend", "user.credentials", "session.revoke",
+		"group.read", "role.read", "audit.read"},
 	world.RoleSecurity: {"tenant.read", "user.read", "group.read", "role.read", "audit.read", "audit.write", "analytics.read",
 		"policy.read", "policy.write", "connection.read", "secret.read", "webhook.read", "apikey.read"},
 	world.RoleAuditor: {"tenant.read", "user.read", "group.read", "role.read", "audit.read", "analytics.read", "policy.read",
@@ -573,6 +575,11 @@ func create(w *world.World, o *world.Org) {
 			for _, name := range []string{world.RoleAdmin, world.RoleITAdmin, world.RoleSecurity, world.RoleHelpdesk,
 				world.RoleDeveloper, world.RoleAuditor, world.RoleBilling, world.RoleMember} {
 				if !want[name] {
+					continue
+				}
+				// Every organisation has built-in admin and member roles.
+				if builtin, ok := builtinRoles[name]; ok {
+					o.Roles[name] = systemRole(w, o, builtin)
 					continue
 				}
 				r, err := d.RBAC.Service.CreateRole(ctx, o.ID, name, roleDescriptions[name], owner.Actor())
@@ -698,15 +705,22 @@ func grant(w *world.World, o *world.Org, roleID uuid.UUID, name string, by *worl
 	}
 	for _, p := range perms {
 		if name == world.RoleAdmin || keys[p.Key] {
-			w.Check(w.Deps.RBAC.Service.GrantPermission(w.Ctx, roleID, p.ID, by.Actor()), "grant "+p.Key+" to "+name)
+			w.Check(w.Deps.RBAC.Service.GrantPermission(w.Ctx, o.ID, roleID, p.ID, by.Actor()), "grant "+p.Key+" to "+name)
 		}
 	}
 }
 
 // ownerRole is the organisation's system owner role.
-func ownerRole(w *world.World, o *world.Org) uuid.UUID {
+func ownerRole(w *world.World, o *world.Org) uuid.UUID { return systemRole(w, o, "owner") }
+
+// builtinRoles are the seed's roles every organisation has built in, by the
+// built-in role's name.
+var builtinRoles = map[string]string{world.RoleAdmin: "admin", world.RoleMember: "member"}
+
+// systemRole is the organisation's built-in role called name.
+func systemRole(w *world.World, o *world.Org, name string) uuid.UUID {
 	var id uuid.UUID
-	w.Check(w.Admin.QueryRow(w.Ctx, `SELECT id FROM rbac.roles WHERE tenant_id = $1 AND is_system`, o.ID).Scan(&id), "owner role of "+o.Spec.Slug)
+	w.Check(w.Admin.QueryRow(w.Ctx, `SELECT id FROM rbac.roles WHERE tenant_id = $1 AND is_system AND name = $2`, o.ID, name).Scan(&id), name+" role of "+o.Spec.Slug)
 	return id
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -39,14 +40,17 @@ var (
 	}, []string{"job"})
 )
 
-// RunScheduled runs the jobs until ctx ends. Each runs when it is due: at
-// start if it has never run or its last run began longer ago than its
-// interval, then once per interval.
+// RunScheduled runs the jobs until ctx ends, then waits for those still
+// running. Each runs when it is due: at start if it has never run or its last
+// run began longer ago than its interval, then once per interval, in its own
+// goroutine so a slow one doesn't hold up the others.
 func RunScheduled(ctx context.Context, pool *pgxpool.Pool, jobs []Scheduled, tick time.Duration) {
+	s := newScheduler(pool, jobs)
+	defer s.wg.Wait()
 	t := time.NewTicker(tick)
 	defer t.Stop()
 	for {
-		RunDue(ctx, pool, jobs)
+		s.startDue(ctx)
 		select {
 		case <-ctx.Done():
 			return
@@ -55,16 +59,54 @@ func RunScheduled(ctx context.Context, pool *pgxpool.Pool, jobs []Scheduled, tic
 	}
 }
 
-// RunDue runs, once, every job that is due and that this instance claims, and
-// returns the names of those it ran. A failing or panicking job is recorded
-// and the others still run.
+// RunDue starts every job that is due and that this instance claims, at most
+// maxRunningJobs of them, each in its own goroutine, and returns the names of
+// those it ran once they have all finished. A failing or panicking job is
+// recorded and the others still run.
 func RunDue(ctx context.Context, pool *pgxpool.Pool, jobs []Scheduled) []string {
-	var ran []string
-	for _, j := range jobs {
+	s := newScheduler(pool, jobs)
+	ran := s.startDue(ctx)
+	s.wg.Wait()
+	return ran
+}
+
+// maxRunningJobs is how many jobs an instance runs at once, so the scheduler
+// leaves most of a shared connection pool to requests.
+const maxRunningJobs = 4
+
+// scheduler runs claimed jobs in goroutines and knows which are still running
+// on this instance, so a later tick doesn't start one again.
+type scheduler struct {
+	pool    *pgxpool.Pool
+	jobs    []Scheduled
+	wg      sync.WaitGroup
+	mu      sync.Mutex
+	running map[string]bool
+}
+
+func newScheduler(pool *pgxpool.Pool, jobs []Scheduled) *scheduler {
+	return &scheduler{pool: pool, jobs: jobs, running: map[string]bool{}}
+}
+
+// startDue claims and starts each due job not already running here, while
+// fewer than maxRunningJobs run, and returns the names of those it started.
+// The rest wait for a later call.
+func (s *scheduler) startDue(ctx context.Context) []string {
+	var started []string
+	for _, j := range s.jobs {
 		if ctx.Err() != nil {
-			return ran
+			return started
 		}
-		claimed, err := claimJob(ctx, pool, j)
+		s.mu.Lock()
+		busy, full := s.running[j.Name], len(s.running) >= maxRunningJobs
+		s.mu.Unlock()
+		if full {
+			return started
+		}
+		if busy {
+			continue
+		}
+		claimed, err := claimJob(ctx, s.pool, j)
 		if err != nil {
 			slog.Error("scheduled job: claim", "job", j.Name, "err", err)
 			continue
@@ -72,22 +114,37 @@ func RunDue(ctx context.Context, pool *pgxpool.Pool, jobs []Scheduled) []string 
 		if !claimed {
 			continue
 		}
-		ran = append(ran, j.Name)
-		start := time.Now()
-		err = runJob(ctx, j)
-		elapsed := time.Since(start)
-		scheduledDuration.WithLabelValues(j.Name).Observe(elapsed.Seconds())
-		if err != nil {
-			scheduledFailures.WithLabelValues(j.Name).Inc()
-			slog.Error("scheduled job failed", "job", j.Name, "err", err, "duration_ms", elapsed.Milliseconds())
-		} else {
-			slog.Info("scheduled job complete", "job", j.Name, "duration_ms", elapsed.Milliseconds())
-		}
-		if ferr := finishJob(context.WithoutCancel(ctx), pool, j.Name, err); ferr != nil {
-			slog.Error("scheduled job: record outcome", "job", j.Name, "err", ferr)
-		}
+		s.mu.Lock()
+		s.running[j.Name] = true
+		s.mu.Unlock()
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.run(ctx, j)
+			s.mu.Lock()
+			delete(s.running, j.Name)
+			s.mu.Unlock()
+		}()
+		started = append(started, j.Name)
 	}
-	return ran
+	return started
+}
+
+// run runs a claimed job and records how it ended.
+func (s *scheduler) run(ctx context.Context, j Scheduled) {
+	start := time.Now()
+	err := runJob(ctx, j)
+	elapsed := time.Since(start)
+	scheduledDuration.WithLabelValues(j.Name).Observe(elapsed.Seconds())
+	if err != nil {
+		scheduledFailures.WithLabelValues(j.Name).Inc()
+		slog.Error("scheduled job failed", "job", j.Name, "err", err, "duration_ms", elapsed.Milliseconds())
+	} else {
+		slog.Info("scheduled job complete", "job", j.Name, "duration_ms", elapsed.Milliseconds())
+	}
+	if ferr := finishJob(context.WithoutCancel(ctx), s.pool, j.Name, err); ferr != nil {
+		slog.Error("scheduled job: record outcome", "job", j.Name, "err", ferr)
+	}
 }
 
 // runJob runs one job, turning a panic into its error.

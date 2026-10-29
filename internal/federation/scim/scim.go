@@ -21,14 +21,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 const (
@@ -43,7 +47,8 @@ const (
 )
 
 // Service manages SCIM tokens and provisioned users and groups. A nil signals
-// announces no ended sessions; a nil gate leaves token rotation ungated.
+// announces no ended sessions; a nil gate leaves token rotation and SCIM
+// requests ungated, and nil seats leaves group membership uncapped.
 type Service struct {
 	signals  *sessionsignal.Signaller
 	pool     *pgxpool.Pool
@@ -52,6 +57,38 @@ type Service struct {
 	observer OperationObserver
 	mapper   ProfileMapper
 	gate     PlanGate
+	seats    SeatGuard
+}
+
+// SeatGuard keeps the people holding a role in a tenant within its plan's
+// seats; joining a group that carries a role takes one. Satisfied by
+// *invite.Service.
+type SeatGuard interface {
+	// SeatLimit returns the tenant's seat cap, negative for none; it reads on
+	// the pool, so it is asked before the transaction.
+	SeatLimit(ctx context.Context, tenantID uuid.UUID) (int, error)
+	// WithinSeats runs change in tx and refuses it when it gives someone a
+	// first role beyond limit.
+	WithinSeats(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, limit int, change func() error) error
+}
+
+// SetSeatGuard wires the seat limit on group membership (nil disables it).
+func (s *Service) SetSeatGuard(g SeatGuard) { s.seats = g }
+
+// seatLimit returns the tenant's seat cap, or -1 without a seat guard.
+func (s *Service) seatLimit(ctx context.Context, tenantID uuid.UUID) (int, error) {
+	if s.seats == nil {
+		return -1, nil
+	}
+	return s.seats.SeatLimit(ctx, tenantID)
+}
+
+// withinSeats runs change in tx through the seat guard, if there is one.
+func (s *Service) withinSeats(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, limit int, change func() error) error {
+	if s.seats == nil {
+		return change()
+	}
+	return s.seats.WithinSeats(ctx, tx, tenantID, limit, change)
 }
 
 // SetSessionSignals sets where the sessions ended by a SCIM suspension are
@@ -72,101 +109,17 @@ type PlanGate interface {
 // SetPlanGate wires the plan-feature gate (nil allows all features).
 func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 
+// planIncludesSCIM reports whether the tenant's plan includes SCIM; with no
+// gate set, every plan does.
+func (s *Service) planIncludesSCIM(ctx context.Context, tenantID uuid.UUID) (bool, error) {
+	if s.gate == nil {
+		return true, nil
+	}
+	return s.gate.FeatureAllowed(ctx, tenantID, "scim")
+}
+
 // Pool returns the connection pool, for handlers that run their own transaction.
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
-
-// ConfigView is the admin-facing status of a tenant's SCIM endpoint. The
-// token itself is never returned here — only on rotation.
-type ConfigView struct {
-	TokenSet         bool       `json:"token_set"`
-	TokenPrefix      string     `json:"token_prefix,omitempty"`
-	CreatedAt        *time.Time `json:"created_at"`
-	LastUsedAt       *time.Time `json:"last_used_at"`
-	ProvisionedCount int        `json:"provisioned_count"`
-}
-
-// Config returns the tenant's SCIM settings, without its token.
-func (s *Service) Config(ctx context.Context, tenantID uuid.UUID) (*ConfigView, error) {
-	v := &ConfigView{}
-	tok, err := s.q.GetScimTokenConfig(ctx, tenantID)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return nil, err
-	}
-	if err == nil {
-		v.TokenSet = true
-		v.TokenPrefix = tok.TokenPrefix
-		v.CreatedAt = &tok.CreatedAt
-		if tok.LastUsedAt.Valid {
-			t := tok.LastUsedAt.Time
-			v.LastUsedAt = &t
-		}
-	}
-	pgTID := pgtype.UUID{Bytes: tenantID, Valid: true}
-	count, err := s.q.CountProvisionedUsers(ctx, pgTID)
-	if err != nil {
-		return nil, err
-	}
-	v.ProvisionedCount = int(count)
-	return v, nil
-}
-
-// Rotate generates a new bearer token (replacing any existing one) and
-// returns the full plaintext exactly once. Stored as SHA-256 + a short
-// display prefix.
-func (s *Service) Rotate(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (full string, err error) {
-	// Plan gate: SCIM directory sync is an Enterprise feature, not on Free/lower.
-	if s.gate != nil {
-		ok, gerr := s.gate.FeatureAllowed(ctx, tenantID, "scim")
-		if gerr != nil {
-			return "", gerr
-		}
-		if !ok {
-			return "", errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "scim"})
-		}
-	}
-	raw, _, err := codes.URLToken()
-	if err != nil {
-		return "", err
-	}
-	full = tokenPrefix + raw
-	hash := codes.Hash(full)
-	display := tokenPrefix + raw[:6]
-	if err := s.q.WithTx(tx).UpsertScimToken(ctx, dbgen.UpsertScimTokenParams{
-		TenantID:    tenantID,
-		TokenHash:   hash,
-		TokenPrefix: display,
-	}); err != nil {
-		return "", err
-	}
-	return full, nil
-}
-
-// Revoke deletes the tenant's SCIM token, which ends provisioning.
-func (s *Service) Revoke(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
-	n, err := s.q.WithTx(tx).DeleteScimToken(ctx, tenantID)
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return errs.ErrNotFound
-	}
-	return nil
-}
-
-// resolveToken maps a presented bearer token to its tenant and records use.
-func (s *Service) resolveToken(ctx context.Context, raw string) (uuid.UUID, error) {
-	hash := codes.Hash(raw)
-	tid, err := s.q.GetScimTokenTenant(ctx, hash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, errs.ErrUnauthorized
-	}
-	if err != nil {
-		return uuid.Nil, err
-	}
-	// Best-effort last-used stamp; never block the request on it.
-	_ = s.q.TouchScimTokenUsed(ctx, tid)
-	return tid, nil
-}
 
 // userRow is the SCIM read side (includes external_id, which user.User omits).
 type userRow struct {
@@ -203,12 +156,18 @@ func (s *Service) getProvisioned(ctx context.Context, tenantID, id uuid.UUID) (*
 	}, nil
 }
 
+// listProvisioned lists the organisation's directory-provisioned users. A
+// userName lookup finds any account at home there, whoever created it, so an
+// identity provider can match and link the people who are already members.
 func (s *Service) listProvisioned(ctx context.Context, tenantID uuid.UUID, emailFilter string, start, count int) ([]userRow, int, error) {
-	args := []any{tenantID, provisionedScim}
-	where := `tenant_id = $1 AND provisioned_via = $2 AND deleted_at IS NULL`
+	args := []any{tenantID}
+	where := `tenant_id = $1 AND deleted_at IS NULL`
 	if emailFilter != "" {
 		args = append(args, emailFilter)
-		where += ` AND LOWER(email) = LOWER($3)`
+		where += ` AND LOWER(email) = LOWER($2)`
+	} else {
+		args = append(args, provisionedScim)
+		where += ` AND provisioned_via = $2`
 	}
 
 	var total int
@@ -259,8 +218,13 @@ type Handler struct {
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/scim", h.config)
 	r.Get("/tenants/{tenantID}/scim/users", h.adminListUsers)
+	r.Get("/tenants/{tenantID}/scim/groups", h.adminListGroups)
 	r.Post("/tenants/{tenantID}/scim/token", h.rotate)
 	r.Delete("/tenants/{tenantID}/scim/token", h.revoke)
+	r.Get("/tenants/{tenantID}/scim/tokens", h.listTokens)
+	r.Post("/tenants/{tenantID}/scim/tokens", h.createToken)
+	r.Post("/tenants/{tenantID}/scim/tokens/{id}/rotate", h.rotateToken)
+	r.Delete("/tenants/{tenantID}/scim/tokens/{id}", h.revokeToken)
 }
 
 // adminUser is the plain (non-SCIM-envelope) shape the admin console renders.
@@ -273,30 +237,135 @@ type adminUser struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-// adminListUsers returns this tenant's SCIM-provisioned users for the admin UI.
+// adminPage reads a console list's limit (1..200, default 50) and cursor.
+func adminPage(r *http.Request) (int, time.Time, uuid.UUID, error) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > maxPageCount {
+		limit = 50
+	}
+	before, beforeID := time.Now().Add(time.Hour), uuid.Max
+	if cursor := r.URL.Query().Get("cursor"); cursor != "" {
+		var err error
+		if before, beforeID, err = paging.DecodeTimeUUID(cursor); err != nil {
+			return 0, time.Time{}, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid cursor")
+		}
+	}
+	return limit, before, beforeID, nil
+}
+
+// adminListUsers returns a page of this tenant's SCIM-provisioned users for the
+// admin UI, newest first, with how many there are.
 func (h *Handler) adminListUsers(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := requirePathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	rows, _, err := h.Service.listProvisioned(r.Context(), tenantID, "", 1, maxPageCount)
+	limit, before, beforeID, err := adminPage(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	items := make([]adminUser, 0, len(rows))
-	for i := range rows {
-		items = append(items, adminUser{
-			ID:          rows[i].ID,
-			Email:       rows[i].Email,
-			DisplayName: rows[i].DisplayName,
-			Status:      rows[i].Status,
-			ExternalID:  rows[i].ExternalID,
-			CreatedAt:   rows[i].CreatedAt,
-		})
+	ctx := r.Context()
+	var total int
+	if err := h.Service.pool.QueryRow(ctx, `SELECT count(*) FROM "user".users WHERE tenant_id = $1 AND deleted_at IS NULL AND provisioned_via = $2`,
+		tenantID, provisionedScim).Scan(&total); err != nil {
+		httpx.WriteError(w, r, err)
+		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+	rows, err := h.Service.pool.Query(ctx, `
+		SELECT id, email, display_name, status, external_id, created_at FROM "user".users
+		WHERE tenant_id = $1 AND deleted_at IS NULL AND provisioned_via = $2 AND (created_at, id) < ($3, $4)
+		ORDER BY created_at DESC, id DESC LIMIT $5`, tenantID, provisionedScim, before, beforeID, limit+1)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer rows.Close()
+	items := make([]adminUser, 0, limit+1)
+	for rows.Next() {
+		var u adminUser
+		if err := rows.Scan(&u.ID, &u.Email, &u.DisplayName, &u.Status, &u.ExternalID, &u.CreatedAt); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		items = append(items, u)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out := map[string]any{"total": total}
+	if len(items) > limit {
+		items = items[:limit]
+		out["next_cursor"] = paging.EncodeTimeUUID(items[limit-1].CreatedAt, items[limit-1].ID)
+	}
+	out["items"] = items
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// adminGroup is a group SCIM made, as the console lists it.
+type adminGroup struct {
+	ID         uuid.UUID `json:"id"`
+	Name       string    `json:"name"`
+	ExternalID *string   `json:"external_id"`
+	Members    int       `json:"members"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// adminListGroups returns a page of the groups this tenant's SCIM made, newest
+// first, each with its count of live members, and how many there are.
+func (h *Handler) adminListGroups(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	limit, before, beforeID, err := adminPage(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	ctx := r.Context()
+	var total int
+	if err := h.Service.pool.QueryRow(ctx, `SELECT count(*) FROM tenant.groups WHERE tenant_id = $1 AND provisioned_via = 'scim'`,
+		tenantID).Scan(&total); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	rows, err := h.Service.pool.Query(ctx, `
+		SELECT g.id, g.name, g.external_id, g.created_at, g.updated_at,
+		       (SELECT count(*) FROM tenant.group_members gm JOIN "user".users u ON u.id = gm.user_id
+		        WHERE gm.group_id = g.id AND gm.tenant_id = g.tenant_id AND u.deleted_at IS NULL)::int
+		FROM tenant.groups g
+		WHERE g.tenant_id = $1 AND g.provisioned_via = 'scim' AND (g.created_at, g.id) < ($2, $3)
+		ORDER BY g.created_at DESC, g.id DESC LIMIT $4`, tenantID, before, beforeID, limit+1)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer rows.Close()
+	items := make([]adminGroup, 0, limit+1)
+	for rows.Next() {
+		var g adminGroup
+		if err := rows.Scan(&g.ID, &g.Name, &g.ExternalID, &g.CreatedAt, &g.UpdatedAt, &g.Members); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		items = append(items, g)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out := map[string]any{"total": total}
+	if len(items) > limit {
+		items = items[:limit]
+		out["next_cursor"] = paging.EncodeTimeUUID(items[limit-1].CreatedAt, items[limit-1].ID)
+	}
+	out["items"] = items
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // MountPublic registers the SCIM 2.0 protocol surface at the root, guarded
@@ -355,7 +424,7 @@ func (h *Handler) rotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	full, err := h.Service.Rotate(ctx, tx, tenantID)
+	issued, full, err := h.Service.replaceAll(ctx, tx, tenantID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -368,9 +437,11 @@ func (h *Handler) rotate(w http.ResponseWriter, r *http.Request) {
 		ActorType:    actorType,
 		Action:       "scim.token_rotated",
 		ResourceType: "scim_token",
+		ResourceID:   &issued.ID,
 		IP:           httpx.ClientIP(r),
 		UserAgent:    r.UserAgent(),
 		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"name": issued.Name, "replaced": "all"},
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -445,6 +516,18 @@ func (h *Handler) scimAuth(next http.Handler) http.Handler {
 			writeSCIMErr(w, http.StatusUnauthorized, "invalid SCIM token")
 			return
 		}
+		// The plan is checked on every request, not only when the token was
+		// issued, so a token from a plan that has since lapsed provisions nothing.
+		allowed, err := h.Service.planIncludesSCIM(r.Context(), tid)
+		if err != nil {
+			slog.Error("scim: plan check", "err", err, "tenant_id", tid)
+			writeSCIMErr(w, http.StatusInternalServerError, "the organisation's plan could not be checked")
+			return
+		}
+		if !allowed {
+			writeSCIMErr(w, http.StatusForbidden, "the organisation's plan does not include SCIM provisioning")
+			return
+		}
 		ctx := context.WithValue(r.Context(), tenantCtxKey, tid)
 		h.observeMutations(next).ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -472,6 +555,7 @@ func writeSCIMErr(w http.ResponseWriter, status int, detail string) {
 }
 
 func writeSCIMTypedErr(w http.ResponseWriter, status int, scimType, detail string) {
+	noteReason(w, scimType)
 	writeSCIM(w, status, map[string]any{
 		"schemas":  []string{schemaError},
 		"status":   strconv.Itoa(status),
@@ -480,10 +564,14 @@ func writeSCIMTypedErr(w http.ResponseWriter, status int, scimType, detail strin
 	})
 }
 
+// BaseURL returns the SCIM 2.0 base URL an IdP provisions to, on origin, the
+// API's public origin.
+func BaseURL(origin string) string { return origin + "/scim/v2" }
+
 // location returns the absolute URL of the SCIM endpoint at suffix, a path
 // under /scim/v2.
 func (h *Handler) location(r *http.Request, suffix string) string {
-	return httpx.PublicOrigin(r, h.PublicBaseURL) + "/scim/v2" + suffix
+	return BaseURL(httpx.PublicOrigin(r, h.PublicBaseURL)) + suffix
 }
 
 // toResource renders a user row as a SCIM core User.
@@ -663,6 +751,38 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	// Someone already at home in the organisation (invited, or signed in with
+	// single sign-on) is adopted rather than refused as a duplicate.
+	if existing, err := h.Service.q.HomeUserByEmail(ctx, dbgen.HomeUserByEmailParams{TenantID: tid, Email: email}); err == nil {
+		c := userChange{profile: profile, tag: &p.ExternalID, adopted: true}
+		if display != "" {
+			c.in.DisplayName = &display
+		}
+		if st := statusFromActive(p.Active); st != "" {
+			c.in.Status = &st
+		}
+		if !h.applyUserChange(w, r, tid, existing, c, "user.updated") {
+			return
+		}
+		row, err := h.Service.getProvisioned(ctx, tid, existing)
+		if err != nil {
+			writeSCIMErr(w, http.StatusNotFound, "user not found")
+			return
+		}
+		writeSCIM(w, http.StatusCreated, h.toResource(r, row))
+		return
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		writeSCIMErr(w, http.StatusInternalServerError, "create failed")
+		return
+	}
+	if err := domainverify.CheckNewAccount(ctx, h.Service.users.Pool(), tid, email); err != nil {
+		if errors.Is(err, errs.ErrUserDomainManaged) {
+			writeSCIMErr(w, http.StatusConflict, "userName is on a domain another organization manages")
+			return
+		}
+		writeSCIMErr(w, http.StatusInternalServerError, "create failed")
+		return
+	}
 	tx, err := h.Service.users.Pool().Begin(ctx)
 	if err != nil {
 		writeSCIMErr(w, http.StatusInternalServerError, "create failed")
@@ -675,7 +795,7 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		DisplayName: display,
 	}, "")
 	if err != nil {
-		if errors.Is(err, errs.ErrConflict) {
+		if errors.Is(err, errs.ErrAuthEmailExists) || errors.Is(err, errs.ErrConflict) {
 			writeSCIMErr(w, http.StatusConflict, "userName already exists")
 			return
 		}
@@ -750,15 +870,17 @@ func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request) {
 		writeSCIMTypedErr(w, http.StatusBadRequest, "invalidValue", "Directory mapping validation failed")
 		return
 	}
-	in := user.UpdateInput{}
+	c := userChange{profile: profile, email: p.email()}
 	if d := p.display(); d != "" {
-		in.DisplayName = &d
+		c.in.DisplayName = &d
 	}
 	status := statusFromActive(p.Active)
 	if status != "" {
-		in.Status = &status
+		c.in.Status = &status
 	}
-	if !h.applyUserUpdate(w, r, tid, id, in, "user.updated", profile) {
+	ext := p.ExternalID // PUT is a full replace: externalId is authoritative
+	c.tag = &ext
+	if !h.applyUserChange(w, r, tid, id, c, "user.updated") {
 		return
 	}
 	row, err := h.Service.getProvisioned(r.Context(), tid, id)
@@ -794,45 +916,9 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 		writeSCIMTypedErr(w, http.StatusBadRequest, "invalidValue", "Directory mapping validation failed")
 		return
 	}
-	in := user.UpdateInput{}
-	for _, op := range body.Operations {
-		if !strings.EqualFold(op.Op, "replace") && !strings.EqualFold(op.Op, "add") {
-			continue
-		}
-		switch strings.ToLower(strings.Trim(op.Path, `"`)) {
-		case "active":
-			var b bool
-			if json.Unmarshal(op.Value, &b) == nil {
-				st := statusFromActive(&b)
-				in.Status = &st
-			}
-		case "displayname":
-			var dn string
-			if json.Unmarshal(op.Value, &dn) == nil {
-				in.DisplayName = &dn
-			}
-		case "":
-			// Path-less replace: value is an object of attributes.
-			var obj map[string]json.RawMessage
-			if json.Unmarshal(op.Value, &obj) != nil {
-				continue
-			}
-			if raw, exists := obj["active"]; exists {
-				var b bool
-				if json.Unmarshal(raw, &b) == nil {
-					st := statusFromActive(&b)
-					in.Status = &st
-				}
-			}
-			if raw, exists := obj["displayName"]; exists {
-				var dn string
-				if json.Unmarshal(raw, &dn) == nil {
-					in.DisplayName = &dn
-				}
-			}
-		}
-	}
-	if !h.applyUserUpdate(w, r, tid, id, in, "user.updated", profile) {
+	c := parseUserPatch(body)
+	c.profile = profile
+	if !h.applyUserChange(w, r, tid, id, c, "user.updated") {
 		return
 	}
 	row, err := h.Service.getProvisioned(r.Context(), tid, id)
@@ -854,6 +940,10 @@ func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.deprovision(r, tid, id); err != nil {
+		if errors.Is(err, errOwnerUnchangeable) {
+			writeSCIMErr(w, http.StatusForbidden, ownerUnchangeable)
+			return
+		}
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return
 	}
@@ -874,6 +964,113 @@ func (h *Handler) scimTarget(w http.ResponseWriter, r *http.Request) (uuid.UUID,
 		return uuid.Nil, uuid.Nil, false
 	}
 	return tid, id, true
+}
+
+// parseUserPatch resolves a PatchOp body into a userChange: active (a
+// boolean, or the string Entra sends), displayName, name parts, userName or
+// the primary email, and externalId, by path or in a path-less value object.
+// Other attributes are left to the directory mapping.
+func parseUserPatch(body patchBody) userChange {
+	var c userChange
+	var given, family, formatted *string
+	set := func(path string, raw json.RawMessage) {
+		switch strings.ToLower(path) {
+		case "active":
+			if b, ok := scimBool(raw); ok {
+				st := statusFromActive(&b)
+				c.in.Status = &st
+			}
+		case "displayname":
+			if v, ok := scimString(raw); ok {
+				c.in.DisplayName = &v
+			}
+		case "username", `emails[primary eq true].value`, `emails[type eq "work"].value`:
+			if v, ok := scimString(raw); ok && v != "" {
+				c.email = v
+			}
+		case "emails":
+			var emails []scimEmail
+			if json.Unmarshal(raw, &emails) == nil {
+				if v := (scimUserPayload{Emails: emails}).email(); v != "" {
+					c.email = v
+				}
+			}
+		case "externalid":
+			if v, ok := scimString(raw); ok {
+				c.tag = &v
+			}
+		case "name":
+			var n scimName
+			if json.Unmarshal(raw, &n) == nil {
+				given, family, formatted = &n.GivenName, &n.FamilyName, &n.Formatted
+			}
+		case "name.givenname":
+			if v, ok := scimString(raw); ok {
+				given = &v
+			}
+		case "name.familyname":
+			if v, ok := scimString(raw); ok {
+				family = &v
+			}
+		case "name.formatted":
+			if v, ok := scimString(raw); ok {
+				formatted = &v
+			}
+		}
+	}
+	for _, op := range body.Operations {
+		if !strings.EqualFold(op.Op, "replace") && !strings.EqualFold(op.Op, "add") {
+			continue
+		}
+		path := strings.Trim(op.Path, `"`)
+		if path != "" {
+			set(path, op.Value)
+			continue
+		}
+		var obj map[string]json.RawMessage
+		if json.Unmarshal(op.Value, &obj) != nil {
+			continue
+		}
+		for key, raw := range obj {
+			set(key, raw)
+		}
+	}
+	if c.in.DisplayName == nil {
+		switch {
+		case formatted != nil && *formatted != "":
+			c.in.DisplayName = formatted
+		case given != nil && family != nil:
+			if full := strings.TrimSpace(*given + " " + *family); full != "" {
+				c.in.DisplayName = &full
+			}
+		}
+	}
+	return c
+}
+
+// scimBool reads a SCIM boolean, which Entra sends as the string "True" or
+// "False".
+func scimBool(raw json.RawMessage) (bool, bool) {
+	var b bool
+	if json.Unmarshal(raw, &b) == nil {
+		return b, true
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		if v, err := strconv.ParseBool(strings.TrimSpace(s)); err == nil {
+			return v, true
+		}
+	}
+	return false, false
+}
+
+// scimString reads a SCIM string attribute.
+func scimString(raw json.RawMessage) (string, bool) {
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		return "", false
+	}
+	return strings.TrimSpace(s), true
 }
 
 // statusFromActive maps the SCIM active flag to a user status. nil → "" so
@@ -1034,15 +1231,46 @@ func recordUserEvidence(ctx context.Context, tx pgx.Tx, r *http.Request, tenantI
 	})
 }
 
-// applyUserUpdate runs a SCIM-driven user update and its evidence in one
-// transaction, so a provisioning change is never durable without a record of it.
-func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenantID, userID uuid.UUID, in user.UpdateInput, action string, profiles ...map[string]any) bool {
+// userChange is a SCIM change to a user: the update, the directory's mapped
+// profile (nil: none), an external ID tagging the account as provisioned (nil:
+// keep the tag), a new address ("": keep it), and whether a create adopted the
+// existing account.
+type userChange struct {
+	in      user.UpdateInput
+	profile map[string]any
+	tag     *string
+	email   string
+	adopted bool
+}
+
+// applyUserChange runs a SCIM-driven user change and its evidence in one
+// transaction, so a provisioning change is never durable without a record of
+// it. A new address must be on a domain the organisation manages; it counts as
+// verified, as the organisation's directory vouches for it, and links sent to
+// the old one stop working.
+func (h *Handler) applyUserChange(w http.ResponseWriter, r *http.Request, tenantID, userID uuid.UUID, c userChange, action string) bool {
 	ctx := r.Context()
+	in := c.in
 	// UpdateTx matches on the user ID alone, so without this check one tenant's
 	// SCIM token could suspend or rename a user in any tenant.
-	if _, err := h.Service.getProvisioned(ctx, tenantID, userID); err != nil {
+	current, err := h.Service.getProvisioned(ctx, tenantID, userID)
+	if err != nil {
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return false
+	}
+	if strings.EqualFold(c.email, current.Email) {
+		c.email = ""
+	}
+	if c.email != "" {
+		manager, managed, err := domainverify.ManagerOf(postgres.AcrossTenants(ctx), h.Service.users.Pool(), c.email)
+		if err != nil {
+			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
+			return false
+		}
+		if !managed || manager != tenantID {
+			writeSCIMTypedErr(w, http.StatusBadRequest, "invalidValue", "userName must be on a domain the organization has verified")
+			return false
+		}
 	}
 	tx, err := h.Service.users.Pool().Begin(ctx)
 	if err != nil {
@@ -1050,24 +1278,61 @@ func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenant
 		return false
 	}
 	defer tx.Rollback(ctx)
+	state, err := h.Service.q.WithTx(tx).ProvisionedUserState(ctx, dbgen.ProvisionedUserStateParams{TenantID: tenantID, ID: userID})
+	if err != nil {
+		writeSCIMErr(w, http.StatusNotFound, "user not found")
+		return false
+	}
+	if state.Owner {
+		writeSCIMErr(w, http.StatusForbidden, ownerUnchangeable)
+		return false
+	}
+	// The directory lifts only a suspension it set: one an administrator, a
+	// policy or another directory set stands, and the rest of the change
+	// applies.
+	if in.Status != nil && *in.Status == "active" && state.Status == "suspended" && state.SuspensionSource != "scim" {
+		in.Status = nil
+	}
 	if _, err := h.Service.users.UpdateTx(ctx, tx, userID, in); err != nil {
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return false
+	}
+	if c.tag != nil {
+		if err := h.Service.tagProvisionedTx(ctx, tx, userID, *c.tag); err != nil {
+			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
+			return false
+		}
+	}
+	if c.email != "" {
+		if err := auth.ExpireRecoveryLinks(ctx, tx, userID); err != nil {
+			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
+			return false
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE "user".users SET email = $3, email_verified_at = NOW(), updated_at = NOW()
+			WHERE id = $1 AND tenant_id = $2`, userID, tenantID, c.email); err != nil {
+			if pgxerr.IsUnique(err) {
+				writeSCIMTypedErr(w, http.StatusConflict, "uniqueness", "userName already exists")
+				return false
+			}
+			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
+			return false
+		}
 	}
 	if in.Status != nil && *in.Status == "suspended" {
 		if _, err := tx.Exec(ctx, `UPDATE "user".users SET suspension_source='scim',suspension_reason='provider' WHERE tenant_id=$1 AND id=$2 AND suspension_source='unknown'`, tenantID, userID); err != nil {
 			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
 			return false
 		}
-		ended, err := sessionsignal.EndUserSessions(ctx, tx, userID)
-		if err != nil {
+		// Every way in ends, as an administrator's suspension ends them, so a
+		// later reactivation revives none.
+		if _, err := auth.EndSignIns(ctx, tx, h.Service.signals, userID, sessionsignal.ReasonDeprovisioned); err != nil {
 			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
 			return false
 		}
-		h.Service.signals.Revoked(ctx, tx, sessionsignal.ReasonDeprovisioned, ended...)
 	}
-	if h.Service.mapper != nil && len(profiles) > 0 {
-		if err := h.Service.mapper.StoreProfile(ctx, tx, tenantID, userID, "scim:"+tenantID.String(), profiles[0]); err != nil {
+	if h.Service.mapper != nil && c.profile != nil {
+		if err := h.Service.mapper.StoreProfile(ctx, tx, tenantID, userID, "scim:"+tenantID.String(), c.profile); err != nil {
 			writeSCIMErr(w, http.StatusInternalServerError, "Profile mapping could not be saved")
 			return false
 		}
@@ -1078,6 +1343,12 @@ func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenant
 	}
 	if in.DisplayName != nil {
 		metadata["display_name_changed"] = true
+	}
+	if c.email != "" {
+		metadata["email_changed"] = true
+	}
+	if c.adopted {
+		metadata["adopted"] = true
 	}
 	if err := recordUserEvidence(ctx, tx, r, tenantID, userID, action, metadata); err != nil {
 		writeSCIMErr(w, http.StatusInternalServerError, "update failed")
@@ -1090,8 +1361,16 @@ func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenant
 	return true
 }
 
-// deprovision soft-deletes a SCIM-managed user and records it in the same
-// transaction.
+// ownerUnchangeable is the refusal of a directory change to an account that
+// owns the organisation: owners are changed only by people, in the console.
+const ownerUnchangeable = "This account owns the organization, so the directory can't change it."
+
+// errOwnerUnchangeable refuses deprovisioning an owner.
+var errOwnerUnchangeable = errors.New("scim: the account owns the organization")
+
+// deprovision soft-deletes a SCIM-managed user, ending every way they sign
+// in, and records it in the same transaction. An owner is refused with
+// errOwnerUnchangeable.
 func (h *Handler) deprovision(r *http.Request, tenantID, userID uuid.UUID) error {
 	ctx := r.Context()
 	tx, err := h.Service.users.Pool().Begin(ctx)
@@ -1099,7 +1378,17 @@ func (h *Handler) deprovision(r *http.Request, tenantID, userID uuid.UUID) error
 		return err
 	}
 	defer tx.Rollback(ctx)
+	state, err := h.Service.q.WithTx(tx).ProvisionedUserState(ctx, dbgen.ProvisionedUserStateParams{TenantID: tenantID, ID: userID})
+	if err != nil {
+		return err
+	}
+	if state.Owner {
+		return errOwnerUnchangeable
+	}
 	if err := h.Service.users.SoftDeleteTx(ctx, tx, userID); err != nil {
+		return err
+	}
+	if _, err := auth.EndSignIns(ctx, tx, h.Service.signals, userID, sessionsignal.ReasonDeprovisioned); err != nil {
 		return err
 	}
 	if err := recordUserEvidence(ctx, tx, r, tenantID, userID, "user.deleted", nil); err != nil {

@@ -1,7 +1,6 @@
 package qeetai
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,15 +13,11 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai/openai"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
-
-// staticKey is a KeyProvider with a fixed data key.
-type staticKey struct{}
-
-func (staticKey) DataKey(context.Context) ([]byte, error) { return make([]byte, 32), nil }
 
 // TestStreamClientOutlivesHeaderTimeout checks that a streamed reply may last
 // longer than the stream client's header timeout, which a whole-request timeout
@@ -71,10 +66,11 @@ func TestStreamClientOutlivesHeaderTimeout(t *testing.T) {
 // TestProviderConfigClients checks that model calls stream through a client
 // with no whole-request timeout and that Test probes stay bounded.
 func TestProviderConfigClients(t *testing.T) {
-	c, err := NewProviderConfig(context.Background(), nil, staticKey{}, PlatformProvider{}, egress.DevelopmentPolicy())
+	box, err := envelope.New(make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
+	c := NewProviderConfig(nil, box, PlatformProvider{}, egress.DevelopmentPolicy())
 	if c.httpClient.Timeout != probeTimeout {
 		t.Errorf("probe client timeout = %s, want %s", c.httpClient.Timeout, probeTimeout)
 	}
@@ -169,4 +165,18 @@ func bodyCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 		t.Fatalf("decode %d response: %v\nbody: %s", rec.Code, err, rec.Body)
 	}
 	return body.Error.Code
+}
+
+// TestPlatformViewHidesTheDeploymentsEndpoint checks that an organisation using
+// the Qeet-managed provider sees which provider and model answer, not the
+// deployment's base URL.
+func TestPlatformViewHidesTheDeploymentsEndpoint(t *testing.T) {
+	p := PlatformProvider{Provider: "openai", APIKey: "sk-secret", Model: "gpt-x", BaseURL: "https://llm.internal.example", MaxTokens: 2048}
+	v := p.view()
+	if v.Source != SourcePlatform || v.Provider != "openai" || v.Model != "gpt-x" || v.MaxTokens != 2048 {
+		t.Errorf("view = %+v; want the platform source, provider, model and token limit", v)
+	}
+	if v.BaseURL != "" || v.Last4 != "" {
+		t.Errorf("view = %+v; want no base URL and no key hint", v)
+	}
 }

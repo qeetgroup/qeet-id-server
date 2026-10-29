@@ -19,7 +19,7 @@ RETURNING id, tenant_id, client_id, type, name, redirect_uris,
 
 -- pkce_exempt is whether the client's PKCE exemption is in force now.
 -- name: GetClientForAuth :one
-SELECT id, tenant_id, client_secret_hash, type, grant_types,
+SELECT id, tenant_id, client_secret_hash, type, grant_types, scopes,
        (pkce_exempt_until IS NOT NULL AND pkce_exempt_until > NOW())::bool AS pkce_exempt
 FROM auth.oidc_clients WHERE client_id = @client_id;
 
@@ -36,9 +36,6 @@ FROM auth.oidc_clients WHERE client_id = @client_id;
 
 -- name: GetClientPostLogoutURIs :one
 SELECT post_logout_uris FROM auth.oidc_clients WHERE client_id = @client_id;
-
--- name: GetClientGrantTypes :one
-SELECT grant_types FROM auth.oidc_clients WHERE client_id = @client_id;
 
 -- name: ListShadowAICandidates :many
 SELECT c.id, c.client_id, c.name, c.grant_types, c.created_at,
@@ -148,7 +145,8 @@ ON CONFLICT (user_id, client_id) DO UPDATE SET scopes = EXCLUDED.scopes, granted
 -- ==========================================================================
 
 -- login_session_id is the hosted-login session the grant was started through
--- (NULL when there was none); renewals carry it forward.
+-- and auth_time when the person signed in there (NULL when there was none);
+-- renewals carry both forward.
 -- InsertRefreshToken starts a grant. However often it is renewed, it ends at
 -- grant_expires_at: the organisation's maximum session age from now, or the
 -- platform's when the organisation sets none. No token outlives the grant.
@@ -156,9 +154,10 @@ ON CONFLICT (user_id, client_id) DO UPDATE SET scopes = EXCLUDED.scopes, granted
 -- name: InsertRefreshToken :exec
 INSERT INTO auth.oidc_refresh_tokens
     (id, grant_id, token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id,
-     grant_expires_at, authorization_code_hash)
+     grant_expires_at, authorization_code_hash, auth_time)
 SELECT @id, @id, @token_hash, @client_id, @user_id, @tenant_id, @scopes, LEAST(@expires_at::timestamptz, g.ends),
-       sqlc.narg('resource'), sqlc.narg('login_session_id'), g.ends, sqlc.narg('authorization_code_hash')
+       sqlc.narg('resource'), sqlc.narg('login_session_id'), g.ends, sqlc.narg('authorization_code_hash'),
+       sqlc.narg('auth_time')
 FROM (
     SELECT NOW() + COALESCE(
         (SELECT sp.session_max_age FROM tenant.security_policies sp WHERE sp.tenant_id = @tenant_id),
@@ -167,7 +166,8 @@ FROM (
 
 -- name: LockRefreshToken :one
 SELECT id, client_id, user_id, tenant_id, scopes, expires_at,
-       used_at, revoked_at, resource, login_session_id, grant_expires_at, authorization_code_hash, grant_id
+       used_at, revoked_at, resource, login_session_id, grant_expires_at, authorization_code_hash, grant_id,
+       auth_time
 FROM auth.oidc_refresh_tokens WHERE token_hash = @token_hash FOR UPDATE;
 
 -- InsertRotatedRefreshToken continues a grant: it keeps the grant's end, and
@@ -175,11 +175,11 @@ FROM auth.oidc_refresh_tokens WHERE token_hash = @token_hash FOR UPDATE;
 -- name: InsertRotatedRefreshToken :one
 INSERT INTO auth.oidc_refresh_tokens
     (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id, grant_expires_at,
-     authorization_code_hash, grant_id)
+     authorization_code_hash, grant_id, auth_time)
 VALUES (@token_hash, @client_id, @user_id, @tenant_id, @scopes,
         LEAST(@expires_at::timestamptz, @grant_expires_at::timestamptz),
         sqlc.narg('resource'), sqlc.narg('login_session_id'), @grant_expires_at::timestamptz,
-        sqlc.narg('authorization_code_hash'), sqlc.narg('grant_id'))
+        sqlc.narg('authorization_code_hash'), sqlc.narg('grant_id'), sqlc.narg('auth_time'))
 RETURNING id;
 
 -- name: MarkRefreshTokenUsed :exec
@@ -209,16 +209,43 @@ RETURNING t.id, t.user_id, t.tenant_id, t.grant_id;
 SELECT client_id, user_id, tenant_id, scopes, issued_at, expires_at, used_at, revoked_at
 FROM auth.oidc_refresh_tokens WHERE token_hash = @token_hash;
 
+-- ListGrants returns a page of the tenant's live grants (each the current
+-- token of its chain), latest issued first, before the cursor, of one
+-- application when given: with its application's and person's names, when the
+-- grant began and when the person last consented to the application.
 -- name: ListGrants :many
--- At most paging.MaxListItems+1 rows: the API truncates the rest.
-SELECT t.id, t.client_id, t.user_id, COALESCE(u.email, '') AS user_email,
-       t.scopes, t.issued_at, t.expires_at
+SELECT t.id, t.client_id, COALESCE(c.name, '') AS client_name, t.user_id,
+       COALESCE(u.email, '') AS user_email, u.display_name AS user_name,
+       t.scopes, t.issued_at, t.expires_at,
+       COALESCE((SELECT r.issued_at FROM auth.oidc_refresh_tokens r
+                 WHERE r.id = t.grant_id AND r.tenant_id = t.tenant_id), t.issued_at)::timestamptz AS authorized_at,
+       k.granted_at AS consented_at
 FROM auth.oidc_refresh_tokens t
+LEFT JOIN auth.oidc_consents k ON k.user_id = t.user_id AND k.client_id = t.client_id
+LEFT JOIN auth.oidc_clients c ON c.client_id = t.client_id
 LEFT JOIN "user".users u ON u.id = t.user_id
 WHERE t.tenant_id = @tenant_id
   AND t.revoked_at IS NULL AND t.replaced_by IS NULL AND t.expires_at > NOW()
-ORDER BY t.issued_at DESC
-LIMIT 1001;
+  AND (sqlc.narg('client_id')::text IS NULL OR t.client_id = sqlc.narg('client_id'))
+  AND (t.issued_at, t.id) < (@before_ts::timestamptz, @before_id::uuid)
+ORDER BY t.issued_at DESC, t.id DESC
+LIMIT @row_limit;
+
+-- name: CountGrants :one
+SELECT count(*)::int FROM auth.oidc_refresh_tokens t
+WHERE t.tenant_id = @tenant_id
+  AND t.revoked_at IS NULL AND t.replaced_by IS NULL AND t.expires_at > NOW()
+  AND (sqlc.narg('client_id')::text IS NULL OR t.client_id = sqlc.narg('client_id'));
+
+-- RevokeClientGrants ends every grant the tenant's people gave client_id and
+-- returns the people they were for, once each.
+-- name: RevokeClientGrants :many
+WITH ended AS (
+    UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
+    WHERE tenant_id = @tenant_id AND client_id = @client_id AND revoked_at IS NULL
+    RETURNING user_id
+)
+SELECT DISTINCT user_id FROM ended;
 
 -- name: GetGrantForRevoke :one
 SELECT client_id, user_id FROM auth.oidc_refresh_tokens
@@ -268,11 +295,12 @@ UPDATE auth.oidc_device_codes SET consumed_at = NOW() WHERE id = @id;
 
 -- name: ListDevices :many
 -- At most paging.MaxListItems+1 rows: the API truncates the rest.
-SELECT d.id, d.client_id, d.user_code, d.status, d.user_id,
+SELECT d.id, d.client_id, COALESCE(c.name, '') AS client_name, d.user_code, d.status, d.user_id,
        COALESCE(u.email, '') AS user_email, d.scopes,
-       d.created_at, d.expires_at, d.last_polled_at
+       d.created_at, d.expires_at, d.last_polled_at, d.consumed_at
 FROM auth.oidc_device_codes d
 LEFT JOIN "user".users u ON u.id = d.user_id
+LEFT JOIN auth.oidc_clients c ON c.client_id = d.client_id AND c.tenant_id = d.tenant_id
 WHERE d.tenant_id = @tenant_id
 ORDER BY d.created_at DESC
 LIMIT 1001;
@@ -280,7 +308,14 @@ LIMIT 1001;
 -- name: RevokeDevice :one
 UPDATE auth.oidc_device_codes SET status = 'denied'
 WHERE id = @id AND tenant_id = @tenant_id
-RETURNING client_id, user_code;
+RETURNING client_id, user_code, device_code_hash;
+
+-- RevokeDeviceGrant ends the grant a device code was redeemed for, every
+-- rotation of it included.
+-- name: RevokeDeviceGrant :execrows
+UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
+WHERE tenant_id = @tenant_id AND client_id = @client_id
+  AND authorization_code_hash = @device_code_hash AND revoked_at IS NULL;
 
 -- ==========================================================================
 -- CIBA (OpenID Connect Client-Initiated Backchannel Authentication)
@@ -443,6 +478,16 @@ SELECT EXISTS (
 SELECT id, tenant_id, identifier, name, server_client_id, created_at
 FROM auth.oidc_resources WHERE tenant_id = @tenant_id ORDER BY identifier;
 
+-- ResourceHostClaimedElsewhere reports whether another organisation has
+-- verified the host of a resource identifier, or a domain above it: only that
+-- organisation may name a service there.
+-- name: ResourceHostClaimedElsewhere :one
+SELECT EXISTS (
+    SELECT 1 FROM tenant.domains d
+    WHERE d.tenant_id <> @tenant_id AND d.verified_at IS NOT NULL
+      AND (lower(@host::text) = lower(d.domain) OR lower(@host::text) LIKE '%.' || lower(d.domain))
+)::bool;
+
 -- name: InsertResource :one
 INSERT INTO auth.oidc_resources (tenant_id, identifier, name, server_client_id)
 VALUES (@tenant_id, @identifier, @name, sqlc.narg('server_client_id'))
@@ -514,3 +559,19 @@ WHERE id = @id;
 -- name: UpgradeOIDCClientSecretHash :exec
 UPDATE auth.oidc_clients SET client_secret_hash = @new_hash
 WHERE id = @id AND tenant_id = @tenant_id AND client_secret_hash = @old_hash;
+
+-- name: GetClientWebOrigins :one
+-- The web origins an application set; NULL: its redirect URIs' origins.
+SELECT web_origins FROM auth.oidc_clients WHERE id = @id AND tenant_id = @tenant_id;
+
+-- name: ListClientWebOrigins :many
+SELECT id, web_origins FROM auth.oidc_clients WHERE tenant_id = @tenant_id;
+
+-- name: SetClientWebOrigins :exec
+UPDATE auth.oidc_clients SET web_origins = sqlc.narg('web_origins')
+WHERE id = @id AND tenant_id = @tenant_id;
+
+-- name: ListAllWebOrigins :many
+-- Every application's redirect URIs and web origins, for the CORS check of
+-- the OAuth endpoints a browser calls before it names its application.
+SELECT redirect_uris, web_origins FROM auth.oidc_clients;

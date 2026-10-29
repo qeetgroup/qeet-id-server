@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -12,10 +13,13 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
 // mfaChallengeTTL bounds how long a pending second-factor login stays valid.
@@ -219,6 +223,13 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken str
 	if err != nil {
 		return metChallenge{}, err
 	}
+	streak, err := dbgen.New(tx).CountMFAAttempt(ctx, userID)
+	if err != nil {
+		return metChallenge{}, err
+	}
+	if streak.Locked {
+		return metChallenge{}, errs.ErrMFALocked
+	}
 	var ok bool
 	if riskEmail {
 		// Confirmed by the latest code sent to the verified email; no second
@@ -239,9 +250,15 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken str
 		return metChallenge{}, err
 	}
 	if !ok {
+		lockNow := streak.Failures >= maxMFAFailureStreak
+		if lockNow {
+			if err := s.lockMFASignIn(ctx, tx, userID, tenantID, int(streak.Failures)); err != nil {
+				return metChallenge{}, err
+			}
+		}
 		next := challengeFailures + 1
 		remaining := maxMFALoginAttempts - int(next)
-		if next >= maxMFALoginAttempts {
+		if next >= maxMFALoginAttempts || lockNow {
 			if _, err := tx.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id); err != nil {
 				return metChallenge{}, err
 			}
@@ -260,6 +277,10 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken str
 			failure.TenantID = *tenantID
 		}
 		s.RecordSignInFailure(ctx, failure)
+		if lockNow {
+			s.noticeMFALocked(ctx, userID)
+			return metChallenge{}, errs.ErrMFALocked
+		}
 		if remaining <= 0 || accountRemaining <= 0 {
 			return metChallenge{}, errs.ErrMFAAttemptsExceeded.WithMetadata(map[string]any{"remaining_attempts": 0})
 		}
@@ -272,6 +293,9 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken str
 		return metChallenge{}, err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM auth.mfa_attempt_budgets WHERE user_id = $1 AND purpose = 'login'`, userID); err != nil {
+		return metChallenge{}, err
+	}
+	if err := dbgen.New(tx).EndMFAFailureStreak(ctx, userID); err != nil {
 		return metChallenge{}, err
 	}
 	if enrollment {
@@ -346,7 +370,51 @@ func (s *Service) deferEnrollment(ctx context.Context, tx pgx.Tx, id uuid.UUID, 
 const (
 	maxMFALoginAttempts   = 5
 	mfaLoginAttemptWindow = 10 * time.Minute
+	// maxMFAFailureStreak is how many wrong second factors in a row lock a
+	// person's second-factor sign-in, whatever the windows above allow.
+	maxMFAFailureStreak = 50
 )
+
+// lockMFASignIn locks userID's second-factor sign-in inside tx, at the end of
+// a run of failures wrong answers, and audits it.
+func (s *Service) lockMFASignIn(ctx context.Context, tx pgx.Tx, userID uuid.UUID, tenantID *uuid.UUID, failures int) error {
+	if err := dbgen.New(tx).LockMFASignIn(ctx, userID); err != nil {
+		return err
+	}
+	return audit.Record(ctx, tx, audit.Event{
+		TenantID:     tenantID,
+		ActorUserID:  &userID,
+		ActorType:    "user",
+		Action:       "auth.mfa_locked",
+		ResourceType: "user",
+		ResourceID:   &userID,
+		Metadata:     map[string]any{"failures": failures},
+	})
+}
+
+// noticeMFALocked tells the person their second-factor sign-in locked, as
+// whoever entered the codes knew their password. Best effort: the lock stands.
+func (s *Service) noticeMFALocked(ctx context.Context, userID uuid.UUID) {
+	if s.sender == nil {
+		return
+	}
+	var email string
+	if err := s.pool.QueryRow(ctx, `SELECT email FROM "user".users WHERE id = $1`, userID).Scan(&email); err != nil {
+		slog.Warn("auth: could not read the address for an MFA lock notice", "user_id", userID, "err", err)
+		return
+	}
+	intro := "Many wrong verification codes were entered after your password while signing in to your Qeet ID account, so signing in with a second factor is now locked."
+	note := "Whoever entered them knew your password. Reset your password from the sign-in page to unlock your account."
+	if err := s.sender.Send(ctx, notifier.Message{
+		Channel: "email",
+		To:      email,
+		Subject: "Your sign-in was locked",
+		Body:    intro + " " + note,
+		HTML:    emailtmpl.Notice("Your sign-in was locked", intro, note),
+	}); err != nil {
+		slog.Warn("auth: could not send an MFA lock notice", "user_id", userID, "err", err)
+	}
+}
 
 func reserveLoginMFAAttempt(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (int, error) {
 	if _, err := tx.Exec(ctx, `

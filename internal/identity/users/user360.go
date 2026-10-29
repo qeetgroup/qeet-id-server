@@ -18,6 +18,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/useragent"
 )
 
 // SecuritySummary is a user's authentication posture for the console. MFARequired
@@ -42,12 +43,18 @@ type SecuritySummary struct {
 // SessionInfo is one live session for a user. Device/OS/geo are intentionally
 // absent — the sessions model stores only ip + raw user_agent; the console
 // parses the UA client-side.
+// Device and DeviceKind describe it from the user agent, as the person's own
+// session list does; Country and City are where it was opened, when known.
 type SessionInfo struct {
 	ID         uuid.UUID `json:"id"`
 	IP         *string   `json:"ip"`
 	UserAgent  *string   `json:"user_agent"`
 	CreatedAt  time.Time `json:"created_at"`
 	LastSeenAt time.Time `json:"last_seen_at"`
+	Device     string    `json:"device"`
+	DeviceKind string    `json:"device_kind"`
+	Country    string    `json:"country,omitempty"`
+	City       string    `json:"city,omitempty"`
 }
 
 // RoleInfo is a role shown in the console's Access tab.
@@ -187,11 +194,20 @@ func (r *Repository) ListUserSessions(ctx context.Context, id, tenantID uuid.UUI
 	}
 	out := make([]SessionInfo, 0, len(rows))
 	for _, row := range rows {
+		ua := ""
+		if row.UserAgent != nil {
+			ua = *row.UserAgent
+		}
+		device := useragent.Parse(ua)
 		si := SessionInfo{
 			ID:         row.ID,
 			UserAgent:  row.UserAgent,
 			CreatedAt:  row.CreatedAt,
 			LastSeenAt: row.LastSeenAt,
+			Device:     device.Label(),
+			DeviceKind: device.Kind,
+			Country:    row.Country,
+			City:       row.City,
 		}
 		if row.Ip != "" {
 			ip := row.Ip
@@ -287,10 +303,10 @@ func (r *Repository) AccessSummary(ctx context.Context, id, tenantID uuid.UUID) 
 	}, nil
 }
 
-// SetMfaRequired flips the users.mfa_required policy flag. ErrNotFound when the
-// user does not exist (or is soft-deleted).
-func (r *Repository) SetMfaRequired(ctx context.Context, id uuid.UUID, required bool) error {
-	n, err := r.q.SetUserMfaRequired(ctx, dbgen.SetUserMfaRequiredParams{ID: id, MfaRequired: required})
+// SetMfaRequiredTx sets the users.mfa_required policy flag in tx. ErrNotFound
+// when the user does not exist (or is soft-deleted).
+func (r *Repository) SetMfaRequiredTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, required bool) error {
+	n, err := r.q.WithTx(tx).SetUserMfaRequired(ctx, dbgen.SetUserMfaRequiredParams{ID: id, MfaRequired: required})
 	if err != nil {
 		return err
 	}
@@ -314,7 +330,15 @@ func (h *Handler) getUserStats(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, stats)
+	counts, err := h.Repo.Counts(r.Context(), *p.TenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, struct {
+		*UserStats
+		*MemberCounts
+	}{stats, counts})
 }
 
 // getUserTrends handles GET /v1/users/trends: 30-day daily series for the
@@ -370,7 +394,7 @@ func (h *Handler) getSessions(w http.ResponseWriter, r *http.Request) {
 // reports {"revoked": total} with a count per kind. Access tokens already
 // issued stay valid until they expire.
 func (h *Handler) revokeAllSessions(w http.ResponseWriter, r *http.Request) {
-	id, tenantID, err := h.scopedID(r)
+	id, tenantID, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -450,9 +474,9 @@ type setMfaRequiredInput struct {
 }
 
 // setMfaRequired handles PUT /v1/users/{id}/mfa-required: it sets the user's
-// MFA-required flag and audits the change.
+// MFA-required flag and audits it, with the value set, in one transaction.
 func (h *Handler) setMfaRequired(w http.ResponseWriter, r *http.Request) {
-	id, _, err := h.scopedID(r)
+	id, tenantID, err := h.actOnID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -466,10 +490,10 @@ func (h *Handler) setMfaRequired(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("required is required"))
 		return
 	}
-	if err := h.Repo.SetMfaRequired(r.Context(), id, *in.Required); err != nil {
+	if err := h.withAudit(r, tenantID, id, "user.mfa_required_set", map[string]any{"mfa_required": *in.Required},
+		func(ctx context.Context, tx pgx.Tx) error { return h.Repo.SetMfaRequiredTx(ctx, tx, id, *in.Required) }); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.auditUserAction(r, "user.mfa_required_set", id)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"mfa_required": *in.Required})
 }
