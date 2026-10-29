@@ -314,7 +314,15 @@ func (h *Handler) getUserStats(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, stats)
+	counts, err := h.Repo.Counts(r.Context(), *p.TenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, struct {
+		*UserStats
+		*MemberCounts
+	}{stats, counts})
 }
 
 // getUserTrends handles GET /v1/users/trends: 30-day daily series for the

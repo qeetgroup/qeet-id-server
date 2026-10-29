@@ -807,7 +807,7 @@ paths:
     get:
       operationId: get_v1_users_stats
       summary: User directory summary
-      description: Tenant-wide member counts (total / active / suspended / invited / MFA enabled / MFA missing) for the Users admin summary strip. Requires `user.read`.
+      description: 'Tenant-wide member counts for the Users admin summary: total, active, suspended, invited, with and without a second factor, new in the last 30 days; members by when they were last seen (last_seen: today, week, month, older, never, with the same edges as the list''s last_seen filter); owners and admins without a second factor; members whose email isn''t verified; and members by role and by department (metadata.department). Each count equals the list''s total for the matching filter. Requires `user.read`.'
       tags:
         - Users
       security:
@@ -827,7 +827,7 @@ paths:
   /v1/users:
     get:
       operationId: get_v1_users
-      description: 'Returns a page of users in the caller''s tenant. Supports opaque cursor paging or numeric offset paging to jump to a specific page. Requires an existing tenant; scope comes from the authenticated principal. Members are the organisation''s own users (their home is this organisation) and the people who hold a role in it; a member whose home is another organisation is shown with empty metadata, which their home organisation keeps; last_seen_at and last_seen_ip come from sessions in this organisation only.'
+      description: 'Returns a page of users in the caller''s tenant, with total, how many match. Every filter is optional and they combine: q (display name, email or phone, case-insensitive), role (a role name in the tenant), department (metadata.department), mfa (on or off: a confirmed second factor), email_verified, status (active, invited or suspended), last_seen (today: under a day; week: 1 to 7 days; month: 7 to 30 days; older: over 30 days; never). sort is created (the default, newest first), name or last_seen, with order asc or desc; a malformed value is refused with 400. Supports opaque cursor paging, in the default order only, or numeric offset paging to jump to a specific page. Requires an existing tenant; scope comes from the authenticated principal. Members are the organisation''s own users (their home is this organisation) and the people who hold a role in it; a member whose home is another organisation is shown with empty metadata, which their home organisation keeps; last_seen_at and last_seen_ip come from sessions in this organisation only.'
       summary: List users
       tags:
         - Users
@@ -841,10 +841,21 @@ paths:
             type: integer
             minimum: 0
           description: Offset for numbered paging (jump to page N). Alternative to cursor.
+        - {name: q, in: query, required: false, schema: {type: string, maxLength: 200}}
+        - {name: role, in: query, required: false, schema: {type: string, maxLength: 200}}
+        - {name: department, in: query, required: false, schema: {type: string, maxLength: 200}}
+        - {name: mfa, in: query, required: false, schema: {type: string, enum: [on, off]}}
+        - {name: email_verified, in: query, required: false, schema: {type: boolean}}
+        - {name: status, in: query, required: false, schema: {type: string, enum: [active, invited, suspended]}}
+        - {name: last_seen, in: query, required: false, schema: {type: string, enum: [today, week, month, older, never]}}
+        - {name: sort, in: query, required: false, schema: {type: string, enum: [created, name, last_seen]}}
+        - {name: order, in: query, required: false, schema: {type: string, enum: [asc, desc]}}
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '200':
           description: User page
           content:
@@ -3625,22 +3636,44 @@ components:
         roles:
           type: array
           items: { type: string }
-          description: Role names in the listed tenant. Populated only by the list endpoint.
+          description: Role names in the tenant reading the user, on the list and GET /v1/users/{id}.
+        assigned_roles:
+          type: array
+          description: The same roles with their IDs.
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
         mfa_enabled:
           type: boolean
-          description: List-only. True if the user has a confirmed TOTP, a verified OTP factor, or a push device.
+          description: True if the user has a confirmed TOTP, a verified OTP factor, or a push device; on the list and GET /v1/users/{id}.
         groups_count:
           type: integer
-          description: List-only. Number of groups the user belongs to in this tenant.
+          description: Number of groups the user belongs to in this tenant; on the list and GET /v1/users/{id}.
         last_seen_at:
           type: string
           format: date-time
           nullable: true
-          description: List-only. Most recent live-session activity, or null.
+          description: Their most recent session activity or sign-in in this tenant, or null; on the list and GET /v1/users/{id}.
         last_seen_ip:
           type: string
           nullable: true
-          description: List-only. IP of the most-recent live session, or null.
+          description: The address of that session or sign-in, or null.
+        home_tenant_name:
+          type: string
+          nullable: true
+          description: The name of the organisation that manages the account (tenant_id).
+        suspension:
+          type: object
+          nullable: true
+          description: On GET /v1/users/{id}, for a suspended person whose home is this tenant; absent otherwise.
+          properties:
+            reason: { type: string }
+            source: { type: string }
+            suspended_at: { type: string, format: date-time, nullable: true }
+            suspended_by: { type: string, format: uuid, nullable: true, description: The person who last suspended them by hand; null for a suspension by policy or provisioning. }
+            suspended_by_email: { type: string, nullable: true }
     UserStats:
       type: object
       properties:
@@ -3651,6 +3684,31 @@ components:
         mfa_enabled: { type: integer }
         mfa_missing: { type: integer }
         new_last_30d: { type: integer }
+        last_seen:
+          type: object
+          properties:
+            today: { type: integer }
+            week: { type: integer }
+            month: { type: integer }
+            older: { type: integer }
+            never: { type: integer }
+        admins_without_mfa: { type: integer, description: Members holding the built-in owner or admin role with no confirmed second factor. }
+        email_unverified: { type: integer }
+        by_role:
+          type: array
+          items:
+            type: object
+            properties:
+              role: { type: string }
+              count: { type: integer }
+        by_department:
+          type: array
+          description: Up to 200 departments, largest first.
+          items:
+            type: object
+            properties:
+              department: { type: string }
+              count: { type: integer }
     UserTrends:
       type: object
       properties:
@@ -3811,6 +3869,9 @@ components:
         next_cursor:
           type: string
           nullable: true
+        total:
+          type: integer
+          description: How many members the filters match.
     Tenant:
       type: object
       properties:

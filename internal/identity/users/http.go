@@ -427,7 +427,12 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	if offset < 0 {
 		offset = 0
 	}
-	out, next, err := h.Repo.ListByTenant(r.Context(), *p.TenantID, limit, r.URL.Query().Get("cursor"), offset)
+	filter, err := ParseListFilter(r.URL.Query())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, next, total, err := h.Repo.List(r.Context(), *p.TenantID, filter, limit, r.URL.Query().Get("cursor"), offset)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -435,6 +440,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"items":       out,
 		"next_cursor": next,
+		"total":       total,
 	})
 }
 
@@ -542,8 +548,20 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	u, err := h.Repo.Get(r.Context(), id)
+	ctx := r.Context()
+	u, err := h.Repo.Get(ctx, id)
 	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	member, err := h.Repo.Member(ctx, tenantID, id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	u.Roles, u.AssignedRoles, u.MfaEnabled, u.GroupsCount = member.Roles, member.AssignedRoles, member.MfaEnabled, member.GroupsCount
+	u.LastSeenAt, u.LastSeenIP, u.HomeTenantName = member.LastSeenAt, member.LastSeenIP, member.HomeTenantName
+	if u.Suspension, err = h.Repo.SuspensionOf(ctx, tenantID, id); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

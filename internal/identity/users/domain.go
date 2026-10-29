@@ -19,19 +19,25 @@ type User struct {
 	PhoneVerifiedAt *time.Time `json:"phone_verified_at"`
 	DisplayName     *string    `json:"display_name"`
 	AvatarURL       *string    `json:"avatar_url"`
-	// Roles holds the user's role names in the listed tenant. Populated only by
-	// ListByTenant (the members list); empty on single-user fetches.
-	Roles     []string       `json:"roles,omitempty"`
-	Status    string         `json:"status"`
-	Metadata  map[string]any `json:"metadata"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	// List-only enrichment (populated by ListByTenant, nil on single-user
-	// fetches): a security/access snapshot for the Users admin table.
-	MfaEnabled  *bool      `json:"mfa_enabled,omitempty"`
-	GroupsCount *int       `json:"groups_count,omitempty"`
-	LastSeenAt  *time.Time `json:"last_seen_at,omitempty"`
-	LastSeenIP  *string    `json:"last_seen_ip,omitempty"`
+	// Roles holds the user's role names in the organisation reading them, and
+	// AssignedRoles the same roles with their IDs. Set on the members list and
+	// a member's own record, not on account-level reads.
+	Roles         []string       `json:"roles,omitempty"`
+	AssignedRoles []RoleRef      `json:"assigned_roles,omitempty"`
+	Status        string         `json:"status"`
+	Metadata      map[string]any `json:"metadata"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	// A member's standing in the organisation reading them, set where the
+	// roles are: a confirmed second factor, its groups they're in, when and
+	// from where they were last seen there, the name of the organisation that
+	// manages their account, and, for its own suspended people, why and by whom.
+	MfaEnabled     *bool       `json:"mfa_enabled,omitempty"`
+	GroupsCount    *int        `json:"groups_count,omitempty"`
+	LastSeenAt     *time.Time  `json:"last_seen_at,omitempty"`
+	LastSeenIP     *string     `json:"last_seen_ip,omitempty"`
+	HomeTenantName *string     `json:"home_tenant_name,omitempty"`
+	Suspension     *Suspension `json:"suspension,omitempty"`
 }
 
 // SeenBy is u as organisation tenantID sees it: a person whose home is
