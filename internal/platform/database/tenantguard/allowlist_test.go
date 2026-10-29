@@ -204,7 +204,6 @@ internal/identity/verification/queries.sql#UpdateUserEmail  session-scoped: the 
 internal/operations/audit/anomaly/anomaly.go#Service.scoreOne  background-sweep: anomaly scoring job
 internal/operations/audit/anomaly/queries.sql#ListUnscoredAuditEvents  background-sweep: anomaly scoring job
 internal/operations/audit/anomaly/queries.sql#MarkAuditEventScored  background-sweep: anomaly scoring job
-internal/operations/audit/audit.go#personLabel  parent-scoped: the person an audit event being recorded is about, named by the service recording it
 internal/operations/audit/queries.sql#ListAuditChainCheckpoints  background-sweep: audit chain verification job, every chain's checkpoint
 internal/operations/billing/checkout.go#Service.StartSignupCheckout  pre-tenant: sign-up checkout runs before the tenant exists
 internal/operations/billing/checkout.go#Service.completeSignupCheckout  pre-tenant: completing the checkout creates the tenant

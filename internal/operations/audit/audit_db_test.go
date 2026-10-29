@@ -196,10 +196,11 @@ func TestChainSurvivesAnInstanceWhoseClockIsAhead(t *testing.T) {
 }
 
 // TestEventsNameWhatTheyAreAbout checks that an audit row names its resource
-// and the role, person or group its metadata gives an id for, as they are
-// when it is written; that a target already gone keeps the name the caller
-// gave; that another organisation's role is not named; that a name the caller
-// gave is kept; and that the chain still verifies.
+// and the role or group its metadata gives an id for, as they are when it is
+// written, but never a person, whose name would outlive their erasure; that a
+// target already gone keeps the name the caller gave; that another
+// organisation's role is not named; that a name the caller gave is kept; and
+// that the chain still verifies.
 func TestEventsNameWhatTheyAreAbout(t *testing.T) {
 	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
 	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
@@ -231,16 +232,16 @@ func TestEventsNameWhatTheyAreAbout(t *testing.T) {
 		want  map[string]any
 	}{
 		{actor.Event(tenant, "role.assigned", "user", person.ID, map[string]any{"role_id": role}),
-			map[string]any{"target_name": "Asha Rao", "role_name": "auditor"}},
+			map[string]any{"target_name": nil, "role_name": "auditor"}},
 		{actor.Event(tenant, "group.member_added", "group", group, map[string]any{"user_id": unnamed.ID.String()}),
-			map[string]any{"target_name": "Finance", "user_name": unnamed.Email}},
+			map[string]any{"target_name": "Finance", "user_name": nil}},
 		{actor.Event(tenant, "abac_policy.updated", "abac_policy", policy, nil),
 			map[string]any{"target_name": "office_hours"}},
 		{actor.Event(tenant, "group.deleted", "group", gone, map[string]any{"name": "Old team"}),
 			map[string]any{"target_name": "Old team"}},
 		{actor.Event(tenant, "role.group_assigned", "group", group, map[string]any{"role_id": otherRole}),
 			map[string]any{"target_name": "Finance", "role_name": nil}},
-		{actor.Event(tenant, "role.assigned", "user", person.ID, map[string]any{"target_name": "as given"}),
+		{actor.Event(tenant, "group.updated", "group", group, map[string]any{"target_name": "as given"}),
 			map[string]any{"target_name": "as given"}},
 	}
 	tx, err := pool.Begin(ctx)

@@ -198,16 +198,18 @@ var labelQueries = map[string]string{
 	"abac_policy": `SELECT name FROM auth.abac_policies WHERE id = $1 AND tenant_id = $2`,
 }
 
-// labelled is e's metadata with the names of what the event is about, as they
-// are now: target_name for its resource, and role_name, user_name or
-// group_name for a role_id, user_id or group_id the metadata gives. A target
-// already gone keeps the name the caller gave, as metadata "name".
+// labelled is e's metadata with the names of the roles, groups and ABAC
+// policies the event is about, as they are now: target_name for its resource,
+// and role_name or group_name for a role_id or group_id the metadata gives. A
+// target already gone keeps the name the caller gave, as metadata "name".
+// People are left to their ids: the chain can't be changed, so a name in it
+// would outlive the person's erasure.
 func labelled(ctx context.Context, tx pgx.Tx, e Event) (map[string]any, error) {
 	meta := make(map[string]any, len(e.Metadata)+2)
 	for k, v := range e.Metadata {
 		meta[k] = v
 	}
-	if _, ok := meta["target_name"]; !ok && e.ResourceID != nil {
+	if _, named := labelQueries[e.ResourceType]; named && meta["target_name"] == nil && e.ResourceID != nil {
 		name, err := label(ctx, tx, e.ResourceType, *e.ResourceID, e.TenantID)
 		if err != nil {
 			return nil, err
@@ -219,7 +221,7 @@ func labelled(ctx context.Context, tx pgx.Tx, e Event) (map[string]any, error) {
 			meta["target_name"] = name
 		}
 	}
-	for _, kind := range []string{"role", "user", "group"} {
+	for _, kind := range []string{"role", "group"} {
 		id, ok := idOf(meta[kind+"_id"])
 		if _, named := meta[kind+"_name"]; !ok || named {
 			continue
@@ -238,26 +240,16 @@ func labelled(ctx context.Context, tx pgx.Tx, e Event) (map[string]any, error) {
 // label is the name of the kind of thing id is, or "" for a kind without one
 // or an id not found.
 func label(ctx context.Context, tx pgx.Tx, kind string, id uuid.UUID, tenantID *uuid.UUID) (string, error) {
-	var row pgx.Row
-	if kind == "user" {
-		row = personLabel(ctx, tx, id)
-	} else if q, ok := labelQueries[kind]; ok {
-		row = tx.QueryRow(ctx, q, id, pgUUIDNullable(tenantID))
-	} else {
+	q, ok := labelQueries[kind]
+	if !ok {
 		return "", nil
 	}
 	var name string
-	err := row.Scan(&name)
+	err := tx.QueryRow(ctx, q, id, pgUUIDNullable(tenantID)).Scan(&name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
 	return name, err
-}
-
-// personLabel reads a person's display name, or else email. An account
-// belongs to no one organisation, so it is read by id alone.
-func personLabel(ctx context.Context, tx pgx.Tx, id uuid.UUID) pgx.Row {
-	return tx.QueryRow(ctx, `SELECT COALESCE(NULLIF(display_name, ''), email) FROM "user".users WHERE id = $1`, id)
 }
 
 // idOf reads an id from metadata, as a UUID or its string.
