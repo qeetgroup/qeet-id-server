@@ -356,6 +356,7 @@ func mountV1PublicRoutes(r chi.Router, d Deps) {
 	d.OIDC.MountBrowser(r)
 	d.TokenVault.MountPublic(r)
 	d.OIDCSSO.MountPublic(r)
+	d.DomainVerify.MountPublic(r)
 	d.MFA.MountPublic(r)
 	d.SESWebhook.Mount(r)
 }
@@ -612,6 +613,7 @@ func csrfExemptPaths() []string {
 		"/v1/billing/sandbox/",          // dev-only mock hosted-checkout page + pay (no cookie session)
 		"/v1/agents/token",              // agent-credential auth (no cookie session)
 		"/v1/credentials/verify",        // public JWT-VC verification (no cookie session)
+		"/v1/sso/discovery",             // read-only lookup by an address's domain (no cookie session)
 		"/v1/mfa/push/challenges/",      // a linked phone answers with its device credential (no cookie session)
 		"/v1/mfa/push/devices/*/unlink", // a linked phone removes itself with its device credential (no cookie session)
 		"/v1/mfa/push/pairing/claim",    // a phone links with a one-time pairing code (no cookie session)

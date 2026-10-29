@@ -503,9 +503,7 @@ paths:
       tags:
         - Domains
       description: >-
-        Toggles SSO routing, just-in-time provisioning, and which domain is the
-        tenant default. Setting a new default clears the previous one. Each
-        switch applies to the addresses the domain manages once it is verified:
+        Toggles SSO routing and just-in-time provisioning. Each switch applies to the addresses the domain manages once it is verified:
         the domain itself and those below it that no closer verified domain
         takes. With sso_enabled on, while the organisation has an active SAML,
         LDAP or OpenID Connect connection, those addresses sign in only through
@@ -539,7 +537,6 @@ paths:
               properties:
                 sso_enabled: {type: boolean}
                 jit_enabled: {type: boolean}
-                is_default: {type: boolean}
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -4153,7 +4150,7 @@ components:
           type: string
     Domain:
       type: object
-      required: [created_at, dns_record_name, dns_record_type, dns_record_value, domain, id, is_default, jit_enabled, sso_enabled, status, verification_token]
+      required: [created_at, dns_record_name, dns_record_type, dns_record_value, domain, id, jit_enabled, sso_enabled, status, verification_token]
       properties:
         created_at:
           type: string
@@ -4169,8 +4166,6 @@ components:
         id:
           type: string
           format: uuid
-        is_default:
-          type: boolean
         jit_enabled:
           type: boolean
           description: Single sign-on creates an account at sign-in for an address on the domain that has none.

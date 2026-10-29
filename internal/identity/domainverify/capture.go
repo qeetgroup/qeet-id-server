@@ -199,3 +199,80 @@ func (h *Handler) setBreakGlass(w http.ResponseWriter, r *http.Request, on bool)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// DiscoveredConnection is a connection an address's domain signs in through.
+// LoginPath, below the API's address, starts its sign-in: a browser goes to it
+// (method redirect), or the person's directory login name and password are
+// posted to it (method credentials).
+type DiscoveredConnection struct {
+	ID        uuid.UUID `json:"id"`
+	Protocol  string    `json:"protocol"`
+	Name      string    `json:"name"`
+	Method    string    `json:"method"`
+	LoginPath string    `json:"login_path"`
+}
+
+// Discovery is where an address signs in. SSO is true when the organisation
+// managing its domain sends the domain to its identity provider, through
+// Connections.
+type Discovery struct {
+	SSO         bool                   `json:"sso"`
+	Connections []DiscoveredConnection `json:"connections"`
+}
+
+// Discover returns where email signs in, judged by its domain alone: every
+// address on a domain gets the same answer, whether or not it has an account
+// or is exempt from single sign-on.
+func (s *Service) Discover(ctx context.Context, email string) (*Discovery, error) {
+	ctx = postgres.AcrossTenants(ctx)
+	out := &Discovery{Connections: []DiscoveredConnection{}}
+	managed, ok, err := ManagingDomain(ctx, s.pool, strings.TrimSpace(email))
+	if err != nil || !ok || !managed.SSO {
+		return out, err
+	}
+	conns, err := s.q.ListActiveSSOConnections(ctx, managed.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range conns {
+		d := DiscoveredConnection{ID: c.ID, Protocol: c.Protocol, Name: c.Name, Method: "redirect"}
+		switch c.Protocol {
+		case "saml":
+			d.LoginPath = "/saml/login/" + c.ID.String()
+		case "oidc":
+			d.LoginPath = "/v1/oidc-connections/" + c.ID.String() + "/login"
+		case "ldap":
+			d.Method, d.LoginPath = "credentials", "/ldap/"+c.ID.String()+"/authenticate"
+		}
+		out.Connections = append(out.Connections, d)
+	}
+	out.SSO = len(out.Connections) > 0
+	return out, nil
+}
+
+// MountPublic registers POST /sso/discovery, which needs no credential.
+func (h *Handler) MountPublic(r chi.Router) {
+	r.Post("/sso/discovery", h.discover)
+}
+
+func (h *Handler) discover(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Email string `json:"email"`
+	}
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if !strings.Contains(in.Email, "@") {
+		httpx.WriteError(w, r, errs.ErrValidationFailed.WithFields([]errs.FieldError{{
+			Field: "email", Code: "invalid", Message: "Enter an email address.",
+		}}))
+		return
+	}
+	out, err := h.Service.Discover(r.Context(), in.Email)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}

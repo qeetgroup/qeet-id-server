@@ -46,7 +46,7 @@ func TestDomainsStayInTheirTenant(t *testing.T) {
 		body         any
 		want         int
 	}{
-		{http.MethodPatch, inB + "/" + domainA.ID.String(), map[string]any{"sso_enabled": true, "is_default": true}, http.StatusNotFound},
+		{http.MethodPatch, inB + "/" + domainA.ID.String(), map[string]any{"sso_enabled": true, "jit_enabled": true}, http.StatusNotFound},
 		{http.MethodPost, inB + "/" + domainA.ID.String() + "/verify", nil, http.StatusNotFound},
 		{http.MethodDelete, inB + "/" + domainA.ID.String(), nil, http.StatusNotFound},
 		{http.MethodGet, "/tenants/" + tenantA.String() + "/domains", nil, http.StatusForbidden},
@@ -71,7 +71,7 @@ func TestDomainsStayInTheirTenant(t *testing.T) {
 
 	if n := dbtest.Count(t, `
 		SELECT count(*) FROM tenant.domains
-		WHERE id = $1 AND verified_at IS NOT NULL AND NOT sso_enabled AND NOT is_default
+		WHERE id = $1 AND verified_at IS NOT NULL AND NOT sso_enabled AND NOT jit_enabled
 	`, domainA.ID); n != 1 {
 		t.Error("tenant B changed tenant A's domain")
 	}

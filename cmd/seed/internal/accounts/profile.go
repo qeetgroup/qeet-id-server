@@ -98,34 +98,34 @@ func (s *seeder) profile(o *world.Org) {
 
 // domainPlan is a domain an organisation claims and how far it got.
 type domainPlan struct {
-	name, state   string // state: verified, pending or attention
-	def, sso, jit bool
-	added         float64 // days after the organisation signed up; negative: days ago
+	name, state string // state: verified, pending or attention
+	sso, jit    bool
+	added       float64 // days after the organisation signed up; negative: days ago
 }
 
 // domainPlans are each organisation's claimed email domains.
 var domainPlans = map[string][]domainPlan{
-	"qeet": {{name: "qeet.in", state: "verified", def: true, sso: true, jit: true, added: 1}},
+	"qeet": {{name: "qeet.in", state: "verified", sso: true, jit: true, added: 1}},
 	"northwind": {
-		{name: "northwindcapital.in", state: "verified", def: true, sso: true, jit: true, added: 1},
+		{name: "northwindcapital.in", state: "verified", sso: true, jit: true, added: 1},
 		{name: "northwind-capital.co.in", state: "verified", sso: true, added: 3},
 		{name: "nwcfinance.in", state: "attention", added: -12},
 	},
 	"meridian": {
-		{name: "meridianhealth.us", state: "verified", def: true, sso: true, jit: true, added: 2},
+		{name: "meridianhealth.us", state: "verified", sso: true, jit: true, added: 2},
 		{name: "meridianhealthcare-us.org", state: "verified", sso: true, added: 9},
 		{name: "mhn-clinics.us", state: "pending", added: -3},
 	},
 	"lumen": {
-		{name: "lumenlabshq.dev", state: "verified", def: true, sso: true, jit: true, added: 1},
+		{name: "lumenlabshq.dev", state: "verified", sso: true, jit: true, added: 1},
 		{name: "lumenlabs-cloud.io", state: "attention", added: -6},
 	},
 	"aster": {
-		{name: "asterretail.in", state: "verified", def: true, added: 2},
+		{name: "asterretail.in", state: "verified", added: 2},
 		{name: "asterfashionhouse.in", state: "pending", added: -1.5},
 	},
 	"vertex":  {{name: "vertexfreightco.us", state: "pending", added: 1}},
-	"kestrel": {{name: "kestrelinsurance.in", state: "verified", def: true, added: 4}},
+	"kestrel": {{name: "kestrelinsurance.in", state: "verified", added: 4}},
 }
 
 // domains claims the organisation's email domains: verified ones (a DNS check
@@ -159,9 +159,9 @@ func (s *seeder) domains(o *world.Org) {
 				WHERE id = $1 AND tenant_id = $2`, dom.ID, o.ID, checked)
 			e := actor.Actor().Event(o.ID, "domain.verified", "domain", dom.ID, map[string]any{"domain": d.name})
 			w.Audit(checked, e)
-			if d.def || d.sso || d.jit {
+			if d.sso || d.jit {
 				w.At(checked.Add(4*time.Minute), func() {
-					_, err := svc.UpdateSettings(w.Ctx, dom.ID, o.ID, &d.sso, &d.jit, &d.def, actor.Actor())
+					_, err := svc.UpdateSettings(w.Ctx, dom.ID, o.ID, &d.sso, &d.jit, actor.Actor())
 					w.Check(err, "domain settings "+d.name)
 				})
 			}

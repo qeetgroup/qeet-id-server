@@ -3650,6 +3650,61 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/sso/discovery:
+    post:
+      operationId: post_v1_sso_discovery
+      summary: Discover where an address signs in (public)
+      description: 'Home-realm discovery: says whether an email address signs in through its organisation''s identity provider, and through which connections. It is judged by the address''s domain alone, so every address on a domain gets the same answer whether or not it has an account. sso is true when the organisation that verified the domain (or the closest verified domain above it) has switched sso_enabled on for it and has an active SAML, LDAP or OpenID Connect connection; those addresses'' own sign-in methods are then refused with 403 auth.sso_required, except for the organisation''s break-glass members. Each connection gives login_path, below the API''s address: a browser goes to it for SAML and OpenID Connect (method redirect), and the directory login name and password are posted to it for LDAP (method credentials). An address that is not routed answers sso false with no connections. Unauthenticated; rate-limited like sign-in.'
+      tags:
+        - OIDC Connections
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Where the address signs in
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sso, connections]
+                properties:
+                  sso:
+                    type: boolean
+                  connections:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, protocol, name, method, login_path]
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        protocol:
+                          type: string
+                          enum: [saml, oidc, ldap]
+                        name:
+                          type: string
+                        method:
+                          type: string
+                          enum: [redirect, credentials]
+                        login_path:
+                          type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/oidc-connections/{id}/login:
     get:
       operationId: get_v1_oidc_connections_ById_login
@@ -7445,7 +7500,7 @@ components:
             type: string
     Domain:
       type: object
-      required: [created_at, dns_record_name, dns_record_type, dns_record_value, domain, id, is_default, jit_enabled, sso_enabled, status, verification_token]
+      required: [created_at, dns_record_name, dns_record_type, dns_record_value, domain, id, jit_enabled, sso_enabled, status, verification_token]
       properties:
         created_at:
           type: string
@@ -7461,8 +7516,6 @@ components:
         id:
           type: string
           format: uuid
-        is_default:
-          type: boolean
         jit_enabled:
           type: boolean
         last_checked_at:

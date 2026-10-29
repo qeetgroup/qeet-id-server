@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
@@ -308,5 +309,59 @@ func TestOIDCConnectionsCapture(t *testing.T) {
 		admin.ID, tenant, active, admin.Email)
 	if got, _ := captured(t, svc, admin.Email); !got {
 		t.Error("an administrator linked to an active OpenID Connect connection is not captured")
+	}
+}
+
+// TestDiscoverRoutesByDomainAlone checks that discovery names a domain's
+// active connections with where each signs in once SSO is on for it, gives
+// every address on the domain the same answer, break-glass members included,
+// and routes nothing for a domain with SSO off or one nobody manages.
+func TestDiscoverRoutesByDomainAlone(t *testing.T) {
+	svc := captureService(t)
+	tenant := dbtest.Tenant(t)
+	domain := dbtest.Domain(t, tenant)
+	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, tenant, tenant)
+	saml := samlConnection(t, tenant, "active")
+	samlConnection(t, tenant, "draft")
+	h := httptest.NewServer(func() http.Handler {
+		r := chi.NewRouter()
+		(&Handler{Service: svc}).MountPublic(r)
+		return r
+	}())
+	defer h.Close()
+
+	if d, err := svc.Discover(dbtest.Context(t), member.Email); err != nil || d.SSO || len(d.Connections) != 0 {
+		t.Errorf("a domain with SSO off: %+v, %v; want not routed", d, err)
+	}
+	exec(t, `UPDATE tenant.domains SET sso_enabled = TRUE WHERE tenant_id = $1`, tenant)
+	exec(t, `INSERT INTO tenant.break_glass_members (tenant_id, user_id) VALUES ($1, $2)`, tenant, member.ID)
+	var ldap uuid.UUID
+	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `INSERT INTO tenant.ldap_connections (tenant_id, name, server_url, bind_dn, bind_password, base_dn, status)
+		VALUES ($1, 'Directory', 'ldaps://ldap.example.test', 'cn=service', 'secret', 'dc=example', 'active') RETURNING id`, tenant).Scan(&ldap); err != nil {
+		t.Fatal(err)
+	}
+	want := []DiscoveredConnection{
+		{ID: saml, Protocol: "saml", Name: "Okta", Method: "redirect", LoginPath: "/saml/login/" + saml.String()},
+		{ID: ldap, Protocol: "ldap", Name: "Directory", Method: "credentials", LoginPath: "/ldap/" + ldap.String() + "/authenticate"},
+	}
+	for _, email := range []string{member.Email, dbtest.Unique("nobody") + "@" + strings.ToUpper(domain)} {
+		d, err := svc.Discover(dbtest.Context(t), email)
+		if err != nil || !d.SSO || !slices.Equal(d.Connections, want) {
+			t.Errorf("%s: %+v, %v; want routed to %+v", email, d, err, want)
+		}
+	}
+	if d, err := svc.Discover(dbtest.Context(t), dbtest.Unique("x")+"@example.test"); err != nil || d.SSO {
+		t.Errorf("a domain nobody manages: %+v, %v; want not routed", d, err)
+	}
+
+	for body, want := range map[string]int{`{"email":"` + member.Email + `"}`: http.StatusOK, `{"email":"no-at-sign"}`: http.StatusUnprocessableEntity} {
+		resp, err := http.Post(h.URL+"/sso/discovery", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Errorf("POST /sso/discovery %s: %d, want %d", body, resp.StatusCode, want)
+		}
 	}
 }
