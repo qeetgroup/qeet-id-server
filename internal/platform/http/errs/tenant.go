@@ -8,6 +8,8 @@ const (
 	CodeTenantSelfSuspend          = "tenant.self_suspend"
 	CodeTenantDeletionScheduled    = "tenant.deletion_scheduled"
 	CodeTenantDeletionNotScheduled = "tenant.deletion_not_scheduled"
+	CodeTenantRegionReadOnly       = "tenant.region_read_only"
+	CodeTenantRegionUnavailable    = "tenant.region_unavailable"
 )
 
 var (
@@ -17,4 +19,6 @@ var (
 	ErrTenantSelfSuspend          = New(CodeTenantSelfSuspend, "An organization can't suspend itself: that would lock out every member, its owners too. Delete it instead.")
 	ErrTenantDeletionScheduled    = New(CodeTenantDeletionScheduled, "This organization's deletion is already scheduled.")
 	ErrTenantDeletionNotScheduled = New(CodeTenantDeletionNotScheduled, "This organization has no deletion scheduled.")
+	ErrTenantRegionReadOnly       = New(CodeTenantRegionReadOnly, "An organization's region is where this service is hosted, so it can't be changed.")
+	ErrTenantRegionUnavailable    = New(CodeTenantRegionUnavailable, "Organizations can only be created in the region this service is hosted in.")
 )

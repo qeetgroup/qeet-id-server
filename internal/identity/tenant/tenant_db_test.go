@@ -376,11 +376,11 @@ func TestOrganisationProfileChangesAreAudited(t *testing.T) {
 		}
 	}
 
-	patch(map[string]any{"name": "Acme Ltd", "region": "eu-west-1", "logo_url": "data:image/png;base64,AAAA", "metadata": map[string]any{"tier": "platinum"}})
+	patch(map[string]any{"name": "Acme Ltd", "region": org.Region, "logo_url": "data:image/png;base64,AAAA", "metadata": map[string]any{"tier": "platinum"}})
 	got := updates()
 	want := record{
-		Changed: []string{"name", "region", "logo_url", "metadata"},
-		Changes: map[string]map[string]any{"name": {"from": "Acme", "to": "Acme Ltd"}, "region": {"from": org.Region, "to": "eu-west-1"}},
+		Changed: []string{"name", "logo_url", "metadata"},
+		Changes: map[string]map[string]any{"name": {"from": "Acme", "to": "Acme Ltd"}},
 	}
 	if len(got) != 1 || !reflect.DeepEqual(got[0], want) {
 		t.Fatalf("recorded %+v, want %+v", got, want)
@@ -475,5 +475,53 @@ func TestOrganisationPickerListsEveryOrganisation(t *testing.T) {
 	listed, _, err := h.Repo.List(dbtest.Context(t), a.ID, 50, "")
 	if err != nil || len(listed) != 2 || !slices.ContainsFunc(listed, func(o Tenant) bool { return o.ID == home }) {
 		t.Errorf("organisation list %+v, %v; want %s and %s", listed, err, home, other)
+	}
+}
+
+// TestRegionIsTheDeployments checks that an organisation is created in the
+// region the deployment runs in, that asking to create one elsewhere is
+// refused and creates nothing, and that the region can't be changed, though
+// sending it back unchanged with other fields is accepted.
+func TestRegionIsTheDeployments(t *testing.T) {
+	h, _, _ := newHandler(t)
+	h.Repo.SetHostingRegion("ap-south-2")
+	a := verifiedAccount(t)
+	create := func(region string) *httptest.ResponseRecorder {
+		body := map[string]any{"slug": dbtest.Unique("org"), "name": "Acme"}
+		if region != "" {
+			body["region"] = region
+		}
+		return dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, uuid.Nil), h.Mount), http.MethodPost, "/tenants", body)
+	}
+
+	if rec := create("eu-west-1"); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), errs.CodeTenantRegionUnavailable) || !strings.Contains(rec.Body.String(), "ap-south-2") {
+		t.Errorf("create in another region: %d %s, want 422 %s naming ap-south-2", rec.Code, rec.Body.String(), errs.CodeTenantRegionUnavailable)
+	}
+	var created struct {
+		TenantID uuid.UUID `json:"tenant_id"`
+	}
+	for _, region := range []string{"", "ap-south-2"} {
+		rec := create(region)
+		dbtest.Decode(t, rec, &created)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create with region %q: %d %s", region, rec.Code, rec.Body.String())
+		}
+		if n := dbtest.Count(t, `SELECT count(*) FROM tenant.tenants WHERE id = $1 AND region = 'ap-south-2'`, created.TenantID); n != 1 {
+			t.Errorf("an organisation created with region %q isn't in ap-south-2", region)
+		}
+	}
+
+	admin := dbtest.User(t, created.TenantID)
+	dbtest.Assign(t, admin.ID, created.TenantID, dbtest.Role(t, created.TenantID, "tenant.read", "tenant.write"))
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, created.TenantID), h.Mount)
+	path := "/tenants/" + created.TenantID.String()
+	if rec := dbtest.Do(t, asAdmin, http.MethodPatch, path, map[string]any{"region": "eu-west-1"}); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), errs.CodeTenantRegionReadOnly) {
+		t.Errorf("change the region: %d %s, want 422 %s", rec.Code, rec.Body.String(), errs.CodeTenantRegionReadOnly)
+	}
+	if rec := dbtest.Do(t, asAdmin, http.MethodPatch, path, map[string]any{"region": "ap-south-2", "name": "Acme Ltd"}); rec.Code != http.StatusOK {
+		t.Errorf("an update sending the region back unchanged: %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.tenants WHERE id = $1 AND region = 'ap-south-2' AND name = 'Acme Ltd'`, created.TenantID); n != 1 {
+		t.Error("the organisation's region or name isn't what the updates left")
 	}
 }

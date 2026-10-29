@@ -78,6 +78,8 @@ var statusByCode = map[string]int{
 	errs.CodeTenantSelfSuspend:          http.StatusForbidden,
 	errs.CodeTenantDeletionScheduled:    http.StatusConflict,
 	errs.CodeTenantDeletionNotScheduled: http.StatusConflict,
+	errs.CodeTenantRegionReadOnly:       http.StatusUnprocessableEntity,
+	errs.CodeTenantRegionUnavailable:    http.StatusUnprocessableEntity,
 }
 
 // registerStatuses adds a domain's code→status entries to statusByCode; each

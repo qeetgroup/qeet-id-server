@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
 	"net/http"
@@ -108,6 +109,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	}
 
 	tenantRepo := tenant.NewRepository(pool)
+	tenantRepo.SetHostingRegion(cmp.Or(cfg.HostingRegion, cfg.AWSRegion)) // where every organisation is created
 	userRepo := user.NewRepository(pool)
 	rbacRepo := rbac.NewRepository(pool)
 	rbacService := rbac.NewService(rbacRepo)

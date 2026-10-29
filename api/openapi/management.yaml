@@ -122,7 +122,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
     post:
       operationId: post_v1_tenants
-      description: 'Creates a tenant and makes the calling user its owner. A newly registered user has no tenant until this succeeds; every tenant-scoped endpoint requires one. A verified email is required before a tenant can be provisioned. The response includes a tenant-scoped token pair so the client can immediately switch into the new tenant; it continues the caller''s session (its sign-in, second factor and end), and is left out for a caller without one.'
+      description: 'Creates a tenant and makes the calling user its owner. A newly registered user has no tenant until this succeeds; every tenant-scoped endpoint requires one. A verified email is required before a tenant can be provisioned. Every organisation is created in the region this service is hosted in; asking for another is refused with 422 tenant.region_unavailable (metadata.available names the one there is). The response includes a tenant-scoped token pair so the client can immediately switch into the new tenant; it continues the caller''s session (its sign-in, second factor and end), and is left out for a caller without one.'
       summary: Create tenant
       tags:
         - Tenants
@@ -137,7 +137,6 @@ paths:
               slug: acme
               name: Acme, Inc.
               plan: pro
-              region: ap-south-1
               metadata:
                 industry: fintech
             schema:
@@ -245,7 +244,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_tenants_ByTenantID
-      description: 'Updates mutable tenant attributes such as name and slug. Requires an administrative role within the tenant. Only the fields supplied in the request body are changed. Changing status is an owner''s (403 tenant.owner_only otherwise), and a tenant can''t suspend itself (403 tenant.self_suspend): that would lock out every member, its owners too, with nobody left to reactivate it; delete it instead. A tenant suspended another way that is reactivated is audited as tenant.reactivated and queued as an event. A change to the name, region, logo or metadata is audited, in the same transaction, as tenant.updated naming every field that changed (changed), with the old and new name and region (changes); the logo and metadata are named but not copied. An update that changes nothing records nothing.'
+      description: 'Updates mutable tenant attributes such as name and slug. Requires an administrative role within the tenant. Only the fields supplied in the request body are changed. Changing status is an owner''s (403 tenant.owner_only otherwise), and a tenant can''t suspend itself (403 tenant.self_suspend): that would lock out every member, its owners too, with nobody left to reactivate it; delete it instead. A tenant suspended another way that is reactivated is audited as tenant.reactivated and queued as an event. The region can''t be changed (422 tenant.region_read_only; the current value is accepted). A change to the name, logo or metadata is audited, in the same transaction, as tenant.updated naming every field that changed (changed), with the old and new name (changes); the logo and metadata are named but not copied. An update that changes nothing records nothing.'
       summary: Update tenant
       tags:
         - Tenants
@@ -3692,6 +3691,7 @@ components:
             - enterprise
         region:
           type: string
+          description: 'The region this service is hosted in, where the organisation''s data is held. It is the same for every organisation of a deployment and isn''t a per-organisation data-residency choice.'
         metadata:
           type: object
           additionalProperties: true
@@ -3735,6 +3735,7 @@ components:
             - enterprise
         region:
           type: string
+          description: 'Optional. Only the region this service is hosted in is accepted (422 tenant.region_unavailable, with metadata.available, otherwise); the organisation is created there either way.'
           maxLength: 64
         metadata:
           type: object
@@ -3759,6 +3760,7 @@ components:
             - enterprise
         region:
           type: string
+          description: 'Read-only: the same value is accepted, as a form sends every field back; another is refused with 422 tenant.region_read_only.'
           maxLength: 64
         metadata:
           type: object

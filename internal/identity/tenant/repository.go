@@ -24,6 +24,23 @@ import (
 type Repository struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
+	// hostingRegion is the region every organisation is created in.
+	hostingRegion string
+}
+
+// defaultRegion is the hosting region when none is configured.
+const defaultRegion = "us-east-1"
+
+// SetHostingRegion sets the region organisations are created in; empty keeps
+// defaultRegion.
+func (r *Repository) SetHostingRegion(region string) { r.hostingRegion = region }
+
+// HostingRegion is the region every organisation is created in.
+func (r *Repository) HostingRegion() string {
+	if r.hostingRegion == "" {
+		return defaultRegion
+	}
+	return r.hostingRegion
 }
 
 // NewRepository returns a Repository over pool.
@@ -107,10 +124,10 @@ func (r *Repository) CreateWithOwnerTx(ctx context.Context, tx pgx.Tx, in Create
 	if plan == "" {
 		plan = "free"
 	}
-	region := in.Region
-	if region == "" {
-		region = "us-east-1"
-	}
+	// The deployment's region whatever was asked: a request for another is
+	// refused where it is made (create), and one already paid for at sign-up
+	// is still provisioned.
+	region := r.HostingRegion()
 	meta := in.Metadata
 	if meta == nil {
 		meta = map[string]any{}
@@ -266,8 +283,16 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput, o
 		ub.Set("status", *in.Status)
 	}
 	// plan is deliberately not settable here — it's owned by billing (see UpdateInput).
+	// Nor is the region, the deployment's: the same one again is accepted, as a
+	// form sends every field back.
 	if in.Region != nil {
-		ub.Set("region", *in.Region)
+		var current string
+		if err := tx.QueryRow(ctx, `SELECT region FROM tenant.tenants WHERE id = $1 AND deleted_at IS NULL`, id).Scan(&current); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		if *in.Region != current {
+			return nil, errs.ErrTenantRegionReadOnly
+		}
 	}
 	if in.LogoURL != nil {
 		ub.Set("logo_url", *in.LogoURL)

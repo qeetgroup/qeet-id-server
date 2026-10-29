@@ -113,6 +113,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
+	if in.Region != "" && in.Region != h.Repo.HostingRegion() {
+		httpx.WriteError(w, r, errs.ErrTenantRegionUnavailable.WithMetadata(map[string]any{"available": []string{h.Repo.HostingRegion()}}))
+		return
+	}
 	// Only the free plan may be self-provisioned here: paid plans go through
 	// signup checkout so payment is captured first, and enterprise is sales-led.
 	if in.Plan != "" && in.Plan != "free" {

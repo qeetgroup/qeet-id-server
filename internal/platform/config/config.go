@@ -242,6 +242,11 @@ type Config struct {
 	// AWSRegion is used by the SES-API email provider (and any other AWS SDK
 	// client) so endpoint resolution never fails on a missing region.
 	AWSRegion string `envconfig:"AWS_REGION" default:""`
+	// HostingRegion is the region this deployment runs in, which every
+	// organisation is created in and shows as its region; empty means
+	// AWS_REGION, else us-east-1. One deployment holds its data in one region,
+	// so an organisation can't choose another.
+	HostingRegion string `envconfig:"HOSTING_REGION" default:""`
 
 	// Email (SMTP) — provider-agnostic (Amazon SES, SendGrid, Mailgun, Postmark).
 	// In dev, an empty SMTPHost logs emails instead of sending them.
