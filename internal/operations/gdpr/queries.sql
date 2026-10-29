@@ -318,3 +318,54 @@ WHERE e.actor_user_id = @user_id::uuid AND e.action IN ('auth.login_succeeded', 
   AND (sqlc.narg('tenant_id')::uuid IS NULL OR e.tenant_id = sqlc.narg('tenant_id'))
 ORDER BY e.created_at DESC
 LIMIT 1000;
+
+-- -----------------------------------------------------------------------
+-- Compliance controls: owners, the last run, external audits
+-- -----------------------------------------------------------------------
+
+-- name: LatestEvidenceControls :one
+-- The control results of the tenant's latest run of a framework.
+SELECT controls, generated_at FROM tenant.compliance_evidence_runs
+WHERE tenant_id = @tenant_id AND framework = @framework
+ORDER BY generated_at DESC LIMIT 1;
+
+-- name: ListControlOwners :many
+SELECT o.control_id, o.user_id, u.email, u.display_name, o.updated_at
+FROM tenant.compliance_control_owners o
+LEFT JOIN "user".users u ON u.id = o.user_id
+WHERE o.tenant_id = @tenant_id
+ORDER BY o.control_id;
+
+-- name: UpsertControlOwner :exec
+INSERT INTO tenant.compliance_control_owners (tenant_id, control_id, user_id, updated_by, updated_at)
+VALUES (@tenant_id, @control_id, @user_id, sqlc.narg('updated_by'), NOW())
+ON CONFLICT (tenant_id, control_id) DO UPDATE SET
+    user_id = EXCLUDED.user_id, updated_by = EXCLUDED.updated_by, updated_at = NOW();
+
+-- name: DeleteControlOwner :execrows
+DELETE FROM tenant.compliance_control_owners WHERE tenant_id = @tenant_id AND control_id = @control_id;
+
+-- name: IsTenantMember :one
+-- Whether the user is one of the tenant's people: its own, or holding a role
+-- there.
+SELECT EXISTS (
+    SELECT 1 FROM "user".users u WHERE u.id = @user_id AND u.deleted_at IS NULL
+      AND (u.tenant_id = @tenant_id OR EXISTS (
+          SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = @tenant_id))
+);
+
+-- name: ListComplianceAudits :many
+SELECT id, framework, kind, body, scope, reference, issued_on, expires_on, created_by, created_at
+FROM tenant.compliance_audits
+WHERE tenant_id = @tenant_id AND (sqlc.narg('framework')::text IS NULL OR framework = sqlc.narg('framework'))
+ORDER BY issued_on DESC, created_at DESC
+LIMIT 200;
+
+-- name: InsertComplianceAudit :one
+INSERT INTO tenant.compliance_audits (tenant_id, framework, kind, body, scope, reference, issued_on, expires_on, created_by)
+VALUES (@tenant_id, @framework, @kind, @body, @scope, @reference, @issued_on, sqlc.narg('expires_on'), sqlc.narg('created_by'))
+RETURNING id, framework, kind, body, scope, reference, issued_on, expires_on, created_by, created_at;
+
+-- name: DeleteComplianceAudit :one
+DELETE FROM tenant.compliance_audits WHERE id = @id AND tenant_id = @tenant_id
+RETURNING framework, kind, body;

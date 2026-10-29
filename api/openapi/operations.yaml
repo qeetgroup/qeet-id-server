@@ -1159,6 +1159,172 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/compliance/controls/owners:
+    get:
+      operationId: get_v1_tenants_ByTenantID_compliance_controls_owners
+      summary: List control owners
+      description: 'The person each of the organisation''s compliance controls is owned by, for the controls that have one; evidence runs name the owner on each control too. Requires audit.read.'
+      tags: [Compliance]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Owners
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/ControlOwner'}}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/compliance/controls/{controlID}/owner:
+    put:
+      operationId: put_v1_tenants_ByTenantID_compliance_controls_ByControlID_owner
+      summary: Set a control's owner
+      description: 'Makes one of the organisation''s people (its own, or holding a role there) answer for a control of either framework''s catalog; another organisation''s person is refused with 422, an unknown control with 404. Audited as compliance.control_owner_set. Requires audit.write.'
+      tags: [Compliance]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: controlID, in: path, required: true, schema: {type: string}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id: {type: string, format: uuid}
+      responses:
+        '204':
+          description: Owner set
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_compliance_controls_ByControlID_owner
+      summary: Remove a control's owner
+      description: 'Leaves the control without an owner; 404 when it has none. Audited as compliance.control_owner_removed. Requires audit.write.'
+      tags: [Compliance]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: controlID, in: path, required: true, schema: {type: string}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Owner removed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/compliance/audits:
+    get:
+      operationId: get_v1_tenants_ByTenantID_compliance_audits
+      summary: List external audits
+      description: 'The external audits and certificates recorded for the organisation, latest first, up to 200, of one framework when asked. Requires audit.read.'
+      tags: [Compliance]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: framework, in: query, required: false, schema: {type: string, enum: [soc2, iso27001]}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Audits
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/ExternalAudit'}}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: post_v1_tenants_ByTenantID_compliance_audits
+      summary: Record an external audit or certificate
+      description: 'Records an audit an external body carried out, or a certificate it issued: framework, kind (audit or certificate), body, scope, reference, issued_on and optional expires_on (YYYY-MM-DD, not before issued_on). Invalid fields are refused with 422 naming each. Audited as compliance.audit_recorded. Requires audit.write.'
+      tags: [Compliance]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [framework, kind, body, issued_on]
+              properties:
+                framework: {type: string, enum: [soc2, iso27001]}
+                kind: {type: string, enum: [audit, certificate]}
+                body: {type: string, maxLength: 200}
+                scope: {type: string, maxLength: 2000}
+                reference: {type: string, maxLength: 200}
+                issued_on: {type: string, format: date}
+                expires_on: {type: string, format: date}
+      responses:
+        '201':
+          description: Recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalAudit'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/compliance/audits/{id}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_compliance_audits_ById
+      summary: Delete an external audit
+      description: 'Removes a recorded external audit or certificate of the organisation. Audited as compliance.audit_deleted. Requires audit.write.'
+      tags: [Compliance]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/tenants/{tenantID}/compliance/evidence/{id}:
     get:
       operationId: get_v1_tenants_ByTenantID_compliance_evidence_ById
@@ -4157,7 +4323,46 @@ components:
             na — data not determinable (never a fabricated pass).
         detail:
           type: string
-          description: Human-readable explanation of what was found; always populated.
+          description: Human-readable explanation of what was found, in English; always populated.
+        detail_code:
+          type: string
+          description: What was found as a code, such as password_length.too_short, for a console to word itself with params.
+        params:
+          type: object
+          additionalProperties: true
+          description: The values the finding is about, such as {min_length, required}.
+        remedy:
+          type: string
+          description: On a failing control, what would make it pass, as a code, such as raise_password_min_length.
+        failing_since:
+          type: string
+          format: date-time
+          description: On a failing control, when it started failing, carried from run to run while it keeps failing.
+        owner:
+          $ref: '#/components/schemas/ControlOwner'
+    ControlOwner:
+      type: object
+      description: The person the organisation has made answer for a control, as it is now.
+      properties:
+        control_id: {type: string}
+        user_id: {type: string, format: uuid}
+        email: {type: [string, 'null']}
+        display_name: {type: [string, 'null']}
+        updated_at: {type: string, format: date-time}
+    ExternalAudit:
+      type: object
+      description: An audit an external body carried out on the organisation, or a certificate it issued.
+      properties:
+        id: {type: string, format: uuid}
+        framework: {type: string, enum: [soc2, iso27001]}
+        kind: {type: string, enum: [audit, certificate]}
+        body: {type: string, description: 'The auditor or certification body.'}
+        scope: {type: string}
+        reference: {type: string}
+        issued_on: {type: string, format: date}
+        expires_on: {type: [string, 'null'], format: date}
+        created_by: {type: [string, 'null'], format: uuid}
+        created_at: {type: string, format: date-time}
     EvidenceRun:
       type: object
       description: >-

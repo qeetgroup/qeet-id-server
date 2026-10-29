@@ -275,6 +275,46 @@ func (q *Queries) CountUsersWithoutSecondFactor(ctx context.Context, tenantID pg
 	return column_1, err
 }
 
+const deleteComplianceAudit = `-- name: DeleteComplianceAudit :one
+DELETE FROM tenant.compliance_audits WHERE id = $1 AND tenant_id = $2
+RETURNING framework, kind, body
+`
+
+type DeleteComplianceAuditParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+type DeleteComplianceAuditRow struct {
+	Framework string
+	Kind      string
+	Body      string
+}
+
+func (q *Queries) DeleteComplianceAudit(ctx context.Context, arg DeleteComplianceAuditParams) (DeleteComplianceAuditRow, error) {
+	row := q.db.QueryRow(ctx, deleteComplianceAudit, arg.ID, arg.TenantID)
+	var i DeleteComplianceAuditRow
+	err := row.Scan(&i.Framework, &i.Kind, &i.Body)
+	return i, err
+}
+
+const deleteControlOwner = `-- name: DeleteControlOwner :execrows
+DELETE FROM tenant.compliance_control_owners WHERE tenant_id = $1 AND control_id = $2
+`
+
+type DeleteControlOwnerParams struct {
+	TenantID  uuid.UUID
+	ControlID string
+}
+
+func (q *Queries) DeleteControlOwner(ctx context.Context, arg DeleteControlOwnerParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteControlOwner, arg.TenantID, arg.ControlID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const expireReadyExports = `-- name: ExpireReadyExports :execrows
 UPDATE "user".export_requests SET payload = NULL, status = 'expired'
 WHERE ctid = ANY(ARRAY(
@@ -458,6 +498,65 @@ func (q *Queries) GetUserProfileForExport(ctx context.Context, arg GetUserProfil
 	return i, err
 }
 
+const insertComplianceAudit = `-- name: InsertComplianceAudit :one
+INSERT INTO tenant.compliance_audits (tenant_id, framework, kind, body, scope, reference, issued_on, expires_on, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, framework, kind, body, scope, reference, issued_on, expires_on, created_by, created_at
+`
+
+type InsertComplianceAuditParams struct {
+	TenantID  uuid.UUID
+	Framework string
+	Kind      string
+	Body      string
+	Scope     string
+	Reference string
+	IssuedOn  pgtype.Date
+	ExpiresOn pgtype.Date
+	CreatedBy pgtype.UUID
+}
+
+type InsertComplianceAuditRow struct {
+	ID        uuid.UUID
+	Framework string
+	Kind      string
+	Body      string
+	Scope     string
+	Reference string
+	IssuedOn  pgtype.Date
+	ExpiresOn pgtype.Date
+	CreatedBy pgtype.UUID
+	CreatedAt time.Time
+}
+
+func (q *Queries) InsertComplianceAudit(ctx context.Context, arg InsertComplianceAuditParams) (InsertComplianceAuditRow, error) {
+	row := q.db.QueryRow(ctx, insertComplianceAudit,
+		arg.TenantID,
+		arg.Framework,
+		arg.Kind,
+		arg.Body,
+		arg.Scope,
+		arg.Reference,
+		arg.IssuedOn,
+		arg.ExpiresOn,
+		arg.CreatedBy,
+	)
+	var i InsertComplianceAuditRow
+	err := row.Scan(
+		&i.ID,
+		&i.Framework,
+		&i.Kind,
+		&i.Body,
+		&i.Scope,
+		&i.Reference,
+		&i.IssuedOn,
+		&i.ExpiresOn,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const insertEvidenceRun = `-- name: InsertEvidenceRun :one
 
 
@@ -629,6 +728,155 @@ func (q *Queries) InsertPurgeRequest(ctx context.Context, arg InsertPurgeRequest
 		&i.SubjectName,
 	)
 	return i, err
+}
+
+const isTenantMember = `-- name: IsTenantMember :one
+SELECT EXISTS (
+    SELECT 1 FROM "user".users u WHERE u.id = $1 AND u.deleted_at IS NULL
+      AND (u.tenant_id = $2 OR EXISTS (
+          SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $2))
+)
+`
+
+type IsTenantMemberParams struct {
+	UserID   uuid.UUID
+	TenantID pgtype.UUID
+}
+
+// Whether the user is one of the tenant's people: its own, or holding a role
+// there.
+func (q *Queries) IsTenantMember(ctx context.Context, arg IsTenantMemberParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isTenantMember, arg.UserID, arg.TenantID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const latestEvidenceControls = `-- name: LatestEvidenceControls :one
+
+SELECT controls, generated_at FROM tenant.compliance_evidence_runs
+WHERE tenant_id = $1 AND framework = $2
+ORDER BY generated_at DESC LIMIT 1
+`
+
+type LatestEvidenceControlsParams struct {
+	TenantID  uuid.UUID
+	Framework string
+}
+
+type LatestEvidenceControlsRow struct {
+	Controls    []byte
+	GeneratedAt time.Time
+}
+
+// -----------------------------------------------------------------------
+// Compliance controls: owners, the last run, external audits
+// -----------------------------------------------------------------------
+// The control results of the tenant's latest run of a framework.
+func (q *Queries) LatestEvidenceControls(ctx context.Context, arg LatestEvidenceControlsParams) (LatestEvidenceControlsRow, error) {
+	row := q.db.QueryRow(ctx, latestEvidenceControls, arg.TenantID, arg.Framework)
+	var i LatestEvidenceControlsRow
+	err := row.Scan(&i.Controls, &i.GeneratedAt)
+	return i, err
+}
+
+const listComplianceAudits = `-- name: ListComplianceAudits :many
+SELECT id, framework, kind, body, scope, reference, issued_on, expires_on, created_by, created_at
+FROM tenant.compliance_audits
+WHERE tenant_id = $1 AND ($2::text IS NULL OR framework = $2)
+ORDER BY issued_on DESC, created_at DESC
+LIMIT 200
+`
+
+type ListComplianceAuditsParams struct {
+	TenantID  uuid.UUID
+	Framework *string
+}
+
+type ListComplianceAuditsRow struct {
+	ID        uuid.UUID
+	Framework string
+	Kind      string
+	Body      string
+	Scope     string
+	Reference string
+	IssuedOn  pgtype.Date
+	ExpiresOn pgtype.Date
+	CreatedBy pgtype.UUID
+	CreatedAt time.Time
+}
+
+func (q *Queries) ListComplianceAudits(ctx context.Context, arg ListComplianceAuditsParams) ([]ListComplianceAuditsRow, error) {
+	rows, err := q.db.Query(ctx, listComplianceAudits, arg.TenantID, arg.Framework)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListComplianceAuditsRow{}
+	for rows.Next() {
+		var i ListComplianceAuditsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Framework,
+			&i.Kind,
+			&i.Body,
+			&i.Scope,
+			&i.Reference,
+			&i.IssuedOn,
+			&i.ExpiresOn,
+			&i.CreatedBy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listControlOwners = `-- name: ListControlOwners :many
+SELECT o.control_id, o.user_id, u.email, u.display_name, o.updated_at
+FROM tenant.compliance_control_owners o
+LEFT JOIN "user".users u ON u.id = o.user_id
+WHERE o.tenant_id = $1
+ORDER BY o.control_id
+`
+
+type ListControlOwnersRow struct {
+	ControlID   string
+	UserID      uuid.UUID
+	Email       *string
+	DisplayName *string
+	UpdatedAt   time.Time
+}
+
+func (q *Queries) ListControlOwners(ctx context.Context, tenantID uuid.UUID) ([]ListControlOwnersRow, error) {
+	rows, err := q.db.Query(ctx, listControlOwners, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListControlOwnersRow{}
+	for rows.Next() {
+		var i ListControlOwnersRow
+		if err := rows.Scan(
+			&i.ControlID,
+			&i.UserID,
+			&i.Email,
+			&i.DisplayName,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listEvidenceRuns = `-- name: ListEvidenceRuns :many
@@ -1257,5 +1505,29 @@ WHERE user_id = $1
 
 func (q *Queries) RevokeUserSessions(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, revokeUserSessions, userID)
+	return err
+}
+
+const upsertControlOwner = `-- name: UpsertControlOwner :exec
+INSERT INTO tenant.compliance_control_owners (tenant_id, control_id, user_id, updated_by, updated_at)
+VALUES ($1, $2, $3, $4, NOW())
+ON CONFLICT (tenant_id, control_id) DO UPDATE SET
+    user_id = EXCLUDED.user_id, updated_by = EXCLUDED.updated_by, updated_at = NOW()
+`
+
+type UpsertControlOwnerParams struct {
+	TenantID  uuid.UUID
+	ControlID string
+	UserID    uuid.UUID
+	UpdatedBy pgtype.UUID
+}
+
+func (q *Queries) UpsertControlOwner(ctx context.Context, arg UpsertControlOwnerParams) error {
+	_, err := q.db.Exec(ctx, upsertControlOwner,
+		arg.TenantID,
+		arg.ControlID,
+		arg.UserID,
+		arg.UpdatedBy,
+	)
 	return err
 }
