@@ -69,13 +69,16 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/activity/{id}", h.event)
 }
 
-// stream serves GET /v1/activity/stream as Server-Sent Events. It replays audit
-// events newer than Last-Event-ID, then forwards live hub events until the
-// client disconnects, the hub shuts down, the reader's credential expires or
-// Access refuses them; the query filters apply to both. Delivery is
-// at least once: an event may arrive twice, and when the client is too far
-// behind, or the hub couldn't keep up with it, the stream ends with a
-// reconnect hint so the next connection catches up from the audit log.
+// stream serves GET /v1/activity/stream as Server-Sent Events of the audit
+// records themselves, each with its own id, so a live event can be opened and
+// related as a historical one. It replays the records newer than
+// Last-Event-ID, then follows the audit log, every streamPoll or as soon as
+// the hub says the organisation did something, until the client disconnects,
+// the hub shuts down, the reader's credential expires or Access refuses them;
+// the query filters apply throughout. Delivery is at least once: a frame's
+// cursor is set back streamLag, so a reconnect may resend a record, and when
+// the client is too far behind, or the hub couldn't keep up with it, the
+// stream ends with a reconnect hint so the next connection catches up.
 func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	tenantID, _, ok := h.requireTenantUser(w, r)
 	if !ok {
@@ -126,17 +129,17 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	default:
 	}
 
-	// Subscribe before replaying, so a live event published during the replay
-	// waits in the channel instead of being lost. Live events come from the
-	// outbox and replayed ones from the audit log, with different ids, so they
-	// can't be matched: an event in both may arrive twice, but none is dropped.
+	// Subscribe before replaying, so the organisation's activity during the
+	// replay wakes the tail at once rather than at the next poll.
 	evCh, lost, unsub := h.Hub.subscribe(tenantID)
 	defer unsub()
 
 	// On reconnect the client sends the ID of the last event it received; replay
-	// everything newer before switching to live.
+	// everything newer before following the log. Without one, the stream
+	// starts at the time it was opened.
+	tail := newAuditTail(time.Now().UTC())
 	if lastID := r.Header.Get("Last-Event-ID"); lastID != "" {
-		if !h.replayHistory(ctx, sse, tenantID, lastID, f) {
+		if !h.replayHistory(ctx, sse, tenantID, lastID, f, tail) {
 			sse.retryLater()
 			return
 		}
@@ -144,6 +147,8 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 
 	recheck := time.NewTicker(h.recheckEvery())
 	defer recheck.Stop()
+	poll := time.NewTicker(streamPoll)
+	defer poll.Stop()
 	var expired <-chan time.Time
 	if reader != nil && reader.ExpiresAt != nil {
 		t := time.NewTimer(time.Until(*reader.ExpiresAt))
@@ -167,32 +172,92 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		case <-lost:
 			sse.retryLater()
 			return
-		case ev := <-evCh:
-			// Defence in depth: drop an event whose own TenantID is not the
-			// connection's, in case the hub ever mis-routes one.
-			if ev.TenantID != tenantID {
-				slog.Error("activity: cross-tenant event dropped at write boundary",
-					"connection_tenant", tenantID,
-					"event_tenant", ev.TenantID)
-				continue
+		case <-evCh:
+			if !h.followLog(ctx, sse, tenantID, tail, f) {
+				sse.retryLater()
+				return
 			}
-			if !matchesStreamFilter(ev, f) {
-				continue
+		case <-poll.C:
+			if !h.followLog(ctx, sse, tenantID, tail, f) {
+				sse.retryLater()
+				return
 			}
-			sse.sendActivity(ev, ev.At.Add(-outboxLag))
 		}
 	}
+}
+
+// streamPoll is how often a stream reads the audit log when nothing wakes it
+// sooner.
+const streamPoll = 2 * time.Second
+
+// auditTail is where a stream has read the audit log to: every record after
+// (floor, floorID), what the client already had, is sent once, and each sent
+// within streamLag of the newest is remembered, as a record committed late can
+// still appear among them.
+type auditTail struct {
+	floor   time.Time
+	floorID uuid.UUID
+	newest  time.Time
+	sent    map[uuid.UUID]time.Time
+}
+
+func newAuditTail(from time.Time) *auditTail {
+	return &auditTail{floor: from, newest: from, sent: map[uuid.UUID]time.Time{}}
+}
+
+// followLog sends the tenant's audit records the tail hasn't, oldest first,
+// reading back streamLag before the newest it sent. It reports false when the
+// log can't be read.
+func (h *Handler) followLog(ctx context.Context, sse *sseWriter, tenantID uuid.UUID, t *auditTail, f StreamFilter) bool {
+	q := dbgen.New(h.pool)
+	afterTs, afterID := t.newest.Add(-streamLag), uuid.Nil
+	if !afterTs.After(t.floor) {
+		afterTs, afterID = t.floor, t.floorID
+	}
+	for {
+		rows, err := q.ReplayActivityHistory(ctx, dbgen.ReplayActivityHistoryParams{
+			TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+			AfterTs:  afterTs,
+			AfterID:  afterID,
+		})
+		if err != nil {
+			slog.Warn("activity: follow the audit log", "err", err)
+			return false
+		}
+		for _, row := range rows {
+			afterTs, afterID = row.CreatedAt, row.ID
+			if _, done := t.sent[row.ID]; done {
+				continue
+			}
+			t.sent[row.ID] = row.CreatedAt
+			if row.CreatedAt.After(t.newest) {
+				t.newest = row.CreatedAt
+			}
+			if ev := mapAuditRow(replayRowToAuditRow(row)); matchesStreamFilter(ev, f) {
+				sse.sendActivity(ev, row.CreatedAt.Add(-streamLag))
+			}
+		}
+		if len(rows) < replayPage {
+			break
+		}
+	}
+	for id, at := range t.sent {
+		if at.Before(t.newest.Add(-streamLag)) {
+			delete(t.sent, id)
+		}
+	}
+	return true
 }
 
 // shutdownRetry is how long the client of a stopping server waits before it
 // reconnects, sending its Last-Event-ID so it misses nothing.
 const shutdownRetry = 3 * time.Second
 
-// outboxLag is how far a live event may trail the audit record it reports: the
-// outbox's poll interval, with margin. A live frame's cursor is set back by it,
-// so a reconnect replays what the outbox had yet to publish; an event may
-// arrive twice, but none is skipped.
-const outboxLag = 10 * time.Second
+// streamLag is how long after its time an audit record may become visible: its
+// transaction commits after the record is stamped. The tail reads back this
+// far, and a live frame's cursor is set back by it, so a reconnect misses
+// nothing; a record may arrive twice, but none is skipped.
+const streamLag = 10 * time.Second
 
 // recheckEvery is how often a stream asks Access again.
 func (h *Handler) recheckEvery() time.Duration {
@@ -218,16 +283,18 @@ func (h *Handler) stillAllowed(ctx context.Context, reader *httpx.Principal) boo
 
 // replayHistory sends the audit events newer than the lastEventID cursor,
 // oldest first, as a connected client would have seen them, page after page
-// until it has caught up. It reads at most maxReplayRows: further behind, it
-// sends the cursor of the last row read and reports false, for the stream to
-// end and the client to carry on from there. The cursor of a row the filters
-// pass over is sent too, so a filtered backlog is read only once. A lastEventID
-// that does not decode skips the replay, so the stream just starts live.
-func (h *Handler) replayHistory(ctx context.Context, sse *sseWriter, tenantID uuid.UUID, lastEventID string, f StreamFilter) bool {
+// until it has caught up, and has t follow on from them. It reads at most
+// maxReplayRows: further behind, it sends the cursor of the last row read and
+// reports false, for the stream to end and the client to carry on from there.
+// The cursor of a row the filters pass over is sent too, so a filtered backlog
+// is read only once. A lastEventID that does not decode skips the replay, so
+// the stream just starts live.
+func (h *Handler) replayHistory(ctx context.Context, sse *sseWriter, tenantID uuid.UUID, lastEventID string, f StreamFilter, t *auditTail) bool {
 	afterTs, afterID, err := decodeCursor(lastEventID)
 	if err != nil {
 		return true // invalid Last-Event-ID — skip replay rather than erroring
 	}
+	t.floor, t.floorID, t.newest = afterTs, afterID, afterTs
 	q := dbgen.New(h.pool)
 	for read := 0; ; {
 		rows, err := q.ReplayActivityHistory(ctx, dbgen.ReplayActivityHistoryParams{
@@ -243,6 +310,10 @@ func (h *Handler) replayHistory(ctx context.Context, sse *sseWriter, tenantID uu
 		for _, row := range rows {
 			ev := mapAuditRow(replayRowToAuditRow(row))
 			afterTs, afterID, sentLast = row.CreatedAt, row.ID, false
+			t.sent[row.ID] = row.CreatedAt
+			if row.CreatedAt.After(t.newest) {
+				t.newest = row.CreatedAt
+			}
 			if matchesStreamFilter(ev, f) {
 				sse.sendActivity(ev, ev.At)
 				sentLast = true

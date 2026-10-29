@@ -325,9 +325,12 @@ paths:
       summary: Live activity stream (SSE)
       description: >-
         Opens a Server-Sent Events stream of ActivityEvent frames for the
-        caller's tenant. Each frame is
-        `id: <cursor>\nevent: activity\ndata: <json>\n\n`; periodic
-        `: keep-alive` comments prevent proxy timeouts.
+        caller's tenant: the audit records themselves, every kind (sign-ins
+        and MFA included), each with its own audit id, so a live event can be
+        opened and related like one from the history. The server follows the
+        audit log every two seconds, or at once when the organisation acts.
+        Each frame is `id: <cursor>\nevent: activity\ndata: <json>\n\n`;
+        periodic `: keep-alive` comments prevent proxy timeouts.
 
 
         When `Last-Event-ID` is supplied (the `id` of the last frame received,
@@ -338,8 +341,9 @@ paths:
         and ends, and the client's reconnect carries on from there. A frame
         may carry only an `id` (no event): the cursor of rows the filters
         passed over, kept as the client's Last-Event-ID. A live frame's id
-        sits ten seconds before its event, to cover events the server had yet
-        to publish. Delivery is at least once: a reconnect may repeat an event
+        sits ten seconds before its event, to cover records whose transaction
+        committed late; the stream sends each record once, and a reconnect may
+        repeat one, recognisable by its id. Delivery is at least once: a reconnect may repeat an event
         but doesn't skip one, and a client too slow for the live stream is
         sent a `retry:` frame and disconnected, to catch up from the audit log
         on reconnect.

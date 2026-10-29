@@ -182,141 +182,125 @@ func TestStreamReplaysEventsAfterLastEventID(t *testing.T) {
 	}
 }
 
-// TestStreamKeepsLiveEventsDuringReplay checks that a live event published
-// while the stream is still replaying history is sent after the replay rather
-// than lost. The replay is held back by a lock on the audit log.
-func TestStreamKeepsLiveEventsDuringReplay(t *testing.T) {
-	ctx := dbtest.Context(t)
-	tenant := dbtest.Tenant(t)
-	admin := dbtest.User(t, tenant, tenant)
-	base := time.Now().Add(-time.Hour)
-	seen := insertEvent(t, tenant, "user.created", base)
-	missed := insertEvent(t, tenant, "user.updated", base.Add(time.Second))
-
-	lock, err := dbtest.Pool(t).Begin(ctx)
+// streamFrames opens the stream with lastEventID and returns a channel of the
+// ids and cursors of its frames, in order, and a stop for the stream.
+func streamFrames(t *testing.T, srv *httptest.Server, lastEventID string) (<-chan [2]string, func()) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(dbtest.Context(t))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/activity/stream", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer lock.Rollback(ctx)
-	if _, err := lock.Exec(ctx, `LOCK TABLE audit.events IN ACCESS EXCLUSIVE MODE`); err != nil {
-		t.Fatalf("lock the audit log: %v", err)
+	if lastEventID != "" {
+		req.Header.Set("Last-Event-ID", lastEventID)
 	}
-
-	hub := NewHub(nil)
-	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), hub).Mount))
-	defer srv.Close()
-	reqCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, srv.URL+"/activity/stream", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Last-Event-ID", encodeCursor(seen.at, seen.id))
-	sent := make(chan []uuid.UUID, 1) // the ids of the first two frames
+	frames := make(chan [2]string, 16)
 	go func() {
-		var ids []uuid.UUID
-		defer func() { sent <- ids }()
+		defer close(frames)
 		resp, err := srv.Client().Do(req)
 		if err != nil {
 			return
 		}
 		defer resp.Body.Close()
 		scanner := bufio.NewScanner(resp.Body)
-		for len(ids) < 2 && scanner.Scan() {
+		for scanner.Scan() {
 			if cursor, ok := strings.CutPrefix(scanner.Text(), "id: "); ok {
 				if _, id, err := decodeCursor(cursor); err == nil {
-					ids = append(ids, id)
+					frames <- [2]string{id.String(), cursor}
 				}
 			}
 		}
 	}()
+	return frames, cancel
+}
 
-	// Wait until the stream has subscribed while its replay is blocked.
-	subscribed := false
-	for deadline := time.Now().Add(5 * time.Second); !subscribed && time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-		hub.mu.RLock()
-		subscribed = len(hub.subs[tenant]) == 1
-		hub.mu.RUnlock()
-	}
-	live := newTestEvent("user.deleted", SeverityWarning)
-	live.TenantID = tenant
-	hub.fanOut(tenant, live)
-	if err := lock.Rollback(ctx); err != nil {
-		t.Fatalf("unlock the audit log: %v", err)
-	}
-	if !subscribed {
-		t.Fatal("the stream did not subscribe before its replay finished")
-	}
-
-	if got, want := <-sent, []uuid.UUID{missed.id, live.ID}; !slices.Equal(got, want) {
-		t.Errorf("stream sent %v, want the replayed %s then the live %s", got, missed.id, live.ID)
+// nextFrame waits for the stream's next frame.
+func nextFrame(t *testing.T, frames <-chan [2]string) [2]string {
+	t.Helper()
+	select {
+	case f, ok := <-frames:
+		if !ok {
+			t.Fatal("the stream ended")
+		}
+		return f
+	case <-time.After(10 * time.Second):
+		t.Fatal("no frame")
+		return [2]string{}
 	}
 }
 
-// TestReconnectReplaysEventsTheOutboxHadNotPublished checks that reconnecting
-// with a live frame's id replays an audit event recorded shortly before that
-// live event arrived, whose own outbox message had yet to be published.
-func TestReconnectReplaysEventsTheOutboxHadNotPublished(t *testing.T) {
+// TestLiveFramesAreTheAuditRecords checks that after replaying what a client
+// missed, the stream sends each new audit record once, as itself, with its own
+// id, whether the hub wakes it or its poll does, a record committed late
+// included.
+func TestLiveFramesAreTheAuditRecords(t *testing.T) {
+	tenant := dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	base := time.Now().Add(-time.Hour)
+	seen := insertEvent(t, tenant, "user.created", base)
+	missed := insertEvent(t, tenant, "user.updated", base.Add(time.Second))
+	hub := NewHub(nil)
+	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), hub).Mount))
+	defer srv.Close()
+
+	frames, stop := streamFrames(t, srv, encodeCursor(seen.at, seen.id))
+	defer stop()
+	if f := nextFrame(t, frames); f[0] != missed.id.String() {
+		t.Fatalf("first frame %s, want the replayed %s", f[0], missed.id)
+	}
+	live := insertEvent(t, tenant, "user.deleted", time.Now())
+	hub.fanOut(tenant, newTestEvent("user.deleted", SeverityWarning)) // the outbox's word wakes the stream
+	if f := nextFrame(t, frames); f[0] != live.id.String() {
+		t.Fatalf("live frame %s, want the audit record %s", f[0], live.id)
+	}
+	late := insertEvent(t, tenant, "user.updated", live.at.Add(-3*time.Second)) // committed after a later one
+	next := insertEvent(t, tenant, "group.created", time.Now())
+	got := []string{nextFrame(t, frames)[0], nextFrame(t, frames)[0]}
+	slices.Sort(got)
+	want := []string{late.id.String(), next.id.String()}
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("frames %v, want the late record and the next, once each", got)
+	}
+	select {
+	case f := <-frames:
+		t.Errorf("a record sent again: %s", f[0])
+	case <-time.After(2*streamPoll + time.Second):
+	}
+}
+
+// TestReconnectReplaysRecordsCommittedLate checks that reconnecting with a
+// live frame's id replays an audit record stamped shortly before it but
+// committed after it was sent.
+func TestReconnectReplaysRecordsCommittedLate(t *testing.T) {
 	tenant := dbtest.Tenant(t)
 	admin := dbtest.User(t, tenant, tenant)
 	hub := NewHub(nil)
 	srv := httptest.NewServer(dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), hub).Mount))
 	defer srv.Close()
-	// firstFrame opens the stream with lastEventID and returns its first frame's id.
-	firstFrame := func(lastEventID string, publish func()) string {
-		ctx, cancel := context.WithCancel(dbtest.Context(t))
-		defer cancel()
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/activity/stream", nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if lastEventID != "" {
-			req.Header.Set("Last-Event-ID", lastEventID)
-		}
-		frame := make(chan string, 1)
-		go func() {
-			defer close(frame)
-			resp, err := srv.Client().Do(req)
-			if err != nil {
-				return
-			}
-			defer resp.Body.Close()
-			scanner := bufio.NewScanner(resp.Body)
-			for scanner.Scan() {
-				if cursor, ok := strings.CutPrefix(scanner.Text(), "id: "); ok {
-					frame <- cursor
-					return
-				}
-			}
-		}()
-		if publish != nil {
-			for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-				hub.mu.RLock()
-				n := len(hub.subs[tenant])
-				hub.mu.RUnlock()
-				if n == 1 {
-					break
-				}
-			}
-			publish()
-		}
-		select {
-		case cursor := <-frame:
-			return cursor
-		case <-time.After(5 * time.Second):
-			t.Fatal("no frame")
-			return ""
+
+	frames, stop := streamFrames(t, srv, "")
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		hub.mu.RLock()
+		n := len(hub.subs[tenant])
+		hub.mu.RUnlock()
+		if n == 1 {
+			break
 		}
 	}
+	time.Sleep(50 * time.Millisecond) // the stream starts following from when it opened
+	live := insertEvent(t, tenant, "user.updated", time.Now())
+	frame := nextFrame(t, frames)
+	stop()
+	if frame[0] != live.id.String() {
+		t.Fatalf("live frame %s, want %s", frame[0], live.id)
+	}
+	lagged := insertEvent(t, tenant, "user.created", live.at.Add(-3*time.Second))
 
-	live := newTestEvent("user.updated", SeverityInfo)
-	live.TenantID, live.At = tenant, time.Now().UTC()
-	liveID := firstFrame("", func() { hub.fanOut(tenant, live) })
-	lagged := insertEvent(t, tenant, "user.created", live.At.Add(-3*time.Second))
-
-	cursor := firstFrame(liveID, nil)
-	if _, id, err := decodeCursor(cursor); err != nil || id != lagged.id {
-		t.Errorf("reconnecting replayed %q (%v), want the lagged event %s", cursor, err, lagged.id)
+	frames, stop = streamFrames(t, srv, frame[1])
+	defer stop()
+	if f := nextFrame(t, frames); f[0] != lagged.id.String() {
+		t.Errorf("reconnecting replayed %s, want the lagged record %s", f[0], lagged.id)
 	}
 }
 
