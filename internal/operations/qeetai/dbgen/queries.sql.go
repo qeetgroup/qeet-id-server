@@ -89,6 +89,29 @@ func (q *Queries) DeleteConversation(ctx context.Context, arg DeleteConversation
 	return result.RowsAffected(), nil
 }
 
+const deleteExpiredConversations = `-- name: DeleteExpiredConversations :execrows
+DELETE FROM qeetai.conversations WHERE id IN (
+    SELECT c.id FROM qeetai.conversations c
+    WHERE c.tenant_id = $1 AND c.updated_at < NOW() - make_interval(days => $2::int)
+    LIMIT $3)
+`
+
+type DeleteExpiredConversationsParams struct {
+	TenantID uuid.UUID
+	Days     int32
+	RowLimit int32
+}
+
+// Deletes, with their messages, up to row_limit of the organisation's
+// conversations untouched for days.
+func (q *Queries) DeleteExpiredConversations(ctx context.Context, arg DeleteExpiredConversationsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredConversations, arg.TenantID, arg.Days, arg.RowLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteProviderSettings = `-- name: DeleteProviderSettings :execrows
 DELETE FROM qeetai.provider_settings
 WHERE tenant_id = $1
@@ -160,6 +183,32 @@ func (q *Queries) GetProviderSettings(ctx context.Context, tenantID uuid.UUID) (
 	return i, err
 }
 
+const getSettings = `-- name: GetSettings :one
+SELECT s.conversation_retention_days, s.updated_by, u.email AS updated_by_email, s.updated_at
+FROM qeetai.settings s
+LEFT JOIN "user".users u ON u.id = s.updated_by
+WHERE s.tenant_id = $1
+`
+
+type GetSettingsRow struct {
+	ConversationRetentionDays *int32
+	UpdatedBy                 pgtype.UUID
+	UpdatedByEmail            *string
+	UpdatedAt                 time.Time
+}
+
+func (q *Queries) GetSettings(ctx context.Context, tenantID uuid.UUID) (GetSettingsRow, error) {
+	row := q.db.QueryRow(ctx, getSettings, tenantID)
+	var i GetSettingsRow
+	err := row.Scan(
+		&i.ConversationRetentionDays,
+		&i.UpdatedBy,
+		&i.UpdatedByEmail,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const insertMessage = `-- name: InsertMessage :one
 INSERT INTO qeetai.messages (tenant_id, conversation_id, role, content)
 VALUES ($1, $2, $3, $4)
@@ -190,6 +239,37 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (Q
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const listConversationRetention = `-- name: ListConversationRetention :many
+SELECT tenant_id, conversation_retention_days::int AS days
+FROM qeetai.settings WHERE conversation_retention_days IS NOT NULL
+`
+
+type ListConversationRetentionRow struct {
+	TenantID uuid.UUID
+	Days     int32
+}
+
+// Every organisation that keeps its conversations for a set time.
+func (q *Queries) ListConversationRetention(ctx context.Context) ([]ListConversationRetentionRow, error) {
+	rows, err := q.db.Query(ctx, listConversationRetention)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListConversationRetentionRow{}
+	for rows.Next() {
+		var i ListConversationRetentionRow
+		if err := rows.Scan(&i.TenantID, &i.Days); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listConversations = `-- name: ListConversations :many
@@ -316,6 +396,47 @@ func (q *Queries) ListRecentMessages(ctx context.Context, arg ListRecentMessages
 	return items, nil
 }
 
+const listUsage = `-- name: ListUsage :many
+SELECT month, messages, input_tokens, output_tokens, last_used_at
+FROM qeetai.usage WHERE tenant_id = $1
+ORDER BY month DESC LIMIT 12
+`
+
+type ListUsageRow struct {
+	Month        pgtype.Date
+	Messages     int32
+	InputTokens  int64
+	OutputTokens int64
+	LastUsedAt   time.Time
+}
+
+// The organisation's last twelve months of use, newest first.
+func (q *Queries) ListUsage(ctx context.Context, tenantID uuid.UUID) ([]ListUsageRow, error) {
+	rows, err := q.db.Query(ctx, listUsage, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUsageRow{}
+	for rows.Next() {
+		var i ListUsageRow
+		if err := rows.Scan(
+			&i.Month,
+			&i.Messages,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.LastUsedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const patchConversation = `-- name: PatchConversation :one
 UPDATE qeetai.conversations
 SET
@@ -353,6 +474,28 @@ func (q *Queries) PatchConversation(ctx context.Context, arg PatchConversationPa
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const recordUsage = `-- name: RecordUsage :exec
+INSERT INTO qeetai.usage (tenant_id, month, messages, input_tokens, output_tokens, last_used_at)
+VALUES ($1, date_trunc('month', NOW() AT TIME ZONE 'UTC')::date, 1, $2, $3, NOW())
+ON CONFLICT (tenant_id, month) DO UPDATE SET
+    messages      = qeetai.usage.messages + 1,
+    input_tokens  = qeetai.usage.input_tokens + EXCLUDED.input_tokens,
+    output_tokens = qeetai.usage.output_tokens + EXCLUDED.output_tokens,
+    last_used_at  = NOW()
+`
+
+type RecordUsageParams struct {
+	TenantID     uuid.UUID
+	InputTokens  int64
+	OutputTokens int64
+}
+
+// Adds one turn and its tokens to the organisation's month.
+func (q *Queries) RecordUsage(ctx context.Context, arg RecordUsageParams) error {
+	_, err := q.db.Exec(ctx, recordUsage, arg.TenantID, arg.InputTokens, arg.OutputTokens)
+	return err
 }
 
 const releaseConversationTurn = `-- name: ReleaseConversationTurn :exec
@@ -453,4 +596,23 @@ func (q *Queries) UpsertProviderSettings(ctx context.Context, arg UpsertProvider
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const upsertSettings = `-- name: UpsertSettings :exec
+INSERT INTO qeetai.settings (tenant_id, conversation_retention_days, updated_by, updated_at)
+VALUES ($1, $2, $3, NOW())
+ON CONFLICT (tenant_id) DO UPDATE SET
+    conversation_retention_days = EXCLUDED.conversation_retention_days,
+    updated_by = EXCLUDED.updated_by, updated_at = NOW()
+`
+
+type UpsertSettingsParams struct {
+	TenantID                  uuid.UUID
+	ConversationRetentionDays *int32
+	UpdatedBy                 pgtype.UUID
+}
+
+func (q *Queries) UpsertSettings(ctx context.Context, arg UpsertSettingsParams) error {
+	_, err := q.db.Exec(ctx, upsertSettings, arg.TenantID, arg.ConversationRetentionDays, arg.UpdatedBy)
+	return err
 }

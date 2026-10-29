@@ -27,6 +27,7 @@ type Handler struct {
 	Resolver     ProviderResolver // the tenant's effective provider, for status and gating
 	Config       *ProviderConfig  // backs the BYOK admin endpoints; may be nil in tests
 	Plan         PlanGate         // plan gate for the platform key; nil means no gate
+	Admin        *Service         // usage and settings, for the organisation's admins
 }
 
 // PlanGate reports whether a boolean feature is included in a tenant's plan.
@@ -61,6 +62,11 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Put("/qeetai/provider-config", h.putProviderConfig)
 	r.Delete("/qeetai/provider-config", h.deleteProviderConfig)
 	r.Post("/qeetai/provider-config/test", h.testProviderConfig)
+
+	// The organisation's use and settings (org admins — see permission map).
+	r.Get("/tenants/{tenantID}/qeetai/usage", h.usage)
+	r.Get("/tenants/{tenantID}/qeetai/settings", h.settings)
+	r.Put("/tenants/{tenantID}/qeetai/settings", h.putSettings)
 }
 
 // status reports the tenant's Qeet AI state, never key material. source is

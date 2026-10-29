@@ -70,8 +70,10 @@ func (c *Client) Stream(ctx context.Context, system string, messages []ai.Messag
 			Model:     c.Model,
 			MaxTokens: c.MaxTokens,
 			Stream:    true,
-			Messages:  buildOpenAIMessages(system, messages),
-			Tools:     buildOpenAITools(tools),
+			// Azure's API takes stream_options as OpenAI's does.
+			StreamOptions: &streamOptions{IncludeUsage: true},
+			Messages:      buildOpenAIMessages(system, messages),
+			Tools:         buildOpenAITools(tools),
 		}
 
 		body, err := json.Marshal(reqBody)
@@ -113,11 +115,17 @@ func (c *Client) Stream(ctx context.Context, system string, messages []ai.Messag
 
 // openAIRequest is the body sent to POST /chat/completions.
 type openAIRequest struct {
-	Model     string          `json:"model"`
-	MaxTokens int             `json:"max_tokens"`
-	Stream    bool            `json:"stream"`
-	Messages  []openAIMessage `json:"messages"`
-	Tools     []openAITool    `json:"tools,omitempty"`
+	Model         string          `json:"model"`
+	MaxTokens     int             `json:"max_tokens"`
+	Stream        bool            `json:"stream"`
+	StreamOptions *streamOptions  `json:"stream_options,omitempty"`
+	Messages      []openAIMessage `json:"messages"`
+	Tools         []openAITool    `json:"tools,omitempty"`
+}
+
+// streamOptions asks for the turn's token counts in a last chunk.
+type streamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 // openAIMessage is one entry in the messages array. Content is *string so that
@@ -151,6 +159,11 @@ type openAITool struct {
 // openAIChunk is a parsed streaming delta from the Chat Completions SSE.
 type openAIChunk struct {
 	Choices []openAIChoice `json:"choices"`
+	// Usage is set on the last chunk, which has no choices.
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
 }
 
 type openAIChoice struct {
@@ -361,6 +374,11 @@ func parseOpenAISSE(ctx context.Context, r io.Reader, out chan<- ai.Event) error
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			// Malformed chunk — skip; don't abort the stream.
 			continue
+		}
+		if chunk.Usage != nil {
+			if err := emit(ai.Event{Type: ai.EventUsage, InputTokens: chunk.Usage.PromptTokens, OutputTokens: chunk.Usage.CompletionTokens}); err != nil {
+				return err
+			}
 		}
 
 		for _, choice := range chunk.Choices {

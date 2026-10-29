@@ -267,10 +267,13 @@ func userPermissionMap() map[string]string {
 		// Qeet AI provider config (BYOK) — org owner/admin only. Reuses the
 		// secrets permission so a newly added capability need not be backfilled
 		// onto existing owner roles. The other /qeetai/* routes are user-level.
-		"GET /v1/qeetai/provider-config":       "secret.read",
-		"PUT /v1/qeetai/provider-config":       "secret.write",
-		"DELETE /v1/qeetai/provider-config":    "secret.write",
-		"POST /v1/qeetai/provider-config/test": "secret.write",
+		"GET /v1/qeetai/provider-config":             "secret.read",
+		"PUT /v1/qeetai/provider-config":             "secret.write",
+		"DELETE /v1/qeetai/provider-config":          "secret.write",
+		"POST /v1/qeetai/provider-config/test":       "secret.write",
+		"GET /v1/tenants/{tenantID}/qeetai/usage":    "secret.read",
+		"GET /v1/tenants/{tenantID}/qeetai/settings": "secret.read",
+		"PUT /v1/tenants/{tenantID}/qeetai/settings": "secret.write",
 
 		// Branding + email templates (GET branding is harmless — ungated).
 		"PUT /v1/tenants/{tenantID}/branding":                       "branding.write",

@@ -143,7 +143,12 @@ func (o *Orchestrator) Run(ctx context.Context, tc turnContext, sse *sseWriter) 
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	events, errC := provider.Stream(streamCtx, system, aiMsgs, toolDefs)
-	text, toolBlocks, ok := collect(events, errC, cancel, sse, o.limits.OutputBytes)
+	var used usage
+	text, toolBlocks, ok := collect(events, errC, cancel, sse, o.limits.OutputBytes, &used)
+	// A turn the model answered counts, whether or not it then failed.
+	if err := o.service.RecordUsage(ctx, tc.tenantID, used.input, used.output); err != nil {
+		slog.Warn("qeetai: record usage", "err", err)
+	}
 	if !ok {
 		return
 	}
@@ -170,13 +175,16 @@ func recentHistory(msgs []Message, maxBytes int) []Message {
 	return msgs[start:]
 }
 
+// usage is the tokens one turn used, as its provider reported them.
+type usage struct{ input, output int }
+
 // collect reads one turn's stream into its text and tool calls, sending the
 // text to sse as it arrives. A tool call must start on the next slot, below
 // ai.MaxToolCalls, and its input stay within ai.MaxToolInputBytes; otherwise
 // the stream is cancelled and the turn refused. ok is false once collect has
 // sent the error and done frames. Text past maxOutput bytes ends the turn
 // there, as the model's own token limit would, without its tool calls.
-func collect(events <-chan ai.Event, errC <-chan error, cancel context.CancelFunc, sse *sseWriter, maxOutput int) (text string, tools []*toolUseAccum, ok bool) {
+func collect(events <-chan ai.Event, errC <-chan error, cancel context.CancelFunc, sse *sseWriter, maxOutput int, used *usage) (text string, tools []*toolUseAccum, ok bool) {
 	var textBuilder strings.Builder
 	fail := func(code, message string) (string, []*toolUseAccum, bool) {
 		cancel()
@@ -235,6 +243,10 @@ func collect(events <-chan ai.Event, errC <-chan error, cancel context.CancelFun
 		case ai.EventStop:
 			// StopReason is captured implicitly: the path is chosen by
 			// len(tools) > 0 after the loop.
+
+		case ai.EventUsage:
+			// Each report is the turn's tokens so far.
+			used.input, used.output = max(used.input, ev.InputTokens), max(used.output, ev.OutputTokens)
 
 		case ai.EventProviderError:
 			slog.Error("qeetai: provider stream error", "msg", ev.ErrorMessage)

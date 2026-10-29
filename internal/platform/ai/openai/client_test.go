@@ -249,3 +249,31 @@ func TestOpenAIStream_RequestFormat(t *testing.T) {
 		t.Errorf("tools = %+v, want search_users", req.Tools)
 	}
 }
+
+// TestOpenAIStreamReportsTheTokensUsed checks that the turn asks for its
+// token counts and reports the last chunk's.
+func TestOpenAIStreamReportsTheTokensUsed(t *testing.T) {
+	var asked bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		asked = strings.Contains(string(body), `"stream_options":{"include_usage":true}`)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(cannedOpenAITextSSE[:strings.Index(cannedOpenAITextSSE, "data: [DONE]")] +
+			"data: {\"id\":\"chatcmpl-001\",\"choices\":[],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":4}}\n\ndata: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+	c := openai.New("test-key", srv.URL, "gpt-4o", 1024, srv.Client())
+	events, errC := c.Stream(context.Background(), "", []ai.Message{{Role: "user", Content: []ai.ContentBlock{{Type: "text", Text: "hi"}}}}, nil)
+	var in, out int
+	for ev := range events {
+		if ev.Type == ai.EventUsage {
+			in, out = ev.InputTokens, ev.OutputTokens
+		}
+	}
+	if err := <-errC; err != nil {
+		t.Fatal(err)
+	}
+	if !asked || in != 11 || out != 4 {
+		t.Errorf("asked for usage %v; got %d in, %d out; want 11 and 4", asked, in, out)
+	}
+}

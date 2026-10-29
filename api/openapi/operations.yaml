@@ -2542,6 +2542,95 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/qeetai/usage:
+    get:
+      operationId: get_v1_tenants_ByTenantID_qeetai_usage
+      summary: Qeet AI usage
+      description: 'What the organisation''s Qeet AI used: this UTC month''s messages (turns answered) and tokens as its provider reported them, the last use, and the twelve most recent months. Requires secret.read, as the provider configuration does.'
+      tags: [Qeet AI]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Usage
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  this_month: {type: object, properties: {month: {type: string, example: '2026-10'}, messages: {type: integer}, input_tokens: {type: integer, format: int64}, output_tokens: {type: integer, format: int64}, last_used_at: {type: string, format: date-time}}}
+                  last_used_at: {type: [string, 'null'], format: date-time}
+                  months: {type: array, items: {type: object, properties: {month: {type: string, example: '2026-10'}, messages: {type: integer}, input_tokens: {type: integer, format: int64}, output_tokens: {type: integer, format: int64}, last_used_at: {type: string, format: date-time}}}}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/qeetai/settings:
+    get:
+      operationId: get_v1_tenants_ByTenantID_qeetai_settings
+      summary: Qeet AI settings
+      description: 'How long the organisation keeps its Qeet AI conversations, and the last change. Requires secret.read.'
+      tags: [Qeet AI]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conversation_retention_days: {type: [integer, 'null'], minimum: 1, maximum: 3650, description: 'Days an untouched conversation is kept, with its messages; null keeps them.'}
+                  updated_at: {type: string, format: date-time}
+                  updated_by: {type: string, format: uuid}
+                  updated_by_email: {type: string}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    put:
+      operationId: put_v1_tenants_ByTenantID_qeetai_settings
+      summary: Set Qeet AI settings
+      description: 'Sets how many days (1 to 3,650) an untouched conversation is kept, or null to keep them. Every day a job deletes the conversations untouched for longer, with their messages, and audits each organisation''s deletion as qeetai.conversations_purged. The change is audited as qeetai.settings_updated. Requires secret.write.'
+      tags: [Qeet AI]
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                conversation_retention_days: {type: [integer, 'null'], minimum: 1, maximum: 3650}
+      responses:
+        '200':
+          description: The settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conversation_retention_days: {type: [integer, 'null'], minimum: 1, maximum: 3650, description: 'Days an untouched conversation is kept, with its messages; null keeps them.'}
+                  updated_at: {type: string, format: date-time}
+                  updated_by: {type: string, format: uuid}
+                  updated_by_email: {type: string}
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/qeetai/status:
     get:
       operationId: get_v1_qeetai_status

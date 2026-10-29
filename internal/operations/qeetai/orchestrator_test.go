@@ -52,7 +52,7 @@ func collectOf(t *testing.T, events []ai.Event, endless bool, maxOutput int) (st
 	defer cancel()
 	stream, errC, stopped := fakeStream(ctx, events, endless)
 	rec := httptest.NewRecorder()
-	text, tools, ok := collect(stream, errC, cancel, newSSEWriter(rec), maxOutput)
+	text, tools, ok := collect(stream, errC, cancel, newSSEWriter(rec), maxOutput, &usage{})
 	select {
 	case <-stopped:
 	case <-time.After(5 * time.Second):

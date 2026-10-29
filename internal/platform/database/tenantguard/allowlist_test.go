@@ -214,6 +214,7 @@ internal/operations/billing/checkout.go#Service.completeSignupCheckout  pre-tena
 internal/operations/billing/queries.sql#CompleteCheckout  parent-scoped: checkout named by a signature-verified payment webhook or callback
 internal/operations/billing/queries.sql#UpdateCheckoutFailed  parent-scoped: checkout inserted for the tenant just before
 internal/operations/billing/queries.sql#UpdateCheckoutProviderRef  parent-scoped: checkout inserted for the tenant just before
+internal/operations/qeetai/queries.sql#ListConversationRetention  background-sweep: the retention job finds every organisation that keeps its Qeet AI conversations for a set time, then deletes each one's scoped to it
 internal/operations/billing/queries.sql#DueSubscriptions  background-sweep: the period-end job finds every organisation whose trial or period has ended
 internal/operations/billing/queries.sql#ClaimInvoiceEmails  background-sweep: the invoice-email job sends every organisation's newly issued invoices to the address each was billed to
 internal/operations/billing/queries.sql#InvoiceTenant  platform-wide: the operator's mark-invoice-paid command finds which organisation an invoice belongs to, then settles it scoped to that one

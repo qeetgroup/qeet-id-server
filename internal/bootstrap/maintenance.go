@@ -16,6 +16,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/qeetai"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope/reseal"
@@ -213,6 +214,19 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller, box *
 				n, err := svc.PurgeDeletedTenants(ctx, gdpr.TenantPurgeAfter)
 				if n > 0 {
 					slog.Info("deleted organisations purged", "purged", n)
+				}
+				return err
+			},
+		},
+		{
+			// An organisation's Qeet AI conversations go once untouched for
+			// longer than it keeps them.
+			Name:     "qeetai-conversation-retention",
+			Interval: 24 * time.Hour,
+			Run: func(ctx context.Context) error {
+				n, err := qeetai.PurgeExpiredConversations(ctx, pool)
+				if n > 0 {
+					slog.Info("Qeet AI conversations purged", "deleted", n)
 				}
 				return err
 			},

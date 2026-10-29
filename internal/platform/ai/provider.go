@@ -47,6 +47,7 @@ const (
 	EventToolCallDelta EventType = "tool_call_delta" // a fragment of a tool call's JSON input
 	EventToolCallStop  EventType = "tool_call_stop"  // a tool call's input is complete; optional
 	EventStop          EventType = "stop"            // the turn is done (StopReason)
+	EventUsage         EventType = "usage"           // the tokens the turn used (InputTokens, OutputTokens)
 	EventProviderError EventType = "error"           // a terminal provider error (ErrorMessage)
 )
 
@@ -69,6 +70,8 @@ type Event struct {
 	ToolInputDelta string // EventToolCallDelta: a fragment of the JSON input
 	StopReason     string // EventStop: "end_turn" or "tool_use"
 	ErrorMessage   string // EventProviderError: a message with no key material
+	InputTokens    int    // EventUsage: the prompt's tokens
+	OutputTokens   int    // EventUsage: the reply's tokens
 }
 
 // Provider streams one inference turn. Stream returns an event channel and an

@@ -336,6 +336,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Resolver:     qeetaiProviderCfg,
 		Config:       qeetaiProviderCfg,
 		Plan:         entitlementSvc, // platform fallback is a Pro+ feature; BYOK bypasses the gate
+		Admin:        qeetaiService,
 	}
 
 	samlService := saml.NewService(pool, authService, cfg.AppBaseURL)

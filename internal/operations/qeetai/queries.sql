@@ -109,3 +109,45 @@ RETURNING tenant_id, provider, model, base_url, max_tokens,
 -- name: DeleteProviderSettings :execrows
 DELETE FROM qeetai.provider_settings
 WHERE tenant_id = @tenant_id;
+
+-- name: RecordUsage :exec
+-- Adds one turn and its tokens to the organisation's month.
+INSERT INTO qeetai.usage (tenant_id, month, messages, input_tokens, output_tokens, last_used_at)
+VALUES (@tenant_id, date_trunc('month', NOW() AT TIME ZONE 'UTC')::date, 1, @input_tokens, @output_tokens, NOW())
+ON CONFLICT (tenant_id, month) DO UPDATE SET
+    messages      = qeetai.usage.messages + 1,
+    input_tokens  = qeetai.usage.input_tokens + EXCLUDED.input_tokens,
+    output_tokens = qeetai.usage.output_tokens + EXCLUDED.output_tokens,
+    last_used_at  = NOW();
+
+-- name: ListUsage :many
+-- The organisation's last twelve months of use, newest first.
+SELECT month, messages, input_tokens, output_tokens, last_used_at
+FROM qeetai.usage WHERE tenant_id = @tenant_id
+ORDER BY month DESC LIMIT 12;
+
+-- name: GetSettings :one
+SELECT s.conversation_retention_days, s.updated_by, u.email AS updated_by_email, s.updated_at
+FROM qeetai.settings s
+LEFT JOIN "user".users u ON u.id = s.updated_by
+WHERE s.tenant_id = @tenant_id;
+
+-- name: UpsertSettings :exec
+INSERT INTO qeetai.settings (tenant_id, conversation_retention_days, updated_by, updated_at)
+VALUES (@tenant_id, sqlc.narg('conversation_retention_days'), sqlc.narg('updated_by'), NOW())
+ON CONFLICT (tenant_id) DO UPDATE SET
+    conversation_retention_days = EXCLUDED.conversation_retention_days,
+    updated_by = EXCLUDED.updated_by, updated_at = NOW();
+
+-- name: ListConversationRetention :many
+-- Every organisation that keeps its conversations for a set time.
+SELECT tenant_id, conversation_retention_days::int AS days
+FROM qeetai.settings WHERE conversation_retention_days IS NOT NULL;
+
+-- name: DeleteExpiredConversations :execrows
+-- Deletes, with their messages, up to row_limit of the organisation's
+-- conversations untouched for days.
+DELETE FROM qeetai.conversations WHERE id IN (
+    SELECT c.id FROM qeetai.conversations c
+    WHERE c.tenant_id = @tenant_id AND c.updated_at < NOW() - make_interval(days => @days::int)
+    LIMIT @row_limit);
