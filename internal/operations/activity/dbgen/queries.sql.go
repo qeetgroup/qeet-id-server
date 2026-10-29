@@ -24,7 +24,10 @@ SELECT count(*)::bigint FROM (
       AND ($4::uuid IS NULL OR e.actor_user_id = $4 OR (e.resource_type = 'user' AND e.resource_id = $4) OR e.metadata->>'user_id' = $4::uuid::text)
       AND ($5::timestamptz IS NULL OR e.created_at >= $5)
       AND ($6::timestamptz IS NULL OR e.created_at <= $6)
-      AND ($7::text IS NULL OR e.search_vector @@ websearch_to_tsquery('simple', $7))
+      AND ($7::text IS NULL OR e.search_vector @@ audit.search_query($7)
+       OR e.actor_user_id IN (SELECT su.id FROM "user".users su
+           WHERE (su.email ILIKE audit.like_escape($7::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape($7::text) || '%')
+             AND (su.tenant_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $1))))
       AND ($8::text[] IS NULL OR e.resource_type = ANY($8))
       AND ($9::uuid IS NULL OR e.resource_id = $9)
       AND ($10::inet IS NULL OR e.ip = $10)
@@ -147,7 +150,10 @@ WHERE e.tenant_id = $1
   AND ($4::uuid IS NULL OR e.actor_user_id = $4 OR (e.resource_type = 'user' AND e.resource_id = $4) OR e.metadata->>'user_id' = $4::uuid::text)
   AND ($5::timestamptz IS NULL OR e.created_at >= $5)
   AND ($6::timestamptz IS NULL OR e.created_at <= $6)
-  AND ($7::text IS NULL OR e.search_vector @@ websearch_to_tsquery('simple', $7))
+  AND ($7::text IS NULL OR e.search_vector @@ audit.search_query($7)
+       OR e.actor_user_id IN (SELECT su.id FROM "user".users su
+           WHERE (su.email ILIKE audit.like_escape($7::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape($7::text) || '%')
+             AND (su.tenant_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $1))))
   AND ($8::text[] IS NULL OR e.resource_type = ANY($8))
   AND ($9::uuid IS NULL OR e.resource_id = $9)
   AND ($10::inet IS NULL OR e.ip = $10)
@@ -202,7 +208,7 @@ type ListActivityHistoryRow struct {
 // All queries are scoped by tenant_id (multi-tenancy).
 // Cursor-paginated history, newest first. Optional filters: action type array,
 // actor, subject (actor, user-resource target or metadata.user_id), time range,
-// GIN full-text search, resource types, a resource, an address, and the
+// full-text search (audit.search_query: words, as prefixes, or the actor's name or email), resource types, a resource, an address, and the
 // categories and severities activity gives an action (audit.activity_category
 // and audit.activity_severity), either a set of severities or, with
 // min_severity, at least one. The cursor carries both created_at and id so the
@@ -510,13 +516,16 @@ func (q *Queries) ReplayActivityHistory(ctx context.Context, arg ReplayActivityH
 const summarizeActivityByAction = `-- name: SummarizeActivityByAction :many
 SELECT action, count(*)::bigint AS count
 FROM audit.events
-WHERE tenant_id = $1
+WHERE audit.events.tenant_id = $1
   AND ($2::text[] IS NULL OR action = ANY($2))
   AND ($3::uuid IS NULL OR actor_user_id = $3)
   AND ($4::uuid IS NULL OR actor_user_id = $4 OR (resource_type = 'user' AND resource_id = $4) OR metadata->>'user_id' = $4::uuid::text)
   AND ($5::timestamptz IS NULL OR created_at >= $5)
   AND ($6::timestamptz IS NULL OR created_at <= $6)
-  AND ($7::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', $7))
+  AND ($7::text IS NULL OR search_vector @@ audit.search_query($7)
+       OR actor_user_id IN (SELECT su.id FROM "user".users su
+           WHERE (su.email ILIKE audit.like_escape($7::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape($7::text) || '%')
+             AND (su.tenant_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $1))))
   AND ($8::text[] IS NULL OR resource_type = ANY($8))
   AND ($9::uuid IS NULL OR resource_id = $9)
   AND ($10::inet IS NULL OR ip = $10)
@@ -592,13 +601,16 @@ SELECT (to_timestamp(floor(extract(epoch FROM created_at) / $1::bigint) * $1::bi
        action,
        count(*)::bigint AS count
 FROM audit.events
-WHERE tenant_id = $2
+WHERE audit.events.tenant_id = $2
   AND ($3::text[] IS NULL OR action = ANY($3))
   AND ($4::uuid IS NULL OR actor_user_id = $4)
   AND ($5::uuid IS NULL OR actor_user_id = $5 OR (resource_type = 'user' AND resource_id = $5) OR metadata->>'user_id' = $5::uuid::text)
   AND ($6::timestamptz IS NULL OR created_at >= $6)
   AND ($7::timestamptz IS NULL OR created_at <= $7)
-  AND ($8::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', $8))
+  AND ($8::text IS NULL OR search_vector @@ audit.search_query($8)
+       OR actor_user_id IN (SELECT su.id FROM "user".users su
+           WHERE (su.email ILIKE audit.like_escape($8::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape($8::text) || '%')
+             AND (su.tenant_id = $2 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $2))))
   AND ($9::text[] IS NULL OR resource_type = ANY($9))
   AND ($10::uuid IS NULL OR resource_id = $10)
   AND ($11::inet IS NULL OR ip = $11)
@@ -680,13 +692,16 @@ SELECT count(*)::bigint AS total,
        count(DISTINCT metadata->>'actor_id') FILTER (WHERE actor_type = 'agent')::bigint AS unique_agents,
        count(DISTINCT metadata->>'actor_id') FILTER (WHERE actor_type = 'service')::bigint AS unique_services
 FROM audit.events
-WHERE tenant_id = $1
+WHERE audit.events.tenant_id = $1
   AND ($2::text[] IS NULL OR action = ANY($2))
   AND ($3::uuid IS NULL OR actor_user_id = $3)
   AND ($4::uuid IS NULL OR actor_user_id = $4 OR (resource_type = 'user' AND resource_id = $4) OR metadata->>'user_id' = $4::uuid::text)
   AND ($5::timestamptz IS NULL OR created_at >= $5)
   AND ($6::timestamptz IS NULL OR created_at <= $6)
-  AND ($7::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', $7))
+  AND ($7::text IS NULL OR search_vector @@ audit.search_query($7)
+       OR actor_user_id IN (SELECT su.id FROM "user".users su
+           WHERE (su.email ILIKE audit.like_escape($7::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape($7::text) || '%')
+             AND (su.tenant_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $1))))
   AND ($8::text[] IS NULL OR resource_type = ANY($8))
   AND ($9::uuid IS NULL OR resource_id = $9)
   AND ($10::inet IS NULL OR ip = $10)

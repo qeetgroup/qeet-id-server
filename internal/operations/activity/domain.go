@@ -95,7 +95,7 @@ type ListFilter struct {
 	Categories    []string    // any of these categories; empty = all
 	ActorID       uuid.UUID   // filter by actor_user_id; uuid.Nil = all
 	Subject       *uuid.UUID  // identity timeline: actor OR user-resource target; nil = all
-	Search        string      // full-text via websearch_to_tsquery
+	Search        string      // words, as prefixes, or the actor's name or email (audit.search_query)
 	From          *time.Time  // inclusive lower bound on created_at
 	To            *time.Time  // inclusive upper bound on created_at
 	ResourceTypes []string    // any of these resource types; empty = all

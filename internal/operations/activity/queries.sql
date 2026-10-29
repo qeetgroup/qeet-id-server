@@ -5,7 +5,7 @@
 -- name: ListActivityHistory :many
 -- Cursor-paginated history, newest first. Optional filters: action type array,
 -- actor, subject (actor, user-resource target or metadata.user_id), time range,
--- GIN full-text search, resource types, a resource, an address, and the
+-- full-text search (audit.search_query: words, as prefixes, or the actor's name or email), resource types, a resource, an address, and the
 -- categories and severities activity gives an action (audit.activity_category
 -- and audit.activity_severity), either a set of severities or, with
 -- min_severity, at least one. The cursor carries both created_at and id so the
@@ -32,7 +32,10 @@ WHERE e.tenant_id = @tenant_id
   AND (sqlc.narg('subject')::uuid IS NULL OR e.actor_user_id = sqlc.narg('subject') OR (e.resource_type = 'user' AND e.resource_id = sqlc.narg('subject')) OR e.metadata->>'user_id' = sqlc.narg('subject')::uuid::text)
   AND (sqlc.narg('from_ts')::timestamptz IS NULL OR e.created_at >= sqlc.narg('from_ts'))
   AND (sqlc.narg('to_ts')::timestamptz IS NULL OR e.created_at <= sqlc.narg('to_ts'))
-  AND (sqlc.narg('q')::text IS NULL OR e.search_vector @@ websearch_to_tsquery('simple', sqlc.narg('q')))
+  AND (sqlc.narg('q')::text IS NULL OR e.search_vector @@ audit.search_query(sqlc.narg('q'))
+       OR e.actor_user_id IN (SELECT su.id FROM "user".users su
+           WHERE (su.email ILIKE audit.like_escape(sqlc.narg('q')::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape(sqlc.narg('q')::text) || '%')
+             AND (su.tenant_id = @tenant_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = @tenant_id))))
   AND (sqlc.narg('resource_types')::text[] IS NULL OR e.resource_type = ANY(sqlc.narg('resource_types')))
   AND (sqlc.narg('resource_id')::uuid IS NULL OR e.resource_id = sqlc.narg('resource_id'))
   AND (sqlc.narg('ip')::inet IS NULL OR e.ip = sqlc.narg('ip'))
@@ -56,7 +59,10 @@ SELECT count(*)::bigint FROM (
       AND (sqlc.narg('subject')::uuid IS NULL OR e.actor_user_id = sqlc.narg('subject') OR (e.resource_type = 'user' AND e.resource_id = sqlc.narg('subject')) OR e.metadata->>'user_id' = sqlc.narg('subject')::uuid::text)
       AND (sqlc.narg('from_ts')::timestamptz IS NULL OR e.created_at >= sqlc.narg('from_ts'))
       AND (sqlc.narg('to_ts')::timestamptz IS NULL OR e.created_at <= sqlc.narg('to_ts'))
-      AND (sqlc.narg('q')::text IS NULL OR e.search_vector @@ websearch_to_tsquery('simple', sqlc.narg('q')))
+      AND (sqlc.narg('q')::text IS NULL OR e.search_vector @@ audit.search_query(sqlc.narg('q'))
+       OR e.actor_user_id IN (SELECT su.id FROM "user".users su
+           WHERE (su.email ILIKE audit.like_escape(sqlc.narg('q')::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape(sqlc.narg('q')::text) || '%')
+             AND (su.tenant_id = @tenant_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = @tenant_id))))
       AND (sqlc.narg('resource_types')::text[] IS NULL OR e.resource_type = ANY(sqlc.narg('resource_types')))
       AND (sqlc.narg('resource_id')::uuid IS NULL OR e.resource_id = sqlc.narg('resource_id'))
       AND (sqlc.narg('ip')::inet IS NULL OR e.ip = sqlc.narg('ip'))
@@ -90,13 +96,16 @@ LIMIT 100;
 -- so aggregation by severity cannot be a plain GROUP BY on a column.
 SELECT action, count(*)::bigint AS count
 FROM audit.events
-WHERE tenant_id = @tenant_id
+WHERE audit.events.tenant_id = @tenant_id
   AND (sqlc.narg('actions')::text[] IS NULL OR action = ANY(sqlc.narg('actions')))
   AND (sqlc.narg('actor_id')::uuid IS NULL OR actor_user_id = sqlc.narg('actor_id'))
   AND (sqlc.narg('subject')::uuid IS NULL OR actor_user_id = sqlc.narg('subject') OR (resource_type = 'user' AND resource_id = sqlc.narg('subject')) OR metadata->>'user_id' = sqlc.narg('subject')::uuid::text)
   AND (sqlc.narg('from_ts')::timestamptz IS NULL OR created_at >= sqlc.narg('from_ts'))
   AND (sqlc.narg('to_ts')::timestamptz IS NULL OR created_at <= sqlc.narg('to_ts'))
-  AND (sqlc.narg('q')::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', sqlc.narg('q')))
+  AND (sqlc.narg('q')::text IS NULL OR search_vector @@ audit.search_query(sqlc.narg('q'))
+       OR actor_user_id IN (SELECT su.id FROM "user".users su
+           WHERE (su.email ILIKE audit.like_escape(sqlc.narg('q')::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape(sqlc.narg('q')::text) || '%')
+             AND (su.tenant_id = @tenant_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = @tenant_id))))
   AND (sqlc.narg('resource_types')::text[] IS NULL OR resource_type = ANY(sqlc.narg('resource_types')))
   AND (sqlc.narg('resource_id')::uuid IS NULL OR resource_id = sqlc.narg('resource_id'))
   AND (sqlc.narg('ip')::inet IS NULL OR ip = sqlc.narg('ip'))
@@ -118,13 +127,16 @@ SELECT count(*)::bigint AS total,
        count(DISTINCT metadata->>'actor_id') FILTER (WHERE actor_type = 'agent')::bigint AS unique_agents,
        count(DISTINCT metadata->>'actor_id') FILTER (WHERE actor_type = 'service')::bigint AS unique_services
 FROM audit.events
-WHERE tenant_id = @tenant_id
+WHERE audit.events.tenant_id = @tenant_id
   AND (sqlc.narg('actions')::text[] IS NULL OR action = ANY(sqlc.narg('actions')))
   AND (sqlc.narg('actor_id')::uuid IS NULL OR actor_user_id = sqlc.narg('actor_id'))
   AND (sqlc.narg('subject')::uuid IS NULL OR actor_user_id = sqlc.narg('subject') OR (resource_type = 'user' AND resource_id = sqlc.narg('subject')) OR metadata->>'user_id' = sqlc.narg('subject')::uuid::text)
   AND (sqlc.narg('from_ts')::timestamptz IS NULL OR created_at >= sqlc.narg('from_ts'))
   AND (sqlc.narg('to_ts')::timestamptz IS NULL OR created_at <= sqlc.narg('to_ts'))
-  AND (sqlc.narg('q')::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', sqlc.narg('q')))
+  AND (sqlc.narg('q')::text IS NULL OR search_vector @@ audit.search_query(sqlc.narg('q'))
+       OR actor_user_id IN (SELECT su.id FROM "user".users su
+           WHERE (su.email ILIKE audit.like_escape(sqlc.narg('q')::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape(sqlc.narg('q')::text) || '%')
+             AND (su.tenant_id = @tenant_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = @tenant_id))))
   AND (sqlc.narg('resource_types')::text[] IS NULL OR resource_type = ANY(sqlc.narg('resource_types')))
   AND (sqlc.narg('resource_id')::uuid IS NULL OR resource_id = sqlc.narg('resource_id'))
   AND (sqlc.narg('ip')::inet IS NULL OR ip = sqlc.narg('ip'))
@@ -143,13 +155,16 @@ SELECT (to_timestamp(floor(extract(epoch FROM created_at) / @bucket_seconds::big
        action,
        count(*)::bigint AS count
 FROM audit.events
-WHERE tenant_id = @tenant_id
+WHERE audit.events.tenant_id = @tenant_id
   AND (sqlc.narg('actions')::text[] IS NULL OR action = ANY(sqlc.narg('actions')))
   AND (sqlc.narg('actor_id')::uuid IS NULL OR actor_user_id = sqlc.narg('actor_id'))
   AND (sqlc.narg('subject')::uuid IS NULL OR actor_user_id = sqlc.narg('subject') OR (resource_type = 'user' AND resource_id = sqlc.narg('subject')) OR metadata->>'user_id' = sqlc.narg('subject')::uuid::text)
   AND (sqlc.narg('from_ts')::timestamptz IS NULL OR created_at >= sqlc.narg('from_ts'))
   AND (sqlc.narg('to_ts')::timestamptz IS NULL OR created_at <= sqlc.narg('to_ts'))
-  AND (sqlc.narg('q')::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', sqlc.narg('q')))
+  AND (sqlc.narg('q')::text IS NULL OR search_vector @@ audit.search_query(sqlc.narg('q'))
+       OR actor_user_id IN (SELECT su.id FROM "user".users su
+           WHERE (su.email ILIKE audit.like_escape(sqlc.narg('q')::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape(sqlc.narg('q')::text) || '%')
+             AND (su.tenant_id = @tenant_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = @tenant_id))))
   AND (sqlc.narg('resource_types')::text[] IS NULL OR resource_type = ANY(sqlc.narg('resource_types')))
   AND (sqlc.narg('resource_id')::uuid IS NULL OR resource_id = sqlc.narg('resource_id'))
   AND (sqlc.narg('ip')::inet IS NULL OR ip = sqlc.narg('ip'))

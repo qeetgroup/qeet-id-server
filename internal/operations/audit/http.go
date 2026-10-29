@@ -44,8 +44,10 @@ type Row struct {
 }
 
 // ListFilter narrows List's results; zero-value fields do not filter, and set
-// ones combine. Actions and ResourceTypes match any of theirs. Search is a
-// websearch_to_tsquery full-text query ("quoted phrases", -exclusions, OR).
+// ones combine. Actions and ResourceTypes match any of theirs. Search finds
+// words of the action, resource, user agent, address and metadata, as
+// prefixes ("quoted phrases", -exclusions and OR as websearch_to_tsquery
+// reads them), or the actor's name or email.
 type ListFilter struct {
 	Actions       []string
 	ResourceTypes []string
@@ -91,7 +93,11 @@ func (filter ListFilter) where(tenantID uuid.UUID) (string, []any) {
 		q += ` AND created_at <= ` + arg(*filter.To)
 	}
 	if filter.Search != "" {
-		q += ` AND search_vector @@ websearch_to_tsquery('simple', ` + arg(filter.Search) + `)`
+		search := arg(filter.Search)
+		q += ` AND (search_vector @@ audit.search_query(` + search + `) OR actor_user_id IN (
+			SELECT su.id FROM "user".users su
+			WHERE (su.email ILIKE audit.like_escape(` + search + `) || '%' OR su.display_name ILIKE '%' || audit.like_escape(` + search + `) || '%')
+			  AND (su.tenant_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $1))))`
 	}
 	return q, args
 }
