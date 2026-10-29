@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/abac/dbgen"
@@ -52,6 +54,10 @@ type Policy struct {
 	Enabled      bool            `json:"enabled"`
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
+	// Version counts the policy's saves from 1, and UpdatedBy is who made the
+	// last, nil for a machine or before it was kept.
+	Version   int        `json:"version"`
+	UpdatedBy *uuid.UUID `json:"updated_by"`
 }
 
 // CreateInput carries the user-supplied fields for a new policy.
@@ -836,6 +842,11 @@ func toPolicy(row dbgen.AuthAbacPolicy) *Policy {
 		Enabled:      row.Enabled,
 		CreatedAt:    row.CreatedAt,
 		UpdatedAt:    row.UpdatedAt,
+		Version:      int(row.Version),
+	}
+	if row.UpdatedBy.Valid {
+		by := uuid.UUID(row.UpdatedBy.Bytes)
+		p.UpdatedBy = &by
 	}
 	if len(row.Condition) > 0 {
 		p.Condition = json.RawMessage(row.Condition)
@@ -910,6 +921,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput
 		Condition:    []byte(cond),
 		Priority:     int32(in.Priority), // #nosec G115 -- only orders the trace; deny wins regardless
 		Enabled:      in.Enabled,
+		UpdatedBy:    savedBy(actor),
 	})
 	if err != nil {
 		if pgxerr.IsUnique(err) {
@@ -918,9 +930,12 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput
 		return nil, err
 	}
 	p := toPolicy(row)
+	if err := s.q.WithTx(tx).SaveAbacPolicyVersion(ctx, dbgen.SaveAbacPolicyVersionParams{ID: p.ID, TenantID: tenantID}); err != nil {
+		return nil, err
+	}
 
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "abac_policy.created", "abac_policy", p.ID,
-		map[string]any{"name": p.Name, "effect": p.Effect, "resource_type": p.ResourceType, "action": p.Action})); err != nil {
+		map[string]any{"name": p.Name, "effect": p.Effect, "resource_type": p.ResourceType, "action": p.Action, "version": p.Version})); err != nil {
 		return nil, err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{
@@ -962,9 +977,23 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Policy, error
 	return out, nil
 }
 
+// savedBy is the person a save is recorded as made by, when actor is one.
+func savedBy(actor audit.Actor) pgtype.UUID {
+	if actor.UserID == nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: *actor.UserID, Valid: true}
+}
+
 // Update replaces all mutable fields of a policy. The audit row and outbox
 // event are committed atomically in the same transaction.
 func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateInput, actor audit.Actor) (*Policy, error) {
+	return s.update(ctx, id, tenantID, in, actor, 0)
+}
+
+// update saves in as the policy's next version, recorded as restoring version
+// restoredFrom when it isn't 0.
+func (s *Service) update(ctx context.Context, id, tenantID uuid.UUID, in UpdateInput, actor audit.Actor, restoredFrom int) (*Policy, error) {
 	cond, err := checkPolicy(in.Name, in.Effect, in.ResourceType, in.Action, in.Condition)
 	if err != nil {
 		return nil, err
@@ -991,6 +1020,7 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 		Condition:    []byte(cond),
 		Priority:     int32(in.Priority), // #nosec G115 -- only orders the trace; deny wins regardless
 		Enabled:      in.Enabled,
+		UpdatedBy:    savedBy(actor),
 		ID:           id,
 		TenantID:     tenantID,
 	})
@@ -1004,9 +1034,17 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 		return nil, err
 	}
 	p := toPolicy(row)
+	if err := s.q.WithTx(tx).SaveAbacPolicyVersion(ctx, dbgen.SaveAbacPolicyVersionParams{ID: p.ID, TenantID: tenantID}); err != nil {
+		return nil, err
+	}
 
-	if err := audit.Record(ctx, tx, actor.Event(tenantID, "abac_policy.updated", "abac_policy", p.ID,
-		map[string]any{"name": p.Name, "effect": p.Effect, "resource_type": p.ResourceType, "action": p.Action})); err != nil {
+	action, meta := "abac_policy.updated", map[string]any{
+		"name": p.Name, "effect": p.Effect, "resource_type": p.ResourceType, "action": p.Action, "version": p.Version,
+	}
+	if restoredFrom > 0 {
+		action, meta["restored_from"] = "abac_policy.restored", restoredFrom
+	}
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, action, "abac_policy", p.ID, meta)); err != nil {
 		return nil, err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{
@@ -1018,6 +1056,70 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 		return nil, err
 	}
 	return p, tx.Commit(ctx)
+}
+
+// PolicyVersion is a policy as one of its saves left it, and who made it.
+type PolicyVersion struct {
+	Version      int             `json:"version"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	Effect       string          `json:"effect"`
+	ResourceType string          `json:"resource_type"`
+	Action       string          `json:"action"`
+	Condition    json.RawMessage `json:"condition"`
+	Priority     int             `json:"priority"`
+	Enabled      bool            `json:"enabled"`
+	SavedBy      *uuid.UUID      `json:"saved_by"`
+	SavedAt      time.Time       `json:"saved_at"`
+}
+
+// Versions returns the last 200 saves of one of the tenant's policies, newest
+// first.
+func (s *Service) Versions(ctx context.Context, id, tenantID uuid.UUID) ([]PolicyVersion, error) {
+	if _, err := s.Get(ctx, id, tenantID); err != nil {
+		return nil, err
+	}
+	rows, err := s.q.ListAbacPolicyVersions(ctx, dbgen.ListAbacPolicyVersionsParams{PolicyID: id, TenantID: tenantID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PolicyVersion, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, toVersion(dbgen.GetAbacPolicyVersionRow(r)))
+	}
+	return out, nil
+}
+
+func toVersion(r dbgen.GetAbacPolicyVersionRow) PolicyVersion {
+	v := PolicyVersion{
+		Version: int(r.Version), Name: r.Name, Description: r.Description, Effect: r.Effect,
+		ResourceType: r.ResourceType, Action: r.Action, Condition: json.RawMessage(r.Condition),
+		Priority: int(r.Priority), Enabled: r.Enabled, SavedAt: r.SavedAt,
+	}
+	if r.SavedBy.Valid {
+		by := uuid.UUID(r.SavedBy.Bytes)
+		v.SavedBy = &by
+	}
+	return v
+}
+
+// Restore saves one of a policy's earlier versions as its next, checked as any
+// change is, and recorded as abac_policy.restored.
+func (s *Service) Restore(ctx context.Context, id, tenantID uuid.UUID, version int, actor audit.Actor) (*Policy, error) {
+	row, err := s.q.GetAbacPolicyVersion(ctx, dbgen.GetAbacPolicyVersionParams{
+		PolicyID: id, TenantID: tenantID, Version: int32(version), // #nosec G115 -- a version number from the path, compared only
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	v := toVersion(row)
+	return s.update(ctx, id, tenantID, UpdateInput{
+		Name: v.Name, Description: v.Description, Effect: v.Effect, ResourceType: v.ResourceType,
+		Action: v.Action, Condition: v.Condition, Priority: v.Priority, Enabled: v.Enabled,
+	}, actor, version)
 }
 
 // Delete removes one policy by id, scoped to tenant.
@@ -1311,6 +1413,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/abac/policies/{id}", h.getPolicy)
 	r.Patch("/tenants/{tenantID}/abac/policies/{id}", h.update)
 	r.Delete("/tenants/{tenantID}/abac/policies/{id}", h.del)
+	r.Get("/tenants/{tenantID}/abac/policies/{id}/versions", h.versions)
+	r.Post("/tenants/{tenantID}/abac/policies/{id}/versions/{version}/restore", h.restore)
 	r.Post("/tenants/{tenantID}/abac/evaluate", h.evalHandler)
 }
 
@@ -1383,6 +1487,49 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, err := h.Service.Update(r.Context(), id, tenantID, in, audit.ActorOf(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, p)
+}
+
+func (h *Handler) versions(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := httpx.PathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	out, err := h.Service.Versions(r.Context(), id, tenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (h *Handler) restore(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := httpx.PathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	version, err := strconv.Atoi(chi.URLParam(r, "version"))
+	if err != nil || version < 1 {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid version"))
+		return
+	}
+	p, err := h.Service.Restore(r.Context(), id, tenantID, version, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

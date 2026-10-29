@@ -3926,6 +3926,108 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/abac/policies/{id}/versions:
+    get:
+      operationId: get_v1_tenants_ByTenantID_abac_policies_ById_versions
+      summary: List ABAC policy versions
+      description: 'Returns the policy''s saves, newest first (the last 200): each whole, as it left the policy, with who made it (saved_by, null for a machine caller) and when. A policy from before versions were kept starts with its state then as version 1. Restore one with the restore call. Requires policy.read.'
+      tags:
+        - ABAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The policy's versions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        version: {type: integer}
+                        name: {type: string}
+                        description: {type: string}
+                        effect: {type: string, enum: [allow, deny]}
+                        resource_type: {type: string}
+                        action: {type: string}
+                        condition: {type: object, additionalProperties: true}
+                        priority: {type: integer}
+                        enabled: {type: boolean}
+                        saved_by: {type: [string, 'null'], format: uuid}
+                        saved_at: {type: string, format: date-time}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/abac/policies/{id}/versions/{version}/restore:
+    post:
+      operationId: post_v1_tenants_ByTenantID_abac_policies_ById_versions_ByVersion_restore
+      summary: Restore an ABAC policy version
+      description: 'Saves one of the policy''s earlier versions as its next one, checked as any change is: a version whose name another policy has taken answers 409 abac.policy_name_exists, and one that would lock the caller out 422 abac.policy_locks_out. Returns the policy. Audited as abac_policy.restored, naming the version restored; webhooks receive abac_policy.updated. Requires policy.write. Needs a recent step-up.'
+      tags:
+        - ABAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The policy, as restored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ABACPolicy'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
   /v1/tenants/{tenantID}/abac/evaluate:
     post:
       operationId: post_v1_tenants_ByTenantID_abac_evaluate
@@ -6151,6 +6253,14 @@ components:
         updated_at:
           type: string
           format: date-time
+        version:
+          type: integer
+          minimum: 1
+          description: The policy's saves counted from 1; each create, change or restore adds one.
+        updated_by:
+          type: [string, 'null']
+          format: uuid
+          description: The person who made the last save; null for a machine caller, or one from before it was kept.
     ABACPolicyCreate:
       type: object
       required:

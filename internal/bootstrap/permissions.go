@@ -83,14 +83,16 @@ func userPermissionMap() map[string]string {
 		// Reads are gated on policy.read; mutations on policy.write. The
 		// evaluate endpoint is a PDP call and is ungated beyond tenant scope
 		// (it gates itself via requirePathTenant in the handler).
-		"GET /v1/tenants/{tenantID}/abac/policies":          "policy.read",
-		"POST /v1/tenants/{tenantID}/abac/policies":         "policy.write",
-		"GET /v1/tenants/{tenantID}/abac/policies/{id}":     "policy.read",
-		"PATCH /v1/tenants/{tenantID}/abac/policies/{id}":   "policy.write",
-		"DELETE /v1/tenants/{tenantID}/abac/policies/{id}":  "policy.write",
-		"POST /v1/tenants/{tenantID}/abac/evaluate":         "policy.read",
-		"POST /v1/tenants/{tenantID}/access/v1/evaluation":  "role.read",
-		"POST /v1/tenants/{tenantID}/access/v1/evaluations": "role.read",
+		"GET /v1/tenants/{tenantID}/abac/policies":                                  "policy.read",
+		"POST /v1/tenants/{tenantID}/abac/policies":                                 "policy.write",
+		"GET /v1/tenants/{tenantID}/abac/policies/{id}":                             "policy.read",
+		"PATCH /v1/tenants/{tenantID}/abac/policies/{id}":                           "policy.write",
+		"DELETE /v1/tenants/{tenantID}/abac/policies/{id}":                          "policy.write",
+		"GET /v1/tenants/{tenantID}/abac/policies/{id}/versions":                    "policy.read",
+		"POST /v1/tenants/{tenantID}/abac/policies/{id}/versions/{version}/restore": "policy.write",
+		"POST /v1/tenants/{tenantID}/abac/evaluate":                                 "policy.read",
+		"POST /v1/tenants/{tenantID}/access/v1/evaluation":                          "role.read",
+		"POST /v1/tenants/{tenantID}/access/v1/evaluations":                         "role.read",
 
 		// ReBAC: relationship tuples + identity graph.
 		// Reads are gated on role.read (structural authz data). Writes/deletes

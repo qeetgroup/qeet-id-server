@@ -166,6 +166,7 @@ func StepUpRoutes() map[string]mfa.StepUpRule {
 		"POST /v1/tenants/{tenantID}/abac/policies",
 		"PATCH /v1/tenants/{tenantID}/abac/policies/{id}",
 		"DELETE /v1/tenants/{tenantID}/abac/policies/{id}",
+		"POST /v1/tenants/{tenantID}/abac/policies/{id}/versions/{version}/restore",
 
 		// Bringing an account back.
 		"POST /v1/users/{id}/reactivate",

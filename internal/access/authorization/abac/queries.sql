@@ -6,17 +6,17 @@
 
 -- name: CreateAbacPolicy :one
 INSERT INTO auth.abac_policies
-    (tenant_id, name, description, effect, resource_type, action, condition, priority, enabled)
-VALUES (@tenant_id, @name, @description, @effect, @resource_type, @action, sqlc.arg(condition)::jsonb, @priority, @enabled)
-RETURNING id, tenant_id, name, description, effect, resource_type, action, condition, priority, enabled, created_at, updated_at;
+    (tenant_id, name, description, effect, resource_type, action, condition, priority, enabled, updated_by)
+VALUES (@tenant_id, @name, @description, @effect, @resource_type, @action, sqlc.arg(condition)::jsonb, @priority, @enabled, sqlc.narg('updated_by'))
+RETURNING id, tenant_id, name, description, effect, resource_type, action, condition, priority, enabled, created_at, updated_at, version, updated_by;
 
 -- name: GetAbacPolicy :one
-SELECT id, tenant_id, name, description, effect, resource_type, action, condition, priority, enabled, created_at, updated_at
+SELECT id, tenant_id, name, description, effect, resource_type, action, condition, priority, enabled, created_at, updated_at, version, updated_by
 FROM auth.abac_policies
 WHERE id = @id AND tenant_id = @tenant_id;
 
 -- name: ListAbacPolicies :many
-SELECT id, tenant_id, name, description, effect, resource_type, action, condition, priority, enabled, created_at, updated_at
+SELECT id, tenant_id, name, description, effect, resource_type, action, condition, priority, enabled, created_at, updated_at, version, updated_by
 FROM auth.abac_policies
 WHERE tenant_id = @tenant_id
 ORDER BY priority DESC, name;
@@ -25,9 +25,31 @@ ORDER BY priority DESC, name;
 UPDATE auth.abac_policies
 SET name = @name, description = @description, effect = @effect,
     resource_type = @resource_type, action = @action, condition = sqlc.arg(condition)::jsonb,
-    priority = @priority, enabled = @enabled, updated_at = now()
+    priority = @priority, enabled = @enabled, updated_at = now(),
+    version = version + 1, updated_by = sqlc.narg('updated_by')
 WHERE id = @id AND tenant_id = @tenant_id
-RETURNING id, tenant_id, name, description, effect, resource_type, action, condition, priority, enabled, created_at, updated_at;
+RETURNING id, tenant_id, name, description, effect, resource_type, action, condition, priority, enabled, created_at, updated_at, version, updated_by;
+
+-- SaveAbacPolicyVersion keeps a policy's state as saved, as its version.
+-- name: SaveAbacPolicyVersion :exec
+INSERT INTO auth.abac_policy_versions
+    (tenant_id, policy_id, version, name, description, effect, resource_type, action, condition, priority, enabled, saved_by)
+SELECT p.tenant_id, p.id, p.version, p.name, p.description, p.effect, p.resource_type, p.action, p.condition, p.priority, p.enabled, p.updated_by
+FROM auth.abac_policies p
+WHERE p.id = @id AND p.tenant_id = @tenant_id;
+
+-- name: ListAbacPolicyVersions :many
+-- A policy's saved versions, newest first.
+SELECT version, name, description, effect, resource_type, action, condition, priority, enabled, saved_by, saved_at
+FROM auth.abac_policy_versions
+WHERE policy_id = @policy_id AND tenant_id = @tenant_id
+ORDER BY version DESC
+LIMIT 200;
+
+-- name: GetAbacPolicyVersion :one
+SELECT version, name, description, effect, resource_type, action, condition, priority, enabled, saved_by, saved_at
+FROM auth.abac_policy_versions
+WHERE policy_id = @policy_id AND tenant_id = @tenant_id AND version = @version;
 
 -- name: DeleteAbacPolicy :one
 DELETE FROM auth.abac_policies
