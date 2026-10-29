@@ -410,12 +410,13 @@ paths:
       operationId: get_v1_activity_summary
       summary: Activity summary
       description: >-
-        Aggregate counts over the same filter predicates as the history
-        endpoint (types, actor, subject, from/to, q). The severity and category
-        filters are ignored — this endpoint produces that distribution. Without
-        an explicit `from` the window defaults to the last 24h and is hard-capped
-        at 90 days to bound the per-tenant scan. Tenant is derived from the JWT
-        principal only.
+        Aggregate counts over the same filters as the history endpoint (types,
+        actor, subject, from/to, q, resource_type, resource_id, ip, category,
+        severity and min_severity), so category and severity together total
+        the events of both; by_severity and by_category then show the spread
+        within what the filters match. Without an explicit `from` the window
+        defaults to the last 24h; it is capped at 366 days, with buckets of up
+        to a week. Tenant is derived from the JWT principal only.
       tags:
         - Activity
       parameters:
@@ -459,6 +460,12 @@ paths:
           schema:
             type: string
             format: date-time
+        - {name: category, in: query, required: false, description: 'Comma-separated categories, as for the history.', schema: {type: string}}
+        - {name: severity, in: query, required: false, description: 'Comma-separated severities, as for the history.', schema: {type: string}}
+        - {name: min_severity, in: query, required: false, schema: {type: string, enum: [info, success, warning, error, critical]}}
+        - {name: resource_type, in: query, required: false, schema: {type: string}}
+        - {name: resource_id, in: query, required: false, schema: {type: string, format: uuid}}
+        - {name: ip, in: query, required: false, schema: {type: string}}
         - name: bucket
           in: query
           required: false
@@ -3750,10 +3757,8 @@ components:
     ActivitySummaryResponse:
       type: object
       description: >-
-        Aggregate counts over the same filter predicates as the history
-        endpoint (types, actor, subject, from/to, q). severity/category filters
-        are ignored — the endpoint produces that distribution. All bucket maps
-        are zero-filled so the console renders a stable legend.
+        Aggregate counts over the same filters as the history endpoint. All
+        bucket maps are zero-filled so the console renders a stable legend.
       required:
         - total
         - unique_actors
@@ -3772,7 +3777,15 @@ components:
         unique_actors:
           type: integer
           format: int64
-          description: Distinct actor_user_id values in the window.
+          description: Distinct people who acted in the window (actors.people).
+        actors:
+          type: object
+          description: Distinct actors of each kind. API keys, agents and service principals are told apart by the metadata.actor_id their events record, from this release on.
+          properties:
+            people: {type: integer, format: int64}
+            api_keys: {type: integer, format: int64}
+            agents: {type: integer, format: int64}
+            services: {type: integer, format: int64}
         security_alerts:
           type: integer
           format: int64

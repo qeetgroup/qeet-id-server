@@ -97,14 +97,26 @@ WHERE tenant_id = @tenant_id
   AND (sqlc.narg('from_ts')::timestamptz IS NULL OR created_at >= sqlc.narg('from_ts'))
   AND (sqlc.narg('to_ts')::timestamptz IS NULL OR created_at <= sqlc.narg('to_ts'))
   AND (sqlc.narg('q')::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', sqlc.narg('q')))
+  AND (sqlc.narg('resource_types')::text[] IS NULL OR resource_type = ANY(sqlc.narg('resource_types')))
+  AND (sqlc.narg('resource_id')::uuid IS NULL OR resource_id = sqlc.narg('resource_id'))
+  AND (sqlc.narg('ip')::inet IS NULL OR ip = sqlc.narg('ip'))
+  AND (sqlc.narg('categories')::text[] IS NULL OR audit.activity_category(action) = ANY(sqlc.narg('categories')))
+  AND (sqlc.narg('severities')::text[] IS NULL OR audit.activity_severity(action) = ANY(sqlc.narg('severities')))
+  AND (sqlc.narg('min_severity')::text IS NULL
+       OR array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], audit.activity_severity(action))
+          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], sqlc.narg('min_severity')::text))
 GROUP BY action;
 
 -- name: SummarizeActivityTotals :one
--- Total events and unique-actor count over the same window. unique_actors cannot
--- be folded from the per-action rows (one actor spans many actions), so it needs
--- its own aggregate pass.
+-- Total events and unique-actor counts over the same window. unique_actors
+-- (people) cannot be folded from the per-action rows (one actor spans many
+-- actions), so it needs its own aggregate pass. API keys, agents and service
+-- principals are told apart by the metadata.actor_id their events record.
 SELECT count(*)::bigint AS total,
-       count(DISTINCT actor_user_id)::bigint AS unique_actors
+       count(DISTINCT actor_user_id) FILTER (WHERE actor_type = 'user')::bigint AS unique_actors,
+       count(DISTINCT metadata->>'actor_id') FILTER (WHERE actor_type = 'api_key')::bigint AS unique_api_keys,
+       count(DISTINCT metadata->>'actor_id') FILTER (WHERE actor_type = 'agent')::bigint AS unique_agents,
+       count(DISTINCT metadata->>'actor_id') FILTER (WHERE actor_type = 'service')::bigint AS unique_services
 FROM audit.events
 WHERE tenant_id = @tenant_id
   AND (sqlc.narg('actions')::text[] IS NULL OR action = ANY(sqlc.narg('actions')))
@@ -112,7 +124,15 @@ WHERE tenant_id = @tenant_id
   AND (sqlc.narg('subject')::uuid IS NULL OR actor_user_id = sqlc.narg('subject') OR (resource_type = 'user' AND resource_id = sqlc.narg('subject')) OR metadata->>'user_id' = sqlc.narg('subject')::uuid::text)
   AND (sqlc.narg('from_ts')::timestamptz IS NULL OR created_at >= sqlc.narg('from_ts'))
   AND (sqlc.narg('to_ts')::timestamptz IS NULL OR created_at <= sqlc.narg('to_ts'))
-  AND (sqlc.narg('q')::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', sqlc.narg('q')));
+  AND (sqlc.narg('q')::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', sqlc.narg('q')))
+  AND (sqlc.narg('resource_types')::text[] IS NULL OR resource_type = ANY(sqlc.narg('resource_types')))
+  AND (sqlc.narg('resource_id')::uuid IS NULL OR resource_id = sqlc.narg('resource_id'))
+  AND (sqlc.narg('ip')::inet IS NULL OR ip = sqlc.narg('ip'))
+  AND (sqlc.narg('categories')::text[] IS NULL OR audit.activity_category(action) = ANY(sqlc.narg('categories')))
+  AND (sqlc.narg('severities')::text[] IS NULL OR audit.activity_severity(action) = ANY(sqlc.narg('severities')))
+  AND (sqlc.narg('min_severity')::text IS NULL
+       OR array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], audit.activity_severity(action))
+          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], sqlc.narg('min_severity')::text));
 
 -- name: SummarizeActivityTimeSeries :many
 -- Per-bucket, per-action counts for sparklines. Bucket width = @bucket_seconds.
@@ -130,6 +150,14 @@ WHERE tenant_id = @tenant_id
   AND (sqlc.narg('from_ts')::timestamptz IS NULL OR created_at >= sqlc.narg('from_ts'))
   AND (sqlc.narg('to_ts')::timestamptz IS NULL OR created_at <= sqlc.narg('to_ts'))
   AND (sqlc.narg('q')::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', sqlc.narg('q')))
+  AND (sqlc.narg('resource_types')::text[] IS NULL OR resource_type = ANY(sqlc.narg('resource_types')))
+  AND (sqlc.narg('resource_id')::uuid IS NULL OR resource_id = sqlc.narg('resource_id'))
+  AND (sqlc.narg('ip')::inet IS NULL OR ip = sqlc.narg('ip'))
+  AND (sqlc.narg('categories')::text[] IS NULL OR audit.activity_category(action) = ANY(sqlc.narg('categories')))
+  AND (sqlc.narg('severities')::text[] IS NULL OR audit.activity_severity(action) = ANY(sqlc.narg('severities')))
+  AND (sqlc.narg('min_severity')::text IS NULL
+       OR array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], audit.activity_severity(action))
+          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], sqlc.narg('min_severity')::text))
 GROUP BY bucket, action
 ORDER BY bucket ASC;
 

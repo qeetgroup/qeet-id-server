@@ -54,3 +54,32 @@ func TestEventsSayWhereTheyCameFrom(t *testing.T) {
 		t.Errorf("the chain after placed events: %+v, %v", res, err)
 	}
 }
+
+// TestEventsNameTheKeyOrAgentThatActed checks that an event an API key, agent
+// or service principal caused records its id as actor_id, and a person's
+// event doesn't.
+func TestEventsNameTheKeyOrAgentThatActed(t *testing.T) {
+	tenant := dbtest.Tenant(t)
+	key := uuid.NewString()
+	for _, c := range []struct {
+		actorType, subject string
+	}{{"api_key", key}, {"user", uuid.NewString()}} {
+		ctx := httpx.WithPrincipal(dbtest.Context(t), &httpx.Principal{ActorType: c.actorType, Subject: c.subject})
+		tx, err := dbtest.Pool(t).Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Record(ctx, tx, Actor{Type: c.actorType}.Event(tenant, "test.acted", "user", uuid.New(), nil)); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND metadata->>'actor_id' = $2 AND actor_type = 'api_key'`, tenant, key); n != 1 {
+		t.Errorf("%d events name the key, want its one", n)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND actor_type = 'user' AND metadata ? 'actor_id'`, tenant); n != 0 {
+		t.Errorf("a person's event names an actor_id")
+	}
+}

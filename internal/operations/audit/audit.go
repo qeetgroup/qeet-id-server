@@ -281,6 +281,13 @@ func Record(ctx context.Context, tx pgx.Tx, e Event) error {
 	if err != nil {
 		return err
 	}
+	// An API key, agent or service principal is told apart by its own id, which
+	// the event's actor user (an API key's owner, if any) doesn't say.
+	if p := httpx.PrincipalFromCtx(ctx); p != nil && p.ActorType == e.ActorType && e.ActorType != "user" && p.Subject != "" {
+		if _, given := labels["actor_id"]; !given {
+			labels["actor_id"] = p.Subject
+		}
+	}
 	// Where the request came from, approximately, when the proxy says.
 	if _, given := labels["geo"]; !given {
 		geo := map[string]any{}

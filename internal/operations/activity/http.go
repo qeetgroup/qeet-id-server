@@ -453,13 +453,14 @@ var (
 )
 
 // Summary window and bucket bounds. The window defaults to the last 24h and is
-// capped at 90 days, so the per-tenant aggregates never scan unbounded history.
+// capped at a year and a day, so the per-tenant aggregates never scan
+// unbounded history; a long window gets buckets of up to a week.
 const (
 	summaryDefaultWindow = 24 * time.Hour
-	summaryMaxWindow     = 90 * 24 * time.Hour
+	summaryMaxWindow     = 366 * 24 * time.Hour
 	summaryDefaultBucket = int64(3600)
 	summaryMinBucket     = int64(60)
-	summaryMaxBucket     = int64(86400)
+	summaryMaxBucket     = int64(7 * 86400)
 	summaryTargetBuckets = 48
 )
 
@@ -467,6 +468,7 @@ const (
 type activitySummaryResponse struct {
 	Total          int64            `json:"total"`
 	UniqueActors   int64            `json:"unique_actors"`
+	Actors         actorCounts      `json:"actors"`
 	SecurityAlerts int64            `json:"security_alerts"`
 	BySeverity     map[string]int64 `json:"by_severity"`
 	ByCategory     map[string]int64 `json:"by_category"`
@@ -474,6 +476,15 @@ type activitySummaryResponse struct {
 	Series         []summaryBucket  `json:"series"`
 	BucketSeconds  int64            `json:"bucket_seconds"`
 	Window         summaryWindow    `json:"window"`
+}
+
+// actorCounts is how many distinct actors of each kind the summary's events
+// have: people, API keys, agents and service principals.
+type actorCounts struct {
+	People   int64 `json:"people"`
+	APIKeys  int64 `json:"api_keys"`
+	Agents   int64 `json:"agents"`
+	Services int64 `json:"services"`
 }
 
 // summaryBucket is one time slice of the summary series: Count is every event
@@ -550,14 +561,11 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 	q := dbgen.New(h.pool)
 	ctx := r.Context()
 
+	p := historyParams(tenantID, f)
 	byAction, err := q.SummarizeActivityByAction(ctx, dbgen.SummarizeActivityByActionParams{
-		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-		Actions:  f.Types,
-		ActorID:  nargUUID(f.ActorID),
-		Subject:  nargSubject(f.Subject),
-		FromTs:   pgtype.Timestamptz{Time: from, Valid: true},
-		ToTs:     pgtype.Timestamptz{Time: to, Valid: true},
-		Q:        nargSearch(f.Search),
+		TenantID: p.TenantID, Actions: p.Actions, ActorID: p.ActorID, Subject: p.Subject,
+		FromTs: p.FromTs, ToTs: p.ToTs, Q: p.Q, ResourceTypes: p.ResourceTypes, ResourceID: p.ResourceID,
+		Ip: p.Ip, Categories: p.Categories, Severities: p.Severities, MinSeverity: p.MinSeverity,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -565,13 +573,9 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	totals, err := q.SummarizeActivityTotals(ctx, dbgen.SummarizeActivityTotalsParams{
-		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-		Actions:  f.Types,
-		ActorID:  nargUUID(f.ActorID),
-		Subject:  nargSubject(f.Subject),
-		FromTs:   pgtype.Timestamptz{Time: from, Valid: true},
-		ToTs:     pgtype.Timestamptz{Time: to, Valid: true},
-		Q:        nargSearch(f.Search),
+		TenantID: p.TenantID, Actions: p.Actions, ActorID: p.ActorID, Subject: p.Subject,
+		FromTs: p.FromTs, ToTs: p.ToTs, Q: p.Q, ResourceTypes: p.ResourceTypes, ResourceID: p.ResourceID,
+		Ip: p.Ip, Categories: p.Categories, Severities: p.Severities, MinSeverity: p.MinSeverity,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -580,13 +584,9 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 
 	series, err := q.SummarizeActivityTimeSeries(ctx, dbgen.SummarizeActivityTimeSeriesParams{
 		BucketSeconds: bucket,
-		TenantID:      pgtype.UUID{Bytes: tenantID, Valid: true},
-		Actions:       f.Types,
-		ActorID:       nargUUID(f.ActorID),
-		Subject:       nargSubject(f.Subject),
-		FromTs:        pgtype.Timestamptz{Time: from, Valid: true},
-		ToTs:          pgtype.Timestamptz{Time: to, Valid: true},
-		Q:             nargSearch(f.Search),
+		TenantID:      p.TenantID, Actions: p.Actions, ActorID: p.ActorID, Subject: p.Subject,
+		FromTs: p.FromTs, ToTs: p.ToTs, Q: p.Q, ResourceTypes: p.ResourceTypes, ResourceID: p.ResourceID,
+		Ip: p.Ip, Categories: p.Categories, Severities: p.Severities, MinSeverity: p.MinSeverity,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -636,8 +636,12 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, activitySummaryResponse{
-		Total:          totals.Total,
-		UniqueActors:   totals.UniqueActors,
+		Total:        totals.Total,
+		UniqueActors: totals.UniqueActors,
+		Actors: actorCounts{
+			People: totals.UniqueActors, APIKeys: totals.UniqueApiKeys,
+			Agents: totals.UniqueAgents, Services: totals.UniqueServices,
+		},
 		SecurityAlerts: bySeverity[SeverityCritical],
 		BySeverity:     bySeverity,
 		ByCategory:     byCategory,
@@ -794,30 +798,6 @@ func (h *Handler) related(w http.ResponseWriter, r *http.Request) {
 			ByActor:     byActor,
 		},
 	})
-}
-
-// nargUUID maps a possibly-Nil actor id to a nullable pgtype.UUID (Nil → NULL).
-func nargUUID(id uuid.UUID) pgtype.UUID {
-	if id == uuid.Nil {
-		return pgtype.UUID{}
-	}
-	return pgtype.UUID{Bytes: id, Valid: true}
-}
-
-// nargSubject maps a possibly-nil subject id to a nullable pgtype.UUID.
-func nargSubject(id *uuid.UUID) pgtype.UUID {
-	if id == nil {
-		return pgtype.UUID{}
-	}
-	return pgtype.UUID{Bytes: *id, Valid: true}
-}
-
-// nargSearch maps an empty search string to a nil *string (NULL predicate).
-func nargSearch(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
 }
 
 // encodeCursor packs (createdAt, id) into an opaque base64url token whose text

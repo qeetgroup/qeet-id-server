@@ -517,17 +517,31 @@ WHERE tenant_id = $1
   AND ($5::timestamptz IS NULL OR created_at >= $5)
   AND ($6::timestamptz IS NULL OR created_at <= $6)
   AND ($7::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', $7))
+  AND ($8::text[] IS NULL OR resource_type = ANY($8))
+  AND ($9::uuid IS NULL OR resource_id = $9)
+  AND ($10::inet IS NULL OR ip = $10)
+  AND ($11::text[] IS NULL OR audit.activity_category(action) = ANY($11))
+  AND ($12::text[] IS NULL OR audit.activity_severity(action) = ANY($12))
+  AND ($13::text IS NULL
+       OR array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], audit.activity_severity(action))
+          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $13::text))
 GROUP BY action
 `
 
 type SummarizeActivityByActionParams struct {
-	TenantID pgtype.UUID
-	Actions  []string
-	ActorID  pgtype.UUID
-	Subject  pgtype.UUID
-	FromTs   pgtype.Timestamptz
-	ToTs     pgtype.Timestamptz
-	Q        *string
+	TenantID      pgtype.UUID
+	Actions       []string
+	ActorID       pgtype.UUID
+	Subject       pgtype.UUID
+	FromTs        pgtype.Timestamptz
+	ToTs          pgtype.Timestamptz
+	Q             *string
+	ResourceTypes []string
+	ResourceID    pgtype.UUID
+	Ip            *netip.Addr
+	Categories    []string
+	Severities    []string
+	MinSeverity   *string
 }
 
 type SummarizeActivityByActionRow struct {
@@ -548,6 +562,12 @@ func (q *Queries) SummarizeActivityByAction(ctx context.Context, arg SummarizeAc
 		arg.FromTs,
 		arg.ToTs,
 		arg.Q,
+		arg.ResourceTypes,
+		arg.ResourceID,
+		arg.Ip,
+		arg.Categories,
+		arg.Severities,
+		arg.MinSeverity,
 	)
 	if err != nil {
 		return nil, err
@@ -579,6 +599,14 @@ WHERE tenant_id = $2
   AND ($6::timestamptz IS NULL OR created_at >= $6)
   AND ($7::timestamptz IS NULL OR created_at <= $7)
   AND ($8::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', $8))
+  AND ($9::text[] IS NULL OR resource_type = ANY($9))
+  AND ($10::uuid IS NULL OR resource_id = $10)
+  AND ($11::inet IS NULL OR ip = $11)
+  AND ($12::text[] IS NULL OR audit.activity_category(action) = ANY($12))
+  AND ($13::text[] IS NULL OR audit.activity_severity(action) = ANY($13))
+  AND ($14::text IS NULL
+       OR array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], audit.activity_severity(action))
+          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $14::text))
 GROUP BY bucket, action
 ORDER BY bucket ASC
 `
@@ -592,6 +620,12 @@ type SummarizeActivityTimeSeriesParams struct {
 	FromTs        pgtype.Timestamptz
 	ToTs          pgtype.Timestamptz
 	Q             *string
+	ResourceTypes []string
+	ResourceID    pgtype.UUID
+	Ip            *netip.Addr
+	Categories    []string
+	Severities    []string
+	MinSeverity   *string
 }
 
 type SummarizeActivityTimeSeriesRow struct {
@@ -614,6 +648,12 @@ func (q *Queries) SummarizeActivityTimeSeries(ctx context.Context, arg Summarize
 		arg.FromTs,
 		arg.ToTs,
 		arg.Q,
+		arg.ResourceTypes,
+		arg.ResourceID,
+		arg.Ip,
+		arg.Categories,
+		arg.Severities,
+		arg.MinSeverity,
 	)
 	if err != nil {
 		return nil, err
@@ -635,7 +675,10 @@ func (q *Queries) SummarizeActivityTimeSeries(ctx context.Context, arg Summarize
 
 const summarizeActivityTotals = `-- name: SummarizeActivityTotals :one
 SELECT count(*)::bigint AS total,
-       count(DISTINCT actor_user_id)::bigint AS unique_actors
+       count(DISTINCT actor_user_id) FILTER (WHERE actor_type = 'user')::bigint AS unique_actors,
+       count(DISTINCT metadata->>'actor_id') FILTER (WHERE actor_type = 'api_key')::bigint AS unique_api_keys,
+       count(DISTINCT metadata->>'actor_id') FILTER (WHERE actor_type = 'agent')::bigint AS unique_agents,
+       count(DISTINCT metadata->>'actor_id') FILTER (WHERE actor_type = 'service')::bigint AS unique_services
 FROM audit.events
 WHERE tenant_id = $1
   AND ($2::text[] IS NULL OR action = ANY($2))
@@ -644,26 +687,44 @@ WHERE tenant_id = $1
   AND ($5::timestamptz IS NULL OR created_at >= $5)
   AND ($6::timestamptz IS NULL OR created_at <= $6)
   AND ($7::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', $7))
+  AND ($8::text[] IS NULL OR resource_type = ANY($8))
+  AND ($9::uuid IS NULL OR resource_id = $9)
+  AND ($10::inet IS NULL OR ip = $10)
+  AND ($11::text[] IS NULL OR audit.activity_category(action) = ANY($11))
+  AND ($12::text[] IS NULL OR audit.activity_severity(action) = ANY($12))
+  AND ($13::text IS NULL
+       OR array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], audit.activity_severity(action))
+          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $13::text))
 `
 
 type SummarizeActivityTotalsParams struct {
-	TenantID pgtype.UUID
-	Actions  []string
-	ActorID  pgtype.UUID
-	Subject  pgtype.UUID
-	FromTs   pgtype.Timestamptz
-	ToTs     pgtype.Timestamptz
-	Q        *string
+	TenantID      pgtype.UUID
+	Actions       []string
+	ActorID       pgtype.UUID
+	Subject       pgtype.UUID
+	FromTs        pgtype.Timestamptz
+	ToTs          pgtype.Timestamptz
+	Q             *string
+	ResourceTypes []string
+	ResourceID    pgtype.UUID
+	Ip            *netip.Addr
+	Categories    []string
+	Severities    []string
+	MinSeverity   *string
 }
 
 type SummarizeActivityTotalsRow struct {
-	Total        int64
-	UniqueActors int64
+	Total          int64
+	UniqueActors   int64
+	UniqueApiKeys  int64
+	UniqueAgents   int64
+	UniqueServices int64
 }
 
-// Total events and unique-actor count over the same window. unique_actors cannot
-// be folded from the per-action rows (one actor spans many actions), so it needs
-// its own aggregate pass.
+// Total events and unique-actor counts over the same window. unique_actors
+// (people) cannot be folded from the per-action rows (one actor spans many
+// actions), so it needs its own aggregate pass. API keys, agents and service
+// principals are told apart by the metadata.actor_id their events record.
 func (q *Queries) SummarizeActivityTotals(ctx context.Context, arg SummarizeActivityTotalsParams) (SummarizeActivityTotalsRow, error) {
 	row := q.db.QueryRow(ctx, summarizeActivityTotals,
 		arg.TenantID,
@@ -673,8 +734,20 @@ func (q *Queries) SummarizeActivityTotals(ctx context.Context, arg SummarizeActi
 		arg.FromTs,
 		arg.ToTs,
 		arg.Q,
+		arg.ResourceTypes,
+		arg.ResourceID,
+		arg.Ip,
+		arg.Categories,
+		arg.Severities,
+		arg.MinSeverity,
 	)
 	var i SummarizeActivityTotalsRow
-	err := row.Scan(&i.Total, &i.UniqueActors)
+	err := row.Scan(
+		&i.Total,
+		&i.UniqueActors,
+		&i.UniqueApiKeys,
+		&i.UniqueAgents,
+		&i.UniqueServices,
+	)
 	return i, err
 }
