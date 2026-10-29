@@ -36,6 +36,7 @@ func stepUpExempt() map[string]string {
 		"POST /v1/tenants/{tenantID}/email-templates/{key}/test":                            "sends a template to the caller",
 		"POST /v1/qeetai/provider-config/test":                                              "tests the saved configuration",
 		"POST /v1/webhooks/{id}/test":                                                       "sends a test event to the endpoint already configured",
+		"POST /v1/tenants/{tenantID}/auth-hooks/{id}/test":                                  "sends a test call to the hook already configured",
 		"POST /v1/webhooks/{id}/deliveries/{deliveryID}/retry":                              "redelivers an event already sent",
 		"POST /v1/tenants/{tenantID}/webhooks/{id}/deliveries/retry":                        "redelivers events already sent",
 		"POST /v1/auth/sessions/revoke-all":                                                 "ends sessions; must stay instant in an incident",

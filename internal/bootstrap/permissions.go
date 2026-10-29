@@ -317,10 +317,11 @@ func userPermissionMap() map[string]string {
 		"DELETE /v1/tenants/{tenantID}/rate-limits":                   "policy.write",
 
 		// Synchronous login hooks are tenant security policy.
-		"GET /v1/tenants/{tenantID}/auth-hooks":         "policy.read",
-		"POST /v1/tenants/{tenantID}/auth-hooks":        "policy.write",
-		"PATCH /v1/tenants/{tenantID}/auth-hooks/{id}":  "policy.write",
-		"DELETE /v1/tenants/{tenantID}/auth-hooks/{id}": "policy.write",
+		"GET /v1/tenants/{tenantID}/auth-hooks":            "policy.read",
+		"POST /v1/tenants/{tenantID}/auth-hooks":           "policy.write",
+		"PATCH /v1/tenants/{tenantID}/auth-hooks/{id}":     "policy.write",
+		"POST /v1/tenants/{tenantID}/auth-hooks/{id}/test": "policy.write",
+		"DELETE /v1/tenants/{tenantID}/auth-hooks/{id}":    "policy.write",
 
 		// Verified domains affect hosted authentication routing.
 		"GET /v1/tenants/{tenantID}/domains":              "connection.read",

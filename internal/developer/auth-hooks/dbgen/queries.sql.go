@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const deleteHook = `-- name: DeleteHook :execrows
@@ -27,6 +28,40 @@ func (q *Queries) DeleteHook(ctx context.Context, arg DeleteHookParams) (int64, 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const getHookForCall = `-- name: GetHookForCall :one
+SELECT id, url, secret, secret_ct, secret_nonce, fail_open
+FROM tenant.auth_hooks WHERE id = $1 AND tenant_id = $2
+`
+
+type GetHookForCallParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+type GetHookForCallRow struct {
+	ID          uuid.UUID
+	Url         string
+	Secret      string
+	SecretCt    []byte
+	SecretNonce []byte
+	FailOpen    bool
+}
+
+// A hook's URL and secret, to call it outside a sign-in.
+func (q *Queries) GetHookForCall(ctx context.Context, arg GetHookForCallParams) (GetHookForCallRow, error) {
+	row := q.db.QueryRow(ctx, getHookForCall, arg.ID, arg.TenantID)
+	var i GetHookForCallRow
+	err := row.Scan(
+		&i.ID,
+		&i.Url,
+		&i.Secret,
+		&i.SecretCt,
+		&i.SecretNonce,
+		&i.FailOpen,
+	)
+	return i, err
 }
 
 const listEnabledSignInHooks = `-- name: ListEnabledSignInHooks :many
@@ -76,17 +111,24 @@ func (q *Queries) ListEnabledSignInHooks(ctx context.Context, tenantID uuid.UUID
 
 const listHooks = `-- name: ListHooks :many
 
-SELECT id, trigger, url, enabled, fail_open, created_at
+SELECT id, trigger, url, enabled, fail_open, created_at,
+       last_called_at, last_outcome, last_status_code, call_count, skip_count, deny_count
 FROM tenant.auth_hooks WHERE tenant_id = $1 ORDER BY created_at DESC
 `
 
 type ListHooksRow struct {
-	ID        uuid.UUID
-	Trigger   string
-	Url       string
-	Enabled   bool
-	FailOpen  bool
-	CreatedAt time.Time
+	ID             uuid.UUID
+	Trigger        string
+	Url            string
+	Enabled        bool
+	FailOpen       bool
+	CreatedAt      time.Time
+	LastCalledAt   pgtype.Timestamptz
+	LastOutcome    *string
+	LastStatusCode *int32
+	CallCount      int64
+	SkipCount      int64
+	DenyCount      int64
 }
 
 // Queries for the auth-hooks domain.
@@ -107,6 +149,12 @@ func (q *Queries) ListHooks(ctx context.Context, tenantID uuid.UUID) ([]ListHook
 			&i.Enabled,
 			&i.FailOpen,
 			&i.CreatedAt,
+			&i.LastCalledAt,
+			&i.LastOutcome,
+			&i.LastStatusCode,
+			&i.CallCount,
+			&i.SkipCount,
+			&i.DenyCount,
 		); err != nil {
 			return nil, err
 		}
@@ -116,6 +164,34 @@ func (q *Queries) ListHooks(ctx context.Context, tenantID uuid.UUID) ([]ListHook
 		return nil, err
 	}
 	return items, nil
+}
+
+const recordHookCall = `-- name: RecordHookCall :exec
+UPDATE tenant.auth_hooks
+SET last_called_at = NOW(), last_outcome = $1, last_status_code = $2,
+    call_count = call_count + 1,
+    skip_count = skip_count + CASE WHEN $1 = 'skipped' THEN 1 ELSE 0 END,
+    deny_count = deny_count + CASE WHEN $1 = 'denied' THEN 1 ELSE 0 END
+WHERE id = $3 AND tenant_id = $4
+`
+
+type RecordHookCallParams struct {
+	Outcome    *string
+	StatusCode *int32
+	ID         uuid.UUID
+	TenantID   uuid.UUID
+}
+
+// RecordHookCall counts one sign-in's call to a hook: its outcome (allowed,
+// denied or skipped), and the status the hook answered when it answered.
+func (q *Queries) RecordHookCall(ctx context.Context, arg RecordHookCallParams) error {
+	_, err := q.db.Exec(ctx, recordHookCall,
+		arg.Outcome,
+		arg.StatusCode,
+		arg.ID,
+		arg.TenantID,
+	)
+	return err
 }
 
 const sealHookSecret = `-- name: SealHookSecret :exec
@@ -140,6 +216,39 @@ func (q *Queries) SealHookSecret(ctx context.Context, arg SealHookSecretParams) 
 		arg.TenantID,
 	)
 	return err
+}
+
+const setHookEndpoint = `-- name: SetHookEndpoint :execrows
+UPDATE tenant.auth_hooks
+SET url = COALESCE($1, url),
+    secret = CASE WHEN $2::bytea IS NULL THEN secret ELSE '' END,
+    secret_ct = COALESCE($2::bytea, secret_ct),
+    secret_nonce = COALESCE($3::bytea, secret_nonce),
+    encryption_version = CASE WHEN $2::bytea IS NULL THEN encryption_version ELSE 1 END
+WHERE id = $4 AND tenant_id = $5
+`
+
+type SetHookEndpointParams struct {
+	Url         *string
+	SecretCt    []byte
+	SecretNonce []byte
+	ID          uuid.UUID
+	TenantID    uuid.UUID
+}
+
+// A new URL, a new secret, or both, for one of the tenant's hooks.
+func (q *Queries) SetHookEndpoint(ctx context.Context, arg SetHookEndpointParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setHookEndpoint,
+		arg.Url,
+		arg.SecretCt,
+		arg.SecretNonce,
+		arg.ID,
+		arg.TenantID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateHook = `-- name: UpdateHook :one

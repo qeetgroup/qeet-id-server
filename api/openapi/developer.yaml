@@ -843,10 +843,43 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/auth-hooks/{id}/test:
+    post:
+      operationId: post_v1_tenants_ByTenantID_auth_hooks_ById_test
+      summary: Test an auth hook
+      description: 'Calls the hook as a sign-in would, signed with its secret, with "test": true and a placeholder person, and reports its answer: status_code, duration_ms, decision (allow, deny, or none when it gave no answer), message, claims and error. It isn''t counted in the hook''s figures. Audited as auth_hook.tested.'
+      tags:
+        - Auth Hooks
+      parameters:
+        - {name: tenantID, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: How the hook answered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status_code: {type: integer}
+                  duration_ms: {type: integer}
+                  decision: {type: string, enum: [allow, deny, none]}
+                  message: {type: string}
+                  claims: {type: object, additionalProperties: true}
+                  error: {type: string}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/tenants/{tenantID}/auth-hooks/{id}:
     patch:
       operationId: patch_v1_tenants_ByTenantID_auth_hooks_ById
-      description: 'Turns an authentication hook on or off and sets whether it fails open. Only the fields sent change; the answer is both settings as stored.'
+      description: 'Turns an authentication hook on or off, sets whether it fails open, and changes its URL (checked as on creation, 422 auth_hook.url_invalid) or its signing secret (encrypted at rest; the next call is signed with it). Only the fields sent change; the answer is both switches as stored. Audited as auth_hook.updated, saying whether the secret changed.'
       summary: Update auth hook
       tags:
         - Auth Hooks
@@ -871,6 +904,12 @@ paths:
             schema:
               type: object
               properties:
+                url:
+                  type: string
+                  format: uri
+                secret:
+                  type: string
+                  description: A new signing secret; write-only.
                 enabled:
                   type: boolean
                 fail_open:
@@ -2146,6 +2185,23 @@ components:
           type: string
         url:
           type: string
+        last_called_at:
+          type: [string, 'null']
+          format: date-time
+          description: Its last call by a sign-in.
+        last_outcome:
+          type: [string, 'null']
+          enum: [allowed, denied, skipped, null]
+          description: How that call ended; skipped when the hook gave no answer.
+        last_status_code:
+          type: [integer, 'null']
+        calls:
+          type: integer
+          description: Sign-in calls since this release; test calls aren't counted.
+        skips:
+          type: integer
+        denies:
+          type: integer
     IssueResult:
       type: object
       required: [credential_id, jwt]
