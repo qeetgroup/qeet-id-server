@@ -1733,7 +1733,7 @@ paths:
   /v1/tenants/{tenantID}/oauth/grants:
     get:
       operationId: get_v1_tenants_ByTenantID_oauth_grants
-      description: 'Lists the active consent grants the tenant''s users have given to OIDC clients, for administrative review. Revoke an individual grant with the delete endpoint to force the client to obtain consent again on its next authorization request.'
+      description: 'Lists the active consent grants the tenant''s users have given to OIDC clients, for administrative review, latest used first, a page at a time: next_cursor fetches the next page and total counts every grant matching the filter. Each names its application and person, when it began (authorized_at), when the application was last issued tokens under it (last_used_at), and when the person last consented to the application (consented_at, null for an application that asks for none). Revoke a grant with the delete endpoint, or several, or every grant of one application, with the revoke endpoint, to force the client to obtain consent again on its next authorization request.'
       summary: List active grants
       tags:
         - OIDC
@@ -1743,6 +1743,9 @@ paths:
           required: true
           schema:
             type: string
+        - {name: client_id, in: query, required: false, description: 'Only the grants given to this application.', schema: {type: string}}
+        - {name: limit, in: query, required: false, description: 'Page size, 1 to 500; 100 by default.', schema: {type: integer, minimum: 1, maximum: 500}}
+        - {name: cursor, in: query, required: false, description: 'The next_cursor of the previous page.', schema: {type: string}}
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1753,12 +1756,19 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [items, total]
                 properties:
-                  truncated: {type: boolean, description: 'Present, true, when the list was cut at its limit (1000).'}
                   items:
                     type: array
                     items:
                       $ref: '#/components/schemas/Grant'
+                  next_cursor:
+                    type: string
+                    description: Present when there is another page.
+                  total:
+                    type: integer
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1795,6 +1805,54 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/oauth/grants/revoke:
+    post:
+      operationId: post_v1_tenants_ByTenantID_oauth_grants_revoke
+      summary: Revoke several grants
+      description: 'Revokes, in one transaction, the grants ids names (up to 100; each ends its whole client-and-person chain, as the delete endpoint does, and an unknown one is skipped), or every grant the tenant''s people gave client_id. Send one of the two. Returns how many people''s access to an application it ended. Audited as oauth.grant_revoked for each grant named, or once as oauth.client_grants_revoked for an application. Requires connection.write.'
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: string
+                    format: uuid
+                client_id:
+                  type: string
+      responses:
+        '200':
+          description: Revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked]
+                properties:
+                  revoked:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
   /v1/tenants/{tenantID}/service-principals:
     get:
       operationId: get_v1_tenants_ByTenantID_service_principals
@@ -7995,8 +8053,24 @@ components:
           type: string
     Grant:
       type: object
-      required: [client_id, expires_at, id, issued_at, scopes, user_email, user_id]
+      required: [authorized_at, client_id, client_name, consented_at, expires_at, id, issued_at, last_used_at, scopes, user_email, user_id, user_name]
       properties:
+        authorized_at:
+          type: string
+          format: date-time
+          description: When the grant began.
+        client_name:
+          type: string
+        consented_at:
+          type: [string, 'null']
+          format: date-time
+          description: When the person last consented to the application; null for an application that asks for no consent.
+        last_used_at:
+          type: string
+          format: date-time
+          description: When the application was last issued tokens under the grant (the same as issued_at).
+        user_name:
+          type: [string, 'null']
         client_id:
           type: string
         expires_at:

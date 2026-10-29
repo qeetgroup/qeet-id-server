@@ -149,6 +149,7 @@ func userPermissionMap() map[string]string {
 		"POST /v1/tenants/{tenantID}/oidc/clients/{id}/review":        "connection.write",
 		"GET /v1/tenants/{tenantID}/oauth/grants":                     "connection.read",
 		"DELETE /v1/tenants/{tenantID}/oauth/grants/{id}":             "connection.write",
+		"POST /v1/tenants/{tenantID}/oauth/grants/revoke":             "connection.write",
 		"GET /v1/tenants/{tenantID}/oauth/devices":                    "connection.read",
 		// Tenant-wide trusted-device estate (adaptive MFA "remember this
 		// device"), distinct from the OAuth device-grant flows above.

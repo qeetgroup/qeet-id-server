@@ -50,6 +50,7 @@ func stepUpExempt() map[string]string {
 		"DELETE /v1/gdpr/purge/{id}":                                                        "cancels a scheduled purge",
 		"DELETE /v1/vault/tokens/{provider}":                                                "removes the caller's own stored token",
 		"DELETE /v1/tenants/{tenantID}/oauth/grants/{id}":                                   "revokes an application's access",
+		"POST /v1/tenants/{tenantID}/oauth/grants/revoke":                                   "revokes applications' access",
 		"DELETE /v1/tenants/{tenantID}/oauth/devices/{id}":                                  "revokes a device's access",
 		"POST /v1/tenants/{tenantID}/audit/anomalies/{id}/resolve":                          "records a triage decision",
 		"POST /v1/tenants/{tenantID}/roles":                                                 "creates an empty role; granting it permissions is gated",

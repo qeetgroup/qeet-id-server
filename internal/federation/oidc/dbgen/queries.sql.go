@@ -162,6 +162,25 @@ func (q *Queries) ConsumeDeviceCode(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const countGrants = `-- name: CountGrants :one
+SELECT count(*)::int FROM auth.oidc_refresh_tokens t
+WHERE t.tenant_id = $1
+  AND t.revoked_at IS NULL AND t.replaced_by IS NULL AND t.expires_at > NOW()
+  AND ($2::text IS NULL OR t.client_id = $2)
+`
+
+type CountGrantsParams struct {
+	TenantID uuid.UUID
+	ClientID *string
+}
+
+func (q *Queries) CountGrants(ctx context.Context, arg CountGrantsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countGrants, arg.TenantID, arg.ClientID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countOIDCClientsByTenant = `-- name: CountOIDCClientsByTenant :one
 SELECT COUNT(*) FROM auth.oidc_clients WHERE tenant_id = $1
 `
@@ -1271,29 +1290,58 @@ func (q *Queries) ListDevices(ctx context.Context, tenantID uuid.UUID) ([]ListDe
 }
 
 const listGrants = `-- name: ListGrants :many
-SELECT t.id, t.client_id, t.user_id, COALESCE(u.email, '') AS user_email,
-       t.scopes, t.issued_at, t.expires_at
+SELECT t.id, t.client_id, COALESCE(c.name, '') AS client_name, t.user_id,
+       COALESCE(u.email, '') AS user_email, u.display_name AS user_name,
+       t.scopes, t.issued_at, t.expires_at,
+       COALESCE((SELECT r.issued_at FROM auth.oidc_refresh_tokens r
+                 WHERE r.id = t.grant_id AND r.tenant_id = t.tenant_id), t.issued_at)::timestamptz AS authorized_at,
+       k.granted_at AS consented_at
 FROM auth.oidc_refresh_tokens t
+LEFT JOIN auth.oidc_consents k ON k.user_id = t.user_id AND k.client_id = t.client_id
+LEFT JOIN auth.oidc_clients c ON c.client_id = t.client_id
 LEFT JOIN "user".users u ON u.id = t.user_id
 WHERE t.tenant_id = $1
   AND t.revoked_at IS NULL AND t.replaced_by IS NULL AND t.expires_at > NOW()
-ORDER BY t.issued_at DESC
-LIMIT 1001
+  AND ($2::text IS NULL OR t.client_id = $2)
+  AND (t.issued_at, t.id) < ($3::timestamptz, $4::uuid)
+ORDER BY t.issued_at DESC, t.id DESC
+LIMIT $5
 `
 
-type ListGrantsRow struct {
-	ID        uuid.UUID
-	ClientID  string
-	UserID    uuid.UUID
-	UserEmail string
-	Scopes    []string
-	IssuedAt  time.Time
-	ExpiresAt time.Time
+type ListGrantsParams struct {
+	TenantID uuid.UUID
+	ClientID *string
+	BeforeTs time.Time
+	BeforeID uuid.UUID
+	RowLimit int32
 }
 
-// At most paging.MaxListItems+1 rows: the API truncates the rest.
-func (q *Queries) ListGrants(ctx context.Context, tenantID uuid.UUID) ([]ListGrantsRow, error) {
-	rows, err := q.db.Query(ctx, listGrants, tenantID)
+type ListGrantsRow struct {
+	ID           uuid.UUID
+	ClientID     string
+	ClientName   string
+	UserID       uuid.UUID
+	UserEmail    string
+	UserName     *string
+	Scopes       []string
+	IssuedAt     time.Time
+	ExpiresAt    time.Time
+	AuthorizedAt time.Time
+	ConsentedAt  pgtype.Timestamptz
+}
+
+// ListGrants returns a page of the tenant's live grants (each the current
+// token of its chain), latest issued first, before the cursor, of one
+// application when given: with its application's and person's names, when the
+// grant began and when the person last consented to the application.
+func (q *Queries) ListGrants(ctx context.Context, arg ListGrantsParams) ([]ListGrantsRow, error) {
+	rows, err := q.db.Query(ctx, listGrants,
+		arg.TenantID,
+		arg.ClientID,
+		arg.BeforeTs,
+		arg.BeforeID,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1304,11 +1352,15 @@ func (q *Queries) ListGrants(ctx context.Context, tenantID uuid.UUID) ([]ListGra
 		if err := rows.Scan(
 			&i.ID,
 			&i.ClientID,
+			&i.ClientName,
 			&i.UserID,
 			&i.UserEmail,
+			&i.UserName,
 			&i.Scopes,
 			&i.IssuedAt,
 			&i.ExpiresAt,
+			&i.AuthorizedAt,
+			&i.ConsentedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1920,6 +1972,42 @@ func (q *Queries) ReviewOIDCClient(ctx context.Context, arg ReviewOIDCClientPara
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const revokeClientGrants = `-- name: RevokeClientGrants :many
+WITH ended AS (
+    UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
+    WHERE tenant_id = $1 AND client_id = $2 AND revoked_at IS NULL
+    RETURNING user_id
+)
+SELECT DISTINCT user_id FROM ended
+`
+
+type RevokeClientGrantsParams struct {
+	TenantID uuid.UUID
+	ClientID string
+}
+
+// RevokeClientGrants ends every grant the tenant's people gave client_id and
+// returns the people they were for, once each.
+func (q *Queries) RevokeClientGrants(ctx context.Context, arg RevokeClientGrantsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, revokeClientGrants, arg.TenantID, arg.ClientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var user_id uuid.UUID
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const revokeDevice = `-- name: RevokeDevice :one

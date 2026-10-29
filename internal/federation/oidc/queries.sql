@@ -209,16 +209,43 @@ RETURNING t.id, t.user_id, t.tenant_id, t.grant_id;
 SELECT client_id, user_id, tenant_id, scopes, issued_at, expires_at, used_at, revoked_at
 FROM auth.oidc_refresh_tokens WHERE token_hash = @token_hash;
 
+-- ListGrants returns a page of the tenant's live grants (each the current
+-- token of its chain), latest issued first, before the cursor, of one
+-- application when given: with its application's and person's names, when the
+-- grant began and when the person last consented to the application.
 -- name: ListGrants :many
--- At most paging.MaxListItems+1 rows: the API truncates the rest.
-SELECT t.id, t.client_id, t.user_id, COALESCE(u.email, '') AS user_email,
-       t.scopes, t.issued_at, t.expires_at
+SELECT t.id, t.client_id, COALESCE(c.name, '') AS client_name, t.user_id,
+       COALESCE(u.email, '') AS user_email, u.display_name AS user_name,
+       t.scopes, t.issued_at, t.expires_at,
+       COALESCE((SELECT r.issued_at FROM auth.oidc_refresh_tokens r
+                 WHERE r.id = t.grant_id AND r.tenant_id = t.tenant_id), t.issued_at)::timestamptz AS authorized_at,
+       k.granted_at AS consented_at
 FROM auth.oidc_refresh_tokens t
+LEFT JOIN auth.oidc_consents k ON k.user_id = t.user_id AND k.client_id = t.client_id
+LEFT JOIN auth.oidc_clients c ON c.client_id = t.client_id
 LEFT JOIN "user".users u ON u.id = t.user_id
 WHERE t.tenant_id = @tenant_id
   AND t.revoked_at IS NULL AND t.replaced_by IS NULL AND t.expires_at > NOW()
-ORDER BY t.issued_at DESC
-LIMIT 1001;
+  AND (sqlc.narg('client_id')::text IS NULL OR t.client_id = sqlc.narg('client_id'))
+  AND (t.issued_at, t.id) < (@before_ts::timestamptz, @before_id::uuid)
+ORDER BY t.issued_at DESC, t.id DESC
+LIMIT @row_limit;
+
+-- name: CountGrants :one
+SELECT count(*)::int FROM auth.oidc_refresh_tokens t
+WHERE t.tenant_id = @tenant_id
+  AND t.revoked_at IS NULL AND t.replaced_by IS NULL AND t.expires_at > NOW()
+  AND (sqlc.narg('client_id')::text IS NULL OR t.client_id = sqlc.narg('client_id'));
+
+-- RevokeClientGrants ends every grant the tenant's people gave client_id and
+-- returns the people they were for, once each.
+-- name: RevokeClientGrants :many
+WITH ended AS (
+    UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
+    WHERE tenant_id = @tenant_id AND client_id = @client_id AND revoked_at IS NULL
+    RETURNING user_id
+)
+SELECT DISTINCT user_id FROM ended;
 
 -- name: GetGrantForRevoke :one
 SELECT client_id, user_id FROM auth.oidc_refresh_tokens
