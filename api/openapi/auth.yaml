@@ -3630,7 +3630,7 @@ paths:
   /v1/users/{userID}/tenants/{tenantID}/permissions:
     get:
       operationId: get_v1_users_ByUserID_tenants_ByTenantID_permissions
-      description: 'Returns the flattened set of permission keys a user effectively holds in a tenant, combining direct role assignments with roles inherited through group membership. Use it to explain why a user can or cannot perform an action, complementing the single-permission decision from the permission-check call. It is read-only and reflects the grants in force at call time.'
+      description: 'Returns the flattened set of permission keys a user effectively holds in a tenant, combining direct role assignments with roles inherited through group membership, and in grants every grant behind them: each permission with the role granting it, held directly or through which group (one entry per role and group, so a permission granted twice appears twice). Use it to explain why a user can or cannot perform an action, complementing the single-permission decision from the permission-check call. It is read-only and reflects the grants in force at call time. Needs role.read.'
       summary: Effective permissions
       tags:
         - RBAC
@@ -3656,10 +3656,14 @@ paths:
               schema:
                 type: object
                 properties:
-                  items:
+                  permissions:
                     type: array
                     items:
                       type: string
+                  grants:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuthzGrantStep'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -5972,9 +5976,14 @@ components:
           type: string
           format: uuid
           description: Set only when via is a group grant.
+        group_name:
+          type: string
+          description: The group's name, set only when via is a group grant.
         role_id:
           type: string
           format: uuid
+        role_name:
+          type: string
     AuthzDecidedBy:
       type: object
       description: >-

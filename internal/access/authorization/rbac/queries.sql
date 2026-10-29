@@ -215,6 +215,26 @@ JOIN rbac.permissions p ON p.id = rp.permission_id
 WHERE gm.user_id = @user_id AND gm.tenant_id = @tenant_id AND p.key = @perm_key
 ORDER BY via, group_name NULLS FIRST;
 
+-- name: ExplainAllGrants :many
+-- Every grant behind a person's permissions in the tenant: each permission
+-- with the role granting it, held directly or through which group.
+SELECT p.key AS permission, 'direct'::text AS via, NULL::uuid AS group_id, NULL::text AS group_name, ro.id AS role_id, ro.name AS role_name
+FROM rbac.user_roles ur
+JOIN rbac.roles ro ON ro.id = ur.role_id
+JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
+JOIN rbac.permissions p ON p.id = rp.permission_id
+WHERE ur.user_id = @user_id AND ur.tenant_id = @tenant_id
+UNION ALL
+SELECT p.key AS permission, 'group'::text AS via, g.id AS group_id, g.name AS group_name, ro.id AS role_id, ro.name AS role_name
+FROM tenant.group_members gm
+JOIN tenant.groups g ON g.id = gm.group_id AND g.tenant_id = gm.tenant_id
+JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+JOIN rbac.roles ro ON ro.id = gr.role_id
+JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
+JOIN rbac.permissions p ON p.id = rp.permission_id
+WHERE gm.user_id = @user_id AND gm.tenant_id = @tenant_id
+ORDER BY permission, via, group_name NULLS FIRST, role_name;
+
 -- name: RoleHolderCounts :many
 -- Per role of the tenant: the live people holding it directly, those holding
 -- it only through a group, and the groups granted it.

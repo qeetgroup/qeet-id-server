@@ -195,6 +195,68 @@ func (q *Queries) DeleteRole(ctx context.Context, arg DeleteRoleParams) error {
 	return err
 }
 
+const explainAllGrants = `-- name: ExplainAllGrants :many
+SELECT p.key AS permission, 'direct'::text AS via, NULL::uuid AS group_id, NULL::text AS group_name, ro.id AS role_id, ro.name AS role_name
+FROM rbac.user_roles ur
+JOIN rbac.roles ro ON ro.id = ur.role_id
+JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
+JOIN rbac.permissions p ON p.id = rp.permission_id
+WHERE ur.user_id = $1 AND ur.tenant_id = $2
+UNION ALL
+SELECT p.key AS permission, 'group'::text AS via, g.id AS group_id, g.name AS group_name, ro.id AS role_id, ro.name AS role_name
+FROM tenant.group_members gm
+JOIN tenant.groups g ON g.id = gm.group_id AND g.tenant_id = gm.tenant_id
+JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+JOIN rbac.roles ro ON ro.id = gr.role_id
+JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
+JOIN rbac.permissions p ON p.id = rp.permission_id
+WHERE gm.user_id = $1 AND gm.tenant_id = $2
+ORDER BY permission, via, group_name NULLS FIRST, role_name
+`
+
+type ExplainAllGrantsParams struct {
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+}
+
+type ExplainAllGrantsRow struct {
+	Permission string
+	Via        string
+	GroupID    pgtype.UUID
+	GroupName  *string
+	RoleID     uuid.UUID
+	RoleName   string
+}
+
+// Every grant behind a person's permissions in the tenant: each permission
+// with the role granting it, held directly or through which group.
+func (q *Queries) ExplainAllGrants(ctx context.Context, arg ExplainAllGrantsParams) ([]ExplainAllGrantsRow, error) {
+	rows, err := q.db.Query(ctx, explainAllGrants, arg.UserID, arg.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExplainAllGrantsRow{}
+	for rows.Next() {
+		var i ExplainAllGrantsRow
+		if err := rows.Scan(
+			&i.Permission,
+			&i.Via,
+			&i.GroupID,
+			&i.GroupName,
+			&i.RoleID,
+			&i.RoleName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const explainGrants = `-- name: ExplainGrants :many
 SELECT 'direct'::text AS via, NULL::uuid AS group_id, NULL::text AS group_name, ro.id AS role_id, ro.name AS role_name
 FROM rbac.user_roles ur

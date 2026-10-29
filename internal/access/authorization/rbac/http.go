@@ -418,7 +418,12 @@ func (h *Handler) effective(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"permissions": keys})
+	grants, err := h.Repo.Grants(r.Context(), uid, tid)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"permissions": keys, "grants": grants})
 }
 
 // check answers GET /v1/check with the composed decision (decide.Decider):

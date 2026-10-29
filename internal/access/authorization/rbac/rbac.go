@@ -429,11 +429,41 @@ func (r *Repository) EffectivePermissions(ctx context.Context, userID, tenantID 
 // GrantStep is one link in an authorization decision's grant path: a role that
 // confers the requested permission, plus how that role reaches the user.
 type GrantStep struct {
-	Permission string     `json:"permission"`         // the permission key
-	GrantedBy  string     `json:"granted_by"`         // e.g. "role:admin"
-	Via        string     `json:"via"`                // "direct" or "group:<name>"
-	GroupID    *uuid.UUID `json:"group_id,omitempty"` // the group, when granted through one
-	RoleID     uuid.UUID  `json:"role_id"`            // the role that grants it
+	Permission string     `json:"permission"`           // the permission key
+	GrantedBy  string     `json:"granted_by"`           // e.g. "role:admin"
+	Via        string     `json:"via"`                  // "direct" or "group:<name>"
+	GroupID    *uuid.UUID `json:"group_id,omitempty"`   // the group, when granted through one
+	GroupName  string     `json:"group_name,omitempty"` // its name
+	RoleID     uuid.UUID  `json:"role_id"`              // the role that grants it
+	RoleName   string     `json:"role_name"`            // its name
+}
+
+// grantStep is one grant of permission: through role, held directly or (via
+// "group") through the group.
+func grantStep(permission, via string, groupID pgtype.UUID, groupName *string, roleID uuid.UUID, roleName string) GrantStep {
+	step := GrantStep{Permission: permission, GrantedBy: "role:" + roleName, Via: "direct", RoleID: roleID, RoleName: roleName}
+	if via == "group" && groupName != nil {
+		step.Via, step.GroupName = "group:"+*groupName, *groupName
+		if groupID.Valid {
+			gid := uuid.UUID(groupID.Bytes)
+			step.GroupID = &gid
+		}
+	}
+	return step
+}
+
+// Grants lists every grant behind userID's permissions in tenantID, by
+// permission: the role granting it, directly or through which group.
+func (r *Repository) Grants(ctx context.Context, userID, tenantID uuid.UUID) ([]GrantStep, error) {
+	rows, err := r.q.ExplainAllGrants(ctx, dbgen.ExplainAllGrantsParams{UserID: userID, TenantID: tenantID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]GrantStep, len(rows))
+	for i, row := range rows {
+		out[i] = grantStep(row.Permission, row.Via, row.GroupID, row.GroupName, row.RoleID, row.RoleName)
+	}
+	return out, nil
 }
 
 // Explanation is the structured "why?" for a single Check. Allowed is the same
@@ -466,21 +496,7 @@ func (r *Repository) Explain(ctx context.Context, userID, tenantID uuid.UUID, pe
 
 	exp := &Explanation{Paths: []GrantStep{}}
 	for _, row := range rows {
-		step := GrantStep{
-			Permission: permKey,
-			GrantedBy:  "role:" + row.RoleName,
-			RoleID:     row.RoleID,
-		}
-		if row.Via == "group" && row.GroupName != nil {
-			step.Via = "group:" + *row.GroupName
-			if row.GroupID.Valid {
-				gid := uuid.UUID(row.GroupID.Bytes)
-				step.GroupID = &gid
-			}
-		} else {
-			step.Via = "direct"
-		}
-		exp.Paths = append(exp.Paths, step)
+		exp.Paths = append(exp.Paths, grantStep(permKey, row.Via, row.GroupID, row.GroupName, row.RoleID, row.RoleName))
 	}
 
 	exp.Allowed = len(exp.Paths) > 0

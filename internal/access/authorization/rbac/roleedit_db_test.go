@@ -120,3 +120,53 @@ func TestCustomRolesAreEditedWhole(t *testing.T) {
 		t.Errorf("after deleting: %d roles, %d role.deleted records; want 0 and 1", n, audited("role.deleted"))
 	}
 }
+
+// TestEffectivePermissionsSayWhereEachComesFrom checks that a person's
+// effective permissions come with every grant behind them: the role, held
+// directly or through which group, one entry for each.
+func TestEffectivePermissionsSayWhereEachComesFrom(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	repo := NewRepository(pool)
+	tenant := dbtest.Tenant(t)
+	person, admin := dbtest.User(t, tenant), dbtest.User(t, tenant)
+	dbtest.Assign(t, admin.ID, tenant, dbtest.Role(t, tenant, "role.read"))
+	readers := dbtest.Role(t, tenant, "user.read")
+	dbtest.Assign(t, person.ID, tenant, readers)
+	auditors := dbtest.Role(t, tenant, "user.read", "audit.read")
+	var group uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Frontend') RETURNING id`, tenant).Scan(&group); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO rbac.group_roles (tenant_id, group_id, role_id) VALUES ($1, $2, $3)`, tenant, group, auditors); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant.group_members (tenant_id, group_id, user_id) VALUES ($1, $2, $3)`, tenant, group, person.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &Handler{Repo: repo, Service: NewService(repo), Validate: validator.New(validator.WithRequiredStructEnabled())}
+	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(admin.ID, tenant), h.Mount), http.MethodGet, "/users/"+person.ID.String()+"/tenants/"+tenant.String()+"/permissions", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Permissions []string    `json:"permissions"`
+		Grants      []GrantStep `json:"grants"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	type grant struct{ permission, via, group string }
+	var grants []grant
+	for _, g := range got.Grants {
+		if g.Via == "direct" && (g.RoleID != readers || g.GroupID != nil) || g.Via != "direct" && (g.RoleID != auditors || g.GroupID == nil || *g.GroupID != group) {
+			t.Errorf("a grant names the wrong role or group: %+v", g)
+		}
+		grants = append(grants, grant{g.Permission, g.Via, g.GroupName})
+	}
+	want := []grant{{"audit.read", "group:Frontend", "Frontend"}, {"user.read", "direct", ""}, {"user.read", "group:Frontend", "Frontend"}}
+	if !slices.Equal(grants, want) || len(got.Permissions) != 2 {
+		t.Errorf("permissions %v with grants %v, want two with %v", got.Permissions, grants, want)
+	}
+}
