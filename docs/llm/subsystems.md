@@ -289,6 +289,7 @@ audit/anomaly/anomaly.go   behavioural baselines
 billing/{billing,payments,tax}.go
 gdpr/{gdpr,evidence}.go    requests, SOC2/ISO evidence
 gdpr/erasure.go · gdpr/export.go   what erasure removes, what an export holds
+gdpr/tenantpurge.go        a deleted organisation's data purged after 30 days
 retention/retention.go · retention/sweeps.go   purge window, sweeps of every growing table
 siem/siem.go · analytics/analytics.go
 activity/{domain,http,hub}.go   SSE feed
