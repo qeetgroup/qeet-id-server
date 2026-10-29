@@ -181,6 +181,20 @@ func (q *Queries) CreateRole(ctx context.Context, arg CreateRoleParams) (RbacRol
 	return i, err
 }
 
+const deleteRole = `-- name: DeleteRole :exec
+DELETE FROM rbac.roles WHERE id = $1 AND tenant_id = $2
+`
+
+type DeleteRoleParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+func (q *Queries) DeleteRole(ctx context.Context, arg DeleteRoleParams) error {
+	_, err := q.db.Exec(ctx, deleteRole, arg.ID, arg.TenantID)
+	return err
+}
+
 const explainGrants = `-- name: ExplainGrants :many
 SELECT 'direct'::text AS via, NULL::uuid AS group_id, NULL::text AS group_name, ro.id AS role_id, ro.name AS role_name
 FROM rbac.user_roles ur
@@ -294,6 +308,22 @@ type GrantPermissionParams struct {
 
 func (q *Queries) GrantPermission(ctx context.Context, arg GrantPermissionParams) error {
 	_, err := q.db.Exec(ctx, grantPermission, arg.RoleID, arg.PermissionID)
+	return err
+}
+
+const grantPermissions = `-- name: GrantPermissions :exec
+INSERT INTO rbac.role_permissions (role_id, permission_id)
+SELECT $1, unnest($2::uuid[])
+ON CONFLICT DO NOTHING
+`
+
+type GrantPermissionsParams struct {
+	RoleID        uuid.UUID
+	PermissionIds []uuid.UUID
+}
+
+func (q *Queries) GrantPermissions(ctx context.Context, arg GrantPermissionsParams) error {
+	_, err := q.db.Exec(ctx, grantPermissions, arg.RoleID, arg.PermissionIds)
 	return err
 }
 
@@ -568,6 +598,57 @@ func (q *Queries) ListRoles(ctx context.Context, tenantID uuid.UUID) ([]RbacRole
 	return items, nil
 }
 
+const lockRole = `-- name: LockRole :one
+SELECT id, tenant_id, name, description, is_system, created_at
+FROM rbac.roles WHERE id = $1 AND tenant_id = $2
+FOR UPDATE
+`
+
+type LockRoleParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+// LockRole reads a role of the tenant for a change, held until it commits, so
+// nobody gives the role to anyone or edits it meanwhile.
+func (q *Queries) LockRole(ctx context.Context, arg LockRoleParams) (RbacRole, error) {
+	row := q.db.QueryRow(ctx, lockRole, arg.ID, arg.TenantID)
+	var i RbacRole
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Name,
+		&i.Description,
+		&i.IsSystem,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const permissionsByID = `-- name: PermissionsByID :many
+SELECT id, key, description FROM rbac.permissions WHERE id = ANY($1::uuid[]) ORDER BY key
+`
+
+func (q *Queries) PermissionsByID(ctx context.Context, ids []uuid.UUID) ([]RbacPermission, error) {
+	rows, err := q.db.Query(ctx, permissionsByID, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RbacPermission{}
+	for rows.Next() {
+		var i RbacPermission
+		if err := rows.Scan(&i.ID, &i.Key, &i.Description); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const removeRoleFromGroup = `-- name: RemoveRoleFromGroup :exec
 DELETE FROM rbac.group_roles WHERE group_id = $1 AND tenant_id = $2 AND role_id = $3
 `
@@ -594,6 +675,20 @@ type RevokePermissionParams struct {
 
 func (q *Queries) RevokePermission(ctx context.Context, arg RevokePermissionParams) error {
 	_, err := q.db.Exec(ctx, revokePermission, arg.RoleID, arg.PermissionID)
+	return err
+}
+
+const revokePermissions = `-- name: RevokePermissions :exec
+DELETE FROM rbac.role_permissions WHERE role_id = $1 AND permission_id = ANY($2::uuid[])
+`
+
+type RevokePermissionsParams struct {
+	RoleID        uuid.UUID
+	PermissionIds []uuid.UUID
+}
+
+func (q *Queries) RevokePermissions(ctx context.Context, arg RevokePermissionsParams) error {
+	_, err := q.db.Exec(ctx, revokePermissions, arg.RoleID, arg.PermissionIds)
 	return err
 }
 
@@ -647,6 +742,34 @@ func (q *Queries) RoleHolderCounts(ctx context.Context, tenantID uuid.UUID) ([]R
 	return items, nil
 }
 
+const roleUse = `-- name: RoleUse :one
+SELECT
+    (SELECT count(*) FROM rbac.user_roles ur WHERE ur.role_id = $1 AND ur.tenant_id = $2) AS people,
+    (SELECT count(*) FROM rbac.group_roles gr WHERE gr.role_id = $1 AND gr.tenant_id = $2) AS groups,
+    (SELECT count(*) FROM tenant.invites i WHERE i.role_id = $1 AND i.tenant_id = $2 AND i.status IN ('pending', 'expired')) AS invitations
+`
+
+type RoleUseParams struct {
+	RoleID   uuid.UUID
+	TenantID uuid.UUID
+}
+
+type RoleUseRow struct {
+	People      int64
+	Groups      int64
+	Invitations int64
+}
+
+// RoleUse counts who would lose the role with it: the people holding it, the
+// groups holding it, and the invitations to it that can still be accepted or
+// resent.
+func (q *Queries) RoleUse(ctx context.Context, arg RoleUseParams) (RoleUseRow, error) {
+	row := q.db.QueryRow(ctx, roleUse, arg.RoleID, arg.TenantID)
+	var i RoleUseRow
+	err := row.Scan(&i.People, &i.Groups, &i.Invitations)
+	return i, err
+}
+
 const unassignUserRole = `-- name: UnassignUserRole :exec
 DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2 AND role_id = $3
 `
@@ -663,6 +786,38 @@ type UnassignUserRoleParams struct {
 func (q *Queries) UnassignUserRole(ctx context.Context, arg UnassignUserRoleParams) error {
 	_, err := q.db.Exec(ctx, unassignUserRole, arg.UserID, arg.TenantID, arg.RoleID)
 	return err
+}
+
+const updateRole = `-- name: UpdateRole :one
+UPDATE rbac.roles SET name = $1, description = $2
+WHERE id = $3 AND tenant_id = $4
+RETURNING id, tenant_id, name, description, is_system, created_at
+`
+
+type UpdateRoleParams struct {
+	Name        string
+	Description string
+	ID          uuid.UUID
+	TenantID    uuid.UUID
+}
+
+func (q *Queries) UpdateRole(ctx context.Context, arg UpdateRoleParams) (RbacRole, error) {
+	row := q.db.QueryRow(ctx, updateRole,
+		arg.Name,
+		arg.Description,
+		arg.ID,
+		arg.TenantID,
+	)
+	var i RbacRole
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Name,
+		&i.Description,
+		&i.IsSystem,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const upsertPermission = `-- name: UpsertPermission :one

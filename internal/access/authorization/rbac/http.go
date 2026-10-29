@@ -1,7 +1,9 @@
 package rbac
 
 import (
+	"bytes"
 	"net/http"
+	"slices"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -30,6 +32,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/roles", h.listRoles)
 	r.Get("/tenants/{tenantID}/roles/{roleID}/holders", h.holders)
 	r.Post("/tenants/{tenantID}/roles", h.createRole)
+	r.Patch("/tenants/{tenantID}/roles/{roleID}", h.updateRole)
+	r.Delete("/tenants/{tenantID}/roles/{roleID}", h.deleteRole)
+	r.Put("/tenants/{tenantID}/roles/{roleID}/permissions", h.setPermissions)
 
 	r.Get("/roles/{roleID}/permissions", h.listRolePermissions)
 	r.Post("/roles/{roleID}/permissions/{permID}", h.grant)
@@ -160,6 +165,101 @@ func (h *Handler) createRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, role)
+}
+
+type updateRoleInput struct {
+	Name        *string `json:"name" validate:"omitempty,min=1,max=64"`
+	Description *string `json:"description" validate:"omitempty,max=500"`
+}
+
+// updateRole serves PATCH /tenants/{tenantID}/roles/{roleID}: rename a custom
+// role or change its description.
+func (h *Handler) updateRole(w http.ResponseWriter, r *http.Request) {
+	tid, roleID, err := pathRole(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var in updateRoleInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Validate.Struct(in); err != nil {
+		httpx.WriteError(w, r, httpx.ValidationError(err))
+		return
+	}
+	role, err := h.Service.UpdateRole(r.Context(), tid, roleID, in.Name, in.Description, audit.ActorOf(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, role)
+}
+
+// deleteRole serves DELETE /tenants/{tenantID}/roles/{roleID}.
+func (h *Handler) deleteRole(w http.ResponseWriter, r *http.Request) {
+	tid, roleID, err := pathRole(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Service.DeleteRole(r.Context(), tid, roleID, audit.ActorOf(r)); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// pathRole is the path's tenant and {roleID}.
+func pathRole(r *http.Request) (tenantID, roleID uuid.UUID, err error) {
+	if tenantID, err = httpx.PathTenant(r); err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	if roleID, err = uuid.Parse(chi.URLParam(r, "roleID")); err != nil {
+		return uuid.Nil, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid roleID")
+	}
+	return tenantID, roleID, nil
+}
+
+type setPermissionsInput struct {
+	PermissionIDs []uuid.UUID `json:"permission_ids" validate:"max=500"`
+}
+
+// setPermissions serves PUT /tenants/{tenantID}/roles/{roleID}/permissions:
+// the role's whole set of permissions in one change.
+func (h *Handler) setPermissions(w http.ResponseWriter, r *http.Request) {
+	scope, roleID, err := pathRole(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var in setPermissionsInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if in.PermissionIDs == nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("permission_ids is required; send [] for none"))
+		return
+	}
+	if err := h.Validate.Struct(in); err != nil {
+		httpx.WriteError(w, r, httpx.ValidationError(err))
+		return
+	}
+	slices.SortFunc(in.PermissionIDs, func(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) })
+	ids := slices.Compact(in.PermissionIDs)
+	mayGrant, err := h.Repo.Grantable(r.Context(), httpx.PrincipalFromCtx(r.Context()), scope)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Service.SetPermissions(r.Context(), scope, roleID, ids, mayGrant, audit.ActorOf(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 func (h *Handler) listRolePermissions(w http.ResponseWriter, r *http.Request) {

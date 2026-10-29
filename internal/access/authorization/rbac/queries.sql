@@ -55,6 +55,41 @@ JOIN rbac.role_permissions rp ON rp.permission_id = p.id
 WHERE rp.role_id = @role_id
 ORDER BY p.key;
 
+-- LockRole reads a role of the tenant for a change, held until it commits, so
+-- nobody gives the role to anyone or edits it meanwhile.
+-- name: LockRole :one
+SELECT id, tenant_id, name, description, is_system, created_at
+FROM rbac.roles WHERE id = @id AND tenant_id = @tenant_id
+FOR UPDATE;
+
+-- name: PermissionsByID :many
+SELECT id, key, description FROM rbac.permissions WHERE id = ANY(@ids::uuid[]) ORDER BY key;
+
+-- name: GrantPermissions :exec
+INSERT INTO rbac.role_permissions (role_id, permission_id)
+SELECT @role_id, unnest(@permission_ids::uuid[])
+ON CONFLICT DO NOTHING;
+
+-- name: RevokePermissions :exec
+DELETE FROM rbac.role_permissions WHERE role_id = @role_id AND permission_id = ANY(@permission_ids::uuid[]);
+
+-- name: UpdateRole :one
+UPDATE rbac.roles SET name = @name, description = @description
+WHERE id = @id AND tenant_id = @tenant_id
+RETURNING id, tenant_id, name, description, is_system, created_at;
+
+-- RoleUse counts who would lose the role with it: the people holding it, the
+-- groups holding it, and the invitations to it that can still be accepted or
+-- resent.
+-- name: RoleUse :one
+SELECT
+    (SELECT count(*) FROM rbac.user_roles ur WHERE ur.role_id = @role_id AND ur.tenant_id = @tenant_id) AS people,
+    (SELECT count(*) FROM rbac.group_roles gr WHERE gr.role_id = @role_id AND gr.tenant_id = @tenant_id) AS groups,
+    (SELECT count(*) FROM tenant.invites i WHERE i.role_id = @role_id AND i.tenant_id = @tenant_id AND i.status IN ('pending', 'expired')) AS invitations;
+
+-- name: DeleteRole :exec
+DELETE FROM rbac.roles WHERE id = @id AND tenant_id = @tenant_id;
+
 -- name: GrantPermission :exec
 INSERT INTO rbac.role_permissions (role_id, permission_id)
 VALUES (@role_id, @permission_id)

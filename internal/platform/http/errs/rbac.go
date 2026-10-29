@@ -12,11 +12,12 @@ const (
 	CodeRBACTargetIsOwner       = "rbac.target_is_owner"
 	CodeRBACTargetOutranks      = "rbac.target_outranks_caller"
 	CodeRBACSystemRoleFixed     = "rbac.system_role_fixed"
+	CodeRBACRoleInUse           = "rbac.role_in_use"
 )
 
 // RBAC errors. ErrRBACUserOrRoleNotFound gives the same answer for missing and
-// other-tenant IDs, and ErrRBACGrantExceedsCaller and ErrRBACTargetOutranks
-// name the permission in their metadata.
+// other-tenant IDs, ErrRBACGrantExceedsCaller and ErrRBACTargetOutranks name
+// the permission in their metadata, and ErrRBACRoleInUse counts the holders.
 var (
 	ErrRBACRoleNameExists      = New(CodeRBACRoleNameExists, "A role with that name already exists.")
 	ErrRBACGroupOrRoleNotFound = New(CodeRBACGroupOrRoleNotFound, "That group or role doesn't exist in this tenant.")
@@ -27,5 +28,6 @@ var (
 	ErrRBACOwnerOnly           = New(CodeRBACOwnerOnly, "Only an owner can make someone an owner.")
 	ErrRBACTargetIsOwner       = New(CodeRBACTargetIsOwner, "Only an owner can change an owner's account or roles.")
 	ErrRBACTargetOutranks      = New(CodeRBACTargetOutranks, "You can't change the account of someone who holds a permission you don't.")
-	ErrRBACSystemRoleFixed     = New(CodeRBACSystemRoleFixed, "A built-in role's permissions can't be changed. Create a role of your own for a different set.")
+	ErrRBACSystemRoleFixed     = New(CodeRBACSystemRoleFixed, "A built-in role can't be changed. Create a role of your own for a different set of permissions.")
+	ErrRBACRoleInUse           = New(CodeRBACRoleInUse, "Someone still holds this role. Give its people, groups and invitations another role first.")
 )

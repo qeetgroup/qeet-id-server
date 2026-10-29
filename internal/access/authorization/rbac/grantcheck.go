@@ -141,6 +141,19 @@ func (r *Repository) CheckGrantScopes(ctx context.Context, caller *httpx.Princip
 	return r.checkGrant(ctx, caller, tenantID, scopes, false)
 }
 
+// Grantable reports which permissions the caller may give or take away in
+// tenantID, under the rule above, for a change worked out in a transaction.
+func (r *Repository) Grantable(ctx context.Context, caller *httpx.Principal, tenantID uuid.UUID) (func(key string) bool, error) {
+	if caller == nil {
+		return nil, errs.ErrRBACPermissionDenied
+	}
+	g, err := r.grantorOf(ctx, caller, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	return g.holds, nil
+}
+
 // checkGrant applies the rule above to the permissions or scopes being given.
 func (r *Repository) checkGrant(ctx context.Context, caller *httpx.Principal, tenantID uuid.UUID, keys []string, ownerRole bool) error {
 	if caller == nil {

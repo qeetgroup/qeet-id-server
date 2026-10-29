@@ -3127,7 +3127,7 @@ paths:
   /v1/roles/{roleID}/permissions:
     get:
       operationId: get_v1_roles_ByRoleID_permissions
-      description: 'Lists the permissions currently granted to a role, resolving what any holder of that role can do. Use it to review a role before changing its grants. Add a permission with the grant-permission-to-role call and remove one with the revoke-permission-from-role call.'
+      description: 'Lists the permissions currently granted to a role, resolving what any holder of that role can do. Use it to review a role before changing its grants. Add a permission with the grant-permission-to-role call and remove one with the revoke-permission-from-role call, or set them all at once with PUT /v1/tenants/{tenantID}/roles/{roleID}/permissions.'
       summary: List permissions granted to a role
       tags:
         - RBAC
@@ -3332,6 +3332,172 @@ paths:
       responses:
         '204':
           description: Revoked
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/roles/{roleID}:
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_roles_ByRoleID
+      summary: Rename a role
+      description: >-
+        Renames a custom role or changes its description; a field left out
+        stays as it is. A built-in role (owner, admin, member, viewer) can't be
+        changed (403 rbac.system_role_fixed), a name another role of the
+        organisation has is refused with 409 rbac.role_name_exists, and a role
+        of another organisation answers 404. Audited as role.updated with the
+        old and new value of each field that changed; a request that changes
+        nothing records nothing. Needs role.write and a recent sign-in
+        (step-up).
+      tags:
+        - RBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: roleID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoleUpdate'
+      responses:
+        '200':
+          description: The role
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Role'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_roles_ByRoleID
+      summary: Delete a role
+      description: >-
+        Deletes a custom role. It is refused with 409 rbac.role_in_use while
+        anyone holds it, any group is granted it, or an invitation that can
+        still be accepted or resent offers it, with how many of each (metadata
+        people, groups, invitations): give them another role first, since
+        someone whose only role it is would leave the organisation with it. A
+        built-in role (owner, admin, member, viewer) can't be deleted (403
+        rbac.system_role_fixed), and a role of another organisation answers 404.
+        Audited as role.deleted with its name. Needs role.write and a recent
+        sign-in (step-up).
+      tags:
+        - RBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: roleID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/tenants/{tenantID}/roles/{roleID}/permissions:
+    put:
+      operationId: put_v1_tenants_ByTenantID_roles_ByRoleID_permissions
+      summary: Set a role's permissions
+      description: >-
+        Makes the listed permissions the whole of a custom role's permissions,
+        in one transaction: the ones not listed are taken away, and the response
+        lists the role's permissions as they now are. The caller must hold every
+        permission added or taken away, unless they are an owner (403
+        rbac.grant_exceeds_caller naming the first one; nothing changes). A
+        built-in role (owner, admin, member, viewer) can't be changed (403
+        rbac.system_role_fixed); a role of another organisation, or a permission
+        ID that doesn't exist, answers 404. Send [] to take every permission
+        away. Audited as one role.permissions_set listing the permissions added
+        and removed; a request that changes nothing records nothing. Needs
+        role.write and a recent sign-in (step-up).
+      tags:
+        - RBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: roleID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - permission_ids
+              properties:
+                permission_ids:
+                  type: array
+                  maxItems: 500
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        '200':
+          description: The role's permissions as they now are
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Permission'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -5851,6 +6017,16 @@ components:
       type: object
       required:
         - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        description:
+          type: string
+          maxLength: 500
+    RoleUpdate:
+      type: object
       properties:
         name:
           type: string
