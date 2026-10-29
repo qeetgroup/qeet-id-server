@@ -599,6 +599,10 @@ paths:
           required: true
           schema:
             type: string
+        - {name: from, in: query, required: false, description: 'Start of a chosen range (RFC 3339), returned as range.', schema: {type: string, format: date-time}}
+        - {name: to, in: query, required: false, description: 'End of the range (RFC 3339); now by default.', schema: {type: string, format: date-time}}
+        - {name: days, in: query, required: false, description: 'The range as days back from to; 30 by default, at most 366.', schema: {type: integer, minimum: 1, maximum: 366}}
+        - {name: method, in: query, required: false, description: 'Count only sign-ins of this first method (password, passkey, magic_link, social, saml, ...).', schema: {type: string}}
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -4487,6 +4491,7 @@ components:
           type: number
     Overview:
       type: object
+      description: The fixed-window KPIs and trends; with from, to or days, also range, the sign-ins day by day over that range.
       required: [failed_logins_hourly_24h, failed_trend_14d, generated_at, kpis, login_activity_14d, login_methods_mix, login_trend_14d, mfa_methods_adoption, mfa_trend_14d, user_trend_14d, weekly_activity_8w]
       properties:
         failed_logins_hourly_24h:
@@ -4548,6 +4553,22 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WeeklyActivityPoint'
+        range:
+          type: object
+          description: The sign-ins day by day (UTC) over the chosen range, without organisation switches; present when from, to or days was given.
+          properties:
+            from: {type: string, format: date-time}
+            to: {type: string, format: date-time}
+            method: {type: string}
+            days:
+              type: array
+              items:
+                type: object
+                properties:
+                  date: {type: string, example: '2026-10-29'}
+                  sign_ins: {type: integer}
+                  people: {type: integer}
+                  failed: {type: integer}
     Plan:
       type: object
       required: [code, description, features, id, interval, name, prices]

@@ -62,6 +62,10 @@ type Overview struct {
 	LoginMethodsMix       []MethodSlice   `json:"login_methods_mix"`
 	MFAMethodsAdoption    []MethodCount   `json:"mfa_methods_adoption"`
 	FailedLoginsHourly24h []HourlyPoint   `json:"failed_logins_hourly_24h"`
+
+	// Range is the sign-ins day by day over the range the request chose,
+	// when it chose one.
+	Range *SignInRange `json:"range,omitempty"`
 }
 
 // Metric is a KPI value and its change from the previous period, in percent;
@@ -528,10 +532,21 @@ func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrAnalyticsTenantMismatch)
 		return
 	}
+	from, to, asked, err := parseRange(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	out, err := h.Reader.Overview(r.Context(), tid)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
+	}
+	if asked {
+		if out.Range, err = h.Reader.Range(r.Context(), tid, from, to, r.URL.Query().Get("method")); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
