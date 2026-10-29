@@ -7,6 +7,7 @@ package dbgen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -36,14 +37,18 @@ func (q *Queries) CountRipeDeletedUsers(ctx context.Context, arg CountRipeDelete
 
 const getRetentionPolicy = `-- name: GetRetentionPolicy :one
 
-SELECT deleted_users_enabled, deleted_users_days
-FROM tenant.retention_policy
-WHERE tenant_id = $1
+SELECT p.deleted_users_enabled, p.deleted_users_days, p.updated_at, p.updated_by, u.email AS updated_by_email
+FROM tenant.retention_policy p
+LEFT JOIN "user".users u ON u.id = p.updated_by
+WHERE p.tenant_id = $1
 `
 
 type GetRetentionPolicyRow struct {
 	DeletedUsersEnabled bool
 	DeletedUsersDays    int32
+	UpdatedAt           time.Time
+	UpdatedBy           pgtype.UUID
+	UpdatedByEmail      *string
 }
 
 // Queries for the retention domain.
@@ -52,7 +57,13 @@ type GetRetentionPolicyRow struct {
 func (q *Queries) GetRetentionPolicy(ctx context.Context, tenantID uuid.UUID) (GetRetentionPolicyRow, error) {
 	row := q.db.QueryRow(ctx, getRetentionPolicy, tenantID)
 	var i GetRetentionPolicyRow
-	err := row.Scan(&i.DeletedUsersEnabled, &i.DeletedUsersDays)
+	err := row.Scan(
+		&i.DeletedUsersEnabled,
+		&i.DeletedUsersDays,
+		&i.UpdatedAt,
+		&i.UpdatedBy,
+		&i.UpdatedByEmail,
+	)
 	return i, err
 }
 
@@ -155,30 +166,38 @@ func (q *Queries) PurgeRipeDeletedUser(ctx context.Context, arg PurgeRipeDeleted
 }
 
 const upsertRetentionPolicy = `-- name: UpsertRetentionPolicy :one
-INSERT INTO tenant.retention_policy (tenant_id, deleted_users_enabled, deleted_users_days, updated_at)
-VALUES ($1, $2, $3, NOW())
+INSERT INTO tenant.retention_policy (tenant_id, deleted_users_enabled, deleted_users_days, updated_at, updated_by)
+VALUES ($1, $2, $3, NOW(), $4)
 ON CONFLICT (tenant_id) DO UPDATE SET
     deleted_users_enabled = EXCLUDED.deleted_users_enabled,
     deleted_users_days    = EXCLUDED.deleted_users_days,
-    updated_at            = NOW()
-RETURNING deleted_users_enabled, deleted_users_days
+    updated_at            = NOW(),
+    updated_by            = EXCLUDED.updated_by
+RETURNING deleted_users_enabled, deleted_users_days, updated_at
 `
 
 type UpsertRetentionPolicyParams struct {
 	TenantID            uuid.UUID
 	DeletedUsersEnabled bool
 	DeletedUsersDays    int32
+	UpdatedBy           pgtype.UUID
 }
 
 type UpsertRetentionPolicyRow struct {
 	DeletedUsersEnabled bool
 	DeletedUsersDays    int32
+	UpdatedAt           time.Time
 }
 
 // Upsert a tenant's retention policy and return the stored values.
 func (q *Queries) UpsertRetentionPolicy(ctx context.Context, arg UpsertRetentionPolicyParams) (UpsertRetentionPolicyRow, error) {
-	row := q.db.QueryRow(ctx, upsertRetentionPolicy, arg.TenantID, arg.DeletedUsersEnabled, arg.DeletedUsersDays)
+	row := q.db.QueryRow(ctx, upsertRetentionPolicy,
+		arg.TenantID,
+		arg.DeletedUsersEnabled,
+		arg.DeletedUsersDays,
+		arg.UpdatedBy,
+	)
 	var i UpsertRetentionPolicyRow
-	err := row.Scan(&i.DeletedUsersEnabled, &i.DeletedUsersDays)
+	err := row.Scan(&i.DeletedUsersEnabled, &i.DeletedUsersDays, &i.UpdatedAt)
 	return i, err
 }

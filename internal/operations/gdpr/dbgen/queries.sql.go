@@ -242,7 +242,7 @@ func (q *Queries) CheckSessionTimeout(ctx context.Context, tenantID uuid.UUID) (
 
 const completePurgeRequest = `-- name: CompletePurgeRequest :exec
 UPDATE "user".purge_requests
-SET status = 'completed', completed_at = NOW()
+SET status = 'completed', completed_at = NOW(), subject_email = NULL, subject_name = NULL
 WHERE id = $1
 `
 
@@ -569,10 +569,12 @@ func (q *Queries) InsertExportRequest(ctx context.Context, arg InsertExportReque
 
 const insertPurgeRequest = `-- name: InsertPurgeRequest :one
 
-INSERT INTO "user".purge_requests (tenant_id, user_id, subject_id, requested_by, reason, grace_until)
-VALUES ($1, $2::uuid, $2::uuid, $3, $4, $5)
+INSERT INTO "user".purge_requests (tenant_id, user_id, subject_id, requested_by, reason, grace_until,
+                                   subject_email, subject_name)
+SELECT $1, $2::uuid, $2::uuid, $3, $4, $5, u.email, u.display_name
+FROM "user".users u WHERE u.id = $2::uuid AND u.tenant_id = $1
 RETURNING id, tenant_id, subject_id, requested_by, reason, status,
-          grace_until, completed_at, created_at
+          grace_until, completed_at, created_at, subject_email, subject_name
 `
 
 type InsertPurgeRequestParams struct {
@@ -584,15 +586,17 @@ type InsertPurgeRequestParams struct {
 }
 
 type InsertPurgeRequestRow struct {
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-	SubjectID   uuid.UUID
-	RequestedBy pgtype.UUID
-	Reason      *string
-	Status      string
-	GraceUntil  time.Time
-	CompletedAt pgtype.Timestamptz
-	CreatedAt   time.Time
+	ID           uuid.UUID
+	TenantID     uuid.UUID
+	SubjectID    uuid.UUID
+	RequestedBy  pgtype.UUID
+	Reason       *string
+	Status       string
+	GraceUntil   time.Time
+	CompletedAt  pgtype.Timestamptz
+	CreatedAt    time.Time
+	SubjectEmail *string
+	SubjectName  *string
 }
 
 // -----------------------------------------------------------------------
@@ -600,7 +604,8 @@ type InsertPurgeRequestRow struct {
 // -----------------------------------------------------------------------
 // Queue a right-to-erasure request. grace_until is pre-computed in Go
 // (time.Now().UTC().Add(s.grace)) to avoid pgtype.Interval parameter type issues.
-// subject_id keeps the account's ID once the account itself is deleted.
+// subject_id keeps the account's ID once the account itself is deleted, and
+// subject_email and subject_name who it was filed for until they are erased.
 func (q *Queries) InsertPurgeRequest(ctx context.Context, arg InsertPurgeRequestParams) (InsertPurgeRequestRow, error) {
 	row := q.db.QueryRow(ctx, insertPurgeRequest,
 		arg.TenantID,
@@ -620,6 +625,8 @@ func (q *Queries) InsertPurgeRequest(ctx context.Context, arg InsertPurgeRequest
 		&i.GraceUntil,
 		&i.CompletedAt,
 		&i.CreatedAt,
+		&i.SubjectEmail,
+		&i.SubjectName,
 	)
 	return i, err
 }
@@ -730,7 +737,7 @@ func (q *Queries) ListExportRequests(ctx context.Context, tenantID uuid.UUID) ([
 
 const listPurgeRequests = `-- name: ListPurgeRequests :many
 SELECT id, tenant_id, subject_id, requested_by, reason, status,
-       grace_until, completed_at, created_at
+       grace_until, completed_at, created_at, subject_email, subject_name
 FROM "user".purge_requests
 WHERE tenant_id = $1
 ORDER BY created_at DESC
@@ -738,15 +745,17 @@ LIMIT 200
 `
 
 type ListPurgeRequestsRow struct {
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-	SubjectID   uuid.UUID
-	RequestedBy pgtype.UUID
-	Reason      *string
-	Status      string
-	GraceUntil  time.Time
-	CompletedAt pgtype.Timestamptz
-	CreatedAt   time.Time
+	ID           uuid.UUID
+	TenantID     uuid.UUID
+	SubjectID    uuid.UUID
+	RequestedBy  pgtype.UUID
+	Reason       *string
+	Status       string
+	GraceUntil   time.Time
+	CompletedAt  pgtype.Timestamptz
+	CreatedAt    time.Time
+	SubjectEmail *string
+	SubjectName  *string
 }
 
 // List all purge requests for a tenant, most recent first.
@@ -769,6 +778,8 @@ func (q *Queries) ListPurgeRequests(ctx context.Context, tenantID uuid.UUID) ([]
 			&i.GraceUntil,
 			&i.CompletedAt,
 			&i.CreatedAt,
+			&i.SubjectEmail,
+			&i.SubjectName,
 		); err != nil {
 			return nil, err
 		}

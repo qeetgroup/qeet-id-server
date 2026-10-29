@@ -4622,6 +4622,18 @@ components:
           type: string
           format: uuid
           description: The account to erase; kept after the account itself is deleted.
+        subject_email:
+          type: [string, 'null']
+          description: The person's email as the request was filed; null once they are erased.
+        subject_name:
+          type: [string, 'null']
+          description: Their display name as the request was filed; null once they are erased.
+        subject_redacted:
+          type: boolean
+          description: The erasure ran, so who it was filed for is no longer kept.
+        grace_period_days:
+          type: integer
+          description: How many days a request waits before the erasure runs.
     RetentionPolicy:
       type: object
       required: [deleted_users_days, deleted_users_enabled]
@@ -4630,6 +4642,16 @@ components:
           type: integer
         deleted_users_enabled:
           type: boolean
+        updated_at:
+          type: string
+          format: date-time
+          description: When the policy was last changed; absent until it is set.
+        updated_by:
+          type: string
+          format: uuid
+          description: Who last changed it.
+        updated_by_email:
+          type: string
     Row:
       type: object
       required: [action, actor_type, actor_user_id, created_at, id, ip, request_id, resource_id, resource_type, tenant_id, user_agent]

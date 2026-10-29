@@ -28,9 +28,14 @@ import (
 const sweepInterval = time.Hour
 
 // Policy is a tenant's retention policy.
+// UpdatedAt and UpdatedBy say when, and by whom, it was last changed; nil
+// until the tenant sets one.
 type Policy struct {
-	DeletedUsersEnabled bool `json:"deleted_users_enabled"`
-	DeletedUsersDays    int  `json:"deleted_users_days"`
+	DeletedUsersEnabled bool       `json:"deleted_users_enabled"`
+	DeletedUsersDays    int        `json:"deleted_users_days"`
+	UpdatedAt           *time.Time `json:"updated_at,omitempty"`
+	UpdatedBy           *uuid.UUID `json:"updated_by,omitempty"`
+	UpdatedByEmail      *string    `json:"updated_by_email,omitempty"`
 }
 
 // DefaultPolicy is the policy of a tenant that has set none.
@@ -70,25 +75,39 @@ func (s *Service) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, error) 
 	if err != nil {
 		return nil, err
 	}
-	return &Policy{
+	p := &Policy{
 		DeletedUsersEnabled: row.DeletedUsersEnabled,
 		DeletedUsersDays:    int(row.DeletedUsersDays),
-	}, nil
+		UpdatedAt:           &row.UpdatedAt,
+		UpdatedByEmail:      row.UpdatedByEmail,
+	}
+	if row.UpdatedBy.Valid {
+		by := uuid.UUID(row.UpdatedBy.Bytes)
+		p.UpdatedBy = &by
+	}
+	return p, nil
 }
 
-// Update stores the tenant's retention policy.
-func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p Policy) (*Policy, error) {
+// Update stores the tenant's retention policy, as changed by by (nil: no one
+// in particular).
+func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p Policy, by *uuid.UUID) (*Policy, error) {
 	p.DeletedUsersDays = clampDays(p.DeletedUsersDays)
+	var updatedBy pgtype.UUID
+	if by != nil {
+		updatedBy = pgtype.UUID{Bytes: *by, Valid: true}
+	}
 	row, err := s.q.WithTx(tx).UpsertRetentionPolicy(ctx, dbgen.UpsertRetentionPolicyParams{
 		TenantID:            tenantID,
 		DeletedUsersEnabled: p.DeletedUsersEnabled,
 		DeletedUsersDays:    int32(p.DeletedUsersDays), // #nosec G115 -- clamped to 1–3650 by clampDays
+		UpdatedBy:           updatedBy,
 	})
 	if err != nil {
 		return nil, err
 	}
 	p.DeletedUsersEnabled = row.DeletedUsersEnabled
 	p.DeletedUsersDays = int(row.DeletedUsersDays)
+	p.UpdatedAt, p.UpdatedBy, p.UpdatedByEmail = &row.UpdatedAt, by, nil
 	return &p, nil
 }
 
@@ -254,12 +273,12 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	p, err := h.Service.Update(ctx, tx, tenantID, in)
+	actorID, actorType := audit.ActorOf(r).Identity()
+	p, err := h.Service.Update(ctx, tx, tenantID, in, actorID)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	actorID, actorType := audit.ActorOf(r).Identity()
 	tid := tenantID
 	if err := audit.Record(ctx, tx, audit.Event{
 		TenantID: &tid, ActorUserID: actorID, ActorType: actorType,

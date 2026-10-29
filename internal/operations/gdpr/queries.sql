@@ -118,11 +118,14 @@ SELECT count(*) FROM "user".export_requests WHERE tenant_id = @tenant_id;
 -- name: InsertPurgeRequest :one
 -- Queue a right-to-erasure request. grace_until is pre-computed in Go
 -- (time.Now().UTC().Add(s.grace)) to avoid pgtype.Interval parameter type issues.
--- subject_id keeps the account's ID once the account itself is deleted.
-INSERT INTO "user".purge_requests (tenant_id, user_id, subject_id, requested_by, reason, grace_until)
-VALUES (@tenant_id, @subject_id::uuid, @subject_id::uuid, @requested_by, @reason, @grace_until)
+-- subject_id keeps the account's ID once the account itself is deleted, and
+-- subject_email and subject_name who it was filed for until they are erased.
+INSERT INTO "user".purge_requests (tenant_id, user_id, subject_id, requested_by, reason, grace_until,
+                                   subject_email, subject_name)
+SELECT @tenant_id, @subject_id::uuid, @subject_id::uuid, @requested_by, @reason, @grace_until, u.email, u.display_name
+FROM "user".users u WHERE u.id = @subject_id::uuid AND u.tenant_id = @tenant_id
 RETURNING id, tenant_id, subject_id, requested_by, reason, status,
-          grace_until, completed_at, created_at;
+          grace_until, completed_at, created_at, subject_email, subject_name;
 
 -- name: CancelPurgeRequest :one
 -- Cancel a pending purge request (e.g. the subject changed their mind),
@@ -135,7 +138,7 @@ RETURNING subject_id;
 -- name: ListPurgeRequests :many
 -- List all purge requests for a tenant, most recent first.
 SELECT id, tenant_id, subject_id, requested_by, reason, status,
-       grace_until, completed_at, created_at
+       grace_until, completed_at, created_at, subject_email, subject_name
 FROM "user".purge_requests
 WHERE tenant_id = @tenant_id
 ORDER BY created_at DESC
@@ -168,7 +171,7 @@ WHERE user_id = @user_id;
 
 -- name: CompletePurgeRequest :exec
 UPDATE "user".purge_requests
-SET status = 'completed', completed_at = NOW()
+SET status = 'completed', completed_at = NOW(), subject_email = NULL, subject_name = NULL
 WHERE id = @id;
 
 -- -----------------------------------------------------------------------

@@ -4,6 +4,7 @@ package retention
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/google/uuid"
@@ -115,7 +116,7 @@ func TestSweepIsAudited(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Update(ctx, tx, tenant, Policy{DeletedUsersEnabled: true, DeletedUsersDays: 30}); err != nil {
+	if _, err := svc.Update(ctx, tx, tenant, Policy{DeletedUsersEnabled: true, DeletedUsersDays: 30}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -139,5 +140,26 @@ func TestSweepIsAudited(t *testing.T) {
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'retention.purge_run'`, tenant); n != 1 {
 		t.Errorf("%d purge runs recorded in all, want only the sweep that removed someone", n)
+	}
+}
+
+// TestThePolicySaysWhoLastChangedIt checks that the retention policy says
+// when it was last changed and by whom.
+func TestThePolicySaysWhoLastChangedIt(t *testing.T) {
+	tenant := dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: NewService(dbtest.Pool(t))}).Mount)
+	path := "/tenants/" + tenant.String() + "/retention"
+	var p Policy
+	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, path, nil), &p)
+	if p.UpdatedAt != nil || p.UpdatedBy != nil {
+		t.Errorf("a policy never set: %+v, want no change recorded", p)
+	}
+	if rec := dbtest.Do(t, h, http.MethodPut, path, Policy{DeletedUsersEnabled: true, DeletedUsersDays: 45}); rec.Code != http.StatusOK {
+		t.Fatalf("set the policy: %d %s", rec.Code, rec.Body.String())
+	}
+	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, path, nil), &p)
+	if p.UpdatedAt == nil || p.UpdatedBy == nil || *p.UpdatedBy != admin.ID || p.UpdatedByEmail == nil || *p.UpdatedByEmail != admin.Email {
+		t.Errorf("the policy after a change: %+v, want when and by the admin", p)
 	}
 }

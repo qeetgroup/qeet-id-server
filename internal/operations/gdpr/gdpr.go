@@ -45,6 +45,13 @@ type Request struct {
 	GraceUntil  time.Time  `json:"grace_until"`
 	CompletedAt *time.Time `json:"completed_at"`
 	CreatedAt   time.Time  `json:"created_at"`
+	// The person's email and name as the request was filed, until they are
+	// erased; Redacted says they were.
+	SubjectEmail *string `json:"subject_email"`
+	SubjectName  *string `json:"subject_name"`
+	Redacted     bool    `json:"subject_redacted"`
+	// GraceDays is how long a request waits before the erasure runs.
+	GraceDays int `json:"grace_period_days"`
 }
 
 // Service handles erasure and data-export requests; Run is its background
@@ -121,6 +128,7 @@ func (s *Service) Request(ctx context.Context, in CreateInput, actor audit.Actor
 		return nil, err
 	}
 	req := purgeRequestFromRow(dbgen.ListPurgeRequestsRow(row))
+	req.GraceDays = s.GraceDays()
 	if err := audit.Record(ctx, tx, actor.Event(req.TenantID, "gdpr.erasure_requested", "purge_request", req.ID,
 		map[string]any{"user_id": req.UserID, "grace_until": req.GraceUntil})); err != nil {
 		return nil, err
@@ -182,23 +190,31 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Request, erro
 	}
 	out := make([]Request, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, *purgeRequestFromRow(r))
+		req := purgeRequestFromRow(r)
+		req.GraceDays = s.GraceDays()
+		out = append(out, *req)
 	}
 	return out, nil
 }
 
+// GraceDays is how many days an erasure request waits before it runs.
+func (s *Service) GraceDays() int { return int(s.grace / (24 * time.Hour)) }
+
 // purgeRequestFromRow converts a purge-request row to a Request.
 func purgeRequestFromRow(r dbgen.ListPurgeRequestsRow) *Request {
 	return &Request{
-		ID:          r.ID,
-		TenantID:    r.TenantID,
-		UserID:      r.SubjectID,
-		RequestedBy: toUUIDPtr(r.RequestedBy),
-		Reason:      r.Reason,
-		Status:      r.Status,
-		GraceUntil:  r.GraceUntil,
-		CompletedAt: toTimePtr(r.CompletedAt),
-		CreatedAt:   r.CreatedAt,
+		ID:           r.ID,
+		TenantID:     r.TenantID,
+		UserID:       r.SubjectID,
+		RequestedBy:  toUUIDPtr(r.RequestedBy),
+		Reason:       r.Reason,
+		Status:       r.Status,
+		GraceUntil:   r.GraceUntil,
+		CompletedAt:  toTimePtr(r.CompletedAt),
+		CreatedAt:    r.CreatedAt,
+		SubjectEmail: r.SubjectEmail,
+		SubjectName:  r.SubjectName,
+		Redacted:     r.Status == "completed",
 	}
 }
 
@@ -320,7 +336,8 @@ func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) err
 	}
 	tag, err := tx.Exec(ctx, `
 		UPDATE "user".purge_requests
-		SET status = 'completed', completed_at = NOW(), lease_owner = NULL, lease_until = NULL
+		SET status = 'completed', completed_at = NOW(), lease_owner = NULL, lease_until = NULL,
+		    subject_email = NULL, subject_name = NULL
 		WHERE id = $1 AND status = 'pending' AND lease_owner = $2
 	`, requestID, s.workerID)
 	if err != nil {
