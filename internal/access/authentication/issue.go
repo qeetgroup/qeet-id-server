@@ -156,6 +156,9 @@ func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID u
 	if err := audit.Record(ctx, tx, signInEvent(userID, tenantID, "session", sessionID, ip, ua, method, auditMeta)); err != nil {
 		return nil, err
 	}
+	if err := user.RecordActive(ctx, tx, tenantID, userID); err != nil {
+		return nil, err
+	}
 	return &TokenPair{
 		AccessToken:      access,
 		TokenType:        "Bearer",

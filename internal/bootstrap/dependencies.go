@@ -399,7 +399,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	abacService.SetPlanGate(entitlementSvc) // ABAC
 	// Current-usage provider for the billing usage-vs-limits display.
 	entitlementSvc.SetUsageResolver(entitlementUsageResolver{
-		invites: inviteService, oidc: oidcService, apikeys: apikeyService, rbacRepo: rbacRepo,
+		invites: inviteService, oidc: oidcService, apikeys: apikeyService, rbacRepo: rbacRepo, users: userRepo,
 	})
 	// custom domain — extracted from its inline handler so the gate can be wired.
 	domainVerifyService := domainverify.NewService(pool, outboundPolicy)

@@ -5,6 +5,9 @@ import (
 	"net/http"
 	"time"
 
+	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
@@ -66,6 +69,7 @@ type entitlementUsageResolver struct {
 	oidc     *oidc.Service
 	apikeys  *apikey.Service
 	rbacRepo *rbac.Repository
+	users    *user.Repository
 }
 
 func (u entitlementUsageResolver) Usage(ctx context.Context, tenantID uuid.UUID) (map[string]int, error) {
@@ -88,6 +92,11 @@ func (u entitlementUsageResolver) Usage(ctx context.Context, tenantID uuid.UUID)
 	if u.rbacRepo != nil {
 		if n, err := u.rbacRepo.CountCustomRoles(ctx, tenantID); err == nil {
 			out["custom_roles"] = int(n)
+		}
+	}
+	if u.users != nil {
+		if n, err := u.users.CountMonthlyActive(ctx, tenantID); err == nil {
+			out[entitlements.LimitMAU] = n
 		}
 	}
 	return out, nil
