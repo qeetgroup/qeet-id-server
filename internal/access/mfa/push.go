@@ -178,7 +178,9 @@ const (
 // the user has linked, and returns its ID and the number the phone must send
 // back to approve it, shown where it was asked for. It fails with
 // ErrMFAPushLimited past the bounds above, and with ErrMFAPushDeliveryFailed,
-// closing the challenge, when no phone accepted it.
+// closing the challenge, when no phone accepted it. A phone whose push service
+// has no credentials here is not a failure: like every phone when no push
+// service is configured, it finds the request when the app next opens.
 func (s *Service) CreatePushChallenge(ctx context.Context, userID uuid.UUID, action string, pctx PushChallengeContext) (uuid.UUID, int, error) {
 	ctxJSON, err := json.Marshal(pctx)
 	if err != nil {
@@ -223,7 +225,7 @@ func (s *Service) CreatePushChallenge(ctx context.Context, userID uuid.UUID, act
 	if !s.pushConfigured() {
 		return ch.ID, int(number), nil // push delivery not configured
 	}
-	delivered := 0
+	delivered := 0 // sent, or left for the app to find when it opens
 	for _, t := range tokens {
 		err := s.deliverPush(ctx, t, ch.ID, action)
 		switch {
@@ -234,6 +236,7 @@ func (s *Service) CreatePushChallenge(ctx context.Context, userID uuid.UUID, act
 			s.retirePushToken(ctx, userID, t.token)
 			slog.Info("push device no longer registered; retired", "challenge_id", ch.ID, "device_ref", pushTokenRef(t.token))
 		case errors.Is(err, errPushNotConfigured):
+			delivered++
 			slog.Warn("push service for this phone is not configured", "challenge_id", ch.ID, "platform", t.platform, "device_ref", pushTokenRef(t.token))
 		default:
 			slog.Warn("push delivery failed", "challenge_id", ch.ID, "platform", t.platform, "device_ref", pushTokenRef(t.token), "err", err)
@@ -570,6 +573,8 @@ func (h *Handler) MountPublic(r chi.Router) {
 	r.Post("/mfa/push/devices/{id}/unlink", h.unlinkPushDevice)
 	// A linked phone tells the server its new push token when the platform rotates it.
 	r.Post("/mfa/push/devices/{id}/push-token", h.updatePushToken)
+	// A linked phone asks for requests waiting on it, for when a push was late or lost.
+	r.Post("/mfa/push/devices/{id}/pending", h.listPendingPushChallenges)
 	// The mobile app links the phone with a pairing code, holding no session.
 	if h.PairingThrottle != nil {
 		r.With(h.PairingThrottle).Post("/mfa/push/pairing/claim", h.claimPushPairing)
@@ -735,6 +740,74 @@ func (h *Handler) updatePushToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// listPendingPushChallenges → POST /v1/mfa/push/devices/{id}/pending: a linked phone asks for
+// the sign-in requests waiting on its account, proving it is that device with its current
+// device credential (sent in the body, never in a URL). The app calls it when it comes to the
+// foreground, so a request whose push was delayed or dropped can still be answered.
+func (h *Handler) listPendingPushChallenges(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	var in unlinkPushDeviceInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if in.DeviceToken == "" || in.UserID == uuid.Nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("user_id and device_token required"))
+		return
+	}
+	challenges, err := h.Service.PendingPushChallenges(r.Context(), id, in.UserID, in.DeviceToken)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"challenges": challenges})
+}
+
+// maxPendingPushChallenges bounds the pending list; creating requests is already limited to a
+// few every ten minutes, so this is never reached in normal use.
+const maxPendingPushChallenges = 10
+
+// PendingPushChallenges returns the user's requests still waiting for an answer, newest first,
+// for the linked phone deviceID. The phone proves itself with its device credential, which must
+// not have expired; ErrMFAPushUnauthorized otherwise.
+func (s *Service) PendingPushChallenges(ctx context.Context, deviceID, userID uuid.UUID, deviceToken string) ([]PushChallenge, error) {
+	var found uuid.UUID
+	err := s.pool.QueryRow(ctx, `
+		SELECT id FROM auth.mfa_push_devices
+		WHERE id = $1 AND user_id = $2 AND device_token_hash = $3 AND device_token_expires_at > NOW()
+	`, deviceID, userID, secretHash(deviceToken)).Scan(&found)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrMFAPushUnauthorized
+	}
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, action, context, status, expires_at, created_at
+		FROM auth.mfa_push_challenges
+		WHERE user_id = $1 AND status = 'pending' AND expires_at > NOW()
+		ORDER BY created_at DESC
+		LIMIT $2
+	`, userID, maxPendingPushChallenges)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []PushChallenge{}
+	for rows.Next() {
+		var c PushChallenge
+		if err := rows.Scan(&c.ID, &c.UserID, &c.Action, &c.Context, &c.Status, &c.ExpiresAt, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // UpdatePushToken stores a phone's new push token, sealed like the one it replaces. The phone

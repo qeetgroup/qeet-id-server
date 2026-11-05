@@ -3,6 +3,7 @@
 package mfa
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"testing"
@@ -14,8 +15,8 @@ import (
 )
 
 // TestNativeAppLinkAndTokenRotation checks what the native apps rely on: the pairing claim
-// names the account, and a linked phone replaces its rotated push token with its current
-// device credential only, once per phone.
+// names the account, a linked phone replaces its rotated push token with its current
+// device credential only, once per phone, and it can list the requests waiting on it.
 func TestNativeAppLinkAndTokenRotation(t *testing.T) {
 	ctx := dbtest.Context(t)
 	svc, _ := pushServices(t, newExpo(t))
@@ -91,5 +92,41 @@ func TestNativeAppLinkAndTokenRotation(t *testing.T) {
 	}
 	if rec := dbtest.Do(t, h, http.MethodPost, path, map[string]any{"user_id": a.ID, "device_token": fresh.DeviceToken}); rec.Code != http.StatusBadRequest {
 		t.Errorf("POST push-token without push_token: %d, want 400", rec.Code)
+	}
+
+	// The iOS phone's push service has no credentials here (only Expo is configured), so the
+	// request stays open for the app to find when it opens, rather than failing the sign-in.
+	challengeID, _, err := svc.CreatePushChallenge(ctx, a.ID, "sign_in", PushChallengeContext{IP: "198.51.100.7"})
+	if err != nil {
+		t.Fatalf("a request to a phone whose push service is not configured: %v", err)
+	}
+	pending := "/mfa/push/devices/" + fresh.Device.ID.String() + "/pending"
+	rec := dbtest.Do(t, h, http.MethodPost, pending, map[string]any{"user_id": a.ID, "device_token": fresh.DeviceToken})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST pending: %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	var list struct {
+		Challenges []PushChallenge `json:"challenges"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Challenges) != 1 || list.Challenges[0].ID != challengeID || list.Challenges[0].Status != "pending" {
+		t.Errorf("pending = %+v, want the one request", list.Challenges)
+	}
+	if rec := dbtest.Do(t, h, http.MethodPost, pending, map[string]any{"user_id": a.ID, "device_token": "not-the-credential"}); rec.Code != http.StatusUnauthorized {
+		t.Errorf("POST pending with the wrong credential: %d, want 401", rec.Code)
+	}
+	b, _ := member(t)
+	if _, err := svc.PendingPushChallenges(ctx, fresh.Device.ID, b.ID, fresh.DeviceToken); !errors.Is(err, errs.ErrMFAPushUnauthorized) {
+		t.Errorf("another account's id with this phone's credential: %v, want %v", err, errs.ErrMFAPushUnauthorized)
+	}
+
+	// An answered request is no longer pending.
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE auth.mfa_push_challenges SET status = 'denied' WHERE id = $1`, challengeID); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := svc.PendingPushChallenges(ctx, fresh.Device.ID, a.ID, fresh.DeviceToken); err != nil || len(got) != 0 {
+		t.Errorf("pending after an answer = %v, %v, want none", got, err)
 	}
 }

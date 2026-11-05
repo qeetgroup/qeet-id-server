@@ -621,6 +621,7 @@ func csrfExemptPaths() []string {
 		"/v1/mfa/push/challenges/",          // a linked phone answers with its device credential (no cookie session)
 		"/v1/mfa/push/devices/*/unlink",     // a linked phone removes itself with its device credential (no cookie session)
 		"/v1/mfa/push/devices/*/push-token", // a linked phone replaces its rotated push token with its device credential (no cookie session)
+		"/v1/mfa/push/devices/*/pending",    // a linked phone lists requests waiting on it with its device credential (no cookie session)
 		"/v1/mfa/push/pairing/claim",        // a phone links with a one-time pairing code (no cookie session)
 	}
 }
