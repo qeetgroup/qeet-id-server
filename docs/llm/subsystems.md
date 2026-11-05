@@ -126,7 +126,8 @@ go-webauthn."* Recovery: *"forgot-password and magic-link login. Both are statel
 mfa/totp.go          TOTP and recovery codes
 mfa/otp.go           SMS and email codes
 mfa/stepup.go        step-up of a session
-mfa/push.go          push approval — pairs with the qeet-id-auth mobile app
+mfa/push.go          push approval — pairs with the Qeet ID mobile apps (native iOS and Android; the React Native qeet-id-auth until it is retired)
+mfa/pushnative.go    delivery by token: APNs (APNS_*), FCM (FCM_SERVICE_ACCOUNT), Expo tokens via EXPO_PUSH_URL
 passkeys/passkey.go  WebAuthn registration + login ceremonies (single file)
 recovery/http.go     handlers
 recovery/recovery.go forgot-password, magic link

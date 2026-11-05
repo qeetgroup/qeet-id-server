@@ -24,6 +24,8 @@ type Service struct {
 	sender          notifier.Sender           // delivers email and SMS codes
 	pushURL         string                    // Expo push API endpoint ("" = push delivery off)
 	pushAccessToken string                    // sent to the push service when set (SetExpoAccessToken)
+	apns            *apnsClient               // Apple Push Notification service for the iOS app (EnableAPNs; nil = off)
+	fcm             *fcmClient                // Firebase Cloud Messaging for the Android app (EnableFCM; nil = off)
 	box             *envelope.Cipher          // encrypts TOTP secrets and push tokens (SetCipher)
 	webauthn        WebAuthnVerifier          // passkeys as a sign-in second factor (nil = not offered)
 	plan            PlanGate                  // gates SMS codes by plan (nil = no gate)

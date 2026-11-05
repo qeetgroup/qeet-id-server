@@ -196,9 +196,17 @@ func (s *Service) WithdrawPushPairing(ctx context.Context, userID, id uuid.UUID)
 // is now linked to, the device record and its device credential (shown only
 // now).
 type PushPairingClaim struct {
-	UserID      uuid.UUID  `json:"user_id"`
-	Device      PushDevice `json:"device"`
-	DeviceToken string     `json:"device_token"`
+	UserID      uuid.UUID           `json:"user_id"`
+	Device      PushDevice          `json:"device"`
+	DeviceToken string              `json:"device_token"`
+	Account     *PushPairingAccount `json:"account,omitempty"`
+}
+
+// PushPairingAccount names the account the phone now approves sign-ins for, so the app can
+// show it. Only the holder of the one-time pairing code, which the signed-in person asked for,
+// receives it.
+type PushPairingAccount struct {
+	Email string `json:"email"`
 }
 
 // ClaimPushPairing links the phone presenting code to the account that asked
@@ -217,14 +225,15 @@ func (s *Service) ClaimPushPairing(ctx context.Context, code, name, pushToken, p
 	defer tx.Rollback(ctx)
 	var pairingID, userID uuid.UUID
 	var tenantID *uuid.UUID
+	var email string
 	err = tx.QueryRow(ctx, `
-		SELECT p.id, p.user_id, p.tenant_id
+		SELECT p.id, p.user_id, p.tenant_id, u.email
 		FROM auth.mfa_push_pairings p
 		JOIN "user".users u ON u.id = p.user_id
 		WHERE p.code_hash = $1 AND p.used_at IS NULL AND p.expires_at > NOW()
 		  AND u.status = 'active' AND u.deleted_at IS NULL
 		FOR UPDATE OF p
-	`, secretHash(normalized)).Scan(&pairingID, &userID, &tenantID)
+	`, secretHash(normalized)).Scan(&pairingID, &userID, &tenantID, &email)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PushPairingClaim{}, errs.ErrMFAPairingCodeInvalid
 	}
@@ -251,7 +260,7 @@ func (s *Service) ClaimPushPairing(ctx context.Context, code, name, pushToken, p
 	if err := tx.Commit(ctx); err != nil {
 		return PushPairingClaim{}, err
 	}
-	return PushPairingClaim{UserID: userID, Device: device, DeviceToken: token}, nil
+	return PushPairingClaim{UserID: userID, Device: device, DeviceToken: token, Account: &PushPairingAccount{Email: email}}, nil
 }
 
 // PurgeExpiredPushPairings deletes pairing codes that expired longer ago than

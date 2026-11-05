@@ -166,6 +166,23 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	mfaService := mfa.NewService(pool, cfg.JWTIssuer, sender, cfg.ExpoPushURL)
 	mfaService.SetCipher(sharedCipher)
 	mfaService.SetExpoAccessToken(cfg.ExpoAccessToken)
+	if cfg.APNsAuthKey != "" {
+		if err := mfaService.EnableAPNs(mfa.APNsConfig{
+			AuthKey: cfg.APNsAuthKey, KeyID: cfg.APNsKeyID, TeamID: cfg.APNsTeamID,
+			BundleID: cfg.APNsBundleID, Sandbox: cfg.APNsSandbox,
+		}); err != nil {
+			slog.Error("init apns", "err", err)
+			os.Exit(1)
+		}
+		slog.Info("push to the iOS app enabled (APNs)", "bundle_id", cfg.APNsBundleID, "sandbox", cfg.APNsSandbox)
+	}
+	if cfg.FCMServiceAccount != "" {
+		if err := mfaService.EnableFCM(mfa.FCMConfig{ServiceAccountJSON: cfg.FCMServiceAccount}); err != nil {
+			slog.Error("init fcm", "err", err)
+			os.Exit(1)
+		}
+		slog.Info("push to the Android app enabled (FCM)")
+	}
 	authService.SetMFA(mfaService)                       // gate password login on a second factor when enrolled
 	authService.SetRegistrationPolicy(authPolicyService) // gate hosted signup + the password check (signup, register, change)
 	authService.SetMethodPolicy(authPolicyService)       // password sign-in only where the tenant allows it

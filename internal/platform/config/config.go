@@ -400,6 +400,18 @@ type Config struct {
 	// enhanced push security is turned on for the mobile app's project.
 	ExpoAccessToken string `envconfig:"EXPO_ACCESS_TOKEN" default:""`
 
+	// Native push for the Qeet ID apps. Each service is off until its credentials are set.
+	// APNsAuthKey is the token-signing key (.p8, PEM text) from the Apple Developer account.
+	APNsAuthKey  string `envconfig:"APNS_AUTH_KEY" default:""`
+	APNsKeyID    string `envconfig:"APNS_KEY_ID" default:""`
+	APNsTeamID   string `envconfig:"APNS_TEAM_ID" default:""`
+	APNsBundleID string `envconfig:"APNS_BUNDLE_ID" default:"com.qeetgroup.qeetid"`
+	// APNsSandbox sends to the development APNs host, for builds signed for development.
+	APNsSandbox bool `envconfig:"APNS_SANDBOX" default:"false"`
+	// FCMServiceAccount is the Firebase project's service-account key (JSON text) for the
+	// Android app.
+	FCMServiceAccount string `envconfig:"FCM_SERVICE_ACCOUNT" default:""`
+
 	// Qeet AI platform provider, used by organisations without their own key; with
 	// QeetaiProvider empty there is none and such organisations get 409
 	// qeetai_unconfigured. QeetaiProvider is "anthropic", "openai" (or any compatible

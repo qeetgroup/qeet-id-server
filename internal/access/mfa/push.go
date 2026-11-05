@@ -220,21 +220,23 @@ func (s *Service) CreatePushChallenge(ctx context.Context, userID uuid.UUID, act
 	if err := tx.Commit(ctx); err != nil {
 		return uuid.Nil, 0, err
 	}
-	if s.pushURL == "" {
+	if !s.pushConfigured() {
 		return ch.ID, int(number), nil // push delivery not configured
 	}
 	delivered := 0
-	for _, tok := range tokens {
-		err := s.sendExpoPush(ctx, tok, ch.ID, action)
+	for _, t := range tokens {
+		err := s.deliverPush(ctx, t, ch.ID, action)
 		switch {
 		case err == nil:
 			delivered++
 		case errors.Is(err, errPushDeviceGone):
 			// The app was removed from that phone: stop sending to it.
-			s.retirePushToken(ctx, userID, tok)
-			slog.Info("push device no longer registered; retired", "challenge_id", ch.ID, "device_ref", pushTokenRef(tok))
+			s.retirePushToken(ctx, userID, t.token)
+			slog.Info("push device no longer registered; retired", "challenge_id", ch.ID, "device_ref", pushTokenRef(t.token))
+		case errors.Is(err, errPushNotConfigured):
+			slog.Warn("push service for this phone is not configured", "challenge_id", ch.ID, "platform", t.platform, "device_ref", pushTokenRef(t.token))
 		default:
-			slog.Warn("push delivery failed", "challenge_id", ch.ID, "device_ref", pushTokenRef(tok), "err", err)
+			slog.Warn("push delivery failed", "challenge_id", ch.ID, "platform", t.platform, "device_ref", pushTokenRef(t.token), "err", err)
 		}
 	}
 	if len(tokens) > 0 && delivered == 0 {
@@ -354,6 +356,7 @@ func (s *Service) RespondToPushChallenge(ctx context.Context, challengeID, userI
 
 type storedPushToken struct {
 	id         uuid.UUID
+	platform   string
 	legacy     *string
 	ciphertext []byte
 	nonce      []byte
@@ -361,9 +364,9 @@ type storedPushToken struct {
 	device     *string
 }
 
-func (s *Service) loadPushTokens(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]string, error) {
+func (s *Service) loadPushTokens(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]pushTarget, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT id, push_token, push_token_ct, push_token_nonce, push_token_hash, device_token
+		SELECT id, platform, push_token, push_token_ct, push_token_nonce, push_token_hash, device_token
 		FROM auth.mfa_push_devices
 		WHERE user_id = $1 AND device_token_expires_at > NOW()
 	`, userID)
@@ -373,7 +376,7 @@ func (s *Service) loadPushTokens(ctx context.Context, tx pgx.Tx, userID uuid.UUI
 	var records []storedPushToken
 	for rows.Next() {
 		var record storedPushToken
-		if err := rows.Scan(&record.id, &record.legacy, &record.ciphertext, &record.nonce, &record.hash, &record.device); err != nil {
+		if err := rows.Scan(&record.id, &record.platform, &record.legacy, &record.ciphertext, &record.nonce, &record.hash, &record.device); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -385,7 +388,7 @@ func (s *Service) loadPushTokens(ctx context.Context, tx pgx.Tx, userID uuid.UUI
 	}
 	rows.Close()
 
-	tokens := make([]string, 0, len(records))
+	tokens := make([]pushTarget, 0, len(records))
 	for _, record := range records {
 		if len(record.ciphertext) > 0 {
 			if s.box == nil {
@@ -398,7 +401,7 @@ func (s *Service) loadPushTokens(ctx context.Context, tx pgx.Tx, userID uuid.UUI
 			if err != nil {
 				return nil, err
 			}
-			tokens = append(tokens, string(plain))
+			tokens = append(tokens, pushTarget{token: string(plain), platform: record.platform})
 			continue
 		}
 		if record.legacy == nil {
@@ -426,7 +429,7 @@ func (s *Service) loadPushTokens(ctx context.Context, tx pgx.Tx, userID uuid.UUI
 		`, record.id, ciphertext, nonce, pushTokenHash, deviceTokenHash); err != nil {
 			return nil, err
 		}
-		tokens = append(tokens, *record.legacy)
+		tokens = append(tokens, pushTarget{token: *record.legacy, platform: record.platform})
 	}
 	return tokens, nil
 }
@@ -565,6 +568,8 @@ func (h *Handler) MountPublic(r chi.Router) {
 	// A linked phone removes itself with its own device credential: the app
 	// holds no signed-in session to call the authenticated route with.
 	r.Post("/mfa/push/devices/{id}/unlink", h.unlinkPushDevice)
+	// A linked phone tells the server its new push token when the platform rotates it.
+	r.Post("/mfa/push/devices/{id}/push-token", h.updatePushToken)
 	// The mobile app links the phone with a pairing code, holding no session.
 	if h.PairingThrottle != nil {
 		r.With(h.PairingThrottle).Post("/mfa/push/pairing/claim", h.claimPushPairing)
@@ -691,6 +696,91 @@ func (h *Handler) unlinkPushDevice(w http.ResponseWriter, r *http.Request) {
 	h.Service.auditPushDevice(r, nil, in.UserID, id, "mfa.push_device_unlinked")
 	h.Service.tellPhoneUnlinked(r.Context(), in.UserID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type updatePushTokenInput struct {
+	UserID      uuid.UUID `json:"user_id"`
+	DeviceToken string    `json:"device_token"`
+	PushToken   string    `json:"push_token"`
+}
+
+// maxPushTokenLength bounds a push token: APNs tokens are 64 hex characters and FCM
+// registration tokens a few hundred.
+const maxPushTokenLength = 4096
+
+// updatePushToken → POST /v1/mfa/push/devices/{id}/push-token: a linked phone replaces the
+// push token its platform rotated, proving it is that device with its current (unexpired)
+// device credential. The credential, the link's expiry and the platform are unchanged.
+func (h *Handler) updatePushToken(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	var in updatePushTokenInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if in.DeviceToken == "" || in.UserID == uuid.Nil || in.PushToken == "" {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("user_id, device_token and push_token required"))
+		return
+	}
+	if len(in.PushToken) > maxPushTokenLength {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("push_token is too long"))
+		return
+	}
+	if err := h.Service.UpdatePushToken(r.Context(), id, in.UserID, in.DeviceToken, in.PushToken); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// UpdatePushToken stores a phone's new push token, sealed like the one it replaces. The phone
+// proves itself with its device credential, which must not have expired. Another of the
+// user's links already holding the same token (the same app, linked before) is removed, so the
+// phone is sent each request once. ErrMFAPushUnauthorized when the device or credential does
+// not match.
+func (s *Service) UpdatePushToken(ctx context.Context, deviceID, userID uuid.UUID, deviceToken, pushToken string) error {
+	if s.box == nil {
+		return errs.ErrInternalServer.WithDetail("MFA secret encryption is unavailable")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var found uuid.UUID
+	err = tx.QueryRow(ctx, `
+		SELECT id FROM auth.mfa_push_devices
+		WHERE id = $1 AND user_id = $2 AND device_token_hash = $3 AND device_token_expires_at > NOW()
+		FOR UPDATE
+	`, deviceID, userID, secretHash(deviceToken)).Scan(&found)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errs.ErrMFAPushUnauthorized
+	}
+	if err != nil {
+		return err
+	}
+	pushTokenHash := secretHash(pushToken)
+	ciphertext, nonce, err := s.box.Seal(userID, "mfa-push-token", pushTokenHash, []byte(pushToken))
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM auth.mfa_push_devices WHERE user_id = $1 AND push_token_hash = $2 AND id <> $3
+	`, userID, pushTokenHash, deviceID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE auth.mfa_push_devices
+		SET push_token = NULL, push_token_ct = $2, push_token_nonce = $3, push_token_hash = $4, encryption_version = 1
+		WHERE id = $1
+	`, deviceID, ciphertext, nonce, pushTokenHash); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // memberInScope returns the member a route names, refused as not found unless

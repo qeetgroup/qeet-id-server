@@ -175,7 +175,7 @@ func NewRouter(d Deps) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(chimw.RequestID)
-	r.Use(httpx.RequestIDHeader) // every response names its request, for support and tracing
+	r.Use(httpx.RequestIDHeader)    // every response names its request, for support and tracing
 	r.Use(httpx.ClientIPContext)    // the client address, for audit records written below a handler
 	r.Use(auth.SignInClientContext) // the application a hosted sign-in is for, for its audit record
 	// chimw.RealIP is deliberately not used: it trusts X-Forwarded-For from anyone.
@@ -607,20 +607,21 @@ func csrfExemptPaths() []string {
 		"/v1/auth/forgot-password", "/v1/auth/reset-password",
 		"/v1/auth/magic-link/start", "/v1/auth/magic-link/consume", "/v1/auth/magic-link/resend", // not .../session: it sets the hosted-login cookie
 		"/v1/passkeys/login/begin", "/v1/passkeys/login/finish", // not .../session: it sets the hosted-login cookie
-		"/v1/social/exchange",           // one-time code exchange, no cookie session
-		"/v1/social/*/callback",         // Apple response_mode=form_post lands cross-site
-		"/v1/invites/accept",            // invitation token in the body, no cookie session
-		"/v1/invites/accept/passkey/",   // the same, accepting with a passkey
-		"/v1/invites/lookup",            // read-only preview by invitation token
-		"/v1/billing/webhooks/",         // provider-signed (Stripe/Razorpay), no cookie session
-		"/v1/webhooks/ses",              // SNS-signed SES events, no cookie session
-		"/v1/billing/sandbox/",          // dev-only mock hosted-checkout page + pay (no cookie session)
-		"/v1/agents/token",              // agent-credential auth (no cookie session)
-		"/v1/credentials/verify",        // public JWT-VC verification (no cookie session)
-		"/v1/sso/discovery",             // read-only lookup by an address's domain (no cookie session)
-		"/v1/mfa/push/challenges/",      // a linked phone answers with its device credential (no cookie session)
-		"/v1/mfa/push/devices/*/unlink", // a linked phone removes itself with its device credential (no cookie session)
-		"/v1/mfa/push/pairing/claim",    // a phone links with a one-time pairing code (no cookie session)
+		"/v1/social/exchange",               // one-time code exchange, no cookie session
+		"/v1/social/*/callback",             // Apple response_mode=form_post lands cross-site
+		"/v1/invites/accept",                // invitation token in the body, no cookie session
+		"/v1/invites/accept/passkey/",       // the same, accepting with a passkey
+		"/v1/invites/lookup",                // read-only preview by invitation token
+		"/v1/billing/webhooks/",             // provider-signed (Stripe/Razorpay), no cookie session
+		"/v1/webhooks/ses",                  // SNS-signed SES events, no cookie session
+		"/v1/billing/sandbox/",              // dev-only mock hosted-checkout page + pay (no cookie session)
+		"/v1/agents/token",                  // agent-credential auth (no cookie session)
+		"/v1/credentials/verify",            // public JWT-VC verification (no cookie session)
+		"/v1/sso/discovery",                 // read-only lookup by an address's domain (no cookie session)
+		"/v1/mfa/push/challenges/",          // a linked phone answers with its device credential (no cookie session)
+		"/v1/mfa/push/devices/*/unlink",     // a linked phone removes itself with its device credential (no cookie session)
+		"/v1/mfa/push/devices/*/push-token", // a linked phone replaces its rotated push token with its device credential (no cookie session)
+		"/v1/mfa/push/pairing/claim",        // a phone links with a one-time pairing code (no cookie session)
 	}
 }
 
