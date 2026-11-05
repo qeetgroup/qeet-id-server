@@ -2621,14 +2621,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required: [invite]
                 properties:
                   invite:
-                    type: object
-                    additionalProperties: true
-                    properties:
-                      delivery:
-                        $ref: '#/components/schemas/InviteDelivery'
+                    $ref: '#/components/schemas/Invite'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '402': {description: 'The plan has no seat left for another invitation (billing.plan_limit).'}
@@ -4219,7 +4215,8 @@ components:
               name: {type: string}
     GroupCreateInput:
       type: object
-      required: [description, name, parent_id, tenant_id]
+      description: The group's organisation is the caller's; it is never taken from the body.
+      required: [name]
       properties:
         description:
           type: string
@@ -4228,9 +4225,7 @@ components:
         parent_id:
           type: [string, 'null']
           format: uuid
-        tenant_id:
-          type: string
-          format: uuid
+          description: One of the organisation's groups to nest it under; omit or null for a top-level group.
     GroupTemplate:
       type: object
       required: [created_at, description, group_count, id, name, nodes, tenant_id, updated_at]
