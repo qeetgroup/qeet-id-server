@@ -661,6 +661,9 @@ func (c *Config) Validate() error {
 		if c.PublicBaseURL == "" {
 			problems = append(problems, "PUBLIC_BASE_URL is required in prod, so no absolute URL is built from a request's Host")
 		}
+		if !isIssuerURL(c.JWTIssuer) {
+			problems = append(problems, "JWT_ISSUER must be an https URL with no query or fragment, such as https://api.example.com (OpenID Connect discovery requires it; the default qeet-id is for development)")
+		}
 	case EnvLocal:
 		// A local runtime is reachable only on this machine: its browser-facing
 		// hosts must be loopback names, or https on its own kit zone, so it can
@@ -843,4 +846,13 @@ func (c *Config) TracingConfig() tracing.Config {
 		ServiceEnv:  c.ServiceEnv,
 		SampleRatio: c.OTelSampleRatio,
 	}
+}
+
+// isIssuerURL reports whether s can be an OpenID Connect issuer: an https URL
+// with a host and no query or fragment (OpenID Connect Discovery 1.0, §3). It
+// is what relying parties compare the iss claim and the discovery document to.
+func isIssuerURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil &&
+		u.RawQuery == "" && !u.ForceQuery && u.Fragment == "" && !strings.HasSuffix(s, "#")
 }
