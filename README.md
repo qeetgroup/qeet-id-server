@@ -121,7 +121,7 @@ bounded context must not import `cmd/*` or `internal/bootstrap`.
 
 | Layer | Technology |
 | :--- | :--- |
-| Language | Go 1.27 (minimum 1.26) |
+| Language | Go 1.27 |
 | HTTP | chi v5, REST, OpenAPI 3.1 |
 | Database | PostgreSQL 16, pgx v5, SQL/sqlc |
 | Authentication | WebAuthn/FIDO2, OAuth 2.0, OpenID Connect, SAML 2.0, SCIM 2.0 |
@@ -134,7 +134,7 @@ bounded context must not import `cmd/*` or `internal/bootstrap`.
 
 ## 🚀 Quick start
 
-**You need:** Go 1.26 or newer (it fetches the pinned toolchain, go1.27.3, itself) &middot; Docker (with Compose) &middot; `make` &middot; `openssl`
+**You need:** Go 1.27 or newer (it fetches the pinned toolchain, go1.27.3, itself) &middot; Docker (with Compose) &middot; `make` &middot; `openssl`
 
 ```bash
 git clone https://github.com/qeetgroup/qeet-id-server.git

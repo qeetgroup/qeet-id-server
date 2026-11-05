@@ -1,10 +1,10 @@
 .PHONY: install dev dev-secrets build test test-db lint sqlc sqlc-check vuln sast ci migrate-up migrate-down db-up db-down db-reset seed seed-reset kill
 
 # Tool versions; keep in step with .github/workflows/ci.yml.
-GOLANGCI_VERSION    = v2.14.0
+GOLANGCI_VERSION    = v2.15.0
 SQLC_VERSION        = v1.31.1
 GOVULNCHECK_VERSION = v1.9.0
-GOSEC_VERSION       = v2.29.0
+GOSEC_VERSION       = v2.30.0
 GOSEC_XTOOLS        = v0.52.0
 
 ifneq (,$(wildcard .env))
