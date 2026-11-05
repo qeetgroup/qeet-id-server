@@ -1,7 +1,7 @@
 # Keep in step with go.mod's toolchain line: CI builds, tests and scans with that Go.
 # Both bases are pinned by digest, so a rebuild of a commit uses the same bytes;
 # move the tag and the digest together (docker buildx imagetools inspect <tag>).
-FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -26,7 +26,7 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
                 -X github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo.Date=${DATE}" \
       -o /out/qeet-id-scheduler ./cmd/scheduler
 
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329
 COPY --from=build /out/qeet-id-server /qeet-id-server
 # The API runs the scheduled jobs itself (embedded workers); the standalone
 # scheduler is here for deployments that run them apart.

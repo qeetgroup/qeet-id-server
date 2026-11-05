@@ -42,7 +42,7 @@ organization or product understanding; this repository does not restate them.
 
 ## Working style in this repository
 
-- **Read before editing.** 77 packages, and similar names mean different things —
+- **Read before editing.** Over a hundred packages, and similar names mean different things —
   `internal/access/risk/ipallow` is not `internal/access/threat/risk`.
 - **Prefer `rg`/`grep` over guessing a path.** Use the architecture map.
 - **Match the neighbouring package's shape** rather than introducing an abstraction: `queries.sql` +
@@ -58,19 +58,11 @@ go build ./... && go test -race ./... && make lint && git diff
 make test-db      # if the change touched SQL, tenant scoping or sign-in
 ```
 
-## Issues and the project board
+## Tickets
 
-Issues live in `qeetgroup/qeet-id-server`.
-
-- **Title:** `[feat] …`, `[fix] …`, `[chore] …`
-- **Body:** Context / Requirements / Acceptance criteria
-- Roadmap board: org Project **#24**. Setting board fields needs the `project` scope —
-  `gh auth refresh -s project`.
-
-> **Note:** earlier revisions of this file referenced subagents at `.claude/agents/issue-tracker.md`
-> and `.claude/agents/product-manager.md`. **No `.claude/` directory exists in this repository.**
-> Those references were dangling and have been removed rather than recreated. Create the agents if
-> they are wanted; do not assume they are available.
+Name the ticket in the commit or pull request title when there is one. Never put a ticket key or
+tracker link in code, comments, tests, migrations, OpenAPI documents or Markdown docs: name the
+thing instead.
 
 ## Escalate rather than proceed
 

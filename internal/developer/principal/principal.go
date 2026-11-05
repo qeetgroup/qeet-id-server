@@ -408,7 +408,7 @@ func (h *Handler) tokenEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 	clientID := r.Form.Get("client_id")
 	clientSecret := r.Form.Get("client_secret")
-	if u, p, ok := r.BasicAuth(); ok {
+	if u, p, ok := httpx.ClientBasicAuth(r); ok {
 		clientID, clientSecret = u, p
 	}
 	if clientID == "" || clientSecret == "" {

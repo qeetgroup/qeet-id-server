@@ -108,6 +108,10 @@ var RecordSweeps = []Sweep{
 		SELECT n.ctid FROM auth.notifications n WHERE n.created_at < NOW() - INTERVAL '90 days' LIMIT $1))`},
 	{"access decisions", `DELETE FROM auth.authz_decisions WHERE ctid = ANY(ARRAY(
 		SELECT d.ctid FROM auth.authz_decisions d WHERE d.decided_at < NOW() - INTERVAL '30 days' LIMIT $1))`},
+	// 13 months, so a year-on-year comparison and the last invoice's month remain.
+	{"monthly active users", `DELETE FROM tenant.monthly_active_users WHERE ctid = ANY(ARRAY(
+		SELECT m.ctid FROM tenant.monthly_active_users m
+		WHERE m.month < (date_trunc('month', NOW() AT TIME ZONE 'UTC') - INTERVAL '13 months')::date LIMIT $1))`},
 	{"invitations", `DELETE FROM tenant.invites WHERE ctid = ANY(ARRAY(
 		SELECT i.ctid FROM tenant.invites i WHERE i.expires_at < NOW() - INTERVAL '90 days' LIMIT $1))`},
 	// Oldest first, so a token goes no later than the one it was renewed from.

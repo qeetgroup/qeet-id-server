@@ -81,7 +81,7 @@ jobs:
       # newer target ("go language version ... lower than the targeted version").
       - name: Install golangci-lint and sqlc
         run: |
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
           go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
 
       # The whole tree, including the integration-tagged database tests.
@@ -108,7 +108,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # Pinned, not @latest; it needs go1.26 or newer. setup-go runs go.mod's
+      # Pinned, not @latest; it needs go1.27 or newer. setup-go runs go.mod's
       # toolchain (the same Go the Dockerfile ships), so the scan covers the
       # standard library that is actually built in. Bump with go.mod.
       - name: Install govulncheck
@@ -137,17 +137,17 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # gosec v2.29.0 requires a golang.org/x/tools too old to read Go 1.27
-      # export data, so `go install gosec@...` loads most packages without type
-      # information (200 files, "export data version 5 is greater than maximum
-      # supported version 4") and the findings that need types go missing.
-      # Build it against a current x/tools instead. Pinned, not @latest; bump
-      # both with go.mod.
+      # gosec needs a golang.org/x/tools that can read Go 1.27 export data;
+      # with an older one it loads most packages without type information and
+      # the findings that need types go missing (v2.29.0 did, through x/tools
+      # v0.4x). v2.30.0 already requires v0.52.0; it is pinned here too so a
+      # gosec bump can't quietly drop below it. Pinned, not @latest; bump both
+      # with go.mod.
       - name: Install gosec
         run: |
           mkdir "$RUNNER_TEMP/gosec" && cd "$RUNNER_TEMP/gosec"
           go mod init gosec-build
-          go get github.com/securego/gosec/v2/cmd/gosec@v2.29.0 golang.org/x/tools@v0.52.0
+          go get github.com/securego/gosec/v2/cmd/gosec@v2.30.0 golang.org/x/tools@v0.52.0
           go build -o "$(go env GOPATH)/bin/gosec" github.com/securego/gosec/v2/cmd/gosec
 
       # Generated sqlc code is excluded, as in golangci-lint: it is not hand-authored.

@@ -1944,7 +1944,6 @@ paths:
         - Token Vault
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       description: Non-secret metadata only (provider, external account id, scope, expiry) for the calling user's own connected accounts.
       responses:
         '200':
@@ -1977,7 +1976,6 @@ paths:
             type: string
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       description: "Returns the authorize_url to redirect the user's browser to, starting a standard OAuth2 authorization-code ceremony (with PKCE, S256) against the tenant's registered provider config. The answer also sets an HttpOnly cookie binding the ceremony to this browser, so call it with credentials included (fetch credentials: 'include') from the browser that will open the link: the callback connects the account only in that browser."
       responses:
         '200':
@@ -2057,7 +2055,6 @@ paths:
             type: string
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '204':
           description: No Content
@@ -2184,7 +2181,7 @@ components:
               description: Optional i18n key the client can use to localize the message.
             retryable:
               type: boolean
-              description: Whether the client may safely retry the request.
+              description: 'Whether the person can try again, often by starting over (signing in again, asking for a new code, waiting). It is not a promise that resending the same request will succeed: auth.session_revoked is retryable and the session never comes back. Decide whether to resend a request from its status (429, 503 with Retry-After).'
             fields:
               type: array
               description: Per-field validation errors (typically on 422 responses).

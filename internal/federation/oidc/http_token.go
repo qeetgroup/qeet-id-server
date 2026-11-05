@@ -27,7 +27,7 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 	}
 	clientID := r.Form.Get("client_id")
 	clientSecret := r.Form.Get("client_secret")
-	if u, p, ok := r.BasicAuth(); ok {
+	if u, p, ok := httpx.ClientBasicAuth(r); ok {
 		clientID, clientSecret = u, p
 	}
 	grantType := r.Form.Get("grant_type")
@@ -126,7 +126,7 @@ func (h *Handler) clientCreds(r *http.Request) (id, secret string, err error) {
 	}
 	id = r.Form.Get("client_id")
 	secret = r.Form.Get("client_secret")
-	if u, p, has := r.BasicAuth(); has {
+	if u, p, has := httpx.ClientBasicAuth(r); has {
 		id, secret = u, p
 	}
 	return id, secret, nil

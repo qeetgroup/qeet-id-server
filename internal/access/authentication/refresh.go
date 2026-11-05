@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"time"
 
+	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -176,6 +178,9 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 	// The renewal is the session's use: its idle timeout counts from now.
 	idleExp, err := s.q.WithTx(tx).UpdateSessionLastSeen(ctx, sessionID)
 	if err != nil {
+		return nil, err
+	}
+	if err := user.RecordActive(ctx, tx, tenantID, userID); err != nil {
 		return nil, err
 	}
 	// The hook ran when the session was opened; its claims stay with the session.

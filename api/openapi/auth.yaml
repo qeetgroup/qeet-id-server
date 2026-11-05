@@ -420,7 +420,6 @@ paths:
         - Auth
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: Signed out
@@ -634,7 +633,6 @@ paths:
         - Auth
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
         - ssoCookie: []
       responses:
         '200':
@@ -948,7 +946,6 @@ paths:
         - Auth
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       description: >-
         How many ways the caller's account can sign in: its password, each
         passkey, and each linked identity that can still sign in (a SAML or
@@ -988,7 +985,6 @@ paths:
         - Auth
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: OK
@@ -1011,7 +1007,6 @@ paths:
         - Auth
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -1057,7 +1052,6 @@ paths:
         - Auth
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: OK
@@ -1118,7 +1112,6 @@ paths:
         - Auth
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: OK
@@ -1155,7 +1148,6 @@ paths:
             format: uuid
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: OK
@@ -1239,7 +1231,6 @@ paths:
           description: Opaque owner-scoped cursor returned by the previous page.
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: Active sessions
@@ -1283,7 +1274,6 @@ paths:
         - Auth
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: The other sessions were ended
@@ -1326,7 +1316,6 @@ paths:
         - Auth
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: The caller was signed out everywhere
@@ -1384,7 +1373,6 @@ paths:
             type: string
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: Session revoked
@@ -1450,7 +1438,6 @@ paths:
         - Auth
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -1486,7 +1473,6 @@ paths:
         - Passkeys
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
         - ssoCookie: []
       description: >-
         The signed-in user's passkeys, newest first, and whether they may add
@@ -1646,7 +1632,6 @@ paths:
         - Passkeys
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
         - ssoCookie: []
       description: >-
         Starts adding a passkey for the signed-in user and returns the WebAuthn
@@ -1688,7 +1673,6 @@ paths:
         - Passkeys
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
         - ssoCookie: []
       requestBody:
         required: false
@@ -1936,7 +1920,6 @@ paths:
             format: uuid
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
         - ssoCookie: []
       requestBody:
         required: true
@@ -1984,7 +1967,6 @@ paths:
             type: string
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       description: 'Deletes one of the caller''s passkeys. Needs a recent step-up. Audited as passkey.deleted (its id and name) in the audit trail of the organization the session is in, and the account holder is emailed that a passkey was removed. Removing the account''s only way to sign in is refused with 409 auth.last_sign_in_method and recorded there as auth.sign_in_method_removal_refused.'
       responses:
         '204':
@@ -2007,7 +1989,6 @@ paths:
         - MFA
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       description: 'Lists the caller''s SMS and email factors.'
       responses:
         '200':
@@ -2039,7 +2020,6 @@ paths:
         - MFA
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: false
         content:
@@ -2095,7 +2075,6 @@ paths:
             type: string
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       description: 'Removes one of the caller''s SMS or email factors. Needs a recent step-up. The account holder is emailed that it happened, with what to do if it wasn''t them.'
       responses:
         '204':
@@ -2124,7 +2103,6 @@ paths:
             type: string
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       description: >-
         Sends a step-up code to one of the caller's confirmed email or SMS factors, to verify at
         /v1/mfa/otp/verify. A code to one factor can be sent at most every 30 seconds, ten an hour to one person and five an hour to one address or number over every account; past that the call answers 429 mfa.code_send_limited with retry_after (seconds). A new code makes the factor's earlier unused code stop working. A step-up code works only for a step-up, and a code sent for a sign-in or to confirm a new factor never counts here; its message says what it is for. An SMS code needs an organisation whose plan includes SMS (403 upgrade_required). Each code sent is audited as mfa.otp_sent.
@@ -2163,7 +2141,6 @@ paths:
             type: string
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: false
         content:
@@ -2200,7 +2177,6 @@ paths:
         - MFA
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: false
         content:
@@ -2237,7 +2213,6 @@ paths:
         - MFA
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       description: 'Reports how many of the caller''s recovery codes are left.'
       responses:
         '200':
@@ -2264,7 +2239,6 @@ paths:
         - MFA
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       description: 'Replaces the caller''s recovery codes; the new ones are shown only in this answer and the old ones stop working. Needs a recent step-up. The account holder is emailed that it happened, with what to do if it wasn''t them.'
       responses:
         '201':
@@ -2301,7 +2275,6 @@ paths:
         - MFA
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       description: >-
         Reports whether the calling session is stepped up: it met a second
         factor of a type its organisation counts within the organisation's
@@ -2384,7 +2357,6 @@ paths:
         - MFA
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       description: 'Sends a step-up request for the calling session to every phone the caller has linked, and answers 202 with its challenge_id, expires_at and the number to show for the phone to send back when approving. Once the request is approved on a phone, complete the step-up with the complete call. A caller with no linked phone gets 404 mfa.push_device_not_found; a principal without a session (an API key, agent) cannot step up. Requests are bounded as at sign-in (429 mfa.push_limited).'
       responses:
         '202':
@@ -2416,7 +2388,6 @@ paths:
         - MFA
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       parameters:
         - name: id
           in: path
@@ -2451,7 +2422,6 @@ paths:
         - MFA
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       description: Reports whether the principal has a confirmed TOTP factor, so the account UI can show an active state instead of re-offering enrollment.
       responses:
         '200':
@@ -2482,7 +2452,6 @@ paths:
         - MFA
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       description: 'Removes the caller''s authenticator app and recovery codes. Needs a recent step-up. The account holder is emailed that it happened, with what to do if it wasn''t them.'
       responses:
         '204':
@@ -2505,7 +2474,6 @@ paths:
         - MFA
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: false
         content:
@@ -2548,7 +2516,6 @@ paths:
         - MFA
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: false
         content:
@@ -2599,7 +2566,6 @@ paths:
         - MFA
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: false
         content:
@@ -2638,7 +2604,6 @@ paths:
         - MFA
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       description: Starts a WebAuthn assertion ceremony over the authenticated user's existing passkey credentials, used as a second factor (no token is issued).
       responses:
         '200':
@@ -2674,7 +2639,6 @@ paths:
         - MFA
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: false
         content:
@@ -2713,7 +2677,6 @@ paths:
       tags: [MFA]
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: Registered devices
@@ -2736,7 +2699,6 @@ paths:
       tags: [MFA]
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -2773,7 +2735,6 @@ paths:
       tags: [MFA]
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       parameters:
         - name: id
           in: path
@@ -2845,7 +2806,6 @@ paths:
       tags: [MFA]
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '201':
           description: Pairing code issued
@@ -2876,7 +2836,6 @@ paths:
       tags: [MFA]
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       parameters:
         - name: id
           in: path
@@ -2909,7 +2868,6 @@ paths:
       tags: [MFA]
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       parameters:
         - name: id
           in: path
@@ -5378,8 +5336,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: '#/components/schemas/BotSettings'
       responses:
         '200':
           description: Updated settings
@@ -5656,7 +5613,7 @@ components:
               description: Optional i18n key the client can use to localize the message.
             retryable:
               type: boolean
-              description: Whether the client may safely retry the request.
+              description: 'Whether the person can try again, often by starting over (signing in again, asking for a new code, waiting). It is not a promise that resending the same request will succeed: auth.session_revoked is retryable and the session never comes back. Decide whether to resend a request from its status (429, 503 with Retry-After).'
             fields:
               type: array
               description: Per-field validation errors (typically on 422 responses).

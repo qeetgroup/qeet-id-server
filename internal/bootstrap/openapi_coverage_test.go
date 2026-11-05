@@ -55,8 +55,11 @@ type openAPIDocument struct {
 	Paths map[string]openAPIPathItem `yaml:"paths"`
 }
 
+// routeClass is how a mounted route is reached: behind the API's
+// authentication or not, and whether its authorization policy admits API keys.
 type routeClass struct {
 	authenticated bool
+	apiKey        bool
 }
 
 type contractDiff struct {
@@ -75,8 +78,16 @@ func compareRouteContract(mounted map[string]routeClass, documented map[string]*
 		}
 		hasBearer := operationHasSecurity(operation, "bearerAuth")
 		hasAPIKey := operationHasSecurity(operation, "apiKeyAuth")
-		if class.authenticated && (!hasBearer || !hasAPIKey) {
-			diff.security = append(diff.security, key+" must declare bearerAuth and apiKeyAuth")
+		if class.authenticated && !hasBearer {
+			diff.security = append(diff.security, key+" must declare bearerAuth")
+		}
+		// apiKeyAuth promises an SDK or a reader that an API key can call the
+		// route, so it is declared exactly where the route's policy admits one.
+		if class.authenticated && class.apiKey && !hasAPIKey {
+			diff.security = append(diff.security, key+" admits API keys but doesn't declare apiKeyAuth")
+		}
+		if class.authenticated && !class.apiKey && hasAPIKey {
+			diff.security = append(diff.security, key+" refuses API keys but declares apiKeyAuth")
 		}
 		if !class.authenticated && (hasBearer || hasAPIKey) {
 			diff.security = append(diff.security, key+" is outside API auth but declares bearerAuth/apiKeyAuth")
@@ -174,8 +185,9 @@ func productionRouteInventory(t *testing.T) map[string]routeClass {
 
 	authenticatedRouter := chi.NewRouter()
 	authenticatedRouter.Route("/v1", func(r chi.Router) { mountAuthenticatedRoutes(r, deps) })
+	policies := RoutePolicies()
 	for key := range walkRoutes(t, authenticatedRouter) {
-		mounted[key] = routeClass{authenticated: true}
+		mounted[key] = routeClass{authenticated: true, apiKey: policies[key].AllowAPIKey}
 	}
 	return mounted
 }
@@ -206,9 +218,16 @@ func TestRouteContractComparisonDetectsDrift(t *testing.T) {
 	}
 
 	documented["GET /known"] = &openAPIOperation{Security: []map[string][]string{}}
+	diff = compareRouteContract(map[string]routeClass{"GET /known": {authenticated: true, apiKey: true}}, documented)
+	if len(diff.security) != 2 {
+		t.Fatalf("missing bearerAuth and apiKeyAuth detection = %v", diff.security)
+	}
+
+	// A route closed to API keys must not advertise apiKeyAuth.
+	documented["GET /known"] = &openAPIOperation{Security: []map[string][]string{{"bearerAuth": {}}, {"apiKeyAuth": {}}}}
 	diff = compareRouteContract(map[string]routeClass{"GET /known": {authenticated: true}}, documented)
-	if len(diff.security) != 1 {
-		t.Fatalf("security mismatch detection = %v", diff.security)
+	if fmt.Sprint(diff.security) != "[GET /known refuses API keys but declares apiKeyAuth]" {
+		t.Fatalf("user-only apiKeyAuth detection = %v", diff.security)
 	}
 }
 

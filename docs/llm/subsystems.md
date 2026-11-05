@@ -299,6 +299,15 @@ qeetai/{qeetai,orchestrator,sse,tools,providercfg,http}.go
 entitlements/ · ratelimits/ · search/ · notifications/ · sales/ · email/
 ```
 
+**Monthly active users** (the plans' `mau` allowance): `tenant.monthly_active_users`, one row per
+organisation, calendar month (UTC) and person, written by `identity/users/active.go`'s
+`RecordActive` in the same transaction as each sign-in (`access/authentication/issue.go`), session
+renewal (`refresh.go`) and application code exchange or refresh-token grant
+(`federation/oidc/token.go`). API keys, service principals and agents are never recorded. Reported
+as `mau` by `GET /v1/tenants/{tenantID}/entitlements/usage`; nothing is refused above the allowance.
+Kept 13 months by `retention/sweeps.go`. The analytics dashboard's MAU is a different figure: a
+rolling 30 days of sign-ins from the audit log.
+
 **Tests** `audit/audit_test.go`, `billing/{billing,payments,tax}_test.go`, `gdpr/evidence_test.go`,
 `qeetai/http_test.go` · integration: `audit_anomaly_test.go`, `ratelimits_test.go`,
 `ops_dev_modules_test.go`

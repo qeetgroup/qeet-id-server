@@ -1,6 +1,6 @@
 # Qeet ID roadmap ideas after 1.0
 
-Jira epic: [QTID-22](https://qeetgroup.atlassian.net/browse/QTID-22). **None of these ideas is approved.** Each is a hypothesis to test with a customer who has the problem before anything is built. The [README](README.md) explains how to choose one, the rules every idea must follow, the plan items and terms used below, and the sources (S1 to S16, T1 to T6).
+**None of these ideas is approved.** Each is a hypothesis to test with a customer who has the problem before anything is built. The [README](README.md) explains how to choose one, the rules every idea must follow, the plan items and terms used below, and the sources (S1 to S16, T1 to T6).
 
 Each idea starts with a plain explanation (in short, why, what exists today), followed by the detail from the October 2026 research: the first version to build, the proposed API routes, the controls, how to measure success and the dependencies. The routes are illustrative; none exists yet.
 
@@ -13,8 +13,6 @@ matching tenant path. New routes need OpenAPI and denial tests. Token, SAML,
 SCIM, webhook or cross-repository changes need explicit design/consumer review.
 
 ### F-01: Preview a policy change before it goes live
-
-Jira: [QTID-140](https://qeetgroup.atlassian.net/browse/QTID-140)
 
 **In short.** Let an admin see exactly who would gain or lose access before a new authorisation policy goes live, and refuse to activate it if the policy changed after the preview.
 
@@ -49,8 +47,6 @@ Enterprise buyers expect this kind of change control. Keycloak and OpenFGA have 
 
 ### F-02: Access reviews and time-limited admin access
 
-Jira: [QTID-141](https://qeetgroup.atlassian.net/browse/QTID-141)
-
 **In short.** Let an organisation regularly review who has access (people, guests, API keys, service principals and AI agents together) and give admin rights for a limited time instead of for ever.
 
 **Why we need it.** Access piles up. People change teams, contractors stay after their project ends, API keys outlive their purpose. ISO 27001 and SOC 2 auditors ask for periodic access reviews, and security teams want admin rights granted "for two hours, approved by someone else" rather than permanently.
@@ -82,8 +78,6 @@ Microsoft Entra offers access reviews and Privileged Identity Management. Qeet's
 
 ### F-03: Offboarding receipt
 
-Jira: [QTID-146](https://qeetgroup.atlassian.net/browse/QTID-146)
-
 **In short.** When someone is offboarded, produce one record that shows every session and credential that was ended, and whether each connected app received the news and acted on it.
 
 **Why we need it.** When an employee leaves, the security team needs proof, not hope, that every way in is closed. Qeet ID already ends sessions and credentials, but an auditor or incident responder can't see in one place what was ended, which apps were told, and which haven't confirmed.
@@ -114,8 +108,6 @@ For example, a leaver still has a session in a customer's app that never process
   offboarding outcomes across human and machine identities.
 
 ### F-04: Rehearse a federation change before it affects people
-
-Jira: [QTID-147](https://qeetgroup.atlassian.net/browse/QTID-147)
 
 **In short.** Before an admin changes a SAML or OIDC connection or its attribute and group mappings, show what the change would do (who gets which roles, which certificates expire, what breaks) without touching real accounts.
 
@@ -149,8 +141,6 @@ For example, removing the group mapping that gave the only two admins their role
 
 ### F-05: Agent actions through a credential broker, with approvals
 
-Jira: [QTID-153](https://qeetgroup.atlassian.net/browse/QTID-153)
-
 **In short.** Let an AI agent call an outside service (for example create a Jira issue or read a Google Drive file) through Qeet, within strict limits and with optional human approval, without the agent ever holding the person's credential.
 
 **Why we need it.** Companies want AI agents to act for people. Handing an agent a raw OAuth token means it can do anything that token allows, for as long as it lasts, and nobody sees what it did. A broker keeps the credential inside Qeet, checks each action against limits (which service, method and resource, how many times, until when), asks a person when needed, and records the decision.
@@ -183,8 +173,6 @@ WorkOS Pipes and Auth0 Token Vault offer similar relays; Qeet's value would be p
   related mechanics, and token/claim changes require consumer coordination.
 
 ### F-06: Evidence pack for a release and an organisation's controls
-
-Jira: [QTID-166](https://qeetgroup.atlassian.net/browse/QTID-166)
 
 **In short.** A downloadable, signed package that shows auditors which version of Qeet ID ran, how it was configured, and which controls were actually tested and passed, not just switched on.
 
@@ -254,8 +242,6 @@ SDK, console, application, deploy and kit effort must be estimated separately.
 
 ### N-01: Sign in CI jobs and workloads without stored secrets
 
-Jira: [QTID-169](https://qeetgroup.atlassian.net/browse/QTID-169)
-
 **In short.** Let a CI job (for example GitHub Actions) or a Kubernetes workload get a short-lived Qeet token by proving who it is with its platform's own identity token, so no long-lived Qeet secret is stored in it.
 
 **Why we need it.** Today a customer's CI pipeline or backend service signs in to Qeet with a service-principal secret or API key that someone copied into the CI settings. Those secrets leak through logs, forks and former employees, and rotating them without breaking deployments is painful.
@@ -307,8 +293,6 @@ and SPIFFE are established precedents [S1, S2].
 
 ### N-02: Task-scoped agent identity with shared budgets
 
-Jira: [QTID-170](https://qeetgroup.atlassian.net/browse/QTID-170)
-
 **In short.** Give each AI agent run (a "task") its own short-lived identity and a shared allowance, so one workflow can be cancelled on its own and child workers can't multiply the agent's budget.
 
 **Why we need it.** An AI agent often splits work into sub-tasks run by child workers. If each child gets the agent's full permissions and full budget (say 10 API calls or Rs 500 of spend), ten children get ten times the allowance.
@@ -357,8 +341,6 @@ Runtime/SDK propagation is required. Entra Agent ID already documents ephemeral
 agents, and RFC 8693 already provides delegation concepts [S3, S4].
 
 ### N-03: Permission-aware AI retrieval with source records
-
-Jira: [QTID-172](https://qeetgroup.atlassian.net/browse/QTID-172)
 
 **In short.** When an AI assistant searches a company's documents to answer a question (retrieval-augmented generation, RAG), let Qeet decide which documents that person may see before any text reaches the model, and keep a record of the sources used.
 
@@ -415,8 +397,6 @@ and clear freshness limits, not the invention of permission-aware RAG.
 
 ### N-04: Pin approved MCP tool servers to a reviewed revision
 
-Jira: [QTID-177](https://qeetgroup.atlassian.net/browse/QTID-177)
-
 **In short.** When an organisation approves an MCP tool server for its AI agents, record exactly what was approved, and stop agents from using it if its tools change until someone reviews the change.
 
 **Why we need it.** MCP (Model Context Protocol) servers give AI agents tools such as "search tickets" or "send email". An admin approves a server after reading its tool list. Later the server's descriptions, input schemas, issuer or destination can change without anyone noticing, on purpose ("tool poisoning") or by accident, and agents start using tools nobody approved.
@@ -466,8 +446,6 @@ feature. Pin a supported MCP specification version and follow its security model
 
 ### N-05: What could this account reach if it were compromised?
 
-Jira: [QTID-178](https://qeetgroup.atlassian.net/browse/QTID-178)
-
 **In short.** Given a person, API key or service principal, show every sensitive thing it could do in Qeet and through which grants, so incident responders can judge the damage of a compromise in minutes.
 
 **Why we need it.** When an account or key is stolen, the first question is "what can the attacker do with it?" Today an admin pieces that together from role lists, group memberships, ABAC policies and ReBAC relationships, which is slow and error-prone in the first hour of an incident.
@@ -516,8 +494,6 @@ access paths and internal/external exposure analysis [S7].
 
 ### N-06: Least-privilege suggestions from real usage
 
-Jira: [QTID-183](https://qeetgroup.atlassian.net/browse/QTID-183)
-
 **In short.** Suggest permissions that could safely be removed, based on what each role, person or key actually used over a period, with the evidence shown and a person deciding.
 
 **Why we need it.** Roles grow over time, and nobody dares remove anything in case it breaks something. Access reviews (F-02) ask reviewers to decide, but they have no data to decide with. Usage evidence helps: "members of this role haven't used billing.write in 90 days".
@@ -561,8 +537,6 @@ from CloudTrail is a documented precedent with coverage limits and human review
 [S8]. This is advisory optimization, not autonomous authorization.
 
 ### N-07: Two-way trust between partner organisations
-
-Jira: [QTID-190](https://qeetgroup.atlassian.net/browse/QTID-190)
 
 **In short.** Let two Qeet organisations, for example a manufacturer and its supplier, agree a versioned, two-sided arrangement for which of one's people may use which of the other's apps; either side can end it.
 
@@ -609,8 +583,6 @@ opportunity is an application-facing agreement workflow, not ambient cross-tenan
 authority or inventing bilateral trust.
 
 ### N-08: Per-app disclosure rules and pairwise subject IDs
-
-Jira: [QTID-196](https://qeetgroup.atlassian.net/browse/QTID-196)
 
 **In short.** Let an organisation control exactly which personal attributes each app receives, and optionally give each app a different user ID, so apps can't link a person across services.
 
@@ -659,8 +631,6 @@ not permission to change today's JWT claims. Selective-disclosure credentials
 are a later separate profile, not a new name for the current JWT-VC format.
 
 ### N-09: Recovery readiness and quorum-approved recovery
-
-Jira: [QTID-200](https://qeetgroup.atlassian.net/browse/QTID-200)
 
 **In short.** Show an organisation whether it could recover if its identity provider or admin devices failed, let it rehearse that, and later let account recovery require two of three trusted people to approve.
 
@@ -733,8 +703,6 @@ Sprint slices are prototypes or discovery, not production delivery promises.
 
 ### N-10: Authenticator and device assurance
 
-Jira: [QTID-201](https://qeetgroup.atlassian.net/browse/QTID-201)
-
 **In short.** Let an organisation require that sensitive apps are used only with an approved authenticator (a specific passkey model) on a compliant, company-managed device, checked with verifiable evidence.
 
 **Why we need it.** A passkey proves the person, not the device: a valid passkey on a personal, unpatched laptop still passes. Regulated enterprises want rules such as "only YubiKeys on company laptops that pass our device-management check" for finance or admin apps.
@@ -788,8 +756,6 @@ metadata maintenance and provider costs. Start with two discovery/pilot sprints;
 live enforcement requires separate review. NIST and Entra provide precedents [T1].
 
 ### N-11: Authorisation decisions close to customer services
-
-Jira: [QTID-202](https://qeetgroup.atlassian.net/browse/QTID-202)
 
 **In short.** Let a customer's service make Qeet authorisation decisions locally, from a signed, short-lived snapshot of policies and data, instead of calling Qeet for every check.
 
@@ -847,8 +813,6 @@ are a starting estimate; production compatibility is substantially more work.
 
 ### N-12: Customer-controlled encryption keys
 
-Jira: [QTID-207](https://qeetgroup.atlassian.net/browse/QTID-207)
-
 **In short.** Let a regulated customer protect its stored secrets in Qeet with a key held in its own cloud key service (KMS), so it can withdraw access to its data.
 
 **Why we need it.** Banks, insurers and public-sector buyers often require customer-managed keys in procurement: if they revoke the key, the vendor can no longer read their data.
@@ -905,8 +869,6 @@ feature. Two pilot sprints scope only vault values, not all customer data or HYO
 
 ### N-13: Outbound-only connector for private directories
 
-Jira: [QTID-214](https://qeetgroup.atlassian.net/browse/QTID-214)
-
 **In short.** A small connector the customer runs inside their network that connects out to Qeet, so Qeet can use their private LDAP or Active Directory without the customer opening a firewall port.
 
 **Why we need it.** Many enterprises keep Active Directory or LDAP on their own premises and won't expose it to the internet. Qeet's LDAP sign-in today needs the directory to be reachable from Qeet.
@@ -962,8 +924,6 @@ a supported multi-protocol fleet; defer without a hybrid-enterprise buyer.
 
 ### N-14: Promote configuration between environments
 
-Jira: [QTID-216](https://qeetgroup.atlassian.net/browse/QTID-216)
-
 **In short.** Let a team copy reviewed configuration, for example OIDC client settings, from development to staging to production as a plan they approve, without copying secrets.
 
 **Why we need it.** Customers run separate Qeet organisations for development, staging and production, and recreate apps and settings by hand in each. Mistakes creep in, secrets get pasted around, and nobody can explain why production differs from staging.
@@ -1015,8 +975,6 @@ Auth0 Deploy CLI and Keycloak import/export are precedents, including destructiv
 import warnings [T5]. Do not build a generic tenant clone or backup system.
 
 ### N-15: Integration diagnostics for customer apps
-
-Jira: [QTID-221](https://qeetgroup.atlassian.net/browse/QTID-221)
 
 **In short.** Help developers find out why their app's sign-in with Qeet fails, by running standard OAuth and OIDC test scenarios against their app and explaining the result.
 
@@ -1127,8 +1085,6 @@ guidance is not automatically a universal private-enterprise deadline.
 
 ### PQ-01: Cryptographic inventory and post-quantum plan
 
-Jira: [QTID-224](https://qeetgroup.atlassian.net/browse/QTID-224)
-
 **In short.** A read-only report of every place Qeet ID uses public-key cryptography for an organisation (signing keys, encryption, TLS), who depends on it, and what would need to move to post-quantum algorithms first.
 
 **Why we need it.** Future quantum computers could break today's public-key algorithms (RSA and elliptic curves). NIST published post-quantum standards in 2024 (ML-KEM for key exchange; ML-DSA and SLH-DSA for signatures) and has set transition timelines. Enterprise security and procurement teams are starting to ask vendors for their post-quantum plan.
@@ -1175,8 +1131,6 @@ guidance provides the standards basis [S12, S13].
 
 ### PQ-02: Evidence of post-quantum TLS on real connections
 
-Jira: [QTID-225](https://qeetgroup.atlassian.net/browse/QTID-225)
-
 **In short.** Record and show which real network connections to and from Qeet used hybrid post-quantum key exchange, and where something in the path prevented it.
 
 **Why we need it.** Modern TLS can use hybrid post-quantum key exchange (for example X25519MLKEM768) to protect traffic recorded today from being decrypted in future. But a setting on one server doesn't prove every hop used it: a load balancer or an old client can quietly fall back.
@@ -1218,8 +1172,6 @@ authenticated telemetry. This is measurement/integration, not custom TLS crypto.
 One staging discovery sprint, then capacity/compatibility work as evidence dictates.
 
 ### PQ-03: Post-quantum signatures on long-lived audit exports
-
-Jira: [QTID-235](https://qeetgroup.atlassian.net/browse/QTID-235)
 
 **In short.** Add an optional second, post-quantum signature (ML-DSA) to audit exports, so exports kept for many years stay verifiable after today's signature algorithms weaken.
 
@@ -1283,8 +1235,6 @@ broken. Do not turn them into parallel implementation without a specific buyer.
   Do not advertise physical residency based on a tenant setting.
 
 ### RESIDENCY: Data residency and dedicated deployments (discovery)
-
-Jira: [QTID-241](https://qeetgroup.atlassian.net/browse/QTID-241)
 
 **In short.** Find out whether customers need their data kept in a specific country or region, private network connectivity, or a dedicated deployment, and what it would cost us to offer that.
 

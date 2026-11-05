@@ -21,6 +21,7 @@ func prodOK() *Config {
 		AllowedOriginsRaw:            "https://app.acme.com",
 		AppBaseURL:                   "https://app.acme.com",
 		PublicBaseURL:                "https://api.acme.com",
+		JWTIssuer:                    "https://api.acme.com",
 		SMTPHost:                     "smtp.acme.com",
 		SMTPFrom:                     "Acme <no-reply@acme.com>",
 	}
@@ -68,6 +69,11 @@ func TestValidate_ProdRejectsInsecure(t *testing.T) {
 		"ses without a sender":     func(c *Config) { c.EmailProvider, c.AWSRegion, c.SMTPFrom = "ses-api", "ap-south-2", "" },
 		"ses without a region":     func(c *Config) { c.EmailProvider = "ses-api" },
 		"unknown email provider":   func(c *Config) { c.EmailProvider = "sendgrid" },
+		"default issuer":           func(c *Config) { c.JWTIssuer = "qeet-id" },
+		"http issuer":              func(c *Config) { c.JWTIssuer = "http://api.acme.com" },
+		"issuer without host":      func(c *Config) { c.JWTIssuer = "https://" },
+		"issuer with query":        func(c *Config) { c.JWTIssuer = "https://api.acme.com?tenant=1" },
+		"issuer with fragment":     func(c *Config) { c.JWTIssuer = "https://api.acme.com#x" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

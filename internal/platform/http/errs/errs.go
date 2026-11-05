@@ -26,8 +26,12 @@ type Error struct {
 	// Code (which is already a stable `domain.reason` key); override only if a
 	// different key namespace is needed.
 	TranslationKey string
-	// Retryable signals the client may safely retry (e.g. refresh a session and
-	// try again). Surfaced as `retryable: true`.
+	// Retryable tells the person they can try again, often by starting over
+	// (signing in again, asking for a new code, waiting a moment). It is not a
+	// promise that resending the same request will succeed: a revoked session
+	// is retryable in this sense and never comes back. Clients decide whether to
+	// resend from the status (429, 503 with Retry-After). Surfaced as
+	// `retryable: true`.
 	Retryable bool
 	// Fields carries structured per-field validation errors.
 	Fields []FieldError
@@ -76,7 +80,7 @@ func (e *Error) Wrap(err error) *Error {
 	return &cp
 }
 
-// AsRetryable returns a copy marked retryable (client may back off + retry).
+// AsRetryable returns a copy marked retryable: the person can try again (see Retryable).
 func (e *Error) AsRetryable() *Error {
 	cp := *e
 	cp.Retryable = true

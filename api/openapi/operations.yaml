@@ -767,7 +767,6 @@ paths:
             default: 20
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: Search results
@@ -1824,7 +1823,6 @@ paths:
       tags: [GDPR]
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: The caller's personal data, as a downloadable JSON document.
@@ -1856,7 +1854,6 @@ paths:
       tags: [GDPR]
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: false
         content:
@@ -2118,7 +2115,6 @@ paths:
         - Notifications
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: Notification inbox
@@ -2144,7 +2140,6 @@ paths:
         - Notifications
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '204':
           description: All notifications marked read
@@ -2737,7 +2732,6 @@ paths:
         - Qeet AI
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: Qeet AI status
@@ -2758,7 +2752,6 @@ paths:
         - Qeet AI
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: Conversation list
@@ -2782,7 +2775,6 @@ paths:
         - Qeet AI
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: false
         content:
@@ -2820,7 +2812,6 @@ paths:
             format: uuid
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: Conversation with messages
@@ -2854,7 +2845,6 @@ paths:
             format: uuid
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -2892,7 +2882,6 @@ paths:
             format: uuid
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '204':
           description: Deleted
@@ -2941,7 +2930,6 @@ paths:
             format: uuid
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -3233,7 +3221,6 @@ paths:
         - Billing
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       description: 'Lists the plans on sale, with their prices.'
       responses:
         '200':
@@ -3532,7 +3519,6 @@ paths:
       tags: [Billing]
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -3639,7 +3625,8 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: true }
+            schema:
+              $ref: '#/components/schemas/BillingProfile'
       responses:
         '200':
           description: Updated billing profile
@@ -3669,7 +3656,16 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: true }
+            schema:
+              type: object
+              required: [plan_code]
+              properties:
+                plan_code:
+                  type: string
+                  description: The plan to try, starter or pro (or their _year plans); any other plan is refused with billing.trial_not_eligible.
+                currency:
+                  type: string
+                  description: ISO 4217 code of a currency the plan is priced in, such as INR; USD when omitted or not a valid code.
       responses:
         '200':
           description: Trial subscription
@@ -3769,7 +3765,7 @@ paths:
   /v1/tenants/{tenantID}/entitlements/usage:
     get:
       operationId: get_v1_tenants_ByTenantID_entitlements_usage
-      description: 'Returns the tenant''s current consumption for each metered resource, such as seats, applications, and API keys, for display against the plan''s limits. seats counts the people holding a role in the tenant, directly or through a group that carries one, each once, plus its pending invitations; an account holding no role, such as a customer signing in to the tenant''s applications, holds no seat. It complements the entitlements endpoint, which resolves the plan''s capability set, by running the underlying count queries only when the usage view needs them. Scoped to the tenant named in the path.'
+      description: 'Returns the tenant''s current consumption for each metered resource, such as seats, applications, and API keys, for display against the plan''s limits. seats counts the people holding a role in the tenant, directly or through a group that carries one, each once, plus its pending invitations; an account holding no role, such as a customer signing in to the tenant''s applications, holds no seat. mau counts the people active in the tenant so far this calendar month (UTC): each person who signed in to it, or renewed a session in it, at least once, counted once. API keys, service principals and AI agents are not counted. It complements the entitlements endpoint, which resolves the plan''s capability set, by running the underlying count queries only when the usage view needs them. Scoped to the tenant named in the path.'
       summary: Get tenant resource usage against plan limits
       tags: [Entitlements]
       security:
@@ -3805,7 +3801,6 @@ paths:
       tags: [Sales]
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -4608,7 +4603,7 @@ components:
               description: Optional i18n key the client can use to localize the message.
             retryable:
               type: boolean
-              description: Whether the client may safely retry the request.
+              description: 'Whether the person can try again, often by starting over (signing in again, asking for a new code, waiting). It is not a promise that resending the same request will succeed: auth.session_revoked is retryable and the session never comes back. Decide whether to resend a request from its status (429, 503 with Retry-After).'
             fields:
               type: array
               description: Per-field validation errors (typically on 422 responses).

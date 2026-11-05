@@ -1,6 +1,6 @@
 # Qeet ID 1.0 release checks
 
-Jira epic: [QTID-1](https://qeetgroup.atlassian.net/browse/QTID-1). The ideas for after 1.0 are in [ideas.md](ideas.md); how they fit together is in the [README](README.md).
+The ideas for after 1.0 are in [ideas.md](ideas.md); how they fit together is in the [README](README.md).
 
 This epic holds the seven checks Qeet ID 1.0 has to pass before real customers use it. The 1.0 server code is finished and merged into develop and release/1.0.0. These checks prove that it works once deployed, together with the console, the hosted login page and the SDKs.
 
@@ -39,8 +39,6 @@ completion or from a large feature count.
 
 ## G-01: Full CI on the 1.0 release candidate
 
-Jira: [QTID-114](https://qeetgroup.atlassian.net/browse/QTID-114)
-
 **In short.** Run the complete CI pipeline once on the exact commit we will release, and publish the release image from that run.
 
 **Why we need it.** CI is our proof that the released code builds and passes every test and security scan, and that the image we deploy is the one that was tested.
@@ -74,8 +72,6 @@ On PR #533 and the release/1.0.0 merges, GitHub refused to start any CI job beca
 **From the review:** One immutable release candidate with full `make ci`, each accepted regression, resolved or explicitly accepted release risks, and a recorded feature/configuration matrix. Earlier partial green runs do not cover later commits. *Owner and dependencies:* Server team; existing programme
 
 ## G-02: Customer sign-in journeys end to end
-
-Jira: [QTID-121](https://qeetgroup.atlassian.net/browse/QTID-121)
 
 **In short.** Walk through every sign-in and account journey a real customer will use, on a deployed copy of Qeet ID, using the real console, hosted login page and SDKs.
 
@@ -112,8 +108,6 @@ Social sign-in (GitHub, Facebook, X, Discord and Apple) has only been tested aga
 
 ## G-03: Backup restore and upgrade rehearsal
 
-Jira: [QTID-122](https://qeetgroup.atlassian.net/browse/QTID-122)
-
 **In short.** Prove that we can restore Qeet ID from a backup, and that the upgrade to 1.0 runs safely on production-sized data.
 
 **Why we need it.** A backup that has never been restored is not one we can rely on. Part of Qeet ID's data is encrypted with keys that rotate, so a restore also needs the right key versions; otherwise stored secrets can't be read.
@@ -149,18 +143,16 @@ The 1.0 upgrade adds database migrations 0165 to 0229. Some build indexes while 
 
 ## G-04: Load and failure test
 
-Jira: [QTID-127](https://qeetgroup.atlassian.net/browse/QTID-127)
-
 **In short.** Put a deployed Qeet ID under realistic peak load and break its dependencies one at a time, to confirm that it slows down gracefully instead of falling over.
 
-**Why we need it.** Password hashing is deliberately slow (Argon2), so a burst of sign-ins can take all the CPU. QTID-2 added protection: a bounded queue that turns surplus sign-ins away quickly with a 503 and Retry-After, so token refresh, the admin API and health checks keep working. That protection has never been measured under load.
+**Why we need it.** Password hashing is deliberately slow (Argon2), so a burst of sign-ins can take all the CPU. Overload shedding added protection: a bounded queue that turns surplus sign-ins away quickly with a 503 and Retry-After, so token refresh, the admin API and health checks keep working. That protection has never been measured under load.
 
-We also need to know how many users one instance can serve (QTID-12), and what happens when NATS, email or the SIEM destination is down.
+We also need to know how many users one instance can serve, and what happens when NATS, email or the SIEM destination is down.
 
 **What Qeet ID has today:**
 
 - A bounded password hasher, tuned with PASSWORD_HASH_CONCURRENCY, PASSWORD_HASH_QUEUE and PASSWORD_HASH_MAX_WAIT (default 1 second), and the metric password_hasher_rejections_total.
-- An earlier local load test (QTID-52) on the production image found the bottlenecks behind QTID-2 and QTID-12.
+- An earlier local load test on the production image found the bottlenecks behind overload shedding and instance sizing.
 - The rate limiter and auth hooks deliberately let requests through if their store fails; both are recorded decisions.
 
 **Steps:**
@@ -173,21 +165,19 @@ We also need to know how many users one instance can serve (QTID-12), and what h
 
 **Done when:**
 
-- Surplus sign-ins get a 503 within about 100 ms, other flows keep p95 under 100 ms, and /readyz answers within 1 second (QTID-2's targets).
+- Surplus sign-ins get a 503 within about 100 ms, other flows keep p95 under 100 ms, and /readyz answers within 1 second (the overload-shedding targets).
 - Memory and pool use stay bounded, and the service recovers by itself when each dependency comes back.
-- PASSWORD_HASH_MAX_WAIT and PASSWORD_HASH_CONCURRENCY are tuned from the results, and QTID-12 gets the measured capacity.
+- PASSWORD_HASH_MAX_WAIT and PASSWORD_HASH_CONCURRENCY are tuned from the results, and the instance sizing uses the measured capacity.
 - The rate limiter and auth hooks still let requests through when their store fails.
 
 **Depends on:**
 
 - Needs G-01's image and the staging environment.
-- Related: QTID-2 (overload shedding) and QTID-12 (sizing).
+- Related: overload shedding and instance sizing.
 
 **From the review:** Two replicas, shared limiter store, noisy tenant, slow SSE consumer, stalled AI provider, database contention and NATS/mail/SIEM outages. Measure p95/p99, bounded memory/pool use and recovery lag against chosen targets. Preserve deliberate failure policies. *Owner and dependencies:* Server + operations; 2.10, 5.7, R-01/R-02
 
 ## G-05: Revoked access really stops
-
-Jira: [QTID-138](https://qeetgroup.atlassian.net/browse/QTID-138)
 
 **In short.** Prove that when access is taken away (a session ended, an app's grant revoked, a key deleted) the old credential stops working everywhere it matters.
 
@@ -219,8 +209,6 @@ Jira: [QTID-138](https://qeetgroup.atlassian.net/browse/QTID-138)
 
 ## G-06: Privacy and support readiness
 
-Jira: [QTID-139](https://qeetgroup.atlassian.net/browse/QTID-139)
-
 **In short.** Rehearse the privacy requests and support work we have to handle from day one: data export, erasure, the list of subprocessors, support bundles and who owns an incident.
 
 **Why we need it.** Customers, India's DPDP Act and the GDPR expect us to export or erase a person's data on request and to know who processes it. Erasure is tricky because backups keep data for the restore window.
@@ -251,8 +239,6 @@ Support work must not leak secrets or personal data, and someone has to own an i
 **From the review:** Rehearse export/erasure/restore-window handling; document model subprocessors and data boundaries; redact support bundles; assign incident response and recovery ownership. Existing GDPR work is a dependency, not a new finding. *Owner and dependencies:* Server + product/operations; 2.7, 5.1
 
 ## G-07: Independent security review
-
-Jira: [QTID-44](https://qeetgroup.atlassian.net/browse/QTID-44)
 
 **In short.** Have someone outside the team test Qeet ID's sign-in and organisation isolation, and map our controls to a recognised security standard before we make any compliance claim.
 

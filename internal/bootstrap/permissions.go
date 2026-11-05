@@ -385,7 +385,8 @@ func userPermissionMap() map[string]string {
 		"GET /v1/tenants/{tenantID}/audit/anomaly-settings":        "audit.read",
 		"PUT /v1/tenants/{tenantID}/audit/anomaly-settings":        "audit.write",
 
-		// Billing (GET /v1/billing/plans is a public catalog — ungated).
+		// Billing. GET /v1/billing/plans is the catalogue: any signed-in person may
+		// read it, with no permission, but it is a person's route (user-only, below).
 		"GET /v1/tenants/{tenantID}/billing/subscription":              "billing.read",
 		"PUT /v1/tenants/{tenantID}/billing/subscription":              "billing.write",
 		"POST /v1/tenants/{tenantID}/billing/subscription/cancel":      "billing.write",

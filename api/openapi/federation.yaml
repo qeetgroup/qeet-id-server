@@ -172,6 +172,12 @@ paths:
                   type: string
                 token_type_hint:
                   type: string
+                client_id:
+                  type: string
+                  description: The client's ID, when it authenticates in the form body rather than with HTTP Basic.
+                client_secret:
+                  type: string
+                  description: The client's secret, when it authenticates in the form body (client_secret_post).
       responses:
         '200':
           description: Introspection result
@@ -208,6 +214,12 @@ paths:
                   enum:
                     - access_token
                     - refresh_token
+                client_id:
+                  type: string
+                  description: The client's ID, when it authenticates in the form body rather than with HTTP Basic; a public client sends only this.
+                client_secret:
+                  type: string
+                  description: A confidential client's secret, when it authenticates in the form body (client_secret_post).
       responses:
         '200':
           description: 'Revoked (RFC 7009: always 200 even for unknown tokens)'
@@ -550,7 +562,6 @@ paths:
         - OIDC
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: OK
@@ -575,7 +586,6 @@ paths:
         - OIDC
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -773,7 +783,6 @@ paths:
               grant_type: client_credentials
               client_id: svc_018f2a80_reporting
               client_secret: cs_3f0a1b2c3d4e5f6g7h8i9j0k1l2m3n4o
-              scope: audit:read users:read
             schema:
               type: object
               required:
@@ -789,6 +798,7 @@ paths:
                   type: string
                 scope:
                   type: string
+                  description: Ignored. The token always carries every scope the service principal holds; asking for fewer isn't supported.
       responses:
         '200':
           description: Token response
@@ -797,7 +807,7 @@ paths:
               example:
                 access_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.eyJhY3RvciI6InNlcnZpY2UifQ.FAKE-signature
                 token_type: Bearer
-                expires_in: 3600
+                expires_in: 600
                 expires_at: '2026-09-24T11:15:00Z'
                 scope: audit:read users:read
               schema:
@@ -838,7 +848,7 @@ paths:
                 id_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.eyJhdWQiOiJhcHAifQ.FAKE-signature
                 refresh_token: rt_8e7d6c5b4a39281706f5e4d3c2b1a09f
                 token_type: Bearer
-                expires_in: 3600
+                expires_in: 600
                 scope: openid profile email
               schema:
                 $ref: '#/components/schemas/OAuthTokenResponse'
@@ -857,7 +867,6 @@ paths:
         - OIDC
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: UserInfo claims
@@ -900,7 +909,6 @@ paths:
         - OIDC
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: UserInfo claims
@@ -1930,7 +1938,6 @@ paths:
         - Social
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: OK
@@ -1964,7 +1971,6 @@ paths:
             format: uuid
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '204':
           description: No Content
@@ -1989,7 +1995,6 @@ paths:
             type: string
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: OK
@@ -2017,7 +2022,6 @@ paths:
         - Social
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -3933,6 +3937,7 @@ paths:
                 oneOf:
                   - $ref: '#/components/schemas/TokenPair'
                   - type: object
+                    description: The same challenge a password sign-in answers with (MFAChallenge in the authentication API).
                     properties:
                       mfa_required:
                         type: boolean
@@ -3942,8 +3947,18 @@ paths:
                         type: array
                         items:
                           type: string
+                          enum: [totp, recovery_code, email, sms, passkey, push]
+                      factors:
+                        type: array
+                        description: Exactly the second factors this person can complete the challenge with. Empty for an enrolment challenge.
+                        items:
+                          $ref: '#/components/schemas/LoginFactor'
                       enrollment_required:
                         type: boolean
+                      enrollment_due_at:
+                        type: string
+                        format: date-time
+                        description: On an enrolment challenge in the organisation's grace period, when it ends.
                     additionalProperties: true
         '400':
           $ref: '#/components/responses/BadRequest'
@@ -6481,7 +6496,7 @@ components:
               description: Optional i18n key the client can use to localize the message.
             retryable:
               type: boolean
-              description: Whether the client may safely retry the request.
+              description: 'Whether the person can try again, often by starting over (signing in again, asking for a new code, waiting). It is not a promise that resending the same request will succeed: auth.session_revoked is retryable and the session never comes back. Decide whether to resend a request from its status (429, 503 with Retry-After).'
             fields:
               type: array
               description: Per-field validation errors (typically on 422 responses).
@@ -6858,6 +6873,7 @@ components:
             - refresh_token
             - urn:ietf:params:oauth:grant-type:device_code
             - urn:ietf:params:oauth:grant-type:token-exchange
+            - urn:openid:params:grant-type:ciba
         code:
           type: string
         redirect_uri:
@@ -6870,6 +6886,9 @@ components:
         device_code:
           type: string
           description: Present when grant_type is the RFC 8628 device_code grant.
+        auth_req_id:
+          type: string
+          description: Present when grant_type is the CIBA grant; the auth_req_id the backchannel authentication request answered.
         resource:
           type: string
           format: uri
@@ -6939,6 +6958,9 @@ components:
           description: When the access token expires; client_credentials tokens only.
         scope:
           type: string
+        issued_token_type:
+          type: string
+          description: RFC 8693 token-exchange answers only; the type of the issued token, urn:ietf:params:oauth:token-type:access_token.
     SCIMError:
       type: object
       description: An RFC 7644 §3.12 SCIM error.

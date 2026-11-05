@@ -1,6 +1,8 @@
 package billing
 
 import (
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,6 +119,46 @@ func TestCostsNoMore(t *testing.T) {
 	for _, c := range cases {
 		if got := costsNoMore(starter, c.current); got != c.want {
 			t.Errorf("costsNoMore(starter, %s) = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestBuiltinPlansPromiseOnlyWhatShips keeps the catalogue the console and the
+// website show to what the product actually does. Each phrase below names
+// something that isn't built or committed to: an uptime figure or SLA, keys
+// the customer brings, data residency, a dedicated tenant, a certification,
+// a custom sign-in domain, or usage metering.
+func TestBuiltinPlansPromiseOnlyWhatShips(t *testing.T) {
+	unsupported := []string{"uptime", "SLA", "BYOK", "residency", "Dedicated tenant", "HIPAA", "& domain", "metered"}
+	for _, p := range builtins {
+		for _, line := range p.features {
+			for _, phrase := range unsupported {
+				if strings.Contains(line, phrase) {
+					t.Errorf("plan %s promises %q in %q", p.code, phrase, line)
+				}
+			}
+		}
+	}
+}
+
+// TestYearlyPlansMatchMonthlyFeatures holds the yearly plans to the features of
+// the monthly plan they bill for, so a change to one can't miss the other.
+func TestYearlyPlansMatchMonthlyFeatures(t *testing.T) {
+	byCode := map[string]builtinPlan{}
+	for _, p := range builtins {
+		byCode[p.code] = p
+	}
+	for _, p := range builtins {
+		if p.interval != "year" {
+			continue
+		}
+		monthly, ok := byCode[strings.TrimSuffix(p.code, "_year")]
+		if !ok {
+			t.Errorf("yearly plan %s has no monthly plan", p.code)
+			continue
+		}
+		if !slices.Equal(p.features, monthly.features) {
+			t.Errorf("plan %s features differ from %s", p.code, monthly.code)
 		}
 	}
 }
