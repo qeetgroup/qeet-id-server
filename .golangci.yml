@@ -1,7 +1,9 @@
 version: "2"
 
 run:
-  timeout: 5m
+  # CI lints with the integration tag on a cold cache; loading those packages alone
+  # can take more than 5 minutes there.
+  timeout: 10m
 
 linters:
   default: none

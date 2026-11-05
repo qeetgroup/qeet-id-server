@@ -122,7 +122,9 @@ func (s *Service) CheckLoginDomain(ctx context.Context, tenantID uuid.UUID) (*Lo
 	if host == "" {
 		return st, nil
 	}
-	now := time.Now().UTC()
+	// Postgres keeps microseconds: truncated, the time answered now is the one a
+	// later read returns, on any clock.
+	now := time.Now().UTC().Truncate(time.Microsecond)
 	st.CheckedAt = &now
 	result, err := json.Marshal(st)
 	if err != nil {
@@ -169,7 +171,7 @@ func (s *Service) loginDomainStatus(ctx context.Context, tenantID uuid.UUID, hos
 
 	lookupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Microsecond)
 	st.DNSCheckedAt = &now
 	want := fmt.Sprintf("qeetid-verify=%s", shortTenant(tenantID))
 	records, _ := s.resolver.LookupTXT(lookupCtx, loginVerifyHost+"."+host)
