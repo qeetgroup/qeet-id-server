@@ -58,7 +58,7 @@ paths:
       security:
         - bearerAuth: []
         - ssoCookie: []
-      description: Caller-scoped user-only list of the active, non-deleted organizations the caller belongs to (their own organization, and each one where they hold a role). No user or tenant identity is taken from query parameters. last_used_at excludes the current session so automatic sign-in scope is not labeled as a prior selection. Also accepts the hosted-login session cookie (qe_ls) in place of a bearer token, so a browser app signed in through the hosted login can list the caller's organizations by name.
+      description: Caller-scoped user-only list of the active, non-deleted organizations the caller belongs to (their own organization, and each one where they hold a role). No user or tenant identity is taken from query parameters. last_used_at excludes the current session so automatic sign-in scope is not labeled as a prior selection. Also accepts the hosted-login session cookie (qe_ls) in place of a bearer token, so Qeet ID's own hosted pages can list the caller's organizations by name. The cookie belongs to Qeet ID's sign-in domain, so another site's browser code cannot send it.
       parameters:
         - name: limit
           in: query

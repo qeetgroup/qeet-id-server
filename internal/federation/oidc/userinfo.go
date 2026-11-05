@@ -23,7 +23,7 @@ var userinfoClaims = map[string][]string{
 
 // claimsSupported is discovery's claims_supported list.
 func claimsSupported() []string {
-	out := []string{"sub", "iss", "aud", "exp", "iat", "nonce", "tenant_id"}
+	out := []string{"sub", "iss", "aud", "exp", "iat", "auth_time", "nonce", "sid", "tenant_id"}
 	for _, scope := range []string{"profile", "email", "phone"} {
 		out = append(out, userinfoClaims[scope]...)
 	}
