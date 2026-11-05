@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -169,24 +168,6 @@ func (p *fakeIdP) sign(t *testing.T, claims jwt.MapClaims, signer crypto.Signer,
 		t.Fatal(err)
 	}
 	return raw
-}
-
-// expect makes the token endpoint redeem code, for the sign-in authURL began,
-// with an ID token: the one claims returns for the nonce authURL carries,
-// signed as sign would.
-func (p *fakeIdP) expect(t *testing.T, authURL, code string, claims func(nonce string) jwt.MapClaims, signer crypto.Signer, kid string) {
-	t.Helper()
-	u, err := url.Parse(authURL)
-	q := u.Query()
-	if err != nil || !strings.HasPrefix(authURL, testAuthorizeBase+"?") || q.Get("code_challenge_method") != "S256" ||
-		q.Get("client_id") != testClientID || q.Get("response_type") != "code" || q.Get("nonce") == "" || q.Get("state") == "" ||
-		!strings.Contains(" "+q.Get("scope")+" ", " openid ") {
-		t.Fatalf("authorization URL %q; want the provider's, with PKCE, a state, a nonce and openid", authURL)
-	}
-	token := p.sign(t, claims(q.Get("nonce")), signer, kid)
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.pending[code] = pendingCode{challenge: q.Get("code_challenge"), redirectURI: q.Get("redirect_uri"), token: token}
 }
 
 // token redeems a prepared code for a client that authenticates with its

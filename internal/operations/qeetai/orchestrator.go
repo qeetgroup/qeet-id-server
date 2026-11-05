@@ -3,6 +3,7 @@ package qeetai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -178,6 +179,17 @@ func recentHistory(msgs []Message, maxBytes int) []Message {
 // usage is the tokens one turn used, as its provider reported them.
 type usage struct{ input, output int }
 
+// drainAfterCancel waits for a stream collect has cancelled to finish. Its
+// error is then the cancellation, which says nothing; any other error means the
+// provider failed on its own first, and is logged.
+func drainAfterCancel(events <-chan ai.Event, errC <-chan error) {
+	for range events {
+	}
+	if err := <-errC; err != nil && !errors.Is(err, context.Canceled) {
+		slog.Warn("qeetai: stream failed after it was cancelled", "err", err)
+	}
+}
+
 // collect reads one turn's stream into its text and tool calls, sending the
 // text to sse as it arrives. A tool call must start on the next slot, below
 // ai.MaxToolCalls, and its input stay within ai.MaxToolInputBytes; otherwise
@@ -188,9 +200,7 @@ func collect(events <-chan ai.Event, errC <-chan error, cancel context.CancelFun
 	var textBuilder strings.Builder
 	fail := func(code, message string) (string, []*toolUseAccum, bool) {
 		cancel()
-		for range events {
-		}
-		<-errC
+		drainAfterCancel(events, errC)
 		sse.send(EventTypeError, errorData{Code: code, Message: message})
 		sse.send(EventTypeDone, doneData{Reason: "error"})
 		return "", nil, false
@@ -213,9 +223,7 @@ func collect(events <-chan ai.Event, errC <-chan error, cancel context.CancelFun
 			if full {
 				slog.Info("qeetai: reply cut at the output limit", "bytes", textBuilder.Len())
 				cancel()
-				for range events {
-				}
-				<-errC
+				drainAfterCancel(events, errC)
 				return textBuilder.String(), nil, true
 			}
 
