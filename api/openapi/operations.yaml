@@ -3625,7 +3625,8 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: true }
+            schema:
+              $ref: '#/components/schemas/BillingProfile'
       responses:
         '200':
           description: Updated billing profile
@@ -3655,7 +3656,16 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: true }
+            schema:
+              type: object
+              required: [plan_code]
+              properties:
+                plan_code:
+                  type: string
+                  description: The plan to try, starter or pro (or their _year plans); any other plan is refused with billing.trial_not_eligible.
+                currency:
+                  type: string
+                  description: ISO 4217 code of a currency the plan is priced in, such as INR; USD when omitted or not a valid code.
       responses:
         '200':
           description: Trial subscription

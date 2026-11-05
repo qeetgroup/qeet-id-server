@@ -5336,8 +5336,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: '#/components/schemas/BotSettings'
       responses:
         '200':
           description: Updated settings
