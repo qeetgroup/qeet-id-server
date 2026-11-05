@@ -19,6 +19,15 @@ type builtinPlan struct {
 	prices                            map[string]int64
 }
 
+// Feature lines name only what the product does today: no uptime figure or
+// SLA, customer-held keys, data residency, dedicated tenant, certification,
+// custom sign-in domain or usage metering until those exist. The yearly plans
+// share their monthly plan's lines.
+var (
+	starterFeatures = []string{"Up to 25,000 MAU", "All MFA methods (SMS, email, passkey)", "Custom branding", "Webhooks & 30-day audit log", "Email support"}
+	proFeatures     = []string{"Up to 100,000 MAU", "Enterprise SSO — SAML & OIDC included", "RBAC + ABAC & advanced threat protection", "Audit export (90-day) & Qeet AI", "Priority + chat support"}
+)
+
 var builtins = []builtinPlan{
 	{
 		code: "free", name: "Free", description: "For prototypes and early projects.", interval: "month", sort: 1,
@@ -27,17 +36,17 @@ var builtins = []builtinPlan{
 	},
 	{
 		code: "starter", name: "Starter", description: "For teams shipping to production.", interval: "month", sort: 2,
-		features: []string{"Up to 25,000 MAU", "All MFA methods (SMS, email, passkey)", "Custom branding & domain", "Webhooks & 30-day audit log", "Email support · 99.9% uptime"},
+		features: starterFeatures,
 		prices:   map[string]int64{"USD": 2900, "EUR": 2700, "GBP": 2400, "INR": 240000, "JPY": 4500, "AUD": 4500, "CAD": 3900},
 	},
 	{
 		code: "pro", name: "Pro", description: "For scaling B2B/B2C — no SSO tax.", interval: "month", sort: 3,
-		features: []string{"Up to 100,000 MAU (then metered)", "Enterprise SSO — SAML & OIDC included", "RBAC + ABAC & advanced threat protection", "Audit export (90-day) & Qeet AI", "Priority + chat support · 99.95% uptime"},
+		features: proFeatures,
 		prices:   map[string]int64{"USD": 9900, "EUR": 9000, "GBP": 7900, "INR": 800000, "JPY": 15000, "AUD": 15000, "CAD": 13000},
 	},
 	{
 		code: "enterprise", name: "Enterprise", description: "Governance, compliance & control for large orgs.", interval: "month", sort: 4,
-		features: []string{"Unlimited MAU & organizations", "SCIM & LDAP directory sync + SSO enforcement", "Conditional access, BYOK & data residency", "Dedicated tenant · SOC 2 / ISO 27001 / HIPAA", "99.99% SLA · named CSM & professional services"},
+		features: []string{"Unlimited MAU & organizations", "SCIM & LDAP directory sync + SSO enforcement", "Conditional access & SIEM log streaming", "SOC 2 & ISO 27001 evidence reports", "Named CSM & professional services"},
 		prices:   map[string]int64{"USD": 29900, "EUR": 27900, "GBP": 24900, "INR": 2490000, "JPY": 45000, "AUD": 45000, "CAD": 39900},
 	},
 
@@ -45,12 +54,12 @@ var builtins = []builtinPlan{
 	// at 10× the monthly price. Free and Enterprise (contact sales) have none.
 	{
 		code: "starter_year", name: "Starter", description: "For teams shipping to production. Billed yearly.", interval: "year", sort: 5,
-		features: []string{"Up to 25,000 MAU", "All MFA methods (SMS, email, passkey)", "Custom branding & domain", "Webhooks & 30-day audit log", "Email support · 99.9% uptime"},
+		features: starterFeatures,
 		prices:   map[string]int64{"USD": 29000, "EUR": 27000, "GBP": 24000, "INR": 2400000, "JPY": 45000, "AUD": 45000, "CAD": 39000},
 	},
 	{
 		code: "pro_year", name: "Pro", description: "For scaling B2B/B2C — no SSO tax. Billed yearly.", interval: "year", sort: 6,
-		features: []string{"Up to 100,000 MAU (then metered)", "Enterprise SSO — SAML & OIDC included", "RBAC + ABAC & advanced threat protection", "Audit export (90-day) & Qeet AI", "Priority + chat support · 99.95% uptime"},
+		features: proFeatures,
 		prices:   map[string]int64{"USD": 99000, "EUR": 90000, "GBP": 79000, "INR": 8000000, "JPY": 150000, "AUD": 150000, "CAD": 130000},
 	},
 }
