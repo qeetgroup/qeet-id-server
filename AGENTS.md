@@ -54,7 +54,7 @@ section of the context document.
 ### 1. Inspect before editing
 
 **Never change code based on a filename or an assumption.** Read the file. Read its callers. This
-repository has 93 packages and near-identical names in different contexts — `internal/access/risk/ipallow`
+repository has over a hundred packages and near-identical names in different contexts — `internal/access/risk/ipallow`
 and `internal/access/threat/risk` are different things.
 
 ### 2. Follow the existing architecture
