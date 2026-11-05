@@ -550,7 +550,6 @@ paths:
         - OIDC
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: OK
@@ -575,7 +574,6 @@ paths:
         - OIDC
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -857,7 +855,6 @@ paths:
         - OIDC
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: UserInfo claims
@@ -900,7 +897,6 @@ paths:
         - OIDC
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: UserInfo claims
@@ -1930,7 +1926,6 @@ paths:
         - Social
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: OK
@@ -1964,7 +1959,6 @@ paths:
             format: uuid
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '204':
           description: No Content
@@ -1989,7 +1983,6 @@ paths:
             type: string
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: OK
@@ -2017,7 +2010,6 @@ paths:
         - Social
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:

@@ -57,7 +57,6 @@ paths:
       tags: [Tenants]
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
         - ssoCookie: []
       description: Caller-scoped user-only list of the active, non-deleted organizations the caller belongs to (their own organization, and each one where they hold a role). No user or tenant identity is taken from query parameters. last_used_at excludes the current session so automatic sign-in scope is not labeled as a prior selection. Also accepts the hosted-login session cookie (qe_ls) in place of a bearer token, so a browser app signed in through the hosted login can list the caller's organizations by name.
       parameters:
@@ -110,7 +109,6 @@ paths:
         - $ref: '#/components/parameters/Cursor'
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: Tenant page
@@ -128,7 +126,6 @@ paths:
         - Tenants
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -1814,7 +1811,6 @@ paths:
       tags: [Users]
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
         - ssoCookie: []
       responses:
         '200':
@@ -1832,7 +1828,6 @@ paths:
       tags: [Users]
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -1866,7 +1861,6 @@ paths:
             type: string
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -1909,7 +1903,6 @@ paths:
         - Verification
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -1948,7 +1941,6 @@ paths:
         - Verification
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -1996,7 +1988,6 @@ paths:
             type: string
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: false
         content:
@@ -2043,7 +2034,6 @@ paths:
             type: string
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -2092,7 +2082,6 @@ paths:
             type: string
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: false
         content:
@@ -2870,7 +2859,6 @@ paths:
         - Invites
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       description: 'Pending, unexpired invitations addressed to the signed-in user''s email, each with the inviting organization''s name — the in-app inbox for a user who may not belong to any org yet. Answers 403 invite.email_not_verified until the account''s address is verified: anyone can sign up with any address.'
       responses:
         '200':
@@ -2899,7 +2887,6 @@ paths:
         - Invites
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -2937,7 +2924,6 @@ paths:
         - Invites
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       parameters:
         - name: id
           in: path
@@ -2969,7 +2955,6 @@ paths:
         - Invites
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       parameters:
         - name: id
           in: path
