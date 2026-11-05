@@ -69,9 +69,9 @@ Once a fix is released, we publish a security advisory on this repository descri
 
 A formal bug bounty program will launch alongside v1.0. Until then, we handle reports through this policy and offer thanks + advisory credit.
 
-## Hardening expectations for self-hosters
+## Hardening expectations for deployments
 
-If you are deploying Qeet ID yourself, please also:
+Every Qeet ID deployment also:
 - Run TLS 1.2+ on every public endpoint
 - Rotate the JWT signing key set every 90 days
 - Keep dependencies current — `go.mod` / `go.sum` are version-pinned for reproducibility, not because they should stay stale

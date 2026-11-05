@@ -4,15 +4,16 @@
 
 ### Passkeys-first Identity & Access Platform
 
-**A self-hostable identity platform for modern applications and enterprises.**
+**Sign-in, access control, federation and machine identity for modern applications and enterprises, behind one API.**
 
-Own the identity layer, keep PostgreSQL as the source of truth, and deploy one Go API artifact.
+Passkeys first, standards throughout (OpenID Connect, SAML, SCIM, WebAuthn), PostgreSQL as the source of truth.
 
 [![CI](https://github.com/qeetgroup/qeet-id-server/actions/workflows/ci.yml/badge.svg)](https://github.com/qeetgroup/qeet-id-server/actions/workflows/ci.yml)
-[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white)](./api/openapi/)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](./Dockerfile)
+[![Tenant isolation](https://img.shields.io/badge/tenant%20isolation-row--level%20security-7C3AED?logo=postgresql&logoColor=white)](./docs/llm/boundaries.md)
 
 **[Website](https://id.qeet.in) &middot; [Documentation](https://docs.qeet.in) &middot; [API](./api/openapi/)**
 
@@ -22,12 +23,9 @@ Own the identity layer, keep PostgreSQL as the source of truth, and deploy one G
 
 ## 🧭 What is Qeet ID?
 
-Qeet ID is an Identity and Access Management platform that combines authentication, authorization, enterprise federation, user lifecycle management, and machine identity behind one API. It is built for teams that need standards-based identity without handing control of users, credentials, and policy to a hosted identity vendor.
+Qeet ID is an Identity and Access Management platform that combines authentication, authorization, enterprise federation, user lifecycle management, and machine identity behind one API. It gives product teams standards-based identity, with users, credentials and policy in one place, instead of stitching sign-in, authorization and federation together from separate services.
 
 The backend is a Go modular monolith backed by PostgreSQL. Five bounded contexts share a small platform layer, while a composition root wires HTTP routes, policy enforcement, persistence, event delivery, and background work. The default API process runs as a single binary and embeds its continuous workers; dedicated worker and scheduler entrypoints are available when those workloads need to scale independently.
-
-> [!IMPORTANT]
-> Qeet ID is currently **pre-1.0**. Review the [changelog](./CHANGELOG.md) and [security policy](./SECURITY.md) before operating it in production.
 
 ## ✨ Key Features
 
@@ -304,8 +302,8 @@ enforces.
 
 <div align="center">
 
-**🔐 Identity infrastructure you control.**
+**🔐 Passkeys-first identity and access.**
 
-[Qeet ID](https://id.qeet.in) &middot; Self-Hostable &middot; Developer First
+[Qeet ID](https://id.qeet.in) &middot; Standards First &middot; Developer First
 
 </div>
