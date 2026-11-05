@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
+	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
@@ -406,6 +407,9 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 			return nil, err
 		}
 	}
+	if err := user.RecordActive(ctx, tx, tenantID, userID); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -574,6 +578,9 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 		NewID: pgtype.UUID{Bytes: newID, Valid: true},
 		ID:    rt.ID,
 	}); err != nil {
+		return nil, err
+	}
+	if err := user.RecordActive(ctx, tx, rt.TenantID, rt.UserID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
