@@ -771,7 +771,6 @@ paths:
               grant_type: client_credentials
               client_id: svc_018f2a80_reporting
               client_secret: cs_3f0a1b2c3d4e5f6g7h8i9j0k1l2m3n4o
-              scope: audit:read users:read
             schema:
               type: object
               required:
@@ -787,6 +786,7 @@ paths:
                   type: string
                 scope:
                   type: string
+                  description: Ignored. The token always carries every scope the service principal holds; asking for fewer isn't supported.
       responses:
         '200':
           description: Token response
@@ -3925,6 +3925,7 @@ paths:
                 oneOf:
                   - $ref: '#/components/schemas/TokenPair'
                   - type: object
+                    description: The same challenge a password sign-in answers with (MFAChallenge in the authentication API).
                     properties:
                       mfa_required:
                         type: boolean
@@ -3934,8 +3935,18 @@ paths:
                         type: array
                         items:
                           type: string
+                          enum: [totp, recovery_code, email, sms, passkey, push]
+                      factors:
+                        type: array
+                        description: Exactly the second factors this person can complete the challenge with. Empty for an enrolment challenge.
+                        items:
+                          $ref: '#/components/schemas/LoginFactor'
                       enrollment_required:
                         type: boolean
+                      enrollment_due_at:
+                        type: string
+                        format: date-time
+                        description: On an enrolment challenge in the organisation's grace period, when it ends.
                     additionalProperties: true
         '400':
           $ref: '#/components/responses/BadRequest'
@@ -6850,6 +6861,7 @@ components:
             - refresh_token
             - urn:ietf:params:oauth:grant-type:device_code
             - urn:ietf:params:oauth:grant-type:token-exchange
+            - urn:openid:params:grant-type:ciba
         code:
           type: string
         redirect_uri:
@@ -6862,6 +6874,9 @@ components:
         device_code:
           type: string
           description: Present when grant_type is the RFC 8628 device_code grant.
+        auth_req_id:
+          type: string
+          description: Present when grant_type is the CIBA grant; the auth_req_id the backchannel authentication request answered.
         resource:
           type: string
           format: uri
@@ -6931,6 +6946,9 @@ components:
           description: When the access token expires; client_credentials tokens only.
         scope:
           type: string
+        issued_token_type:
+          type: string
+          description: RFC 8693 token-exchange answers only; the type of the issued token, urn:ietf:params:oauth:token-type:access_token.
     SCIMError:
       type: object
       description: An RFC 7644 §3.12 SCIM error.

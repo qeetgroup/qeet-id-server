@@ -1977,7 +1977,7 @@ paths:
     post:
       operationId: post_v1_users_ById_verify_email_start
       summary: Start email verification
-      description: Sends a 6-digit code to the address on file. Pass `email` only to verify a different address.
+      description: Sends a 6-digit code to the caller's address on file. It never verifies an address given in the request; moving to another address is the email-change flow (/v1/me/email/change/start).
       tags:
         - Verification
       parameters:
@@ -1988,17 +1988,6 @@ paths:
             type: string
       security:
         - bearerAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                email:
-                  type: string
-                  format: email
-                  description: Optional; defaults to the user's email on file.
       responses:
         '200':
           description: Code sent; returns a confirmation message
@@ -3653,10 +3642,15 @@ components:
         display_name:
           type: string
           nullable: true
+        avatar_url:
+          type: string
+          nullable: true
+          description: The person's picture as a data:image/ URL, or null for none.
         status:
           type: string
           enum:
             - active
+            - invited
             - suspended
         metadata:
           type: object
@@ -3881,6 +3875,11 @@ components:
           type: string
           maxLength: 200
           nullable: true
+        avatar_url:
+          type: string
+          maxLength: 300000
+          nullable: true
+          description: A data:image/ URL, or an empty string to clear the picture.
         phone:
           type: string
           nullable: true
@@ -4260,14 +4259,16 @@ components:
           format: date-time
     GroupUpdateInput:
       type: object
-      required: [description, name, parent_id]
+      description: Every field is optional; an omitted one keeps its value.
       properties:
         description:
           type: [string, 'null']
         name:
           type: [string, 'null']
         parent_id:
-          $ref: '#/components/schemas/OptionalUUID'
+          type: [string, 'null']
+          format: uuid
+          description: The new parent group's id, or null to make the group top-level. Omit it to keep the parent.
     ImportResult:
       type: object
       required: [created, failed, rows, skipped]
@@ -4387,15 +4388,6 @@ components:
         user_id:
           type: string
           format: uuid
-    OptionalUUID:
-      type: object
-      required: [ID, Set]
-      properties:
-        ID:
-          type: [string, 'null']
-          format: uuid
-        Set:
-          type: boolean
     PublicKeyCredentialCreationOptions:
       type: object
       required: [challenge, rp, user]
