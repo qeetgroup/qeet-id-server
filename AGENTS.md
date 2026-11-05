@@ -184,7 +184,7 @@ make kill                        # free a stuck :4001
 
 There is no `make help`, and no `dev-*` variants beyond `dev-secrets`.
 
-**`make lint` runs the same lint as CI:** `go vet` plus `golangci-lint` v2.14.0 over the whole tree,
+**`make lint` runs the same lint as CI:** `go vet` plus `golangci-lint` v2.15.0 over the whole tree,
 including the integration-tagged database tests, with the linters in `.golangci.yml`.
 
 Single test: `go test ./internal/access/authentication/... -run TestName`
@@ -197,7 +197,7 @@ Single test: `go test ./internal/access/authentication/... -run TestName`
 |---|---|
 | `test` | `go build ./...`, `go vet ./...`, `go test -race -count=1 ./...` — includes the OpenAPI route-coverage and document-validity gates and the static guards: tenant filter (`internal/platform/database/tenantguard`), pool use inside a transaction (`…/txguard`), error-code statuses and `.env.example` completeness; reports coverage |
 | `database` | `go test -tags integration ./...` — tenant-isolation and sign-in tests against PostgreSQL (testcontainers) |
-| `lint` | `golangci-lint` v2.14.0 on the whole tree; `sqlc diff` in every package |
+| `lint` | `golangci-lint` v2.15.0 on the whole tree; `sqlc diff` in every package |
 | `vuln` | `govulncheck ./cmd/... ./internal/...` blocking, plus an advisory full-tree scan |
 | `sast` | `gosec` — blocking; an accepted finding needs `// #nosec <rule> -- <reason>` (`.gosec.json`) |
 | `image` | On push to `release/**` only, after `test`/`database`/`lint`/`vuln`: scan the image with Trivy (blocking on fixable critical CVEs), then publish `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>` (amd64+arm64) with an SBOM and SLSA provenance attached, for the Qeet ID Kit (`qeet-id-kit`). Base images are pinned by digest and every action by commit SHA. Never computes an RC number |
