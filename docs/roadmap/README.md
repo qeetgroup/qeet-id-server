@@ -2,10 +2,10 @@
 
 This folder holds two things for Qeet ID:
 
-- **[release-1.0.md](release-1.0.md):** the seven checks Qeet ID 1.0 has to pass before real customers use it (Jira epic [QTID-1](https://qeetgroup.atlassian.net/browse/QTID-1)).
-- **[ideas.md](ideas.md):** 25 product ideas for after 1.0 (Jira epic [QTID-22](https://qeetgroup.atlassian.net/browse/QTID-22)). None is approved.
+- **[release-1.0.md](release-1.0.md):** the seven checks Qeet ID 1.0 has to pass before real customers use it.
+- **[ideas.md](ideas.md):** 25 product ideas for after 1.0. None is approved.
 
-Both came out of a backend review and product research done in October 2026. Each item has a Jira ticket where its work is tracked; these pages keep the full reasoning, the proposed APIs and the sources behind each ticket.
+Both came out of a backend review and product research done in October 2026. These pages keep the full reasoning, the proposed APIs and the sources behind each item.
 
 ## Status (2 November 2026)
 
@@ -15,40 +15,40 @@ Both came out of a backend review and product research done in October 2026. Eac
 
 ## Index
 
-| ID | Name | Jira | Detail |
-| --- | --- | --- | --- |
-| G-01 | Full CI on the 1.0 release candidate | [QTID-114](https://qeetgroup.atlassian.net/browse/QTID-114) | [release-1.0.md](release-1.0.md#g-01-full-ci-on-the-10-release-candidate) |
-| G-02 | Customer sign-in journeys end to end | [QTID-121](https://qeetgroup.atlassian.net/browse/QTID-121) | [release-1.0.md](release-1.0.md#g-02-customer-sign-in-journeys-end-to-end) |
-| G-03 | Backup restore and upgrade rehearsal | [QTID-122](https://qeetgroup.atlassian.net/browse/QTID-122) | [release-1.0.md](release-1.0.md#g-03-backup-restore-and-upgrade-rehearsal) |
-| G-04 | Load and failure test | [QTID-127](https://qeetgroup.atlassian.net/browse/QTID-127) | [release-1.0.md](release-1.0.md#g-04-load-and-failure-test) |
-| G-05 | Revoked access really stops | [QTID-138](https://qeetgroup.atlassian.net/browse/QTID-138) | [release-1.0.md](release-1.0.md#g-05-revoked-access-really-stops) |
-| G-06 | Privacy and support readiness | [QTID-139](https://qeetgroup.atlassian.net/browse/QTID-139) | [release-1.0.md](release-1.0.md#g-06-privacy-and-support-readiness) |
-| G-07 | Independent security review | [QTID-44](https://qeetgroup.atlassian.net/browse/QTID-44) | [release-1.0.md](release-1.0.md#g-07-independent-security-review) |
-| F-01 | Preview a policy change before it goes live | [QTID-140](https://qeetgroup.atlassian.net/browse/QTID-140) | [ideas.md](ideas.md#f-01-preview-a-policy-change-before-it-goes-live) |
-| F-02 | Access reviews and time-limited admin access | [QTID-141](https://qeetgroup.atlassian.net/browse/QTID-141) | [ideas.md](ideas.md#f-02-access-reviews-and-time-limited-admin-access) |
-| F-03 | Offboarding receipt | [QTID-146](https://qeetgroup.atlassian.net/browse/QTID-146) | [ideas.md](ideas.md#f-03-offboarding-receipt) |
-| F-04 | Rehearse a federation change before it affects people | [QTID-147](https://qeetgroup.atlassian.net/browse/QTID-147) | [ideas.md](ideas.md#f-04-rehearse-a-federation-change-before-it-affects-people) |
-| F-05 | Agent actions through a credential broker, with approvals | [QTID-153](https://qeetgroup.atlassian.net/browse/QTID-153) | [ideas.md](ideas.md#f-05-agent-actions-through-a-credential-broker-with-approvals) |
-| F-06 | Evidence pack for a release and an organisation's controls | [QTID-166](https://qeetgroup.atlassian.net/browse/QTID-166) | [ideas.md](ideas.md#f-06-evidence-pack-for-a-release-and-an-organisations-controls) |
-| N-01 | Sign in CI jobs and workloads without stored secrets | [QTID-169](https://qeetgroup.atlassian.net/browse/QTID-169) | [ideas.md](ideas.md#n-01-sign-in-ci-jobs-and-workloads-without-stored-secrets) |
-| N-02 | Task-scoped agent identity with shared budgets | [QTID-170](https://qeetgroup.atlassian.net/browse/QTID-170) | [ideas.md](ideas.md#n-02-task-scoped-agent-identity-with-shared-budgets) |
-| N-03 | Permission-aware AI retrieval with source records | [QTID-172](https://qeetgroup.atlassian.net/browse/QTID-172) | [ideas.md](ideas.md#n-03-permission-aware-ai-retrieval-with-source-records) |
-| N-04 | Pin approved MCP tool servers to a reviewed revision | [QTID-177](https://qeetgroup.atlassian.net/browse/QTID-177) | [ideas.md](ideas.md#n-04-pin-approved-mcp-tool-servers-to-a-reviewed-revision) |
-| N-05 | What could this account reach if it were compromised? | [QTID-178](https://qeetgroup.atlassian.net/browse/QTID-178) | [ideas.md](ideas.md#n-05-what-could-this-account-reach-if-it-were-compromised) |
-| N-06 | Least-privilege suggestions from real usage | [QTID-183](https://qeetgroup.atlassian.net/browse/QTID-183) | [ideas.md](ideas.md#n-06-least-privilege-suggestions-from-real-usage) |
-| N-07 | Two-way trust between partner organisations | [QTID-190](https://qeetgroup.atlassian.net/browse/QTID-190) | [ideas.md](ideas.md#n-07-two-way-trust-between-partner-organisations) |
-| N-08 | Per-app disclosure rules and pairwise subject IDs | [QTID-196](https://qeetgroup.atlassian.net/browse/QTID-196) | [ideas.md](ideas.md#n-08-per-app-disclosure-rules-and-pairwise-subject-ids) |
-| N-09 | Recovery readiness and quorum-approved recovery | [QTID-200](https://qeetgroup.atlassian.net/browse/QTID-200) | [ideas.md](ideas.md#n-09-recovery-readiness-and-quorum-approved-recovery) |
-| N-10 | Authenticator and device assurance | [QTID-201](https://qeetgroup.atlassian.net/browse/QTID-201) | [ideas.md](ideas.md#n-10-authenticator-and-device-assurance) |
-| N-11 | Authorisation decisions close to customer services | [QTID-202](https://qeetgroup.atlassian.net/browse/QTID-202) | [ideas.md](ideas.md#n-11-authorisation-decisions-close-to-customer-services) |
-| N-12 | Customer-controlled encryption keys | [QTID-207](https://qeetgroup.atlassian.net/browse/QTID-207) | [ideas.md](ideas.md#n-12-customer-controlled-encryption-keys) |
-| N-13 | Outbound-only connector for private directories | [QTID-214](https://qeetgroup.atlassian.net/browse/QTID-214) | [ideas.md](ideas.md#n-13-outbound-only-connector-for-private-directories) |
-| N-14 | Promote configuration between environments | [QTID-216](https://qeetgroup.atlassian.net/browse/QTID-216) | [ideas.md](ideas.md#n-14-promote-configuration-between-environments) |
-| N-15 | Integration diagnostics for customer apps | [QTID-221](https://qeetgroup.atlassian.net/browse/QTID-221) | [ideas.md](ideas.md#n-15-integration-diagnostics-for-customer-apps) |
-| PQ-01 | Cryptographic inventory and post-quantum plan | [QTID-224](https://qeetgroup.atlassian.net/browse/QTID-224) | [ideas.md](ideas.md#pq-01-cryptographic-inventory-and-post-quantum-plan) |
-| PQ-02 | Evidence of post-quantum TLS on real connections | [QTID-225](https://qeetgroup.atlassian.net/browse/QTID-225) | [ideas.md](ideas.md#pq-02-evidence-of-post-quantum-tls-on-real-connections) |
-| PQ-03 | Post-quantum signatures on long-lived audit exports | [QTID-235](https://qeetgroup.atlassian.net/browse/QTID-235) | [ideas.md](ideas.md#pq-03-post-quantum-signatures-on-long-lived-audit-exports) |
-| RESIDENCY | Data residency and dedicated deployments (discovery) | [QTID-241](https://qeetgroup.atlassian.net/browse/QTID-241) | [ideas.md](ideas.md#residency-data-residency-and-dedicated-deployments-discovery) |
+| ID | Name | Detail |
+| --- | --- | --- |
+| G-01 | Full CI on the 1.0 release candidate | [release-1.0.md](release-1.0.md#g-01-full-ci-on-the-10-release-candidate) |
+| G-02 | Customer sign-in journeys end to end | [release-1.0.md](release-1.0.md#g-02-customer-sign-in-journeys-end-to-end) |
+| G-03 | Backup restore and upgrade rehearsal | [release-1.0.md](release-1.0.md#g-03-backup-restore-and-upgrade-rehearsal) |
+| G-04 | Load and failure test | [release-1.0.md](release-1.0.md#g-04-load-and-failure-test) |
+| G-05 | Revoked access really stops | [release-1.0.md](release-1.0.md#g-05-revoked-access-really-stops) |
+| G-06 | Privacy and support readiness | [release-1.0.md](release-1.0.md#g-06-privacy-and-support-readiness) |
+| G-07 | Independent security review | [release-1.0.md](release-1.0.md#g-07-independent-security-review) |
+| F-01 | Preview a policy change before it goes live | [ideas.md](ideas.md#f-01-preview-a-policy-change-before-it-goes-live) |
+| F-02 | Access reviews and time-limited admin access | [ideas.md](ideas.md#f-02-access-reviews-and-time-limited-admin-access) |
+| F-03 | Offboarding receipt | [ideas.md](ideas.md#f-03-offboarding-receipt) |
+| F-04 | Rehearse a federation change before it affects people | [ideas.md](ideas.md#f-04-rehearse-a-federation-change-before-it-affects-people) |
+| F-05 | Agent actions through a credential broker, with approvals | [ideas.md](ideas.md#f-05-agent-actions-through-a-credential-broker-with-approvals) |
+| F-06 | Evidence pack for a release and an organisation's controls | [ideas.md](ideas.md#f-06-evidence-pack-for-a-release-and-an-organisations-controls) |
+| N-01 | Sign in CI jobs and workloads without stored secrets | [ideas.md](ideas.md#n-01-sign-in-ci-jobs-and-workloads-without-stored-secrets) |
+| N-02 | Task-scoped agent identity with shared budgets | [ideas.md](ideas.md#n-02-task-scoped-agent-identity-with-shared-budgets) |
+| N-03 | Permission-aware AI retrieval with source records | [ideas.md](ideas.md#n-03-permission-aware-ai-retrieval-with-source-records) |
+| N-04 | Pin approved MCP tool servers to a reviewed revision | [ideas.md](ideas.md#n-04-pin-approved-mcp-tool-servers-to-a-reviewed-revision) |
+| N-05 | What could this account reach if it were compromised? | [ideas.md](ideas.md#n-05-what-could-this-account-reach-if-it-were-compromised) |
+| N-06 | Least-privilege suggestions from real usage | [ideas.md](ideas.md#n-06-least-privilege-suggestions-from-real-usage) |
+| N-07 | Two-way trust between partner organisations | [ideas.md](ideas.md#n-07-two-way-trust-between-partner-organisations) |
+| N-08 | Per-app disclosure rules and pairwise subject IDs | [ideas.md](ideas.md#n-08-per-app-disclosure-rules-and-pairwise-subject-ids) |
+| N-09 | Recovery readiness and quorum-approved recovery | [ideas.md](ideas.md#n-09-recovery-readiness-and-quorum-approved-recovery) |
+| N-10 | Authenticator and device assurance | [ideas.md](ideas.md#n-10-authenticator-and-device-assurance) |
+| N-11 | Authorisation decisions close to customer services | [ideas.md](ideas.md#n-11-authorisation-decisions-close-to-customer-services) |
+| N-12 | Customer-controlled encryption keys | [ideas.md](ideas.md#n-12-customer-controlled-encryption-keys) |
+| N-13 | Outbound-only connector for private directories | [ideas.md](ideas.md#n-13-outbound-only-connector-for-private-directories) |
+| N-14 | Promote configuration between environments | [ideas.md](ideas.md#n-14-promote-configuration-between-environments) |
+| N-15 | Integration diagnostics for customer apps | [ideas.md](ideas.md#n-15-integration-diagnostics-for-customer-apps) |
+| PQ-01 | Cryptographic inventory and post-quantum plan | [ideas.md](ideas.md#pq-01-cryptographic-inventory-and-post-quantum-plan) |
+| PQ-02 | Evidence of post-quantum TLS on real connections | [ideas.md](ideas.md#pq-02-evidence-of-post-quantum-tls-on-real-connections) |
+| PQ-03 | Post-quantum signatures on long-lived audit exports | [ideas.md](ideas.md#pq-03-post-quantum-signatures-on-long-lived-audit-exports) |
+| RESIDENCY | Data residency and dedicated deployments (discovery) | [ideas.md](ideas.md#residency-data-residency-and-dedicated-deployments-discovery) |
 
 ## How to choose an idea
 
@@ -155,7 +155,7 @@ Numbers such as "4.4" or "5.3" in these pages are items of the October 2026 ente
 | 5.2 | Region: relabel + read-only until real data residency exists |
 | 5.3 | Audit tamper evidence (no UPDATE/DELETE for the app role, signed chain anchor) + audit export with hashes |
 | 5.4 | Encryption key ids + rotation |
-| 5.7 | Admission control (QTID-2) + shard the platform audit chain lock |
+| 5.7 | Admission control (overload shedding) + shard the platform audit chain lock |
 | 5.8 | Metrics (sign-ins by method, queue lags) + supply chain (scan/sign the prod image, SBOM) |
 
 ## Glossary
