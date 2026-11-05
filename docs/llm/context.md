@@ -164,7 +164,7 @@ internal/platform      shared kernel — pure infrastructure
 | `internal/platform` | HTTP, database, crypto, cache, config, events, jobs, messaging, observability |
 | `internal/bootstrap` | Composition root: dependencies, router, permission map, lifecycle, server |
 
-93 packages contain Go files.
+107 packages contain hand-written Go files, 159 with the sqlc-generated `dbgen` ones.
 
 **File-naming convention — `<domain>.go`, not layered file names.** Domain logic, persistence and
 HTTP handlers usually live in **one file named after the package**; additional files split by
