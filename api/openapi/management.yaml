@@ -57,7 +57,6 @@ paths:
       tags: [Tenants]
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
         - ssoCookie: []
       description: Caller-scoped user-only list of the active, non-deleted organizations the caller belongs to (their own organization, and each one where they hold a role). No user or tenant identity is taken from query parameters. last_used_at excludes the current session so automatic sign-in scope is not labeled as a prior selection. Also accepts the hosted-login session cookie (qe_ls) in place of a bearer token, so a browser app signed in through the hosted login can list the caller's organizations by name.
       parameters:
@@ -110,7 +109,6 @@ paths:
         - $ref: '#/components/parameters/Cursor'
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       responses:
         '200':
           description: Tenant page
@@ -128,7 +126,6 @@ paths:
         - Tenants
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -1814,7 +1811,6 @@ paths:
       tags: [Users]
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
         - ssoCookie: []
       responses:
         '200':
@@ -1832,7 +1828,6 @@ paths:
       tags: [Users]
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -1866,7 +1861,6 @@ paths:
             type: string
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -1909,7 +1903,6 @@ paths:
         - Verification
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -1948,7 +1941,6 @@ paths:
         - Verification
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -1985,7 +1977,7 @@ paths:
     post:
       operationId: post_v1_users_ById_verify_email_start
       summary: Start email verification
-      description: Sends a 6-digit code to the address on file. Pass `email` only to verify a different address.
+      description: Sends a 6-digit code to the caller's address on file. It never verifies an address given in the request; moving to another address is the email-change flow (/v1/me/email/change/start).
       tags:
         - Verification
       parameters:
@@ -1996,18 +1988,6 @@ paths:
             type: string
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                email:
-                  type: string
-                  format: email
-                  description: Optional; defaults to the user's email on file.
       responses:
         '200':
           description: Code sent; returns a confirmation message
@@ -2043,7 +2023,6 @@ paths:
             type: string
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -2092,7 +2071,6 @@ paths:
             type: string
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: false
         content:
@@ -2870,7 +2848,6 @@ paths:
         - Invites
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       description: 'Pending, unexpired invitations addressed to the signed-in user''s email, each with the inviting organization''s name — the in-app inbox for a user who may not belong to any org yet. Answers 403 invite.email_not_verified until the account''s address is verified: anyone can sign up with any address.'
       responses:
         '200':
@@ -2899,7 +2876,6 @@ paths:
         - Invites
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -2937,7 +2913,6 @@ paths:
         - Invites
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       parameters:
         - name: id
           in: path
@@ -2969,7 +2944,6 @@ paths:
         - Invites
       security:
         - bearerAuth: []
-        - apiKeyAuth: []
       parameters:
         - name: id
           in: path
@@ -3611,7 +3585,7 @@ components:
               description: Optional i18n key the client can use to localize the message.
             retryable:
               type: boolean
-              description: Whether the client may safely retry the request.
+              description: 'Whether the person can try again, often by starting over (signing in again, asking for a new code, waiting). It is not a promise that resending the same request will succeed: auth.session_revoked is retryable and the session never comes back. Decide whether to resend a request from its status (429, 503 with Retry-After).'
             fields:
               type: array
               description: Per-field validation errors (typically on 422 responses).
@@ -3668,10 +3642,15 @@ components:
         display_name:
           type: string
           nullable: true
+        avatar_url:
+          type: string
+          nullable: true
+          description: The person's picture as a data:image/ URL, or null for none.
         status:
           type: string
           enum:
             - active
+            - invited
             - suspended
         metadata:
           type: object
@@ -3896,6 +3875,11 @@ components:
           type: string
           maxLength: 200
           nullable: true
+        avatar_url:
+          type: string
+          maxLength: 300000
+          nullable: true
+          description: A data:image/ URL, or an empty string to clear the picture.
         phone:
           type: string
           nullable: true
@@ -4275,14 +4259,16 @@ components:
           format: date-time
     GroupUpdateInput:
       type: object
-      required: [description, name, parent_id]
+      description: Every field is optional; an omitted one keeps its value.
       properties:
         description:
           type: [string, 'null']
         name:
           type: [string, 'null']
         parent_id:
-          $ref: '#/components/schemas/OptionalUUID'
+          type: [string, 'null']
+          format: uuid
+          description: The new parent group's id, or null to make the group top-level. Omit it to keep the parent.
     ImportResult:
       type: object
       required: [created, failed, rows, skipped]
@@ -4402,15 +4388,6 @@ components:
         user_id:
           type: string
           format: uuid
-    OptionalUUID:
-      type: object
-      required: [ID, Set]
-      properties:
-        ID:
-          type: [string, 'null']
-          format: uuid
-        Set:
-          type: boolean
     PublicKeyCredentialCreationOptions:
       type: object
       required: [challenge, rp, user]

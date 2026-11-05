@@ -740,7 +740,7 @@ func (h *Handler) token(w http.ResponseWriter, r *http.Request) {
 		Secret  string `json:"secret"`
 	}
 	// Also accept HTTP Basic (agent_id:secret), mirroring OAuth client auth.
-	if u, p, ok := r.BasicAuth(); ok {
+	if u, p, ok := httpx.ClientBasicAuth(r); ok {
 		in.AgentID, in.Secret = u, p
 	} else if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
