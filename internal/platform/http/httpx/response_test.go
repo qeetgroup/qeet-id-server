@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -44,5 +45,26 @@ func TestWriteErrorTellsAnOverloadedClientWhenToRetry(t *testing.T) {
 	WriteError(rec, httptest.NewRequest(http.MethodGet, "/", nil), errs.ErrNotFound)
 	if got := rec.Header().Get("Retry-After"); got != "" {
 		t.Errorf("Retry-After %q on a 404, want none", got)
+	}
+}
+
+// TestWriteErrorAnswersAnAbandonedRequest499: work cancelled because the client
+// went away is not a server fault, so it is not a 500; the same cancellation
+// while the client is still waiting is.
+func TestWriteErrorAnswersAnAbandonedRequest499(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	gone := httptest.NewRequest(http.MethodPost, "/v1/mfa/push/pairing/claim", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	WriteError(rec, gone, fmt.Errorf("claim: %w", context.Canceled))
+	if rec.Code != StatusClientClosedRequest {
+		t.Errorf("client gone: status %d, want %d", rec.Code, StatusClientClosedRequest)
+	}
+
+	waiting := httptest.NewRequest(http.MethodPost, "/v1/mfa/push/pairing/claim", nil)
+	rec = httptest.NewRecorder()
+	WriteError(rec, waiting, fmt.Errorf("claim: %w", context.Canceled))
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("client still waiting: status %d, want 500", rec.Code)
 	}
 }

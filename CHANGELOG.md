@@ -20,3 +20,9 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
 - `POST /v1/mfa/push/devices/{id}/pending`: a linked phone lists the sign-in requests waiting on its account,
   with its unexpired device credential, so a request whose push was late or lost can still be answered.
 - The pairing claim answers the linked account's email (`account.email`), so the app can name it.
+
+### Fixed
+
+- A request whose client hung up or gave up waiting is answered 499 and noted at info level, not logged as an
+  unhandled error and counted as a 500.
+
