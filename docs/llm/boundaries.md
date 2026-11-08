@@ -31,7 +31,7 @@ Do not implement these here, and do not edit these repositories from a task scop
 | Operator console | `qeet-id-console` |
 | Hosted login UI | `qeet-id-login` |
 | Marketing site | `qeet-id-website` |
-| Mobile authenticator | `qeet-id-auth` |
+| Qeet ID on the phone | `qeet-id-ios`, `qeet-id-android` |
 | Go / Node / React SDKs | `qeet-id-{go,node,react}` |
 | Product documentation | `qeet-id-docs` |
 | **Terraform, Caddy, production rollout** | `qeet-id-deploy` |
@@ -158,7 +158,7 @@ qeet-context (L0)  →  qeet-id-context (L1)  →  qeet-id-server (this reposito
                                                       │  publishes the API contract
         ┌──────────────┬──────────────┬───────────────┼──────────────┬──────────────┐
         ▼              ▼              ▼               ▼              ▼              ▼
-  qeet-id-console  qeet-id-login  qeet-id-auth   go/node/react   qeet-id-docs   external
+  qeet-id-console  qeet-id-login  ios/android    go/node/react   qeet-id-docs   external
    (BFF, bearer)   (cookie+CSRF)  (device token)     SDKs          (manual)     consumers
 
   qeet-id-deploy  ──provisions──►  this repository

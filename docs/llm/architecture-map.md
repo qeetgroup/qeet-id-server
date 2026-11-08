@@ -79,7 +79,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Passkeys / WebAuthn | `internal/access/passkeys/` |
 | MFA — TOTP, OTP, recovery codes | `internal/access/mfa/` — `totp.go`, `otp.go`, `stepup.go` |
 | MFA — push approval | `internal/access/mfa/push.go` |
-| MFA — native push delivery (APNs for iOS, FCM for Android; Expo for the React Native app) | `internal/access/mfa/pushnative.go` |
+| MFA — native push delivery (APNs for iOS, FCM for Android; Expo for phones still linked by the retired React Native app) | `internal/access/mfa/pushnative.go` |
 | Magic link, password reset | `internal/access/recovery/` |
 | Adaptive risk, login history | `internal/access/threat/risk/` |
 | Bot detection | `internal/access/threat/bot/` |

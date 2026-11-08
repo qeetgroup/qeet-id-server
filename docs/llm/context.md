@@ -75,7 +75,7 @@ Owned elsewhere. Do not implement these here:
 | Operator console UI | `qeet-id-console` |
 | Hosted login UI | `qeet-id-login` |
 | Marketing site | `qeet-id-website` |
-| Mobile authenticator | `qeet-id-auth` |
+| Qeet ID on the phone | `qeet-id-ios`, `qeet-id-android` |
 | Client SDKs | `qeet-id-{go,node,react}` |
 | Product documentation | `qeet-id-docs` |
 | **Deployment manifests, Terraform, rollout** | `qeet-id-deploy` |
