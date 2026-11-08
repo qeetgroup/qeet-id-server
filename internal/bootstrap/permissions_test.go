@@ -338,10 +338,11 @@ func TestSensitiveRoutesNeedStepUp(t *testing.T) {
 	_ = (&mfa.Service{}).StepUpGate(gated)
 }
 
-// TestLinkedPhoneCallsPassCSRF: the mobile app answers approval requests and
-// unlinks itself with its device credential, and links itself with a pairing
-// code, sending no cookie, bearer token or Origin; those three calls must get
-// past the CSRF check, and nothing else on the push-device paths may.
+// TestLinkedPhoneCallsPassCSRF: the mobile app answers approval requests,
+// replaces its rotated push token, lists the requests waiting on it and unlinks
+// itself with its device credential, and links itself with a pairing code,
+// sending no cookie, bearer token or Origin; those five calls must get past the
+// CSRF check, and nothing else on the push-device paths may.
 func TestLinkedPhoneCallsPassCSRF(t *testing.T) {
 	reached := false
 	h := httpx.CSRF(httpx.CSRFConfig{AllowedOrigins: []string{"https://console.example"}, ExemptPaths: csrfExemptPaths()})(
@@ -349,6 +350,8 @@ func TestLinkedPhoneCallsPassCSRF(t *testing.T) {
 	for path, want := range map[string]bool{
 		"/v1/mfa/push/challenges/" + uuid.NewString() + "/respond": true,
 		"/v1/mfa/push/devices/" + uuid.NewString() + "/unlink":     true,
+		"/v1/mfa/push/devices/" + uuid.NewString() + "/push-token": true,
+		"/v1/mfa/push/devices/" + uuid.NewString() + "/pending":    true,
 		"/v1/mfa/push/pairing/claim":                               true,
 		"/v1/mfa/push/devices":                                     false,
 		"/v1/mfa/push/pairing":                                     false,

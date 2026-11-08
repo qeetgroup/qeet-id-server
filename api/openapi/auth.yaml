@@ -2790,6 +2790,107 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/mfa/push/devices/{id}/push-token:
+    post:
+      operationId: post_v1_mfa_push_devices_ById_push_token
+      summary: Replace this phone's push token
+      description: >-
+        Called by the mobile app when its platform rotates the push token (APNs or FCM), so sign-in
+        requests keep reaching the phone. The app proves it is that device with the device_token it was
+        given when linked, which must not have expired (the app holds no signed-in session). The link's
+        expiry and the platform are unchanged; another link of the same account already holding the new
+        token is removed, so each request reaches the phone once. 401 mfa.push_unauthorized when the
+        device or credential does not match or has expired.
+      tags:
+        - MFA
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, device_token, push_token]
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+                device_token:
+                  type: string
+                push_token:
+                  type: string
+                  maxLength: 4096
+      responses:
+        '204':
+          description: The new push token is stored
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/mfa/push/devices/{id}/pending:
+    post:
+      operationId: post_v1_mfa_push_devices_ById_pending
+      summary: List the sign-in requests waiting on this phone
+      description: >-
+        Called by the mobile app when it comes to the foreground, so a request whose push was late, lost
+        or never sent (its push service has no credentials on this server) can still be answered. Lists
+        the account's pending, unexpired requests, newest first, at most ten. The app proves it is that
+        device with the device_token it was given when linked, which must not have expired; it is sent in
+        the body, never in the URL (the app holds no signed-in session). Each request is answered with the
+        respond call, carrying the number shown where it was asked for. 401 mfa.push_unauthorized when the
+        device or credential does not match or has expired.
+      tags:
+        - MFA
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, device_token]
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+                device_token:
+                  type: string
+      responses:
+        '200':
+          description: The requests waiting for an answer, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [challenges]
+                properties:
+                  challenges:
+                    type: array
+                    maxItems: 10
+                    items:
+                      $ref: '#/components/schemas/PushChallenge'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/mfa/push/pairing:
     post:
       operationId: post_v1_mfa_push_pairing
@@ -2918,6 +3019,12 @@ paths:
                   device:
                     $ref: '#/components/schemas/PushDevice'
                   device_token: { type: string }
+                  account:
+                    type: object
+                    description: The account the phone now approves sign-ins for, so the app can name it.
+                    required: [email]
+                    properties:
+                      email: { type: string, format: email }
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':

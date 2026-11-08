@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,6 +45,10 @@ func WriteJSON(w http.ResponseWriter, status int, body any) {
 	}
 }
 
+// StatusClientClosedRequest is the status recorded for a request its client
+// abandoned before the answer: nginx's 499, outside the 5xx a server fault gets.
+const StatusClientClosedRequest = 499
+
 // overloadRetryAfter is the longest Retry-After, in seconds, sent with
 // server.overloaded; each answer picks 1 up to it, so refused clients come
 // back spread out rather than all at once.
@@ -51,7 +56,8 @@ const overloadRetryAfter = 3
 
 // WriteError writes err as the JSON error envelope with its code's HTTP status.
 // An error that is not an *errs.Error is logged and sent as ErrInternalServer,
-// except the database's last-owner guard, which becomes ErrTenantLastOwner.
+// except the database's last-owner guard, which becomes ErrTenantLastOwner, and
+// work cancelled because the client went away, which is answered 499.
 // server.overloaded also carries Retry-After, as a header and as metadata.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	e := errs.As(err)
@@ -64,6 +70,17 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 			// The database's own guard (migration 0151): whichever path tried to
 			// take away the organisation's last active owner is told why.
 			e = errs.ErrTenantLastOwner
+		case errors.Is(err, context.Canceled) && r.Context().Err() != nil:
+			// The client hung up or gave up waiting, cancelling the request's work.
+			// Not a server fault: noted, and answered 499 (nginx's "client closed
+			// request") so it never counts as a 5xx. Nobody reads the body.
+			slog.Info("client closed request",
+				"route", safeRequestRoute(r),
+				"req_id", RequestID(r),
+				"client_ip", ClientIP(r),
+			)
+			w.WriteHeader(StatusClientClosedRequest)
+			return
 		default:
 			attrs := []any{
 				"err", err,
