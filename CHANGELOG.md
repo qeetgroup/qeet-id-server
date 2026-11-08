@@ -20,6 +20,8 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
 - `POST /v1/mfa/push/devices/{id}/pending`: a linked phone lists the sign-in requests waiting on its account,
   with its unexpired device credential, so a request whose push was late or lost can still be answered.
 - The pairing claim answers the linked account's email (`account.email`), so the app can name it.
+- A sign-in or step-up request for a phone records where it came from (`context.location`, such as
+  "Bengaluru, India"), from the trusted proxy's country and city headers, so the phone can show it.
 
 ### Fixed
 

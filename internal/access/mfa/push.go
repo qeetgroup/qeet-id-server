@@ -182,6 +182,9 @@ const (
 // has no credentials here is not a failure: like every phone when no push
 // service is configured, it finds the request when the app next opens.
 func (s *Service) CreatePushChallenge(ctx context.Context, userID uuid.UUID, action string, pctx PushChallengeContext) (uuid.UUID, int, error) {
+	if pctx.Location == "" {
+		pctx.Location = pushLocation(ctx)
+	}
 	ctxJSON, err := json.Marshal(pctx)
 	if err != nil {
 		return uuid.Nil, 0, err

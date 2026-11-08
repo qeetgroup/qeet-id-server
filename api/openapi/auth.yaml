@@ -6796,7 +6796,27 @@ components:
       properties:
         action:
           type: string
-        context: {}
+        context:
+          type: object
+          description: What the phone shows so the person can decide.
+          properties:
+            ip:
+              type: string
+              description: The IP address the request came from.
+            user_agent:
+              type: string
+              description: The browser's User-Agent.
+            location:
+              type: string
+              description: >-
+                Where the request came from, approximately, from the trusted proxy's country and city
+                headers: "Bengaluru, India", the country alone, or absent when neither is known.
+            timestamp:
+              type: string
+              format: date-time
+            session_id:
+              type: string
+              description: For a step-up, the session it was raised for.
         created_at:
           type: string
           format: date-time
