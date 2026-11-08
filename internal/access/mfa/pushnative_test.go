@@ -56,7 +56,7 @@ func TestAPNsSendsATimeSensitiveAlert(t *testing.T) {
 		got = r
 		body, _ = io.ReadAll(r.Body)
 	})
-	if err := c.send(t.Context(), apnsDeviceToken, challenge, "sign_in"); err != nil {
+	if err := c.send(t.Context(), apnsDeviceToken, signInMessage(challenge, "sign_in")); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 	if got.URL.Path != "/3/device/"+apnsDeviceToken {
@@ -102,7 +102,7 @@ func TestAPNsGoneMeansTheAppIsGone(t *testing.T) {
 		w.WriteHeader(http.StatusGone)
 		_, _ = io.WriteString(w, `{"reason":"Unregistered"}`)
 	})
-	if err := c.send(t.Context(), apnsDeviceToken, uuid.New(), "sign_in"); !errors.Is(err, errPushDeviceGone) {
+	if err := c.send(t.Context(), apnsDeviceToken, signInMessage(uuid.New(), "sign_in")); !errors.Is(err, errPushDeviceGone) {
 		t.Fatalf("err = %v, want errPushDeviceGone", err)
 	}
 }
@@ -115,14 +115,14 @@ func TestAPNsRefreshesAnExpiredProviderTokenOnce(t *testing.T) {
 			_, _ = io.WriteString(w, `{"reason":"ExpiredProviderToken"}`)
 		}
 	})
-	if err := c.send(t.Context(), apnsDeviceToken, uuid.New(), "sign_in"); err != nil || calls.Load() != 2 {
+	if err := c.send(t.Context(), apnsDeviceToken, signInMessage(uuid.New(), "sign_in")); err != nil || calls.Load() != 2 {
 		t.Fatalf("err = %v after %d calls, want success on the second", err, calls.Load())
 	}
 }
 
 func TestAPNsRefusesATokenThatIsNotHex(t *testing.T) {
 	c, _ := testAPNs(t, func(http.ResponseWriter, *http.Request) { t.Error("nothing should be sent") })
-	if err := c.send(t.Context(), "../../3/device/x", uuid.New(), "sign_in"); err == nil {
+	if err := c.send(t.Context(), "../../3/device/x", signInMessage(uuid.New(), "sign_in")); err == nil {
 		t.Fatal("a non-hex token was sent")
 	}
 }
@@ -172,7 +172,7 @@ func TestFCMSendsAHighPriorityDataMessage(t *testing.T) {
 		}
 	})
 	key = k
-	if err := c.send(t.Context(), "fcm-registration-token", challenge, "sign_in"); err != nil {
+	if err := c.send(t.Context(), "fcm-registration-token", signInMessage(challenge, "sign_in")); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 	m := message["message"].(map[string]any)
@@ -196,7 +196,7 @@ func TestFCMUnregisteredMeansTheAppIsGone(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = io.WriteString(w, `{"error":{"status":"NOT_FOUND","details":[{"@type":"type.googleapis.com/google.firebase.fcm.v1.FcmError","errorCode":"UNREGISTERED"}]}}`)
 	})
-	if err := c.send(t.Context(), "stale-token", uuid.New(), "sign_in"); !errors.Is(err, errPushDeviceGone) {
+	if err := c.send(t.Context(), "stale-token", signInMessage(uuid.New(), "sign_in")); !errors.Is(err, errPushDeviceGone) {
 		t.Fatalf("err = %v, want errPushDeviceGone", err)
 	}
 }

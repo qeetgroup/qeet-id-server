@@ -22,6 +22,18 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
 - The pairing claim answers the linked account's email (`account.email`), so the app can name it.
 - A sign-in or step-up request for a phone records where it came from (`context.location`, such as
   "Bengaluru, India"), from the trusted proxy's country and city headers, so the phone can show it.
+- Access requests: a person asks their organisation for one of its roles, for up to 90 days or for good,
+  with a reason (`/v1/me/access-requests`, the roles they can ask for, cancel); the people who can give roles
+  are told in the app and on their linked phones, and approve (step-up; held to the rule for giving the role
+  directly; nobody answers their own) or deny with a note (`/v1/tenants/{tenantID}/access-requests`). A
+  time-limited role is taken back when its time is up, and a request nobody answers lapses after 14 days
+  (the `access-request-sweep` job). Every step is audited (`access_request.*`).
+- `GET /v1/tenants/{tenantID}/critical-events`: the organisation's open anomaly alerts and critical audit
+  events (suspensions, lockouts, the AI agent kill switch, second factors reset or turned off, roles given,
+  sign-in risk settings changed) of the last hours, newest first, levelled high or medium, for an on-call
+  administrator. Needs `audit.read`.
+- Linked phones can be sent notices besides sign-in requests (an access request to answer): an alert on
+  iOS, a data message with its text on Android, kept for a day. Sign-in requests are unchanged.
 
 ### Fixed
 

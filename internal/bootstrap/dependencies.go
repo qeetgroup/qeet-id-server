@@ -15,6 +15,7 @@ import (
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/abac"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/accessrequest"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authzen"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decide"
@@ -58,6 +59,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/analytics"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/anomaly"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/critical"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/email"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
@@ -214,7 +216,13 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	threatService := threat.NewService(pool)
 	authService.SetAnomalyRecorder(threatService) // record sign-in lock and spraying-source anomalies
 	notificationService := notification.NewService(pool)
-	threatService.SetNotifier(notificationService) // alert the affected user in-app on lockout
+	// People asking for a role, and administrators answering, in the console or
+	// on the phone: approving gives the role through RBAC; a time-limited grant
+	// is taken back by AccessRequestJobs.
+	accessRequestService := accessrequest.NewService(pool, rbacService, rbacRepo)
+	accessRequestService.SetNotifier(notificationService)
+	accessRequestService.SetPhoneNotifier(mfaService) // approvers' linked phones (APNs, FCM)
+	threatService.SetNotifier(notificationService)    // alert the affected user in-app on lockout
 	riskService := risk.NewService(pool)
 	authService.SetRiskAssessor(riskService) // assess every sign-in; a risky one skips no factor
 	authService.SetSender(sender)            // email the code that confirms a risky sign-in with no factor
@@ -454,36 +462,38 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Tenant: &tenant.Handler{Repo: tenantRepo, Validate: v, AuthService: authService, Signals: sessionSignals, OwnerCheck: rbacRepo.IsOwner},
 		User: &user.Handler{Repo: userRepo, Validate: v, PasswordPolicy: authPolicyService.ValidateForTenant, MFA: mfaService, SignIns: authService, Signals: sessionSignals, Mailer: sender, ActOnCheck: rbacRepo.CheckActOn,
 			Roles: importRoles{repo: rbacRepo, seats: inviteService}},
-		AuthPolicy:    &authpolicy.Handler{Service: authPolicyService},
-		Auth:          &auth.Handler{Service: authService, Validate: v, CookieSecure: !cfg.IsDev(), Bot: botService, GeoCountryHeader: cfg.GeoCountryHeader},
-		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbacService, Validate: v, Decider: decider, Decisions: decisionLog},
-		DecisionLog:   &decisionlog.Handler{Log: decisionLog},
-		RBACChecker:   decider,
-		Verification:  &verification.Handler{Service: verifyService},
-		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService, DevMode: cfg.IsDev(), CookieSecure: !cfg.IsDev(), PublicBaseURL: cfg.PublicBaseURL},
-		Retention:     &retention.Handler{Service: retentionService},
-		Invite:        &invite.Handler{Service: inviteService, AuthService: authService, Validate: v, GrantCheck: rbacRepo.CheckGrantRole},
-		Branding:      &branding.Handler{Repo: brandingRepo},
-		EmailTemplate: &email.Handler{Service: emailTemplateService, Sender: sender, Appearance: brandingRepo, TestEmailEnabled: mail.testEnabled},
-		EmailDelivery: &email.DeliveryHandler{Store: mail.deliveries},
-		SESWebhook:    &delivery.Webhook{Store: mail.deliveries, TopicARNs: cfg.SESEventsTopicARNs},
-		APIKey:        &apikey.Handler{Service: apikeyService, GrantCheck: rbacRepo.CheckGrantScopes},
-		APIKeyService: apikeyService,
-		Principal:     &principal.Handler{Service: principalService, GrantCheck: rbacRepo.CheckGrantScopes},
-		MFA:           &mfa.Handler{Service: mfaService, WebAuthn: passkeyService},
-		Webhook:       &webhook.Handler{Service: webhookService},
-		Policy:        &policy.Handler{Repo: policyRepo},
-		GDPR:          &gdpr.Handler{Service: gdprService, Evidence: evidenceService, Reauth: authService},
-		Audit:         &audit.Handler{Reader: auditReader, Verifier: auditVerifier},
-		AuditAnomaly:  &anomaly.Handler{Service: auditAnomalyService},
-		Billing:       &billing.Handler{Service: billingService},
-		Entitlement:   &entitlements.Handler{Service: entitlementSvc},
-		Sales:         &sales.Handler{Service: salesService},
-		Analytics:     &analytics.Handler{Reader: analyticsReader},
-		ServiceHealth: &servicehealth.Handler{Service: serviceHealth},
-		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Methods: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: !cfg.IsDev(), PublicBaseURL: cfg.PublicBaseURL},
-		Passkey:       &passkey.Handler{Service: passkeyService, CookieSecure: !cfg.IsDev()},
-		Social:        &social.Handler{Service: socialService, CookieSecure: !cfg.IsDev(), LoginBaseURL: cfg.LoginBaseURL, PublicBaseURL: cfg.PublicBaseURL},
+		AuthPolicy:     &authpolicy.Handler{Service: authPolicyService},
+		Auth:           &auth.Handler{Service: authService, Validate: v, CookieSecure: !cfg.IsDev(), Bot: botService, GeoCountryHeader: cfg.GeoCountryHeader},
+		RBAC:           &rbac.Handler{Repo: rbacRepo, Service: rbacService, Validate: v, Decider: decider, Decisions: decisionLog},
+		AccessRequest:  &accessrequest.Handler{Service: accessRequestService, GrantCheck: rbacRepo.CheckGrantRole},
+		DecisionLog:    &decisionlog.Handler{Log: decisionLog},
+		RBACChecker:    decider,
+		Verification:   &verification.Handler{Service: verifyService},
+		Recovery:       &recovery.Handler{Service: recoveryService, AuthService: authService, DevMode: cfg.IsDev(), CookieSecure: !cfg.IsDev(), PublicBaseURL: cfg.PublicBaseURL},
+		Retention:      &retention.Handler{Service: retentionService},
+		Invite:         &invite.Handler{Service: inviteService, AuthService: authService, Validate: v, GrantCheck: rbacRepo.CheckGrantRole},
+		Branding:       &branding.Handler{Repo: brandingRepo},
+		EmailTemplate:  &email.Handler{Service: emailTemplateService, Sender: sender, Appearance: brandingRepo, TestEmailEnabled: mail.testEnabled},
+		EmailDelivery:  &email.DeliveryHandler{Store: mail.deliveries},
+		SESWebhook:     &delivery.Webhook{Store: mail.deliveries, TopicARNs: cfg.SESEventsTopicARNs},
+		APIKey:         &apikey.Handler{Service: apikeyService, GrantCheck: rbacRepo.CheckGrantScopes},
+		APIKeyService:  apikeyService,
+		Principal:      &principal.Handler{Service: principalService, GrantCheck: rbacRepo.CheckGrantScopes},
+		MFA:            &mfa.Handler{Service: mfaService, WebAuthn: passkeyService},
+		Webhook:        &webhook.Handler{Service: webhookService},
+		Policy:         &policy.Handler{Repo: policyRepo},
+		GDPR:           &gdpr.Handler{Service: gdprService, Evidence: evidenceService, Reauth: authService},
+		Audit:          &audit.Handler{Reader: auditReader, Verifier: auditVerifier},
+		AuditAnomaly:   &anomaly.Handler{Service: auditAnomalyService},
+		CriticalEvents: &critical.Handler{Service: critical.NewService(auditReader, auditAnomalyService)},
+		Billing:        &billing.Handler{Service: billingService},
+		Entitlement:    &entitlements.Handler{Service: entitlementSvc},
+		Sales:          &sales.Handler{Service: salesService},
+		Analytics:      &analytics.Handler{Reader: analyticsReader},
+		ServiceHealth:  &servicehealth.Handler{Service: serviceHealth},
+		OIDC:           &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Methods: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: !cfg.IsDev(), PublicBaseURL: cfg.PublicBaseURL},
+		Passkey:        &passkey.Handler{Service: passkeyService, CookieSecure: !cfg.IsDev()},
+		Social:         &social.Handler{Service: socialService, CookieSecure: !cfg.IsDev(), LoginBaseURL: cfg.LoginBaseURL, PublicBaseURL: cfg.PublicBaseURL},
 		Group: &group.Handler{Service: groupService, GrantCheck: rbacRepo.CheckGrantGroup, ReadsRoles: func(r *http.Request) bool {
 			ok, err := rbac.Holds(r.Context(), rbacRepo, httpx.PrincipalFromCtx(r.Context()), "role.read")
 			return err == nil && ok
@@ -558,6 +568,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		// instances.
 		{name: "scheduler", run: func(ctx context.Context) {
 			jobs := append(MaintenanceJobs(pool, sessionSignals, sharedCipher, outboundPolicy), BillingJobs(billingService)...)
+			jobs = append(jobs, AccessRequestJobs(accessRequestService)...)
 			worker.RunScheduled(ctx, pool, jobs, worker.SchedulerTick)
 		}},
 	}

@@ -208,6 +208,34 @@ func (s *Service) AssignRole(ctx context.Context, userID, tenantID, roleID uuid.
 	return nil
 }
 
+// SeatLimit is the plan's seat limit for tenantID (negative: none), read before
+// a transaction that gives a role with AssignRoleInTx.
+func (s *Service) SeatLimit(ctx context.Context, tenantID uuid.UUID) (int, error) {
+	return s.seatLimit(ctx, tenantID)
+}
+
+// AssignRoleInTx is AssignRole inside the caller's transaction tx: the seat
+// check, the assignment and its audit row commit or roll back with the
+// caller's own work, such as answering an access request. limit is SeatLimit,
+// read before tx began. Once tx has committed, call the returned function to
+// send the token-change signal.
+func (s *Service) AssignRoleInTx(ctx context.Context, tx pgx.Tx, limit int, userID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID, actor audit.Actor) (func(), error) {
+	if err := s.withinSeats(ctx, tx, tenantID, limit, func() error {
+		return s.repo.AssignRole(ctx, tx, userID, tenantID, roleID, grantedBy)
+	}); err != nil {
+		return nil, err
+	}
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "role.assigned", "user", userID,
+		map[string]any{"role_id": roleID})); err != nil {
+		return nil, err
+	}
+	return func() {
+		s.emit(ctx, tenantID, "token.claims_change", map[string]any{
+			"user_id": userID, "role_id": roleID, "change": "role_assigned",
+		})
+	}, nil
+}
+
 // recordAssignRefused audits a refused role assignment in its own transaction,
 // after the assignment's has rolled back, so repeated attempts with another
 // tenant's ids stay visible. The supplied ids are recorded as given.

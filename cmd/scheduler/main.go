@@ -100,6 +100,7 @@ func main() {
 	}
 
 	jobs := append(bootstrap.MaintenanceJobs(pool, sessionSignals, box, bootstrap.OutboundPolicy(cfg)), bootstrap.BillingJobs(billingService)...)
+	jobs = append(jobs, bootstrap.AccessRequestJobs(bootstrap.SchedulerAccessRequests(pool))...)
 	for _, j := range jobs {
 		slog.Info("job registered", "name", j.Name, "interval", j.Interval)
 	}

@@ -14,6 +14,7 @@ import (
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/abac"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/accessrequest"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authzen"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decisionlog"
@@ -55,6 +56,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/analytics"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/anomaly"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/critical"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/email"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
@@ -85,6 +87,10 @@ type Deps struct {
 	Auth       *auth.Handler
 	AuthPolicy *authpolicy.Handler
 	RBAC       *rbac.Handler
+	// AccessRequest serves people asking for a role and administrators answering.
+	AccessRequest *accessrequest.Handler
+	// CriticalEvents is the short list of what an on-call administrator triages.
+	CriticalEvents *critical.Handler
 	// RBACChecker enforces per-route permissions for end-user principals
 	// (the authz policy table lives in permissionMap()). Satisfied by the
 	// rbac repository.
@@ -380,6 +386,7 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.Tenant.Mount(r)
 	d.User.Mount(r)
 	d.RBAC.Mount(r)
+	d.AccessRequest.Mount(r)
 	d.Verification.Mount(r)
 	d.Invite.MountAuthed(r)
 	d.Branding.Mount(r)
@@ -396,6 +403,7 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.Retention.Mount(r)
 	d.Audit.Mount(r)
 	d.AuditAnomaly.Mount(r)
+	d.CriticalEvents.Mount(r)
 	d.Billing.Mount(r)
 	d.Entitlement.Mount(r)
 	d.Sales.Mount(r)

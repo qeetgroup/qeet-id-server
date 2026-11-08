@@ -75,7 +75,11 @@ func userPermissionMap() map[string]string {
 		"DELETE /v1/roles/{roleID}/permissions/{permID}":              "role.write",
 		"POST /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}":   "role.write",
 		"DELETE /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}": "role.write",
-		"GET /v1/users/{userID}/tenants/{tenantID}/permissions":       "role.read",
+
+		// Access requests: reading them. Answering one is in RoutePolicies.
+		"GET /v1/tenants/{tenantID}/access-requests":            "role.read",
+		"GET /v1/tenants/{tenantID}/access-requests/{id}":       "role.read",
+		"GET /v1/users/{userID}/tenants/{tenantID}/permissions": "role.read",
 		"GET /v1/check": "role.read",
 		"GET /v1/tenants/{tenantID}/groups/{groupID}/roles": "role.read",
 
@@ -368,6 +372,7 @@ func userPermissionMap() map[string]string {
 
 		// Audit (sensitive read).
 		"GET /v1/tenants/{tenantID}/audit":              "audit.read",
+		"GET /v1/tenants/{tenantID}/critical-events":    "audit.read",
 		"GET /v1/tenants/{tenantID}/audit/verify":       "audit.read",
 		"GET /v1/tenants/{tenantID}/audit/verification": "audit.read",
 
@@ -454,6 +459,10 @@ func RoutePolicies() map[string]rbac.RoutePolicy {
 		"POST /v1/me/invites/accept",
 		"POST /v1/me/invites/{id}/accept",
 		"POST /v1/me/invites/{id}/decline",
+		"GET /v1/me/access-requests",
+		"POST /v1/me/access-requests",
+		"GET /v1/me/access-requests/roles",
+		"POST /v1/me/access-requests/{id}/cancel",
 		"POST /v1/users/{id}/verify/email/start",
 		"POST /v1/users/{id}/verify/email/confirm",
 		"POST /v1/users/{id}/verify/phone/start",
@@ -530,6 +539,15 @@ func RoutePolicies() map[string]rbac.RoutePolicy {
 	// Search performs per-result-type RBAC checks in its service. Keep it user
 	// only until an equivalent per-type machine-scope evaluator is implemented.
 	policies["GET /v1/search"] = rbac.UserOnlyPolicy("user.read")
+
+	// Answering an access request gives a role or refuses it, a person's
+	// decision recorded as theirs: role.write, and no machine credential.
+	for _, route := range []string{
+		"POST /v1/tenants/{tenantID}/access-requests/{id}/approve",
+		"POST /v1/tenants/{tenantID}/access-requests/{id}/deny",
+	} {
+		policies[route] = rbac.RoutePolicy{UserPermission: "role.write", ApplicationScope: "role.write", AllowUser: true}
+	}
 	return policies
 }
 

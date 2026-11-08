@@ -5558,6 +5558,353 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/me/access-requests:
+    get:
+      operationId: get_v1_me_access_requests
+      summary: List my access requests
+      description: >-
+        The signed-in person's requests for a role in the organisation they're signed in to, newest first (up to 100),
+        with their answers.
+      tags:
+        - RBAC
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_requests]
+                properties:
+                  access_requests:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AccessRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: post_v1_me_access_requests
+      summary: Ask for a role
+      description: >-
+        Asks the organisation for one of its roles, for duration_hours (1 to 2160, 90 days) or, without it, for good,
+        with a reason the people who can grant roles see. They're told in the app and on their linked phones. Any
+        role but the owner role can be asked for (404 otherwise). A role held directly is refused with 409
+        access_request.role_held, and a second request for a role already asked for with 409 access_request.pending.
+        A request nobody answers lapses after 14 days.
+      tags:
+        - RBAC
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role_id, reason]
+              additionalProperties: false
+              properties:
+                role_id:
+                  type: string
+                  format: uuid
+                  description: The role asked for.
+                reason:
+                  type: string
+                  maxLength: 500
+                  description: Why, in 1 to 500 characters.
+                duration_hours:
+                  type: integer
+                  minimum: 1
+                  maximum: 2160
+                  description: How long the role is needed; absent means for good.
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Asked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_request]
+                properties:
+                  access_request:
+                    $ref: '#/components/schemas/AccessRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/me/access-requests/roles:
+    get:
+      operationId: get_v1_me_access_requests_roles
+      summary: List roles I can ask for
+      description: >-
+        The organisation's roles the signed-in person can ask for (every role but the owner role), marking the ones
+        they already hold directly.
+      tags:
+        - RBAC
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [roles]
+                properties:
+                  roles:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RequestableRole'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/me/access-requests/{id}/cancel:
+    post:
+      operationId: post_v1_me_access_requests_ById_cancel
+      summary: Cancel my access request
+      description: >-
+        Withdraws the signed-in person's own request while it's waiting. One already answered, cancelled or lapsed
+        answers 409 access_request.closed.
+      tags:
+        - RBAC
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Cancelled
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/tenants/{tenantID}/access-requests:
+    get:
+      operationId: get_v1_tenants_ByTenantID_access_requests
+      summary: List an organisation's access requests
+      description: >-
+        The organisation's requests for a role, newest first, optionally of one status, with how many are waiting.
+        Needs role.read.
+      tags:
+        - RBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          description: Only requests with this status.
+          schema:
+            type: string
+            enum: [pending, approved, denied, cancelled, expired]
+        - name: limit
+          in: query
+          required: false
+          description: At most this many, 1 to 200 (100 by default).
+          schema:
+            type: integer
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_requests, pending]
+                properties:
+                  access_requests:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AccessRequest'
+                  pending:
+                    type: integer
+                    description: How many of the organisation's requests are waiting.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/access-requests/{id}:
+    get:
+      operationId: get_v1_tenants_ByTenantID_access_requests_ById
+      summary: Get an access request
+      description: >-
+        One of the organisation's requests: who asked, for which role and how long, why, and its answer. Needs
+        role.read.
+      tags:
+        - RBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_request]
+                properties:
+                  access_request:
+                    $ref: '#/components/schemas/AccessRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/access-requests/{id}/approve:
+    post:
+      operationId: post_v1_tenants_ByTenantID_access_requests_ById_approve
+      summary: Approve an access request
+      description: >-
+        Gives the requester the role, for the duration they asked (access_ends_at; it's taken back then) or for
+        good, with an optional note they see. Needs role.write and a recent step-up, and is held to the rule for
+        giving the role directly (403 rbac.grant_exceeds_caller or rbac.owner_only); a first role takes a seat (402
+        billing.plan_limit). Nobody answers their own request (403 access_request.own). A request no longer waiting
+        answers 409 access_request.closed. A role the requester meanwhile holds directly is left as it is, and never
+        taken back by the request.
+      tags:
+        - RBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                note:
+                  type: string
+                  maxLength: 500
+                  description: Optional, up to 500 characters; the requester sees it.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Approved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_request]
+                properties:
+                  access_request:
+                    $ref: '#/components/schemas/AccessRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/tenants/{tenantID}/access-requests/{id}/deny:
+    post:
+      operationId: post_v1_tenants_ByTenantID_access_requests_ById_deny
+      summary: Deny an access request
+      description: >-
+        Refuses the request with a note the requester sees (required: 422 access_request.note_required without it).
+        Needs role.write. Nobody answers their own request (403 access_request.own); one no longer waiting answers
+        409 access_request.closed.
+      tags:
+        - RBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [note]
+              additionalProperties: false
+              properties:
+                note:
+                  type: string
+                  maxLength: 500
+                  description: Why, up to 500 characters; the requester sees it.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Denied
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_request]
+                properties:
+                  access_request:
+                    $ref: '#/components/schemas/AccessRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
 components:
   securitySchemes:
     bearerAuth:
@@ -5664,6 +6011,79 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    AccessRequest:
+      type: object
+      description: A person's request for one of the organisation's roles, and its answer.
+      required: [id, requester, role, reason, status, created_at, expires_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        requester:
+          $ref: '#/components/schemas/AccessRequestPerson'
+        role:
+          $ref: '#/components/schemas/AccessRequestRole'
+        reason:
+          type: string
+        duration_hours:
+          type: integer
+          description: How long the role was asked for; absent means for good.
+        status:
+          type: string
+          enum: [pending, approved, denied, cancelled, expired]
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          description: When the request lapses if nobody answers it.
+        decided_by:
+          $ref: '#/components/schemas/AccessRequestPerson'
+        decided_at:
+          type: string
+          format: date-time
+        decision_note:
+          type: string
+        access_ends_at:
+          type: string
+          format: date-time
+          description: For an approved, time-limited request, when the role is taken back.
+        ended_at:
+          type: string
+          format: date-time
+          description: When it was.
+    AccessRequestPerson:
+      type: object
+      required: [id, email]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        name:
+          type: string
+    AccessRequestRole:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+    RequestableRole:
+      allOf:
+        - $ref: '#/components/schemas/AccessRequestRole'
+        - type: object
+          required: [held]
+          properties:
+            held:
+              type: boolean
+              description: The person already holds it directly.
     RiskSettings:
       type: object
       properties:

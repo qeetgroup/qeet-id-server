@@ -278,3 +278,25 @@ FROM rbac.group_roles gr
 JOIN tenant.groups g ON g.id = gr.group_id AND g.tenant_id = gr.tenant_id
 WHERE gr.tenant_id = @tenant_id AND gr.role_id = @role_id
 ORDER BY g.name, g.id;
+
+-- UsersWithPermission lists the active members of the tenant who hold the
+-- permission, directly or through a group: the people to tell about something
+-- only they can act on, such as an access request.
+-- name: UsersWithPermission :many
+SELECT DISTINCT holder.user_id
+FROM (
+    SELECT ur.user_id
+    FROM rbac.user_roles ur
+    JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
+    JOIN rbac.permissions p ON p.id = rp.permission_id
+    WHERE ur.tenant_id = @tenant_id AND p.key = @perm_key
+    UNION
+    SELECT gm.user_id
+    FROM tenant.group_members gm
+    JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+    JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
+    JOIN rbac.permissions p ON p.id = rp.permission_id
+    WHERE gm.tenant_id = @tenant_id AND p.key = @perm_key
+) holder
+JOIN "user".users u ON u.id = holder.user_id AND u.deleted_at IS NULL AND u.status = 'active'
+LIMIT 200;

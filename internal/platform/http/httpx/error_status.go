@@ -67,6 +67,13 @@ var statusByCode = map[string]int{
 	errs.CodeInviteEmailNotVerified: http.StatusForbidden,
 	errs.CodeInviteRoleRequired:     http.StatusUnprocessableEntity,
 
+	// Access requests.
+	errs.CodeAccessRequestRoleHeld:   http.StatusConflict,
+	errs.CodeAccessRequestPending:    http.StatusConflict,
+	errs.CodeAccessRequestClosed:     http.StatusConflict,
+	errs.CodeAccessRequestOwn:        http.StatusForbidden,
+	errs.CodeAccessRequestNoteNeeded: http.StatusUnprocessableEntity,
+
 	// Passkeys.
 	errs.CodePasskeyExists:      http.StatusConflict,
 	errs.CodePasskeyLoginFailed: http.StatusUnauthorized,

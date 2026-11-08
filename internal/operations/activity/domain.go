@@ -129,6 +129,7 @@ var categoryPrefixes = []struct {
 	{"abac_policy.", CategoryAuthorization},
 	{"rebac.", CategoryAuthorization},
 	{"role.", CategoryAuthorization},
+	{"access_request.", CategoryAuthorization},
 	{"policy.", CategoryAuthorization},
 	{"authzen.", CategoryAuthorization},
 	{"threat.", CategorySecurity},

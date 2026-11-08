@@ -3810,6 +3810,56 @@ paths:
         '202': { description: Lead accepted }
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v1/tenants/{tenantID}/critical-events:
+    get:
+      operationId: get_v1_tenants_ByTenantID_critical_events
+      summary: List critical events
+      description: >-
+        The short list an on-call administrator triages, from a phone or the console: the organisation's open
+        anomaly alerts and its critical audit events (suspensions, lockouts, the AI agent kill switch, second
+        factors reset or turned off, roles given, sign-in risk settings changed) of the last hours, newest
+        first, at most 100, with how many are high. Read only; the full trail is the audit log. Needs
+        audit.read.
+      tags:
+        - Audit
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: hours
+          in: query
+          required: false
+          description: How far back, 1 to 168 hours (24 by default).
+          schema:
+            type: integer
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events, high, hours]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CriticalEvent'
+                  high:
+                    type: integer
+                  hours:
+                    type: integer
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 components:
   parameters:
     IdempotencyKey:
@@ -3900,6 +3950,48 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    CriticalEvent:
+      type: object
+      required: [id, source, level, action, occurred_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The audit event's or the anomaly alert's id.
+        source:
+          type: string
+          enum: [audit, anomaly]
+        level:
+          type: string
+          enum: [high, medium]
+        action:
+          type: string
+        actor_user_id:
+          type: string
+          format: uuid
+        actor_email:
+          type: string
+        resource_type:
+          type: string
+        resource_id:
+          type: string
+          format: uuid
+        ip:
+          type: string
+        reasons:
+          type: array
+          items:
+            type: string
+          description: For an anomaly, why it stood out.
+        score:
+          type: number
+          description: For an anomaly, how unusual it was, 0 to 1.
+        metadata:
+          type: object
+          additionalProperties: true
+        occurred_at:
+          type: string
+          format: date-time
     EmailLocalizedContent:
       type: object
       description: Subject and preheader limits count Unicode characters. Text and HTML limits count UTF-8 bytes. Action URL variables must remain in both text and HTML when provided. Variables in URLs are allowed only as standalone action-link href values, never in image sources or within external URLs.

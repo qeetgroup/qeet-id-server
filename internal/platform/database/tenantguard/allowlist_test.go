@@ -76,6 +76,8 @@ internal/access/authentication/mfachallenge.go#Service.verifyAndConsumeMFAChalle
 internal/access/authentication/switch.go#continueSession  session-scoped: the session issued in the same transaction, from one of the same person's
 internal/access/authentication/sessionlimit.go#Service.enforceSessionLimit  parent-scoped: session IDs from the tenant-scoped list above
 internal/access/authentication/signinaudit.go#Service.homeTenant  pre-tenant: files a failed sign-in under the account's home tenant
+internal/access/authorization/accessrequest/queries.sql#EndingAccess  background-sweep: the access-request sweep takes back ended grants in every tenant
+internal/access/authorization/accessrequest/queries.sql#LapsePendingAccessRequests  background-sweep: the access-request sweep lapses unanswered requests in every tenant
 internal/access/authorization/rbac/queries.sql#GrantBuiltinRolePermissions  background-sweep: at boot, gives every organisation's built-in roles the permissions their definitions cover
 internal/access/authorization/rbac/queries.sql#GetRoleTenant  parent-scoped: scopedRole compares the role's tenant to httpx.RequireTenant
 internal/access/mfa/totp.go#Service.ResetForUser  parent-scoped: the handler checks the user's home tenant first

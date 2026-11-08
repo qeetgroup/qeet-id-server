@@ -142,6 +142,12 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 // transactions that wrap an RBAC mutation and its audit row.
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
+// UsersWithPermission lists up to 200 active members of tenantID who hold
+// permKey, directly or through a group.
+func (r *Repository) UsersWithPermission(ctx context.Context, tenantID uuid.UUID, permKey string) ([]uuid.UUID, error) {
+	return r.q.UsersWithPermission(ctx, dbgen.UsersWithPermissionParams{TenantID: tenantID, PermKey: permKey})
+}
+
 // CountCustomRoles returns the number of non-system (custom) roles tenantID
 // has defined.
 func (r *Repository) CountCustomRoles(ctx context.Context, tenantID uuid.UUID) (int64, error) {

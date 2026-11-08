@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -43,6 +44,31 @@ const (
 	pushAlertBody   = "Someone is signing in to your Qeet ID account. Tap to review."
 )
 
+// pushMessage is one notification for a linked phone: a sign-in request, or a notice about
+// something waiting for its person (an access request to answer).
+type pushMessage struct {
+	kind          string            // the payload's "type"
+	collapseID    string            // a newer message with the same id replaces this one
+	title, body   string            // what the phone shows
+	data          map[string]string // besides "type"
+	ttl           time.Duration     // how long the service keeps trying
+	timeSensitive bool              // iOS: break through Focus
+	thread        string            // iOS: how the phone groups them
+	textInData    bool              // Android: the app shows title and body from the data
+}
+
+// signInMessage is a sign-in or step-up request, exactly as the apps expect it.
+func signInMessage(challengeID uuid.UUID, action string) pushMessage {
+	return pushMessage{
+		kind: pushPayloadType, collapseID: challengeID.String(),
+		title: pushAlertTitle, body: pushAlertBody,
+		data:          map[string]string{"challenge_id": challengeID.String(), "action": action},
+		ttl:           pushRequestTTL,
+		timeSensitive: true,
+		thread:        "sign-in",
+	}
+}
+
 // isExpoToken reports whether a push token was issued by Expo (the React Native app). Native
 // apps send the platform's own token instead: hex from APNs, an opaque string from FCM.
 func isExpoToken(token string) bool {
@@ -56,22 +82,28 @@ func (s *Service) pushConfigured() bool {
 
 // deliverPush sends one sign-in request to one phone through the service that issued its token.
 func (s *Service) deliverPush(ctx context.Context, t pushTarget, challengeID uuid.UUID, action string) error {
-	switch {
-	case isExpoToken(t.token):
+	if isExpoToken(t.token) {
 		if s.pushURL == "" {
 			return errPushNotConfigured
 		}
 		return s.sendExpoPush(ctx, t.token, challengeID, action)
-	case t.platform == "ios":
+	}
+	return s.deliverNative(ctx, t, signInMessage(challengeID, action))
+}
+
+// deliverNative sends m to one phone of the native apps, through APNs or FCM.
+func (s *Service) deliverNative(ctx context.Context, t pushTarget, m pushMessage) error {
+	switch t.platform {
+	case "ios":
 		if s.apns == nil {
 			return errPushNotConfigured
 		}
-		return s.apns.send(ctx, t.token, challengeID, action)
-	case t.platform == "android":
+		return s.apns.send(ctx, t.token, m)
+	case "android":
 		if s.fcm == nil {
 			return errPushNotConfigured
 		}
-		return s.fcm.send(ctx, t.token, challengeID, action)
+		return s.fcm.send(ctx, t.token, m)
 	default:
 		return errPushNotConfigured
 	}
@@ -162,26 +194,32 @@ func (c *apnsClient) providerToken(refresh bool) (string, error) {
 }
 
 // apnsPayload is the alert the iOS app shows; its Notification Service Extension may add detail.
-func apnsPayload(challengeID uuid.UUID, action string) ([]byte, error) {
-	return json.Marshal(map[string]any{
+func apnsPayload(m pushMessage) ([]byte, error) {
+	level := "active"
+	if m.timeSensitive {
+		level = "time-sensitive"
+	}
+	out := map[string]any{
 		"aps": map[string]any{
-			"alert":              map[string]string{"title": pushAlertTitle, "body": pushAlertBody},
+			"alert":              map[string]string{"title": m.title, "body": m.body},
 			"sound":              "default",
-			"interruption-level": "time-sensitive",
+			"interruption-level": level,
 			"mutable-content":    1,
-			"thread-id":          "sign-in",
+			"thread-id":          m.thread,
 		},
-		"type":         pushPayloadType,
-		"challenge_id": challengeID.String(),
-		"action":       action,
-	})
+		"type": m.kind,
+	}
+	for k, v := range m.data {
+		out[k] = v
+	}
+	return json.Marshal(out)
 }
 
-func (c *apnsClient) send(ctx context.Context, deviceToken string, challengeID uuid.UUID, action string) error {
+func (c *apnsClient) send(ctx context.Context, deviceToken string, m pushMessage) error {
 	if _, err := hex.DecodeString(deviceToken); err != nil || deviceToken == "" {
 		return errors.New("APNs device token is not hex")
 	}
-	payload, err := apnsPayload(challengeID, action)
+	payload, err := apnsPayload(m)
 	if err != nil {
 		return err
 	}
@@ -190,7 +228,7 @@ func (c *apnsClient) send(ctx context.Context, deviceToken string, challengeID u
 		if err != nil {
 			return err
 		}
-		status, reason, err := c.post(ctx, deviceToken, bearer, challengeID, payload)
+		status, reason, err := c.post(ctx, deviceToken, bearer, m, payload)
 		if err != nil {
 			return err
 		}
@@ -207,7 +245,7 @@ func (c *apnsClient) send(ctx context.Context, deviceToken string, challengeID u
 	}
 }
 
-func (c *apnsClient) post(ctx context.Context, deviceToken, bearer string, challengeID uuid.UUID, payload []byte) (int, string, error) {
+func (c *apnsClient) post(ctx context.Context, deviceToken, bearer string, m pushMessage, payload []byte) (int, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, pushSendTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.host+"/3/device/"+deviceToken, bytes.NewReader(payload))
@@ -219,8 +257,8 @@ func (c *apnsClient) post(ctx context.Context, deviceToken, bearer string, chall
 	req.Header.Set("apns-topic", c.cfg.BundleID)
 	req.Header.Set("apns-push-type", "alert")
 	req.Header.Set("apns-priority", "10")
-	req.Header.Set("apns-expiration", fmt.Sprint(c.now().Add(pushRequestTTL).Unix()))
-	req.Header.Set("apns-collapse-id", challengeID.String())
+	req.Header.Set("apns-expiration", fmt.Sprint(c.now().Add(m.ttl).Unix()))
+	req.Header.Set("apns-collapse-id", m.collapseID)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return 0, "", err
@@ -355,22 +393,27 @@ func (c *fcmClient) accessToken(ctx context.Context, refresh bool) (string, erro
 
 // fcmPayload is a data message: the Android app writes the notification itself, on its
 // high-importance channel, so it can open the request directly.
-func fcmPayload(token string, challengeID uuid.UUID, action string) ([]byte, error) {
+func fcmPayload(token string, m pushMessage) ([]byte, error) {
+	data := map[string]string{"type": m.kind}
+	for k, v := range m.data {
+		data[k] = v
+	}
+	if m.textInData {
+		data["title"], data["body"] = m.title, m.body
+	}
 	return json.Marshal(map[string]any{"message": map[string]any{
 		"token": token,
-		"data": map[string]string{
-			"type": pushPayloadType, "challenge_id": challengeID.String(), "action": action,
-		},
+		"data":  data,
 		"android": map[string]any{
 			"priority":     "HIGH",
-			"ttl":          fmt.Sprintf("%ds", int(pushRequestTTL.Seconds())),
-			"collapse_key": challengeID.String(),
+			"ttl":          fmt.Sprintf("%ds", int(m.ttl.Seconds())),
+			"collapse_key": m.collapseID,
 		},
 	}})
 }
 
-func (c *fcmClient) send(ctx context.Context, token string, challengeID uuid.UUID, action string) error {
-	payload, err := fcmPayload(token, challengeID, action)
+func (c *fcmClient) send(ctx context.Context, token string, m pushMessage) error {
+	payload, err := fcmPayload(token, m)
 	if err != nil {
 		return err
 	}
@@ -438,4 +481,52 @@ func fcmUnregistered(status int, body []byte) bool {
 		}
 	}
 	return false
+}
+
+// noticeTTL is how long the push services keep trying to deliver a notice.
+const noticeTTL = 24 * time.Hour
+
+// NotifyPhones tells userID's linked phones about something waiting for them, such as an access
+// request to answer: an alert on iOS, a data message the Android app shows. data names it ("kind",
+// and its id as "<kind>_id"); the phone opens it from there. Best effort, after the action that
+// caused it: a failure is logged, and a phone its service says is gone is retired. Phones linked
+// by the retired React Native app (Expo tokens) aren't sent notices.
+func (s *Service) NotifyPhones(ctx context.Context, userID uuid.UUID, title, body string, data map[string]string) {
+	if s.apns == nil && s.fcm == nil {
+		return
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "phone notice: reading devices", "err", err)
+		return
+	}
+	tokens, err := s.loadPushTokens(ctx, tx, userID)
+	_ = tx.Rollback(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "phone notice: reading devices", "err", err)
+		return
+	}
+	kind := data["kind"]
+	if kind == "" {
+		kind = "notice"
+	}
+	collapse := data[kind+"_id"]
+	if collapse == "" {
+		collapse = uuid.NewString()
+	}
+	m := pushMessage{kind: kind, collapseID: collapse, title: title, body: body, data: data,
+		ttl: noticeTTL, thread: kind, textInData: true}
+	for _, t := range tokens {
+		if isExpoToken(t.token) {
+			continue
+		}
+		switch err := s.deliverNative(ctx, t, m); {
+		case err == nil, errors.Is(err, errPushNotConfigured):
+		case errors.Is(err, errPushDeviceGone):
+			s.retirePushToken(ctx, userID, t.token)
+		default:
+			slog.WarnContext(ctx, "phone notice: delivery failed", "kind", kind, "platform", t.platform,
+				"device_ref", pushTokenRef(t.token), "err", err)
+		}
+	}
 }

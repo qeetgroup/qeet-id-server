@@ -90,6 +90,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Model | Path |
 |---|---|
 | RBAC + route enforcement | `internal/access/authorization/rbac/` (`enforce.go`) |
+| Access requests (ask for a role; approve, deny, time-limited grants) | `internal/access/authorization/accessrequest/` |
 | ABAC | `internal/access/authorization/abac/` |
 | ReBAC (Zanzibar-style) | `internal/access/authorization/rebac/` |
 | AuthZEN PDP/PEP | `internal/access/authorization/authzen/` |
@@ -144,6 +145,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 |---|---|
 | Hash-chained audit log, `/verify` | `internal/operations/audit/` |
 | Anomaly detection | `internal/operations/audit/anomaly/` |
+| Critical events (anomalies + critical audit actions, for on-call) | `internal/operations/audit/critical/` |
 | Billing, payments, tax | `internal/operations/billing/` |
 | GDPR erasure, export | `internal/operations/gdpr/` |
 | Retention auto-purge | `internal/operations/retention/` |
@@ -162,7 +164,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 |---|---|
 | Postgres pool | `internal/platform/database/postgres/` |
 | pgx error mapping | `internal/platform/database/postgres/pgxerr/` |
-| **Migrations (0001–0229; 0082 absent)** | `internal/platform/database/migrations/` |
+| **Migrations (0001–0232; 0082 absent)** | `internal/platform/database/migrations/` |
 | Migration runner (`//go:embed`) | `internal/platform/database/migrations/runner.go` |
 | Per-domain queries | `internal/<context>/<domain>/queries.sql` (48) |
 | sqlc config | `internal/<context>/<domain>/sqlc.yaml` (48) |

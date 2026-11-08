@@ -905,3 +905,51 @@ func (q *Queries) UpsertPermission(ctx context.Context, arg UpsertPermissionPara
 	err := row.Scan(&i.ID, &i.Key, &i.Description)
 	return i, err
 }
+
+const usersWithPermission = `-- name: UsersWithPermission :many
+SELECT DISTINCT holder.user_id
+FROM (
+    SELECT ur.user_id
+    FROM rbac.user_roles ur
+    JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
+    JOIN rbac.permissions p ON p.id = rp.permission_id
+    WHERE ur.tenant_id = $1 AND p.key = $2
+    UNION
+    SELECT gm.user_id
+    FROM tenant.group_members gm
+    JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+    JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
+    JOIN rbac.permissions p ON p.id = rp.permission_id
+    WHERE gm.tenant_id = $1 AND p.key = $2
+) holder
+JOIN "user".users u ON u.id = holder.user_id AND u.deleted_at IS NULL AND u.status = 'active'
+LIMIT 200
+`
+
+type UsersWithPermissionParams struct {
+	TenantID uuid.UUID
+	PermKey  string
+}
+
+// UsersWithPermission lists the active members of the tenant who hold the
+// permission, directly or through a group: the people to tell about something
+// only they can act on, such as an access request.
+func (q *Queries) UsersWithPermission(ctx context.Context, arg UsersWithPermissionParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, usersWithPermission, arg.TenantID, arg.PermKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var user_id uuid.UUID
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
