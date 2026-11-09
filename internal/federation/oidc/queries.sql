@@ -27,7 +27,11 @@ FROM auth.oidc_clients WHERE client_id = @client_id;
 SELECT tenant_id, scopes, grant_types FROM auth.oidc_clients WHERE client_id = @client_id;
 
 -- name: GetClientName :one
-SELECT name, tenant_id, logo_uri, client_uri FROM auth.oidc_clients WHERE client_id = @client_id;
+-- The application's presentation, and the name of the organisation it belongs to.
+SELECT c.name, c.tenant_id, c.logo_uri, c.client_uri, t.name AS tenant_name
+FROM auth.oidc_clients c
+LEFT JOIN tenant.tenants t ON t.id = c.tenant_id
+WHERE c.client_id = @client_id;
 
 -- name: GetClientRedirectInfo :one
 SELECT tenant_id, type, scopes, redirect_uris, grant_types,

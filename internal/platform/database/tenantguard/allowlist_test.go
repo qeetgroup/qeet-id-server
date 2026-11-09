@@ -128,7 +128,6 @@ internal/federation/oidc/queries.sql#DenyCIBARequest  parent-scoped: request loc
 internal/federation/oidc/queries.sql#DenyDevice  secret-lookup: request found by its user code
 internal/federation/oidc/queries.sql#GetAccountStanding  parent-scoped: account named by the grant in use
 internal/federation/oidc/queries.sql#GetClientForAuth  global-client: client_id is unique platform-wide
-internal/federation/oidc/queries.sql#GetClientName  global-client: client_id is unique platform-wide
 internal/federation/oidc/queries.sql#GetClientPostLogoutURIs  global-client: client_id is unique platform-wide
 internal/federation/oidc/queries.sql#GetClientRedirectInfo  global-client: client_id is unique platform-wide
 internal/federation/oidc/queries.sql#GetClientTenantAndScopes  global-client: client_id is unique platform-wide

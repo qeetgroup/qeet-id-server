@@ -50,6 +50,13 @@ type SignInMethodsChecker interface {
 	AllowedSignInMethods(ctx context.Context, tenantID uuid.UUID) (password, passkey, magicLink bool, err error)
 }
 
+// HostedPolicyReader returns what a tenant's hosted sign-in pages say before anyone signs in: the
+// rules a new password must meet, how long a sign-in link works and how long a device is
+// remembered. Satisfied by *authpolicy.Service (optional).
+type HostedPolicyReader interface {
+	HostedSignInPolicy(ctx context.Context, tenantID uuid.UUID) (minLength int, upper, number, symbol bool, magicLinkMinutes, rememberDeviceDays int, err error)
+}
+
 // DeviceTrustChecker reports whether a tenant has opted into adaptive MFA, so
 // the login-context tells the hosted app whether to offer "remember this
 // device" on the MFA step. Satisfied by *authpolicy.Service (optional).
@@ -76,6 +83,7 @@ type Handler struct {
 	Registration RegistrationChecker
 	DeviceTrust  DeviceTrustChecker
 	Methods      SignInMethodsChecker
+	Policy       HostedPolicyReader
 	Branding     BrandingLister
 	LoginBaseURL string
 	// CookieSecure marks the hosted-login SSO cookie Secure (HTTPS-only) when
@@ -237,6 +245,25 @@ func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 		"remember_device_enabled":   rememberDevice,
 		"sign_in_methods":           methods,
 		"branding":                  brand,
+	}
+	// The organisation's password rules and lifetimes, for the pages to say before anyone signs
+	// in. Absent when no reader is wired or the policy can't be read.
+	if h.Policy != nil {
+		if minLen, upper, number, symbol, linkMinutes, deviceDays, perr := h.Policy.HostedSignInPolicy(r.Context(), tenantID); perr == nil {
+			out["password_policy"] = map[string]any{
+				"min_length":        minLen,
+				"require_uppercase": upper,
+				"require_number":    number,
+				"require_symbol":    symbol,
+			}
+			out["magic_link_ttl_minutes"] = linkMinutes
+			out["remember_device_days"] = deviceDays
+		}
+	}
+	// The organisation's name, so the pages can say whose rules apply ("Brightleaf Foods asks
+	// for a second step"). Absent when it can't be read.
+	if client.TenantName != "" {
+		out["organization_name"] = client.TenantName
 	}
 	// The application's registered logo and home page, absent when not set.
 	if client.LogoURI != "" {

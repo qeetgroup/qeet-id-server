@@ -36,60 +36,12 @@ type ExternalCheck func(ctx context.Context) (userID uuid.UUID, rejected bool, e
 // status, login hook, risk assessment and second-factor requirement. It returns
 // a token pair or the challenge to meet first.
 func (s *Service) SignInExternal(ctx context.Context, in ExternalSignIn, check ExternalCheck) (*LoginResult, error) {
-	// Before the first factor, so the answer from a refused network is the same
-	// whether or not the credential is right.
-	if err := s.checkAddress(ctx, in.TenantID, uuid.Nil, in.IP, in.Method); err != nil {
-		return nil, err
-	}
-	attempt, err := s.signInAttemptIn(ctx, in.TenantID, in.Account, in.IP)
+	userID, claims, challenge, err := s.externalFirstFactor(ctx, in, check)
 	if err != nil {
 		return nil, err
 	}
-	failure := SignInFailure{TenantID: in.TenantID, Method: in.Method, IP: in.IP, UserAgent: in.UserAgent}
-	if err := s.refuseLocked(ctx, attempt, failure, nil); err != nil {
-		return nil, err
-	}
-	userID, rejected, err := check(ctx)
-	if err != nil {
-		if rejected {
-			failure.Reason = FailureWrongPassword
-			if rerr := s.recordFailedSignIn(ctx, attempt, failure); rerr != nil {
-				return nil, rerr
-			}
-		}
-		return nil, err
-	}
-	if err := s.clearFailedSignIns(ctx, attempt); err != nil {
-		return nil, err
-	}
-	if err := s.refuseInactiveAccount(ctx, userID, in.TenantID, in.Method, in.IP, in.UserAgent); err != nil {
-		return nil, err
-	}
-	u, err := s.users.Get(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	claims, err := s.hookClaims(ctx, in.TenantID, u)
-	if err != nil {
-		return nil, err
-	}
-	gate, err := s.mfaGateFor(ctx, userID, u.TenantID, in.TenantID)
-	if err != nil {
-		return nil, err
-	}
-	switch s.nextSignInStep(ctx, userID, in.TenantID, gate, in.Method, "", in.IP, in.UserAgent, httpx.GeoCountry(ctx)) {
-	case stepChallenge:
-		challenge, err := s.challengeSignIn(ctx, userID, in.TenantID, claims, gate, in.Method, in.IP, in.UserAgent)
-		if err != nil {
-			return nil, err
-		}
-		return &LoginResult{MFAChallenge: challenge}, nil
-	case stepRiskEmail:
-		challenge, err := s.riskEmailChallenge(ctx, userID, in.TenantID, claims, in.Method, in.IP, in.UserAgent)
-		if err != nil {
-			return nil, err
-		}
-		return &LoginResult{MFAChallenge: challenge}, nil
+	if challenge != nil {
+		return &LoginResult{MFAChallenge: *challenge}, nil
 	}
 	pair, err := s.IssuePairWithClaims(ctx, userID, in.TenantID, in.IP, in.UserAgent, in.Method, claims)
 	if err != nil {
@@ -97,4 +49,100 @@ func (s *Service) SignInExternal(ctx context.Context, in ExternalSignIn, check E
 	}
 	s.recordSignIn(ctx, userID, in.TenantID, in.UserAgent, httpx.GeoCountry(ctx))
 	return &LoginResult{Pair: pair}, nil
+}
+
+// SignInExternalSession is SignInExternal for the hosted login: the same checks, ending in the
+// hosted login session (its cookie value) instead of a token pair, or the challenge to complete
+// first at POST /v1/auth/session/mfa.
+func (s *Service) SignInExternalSession(ctx context.Context, in ExternalSignIn, check ExternalCheck) (*LoginSessionResult, error) {
+	userID, _, challenge, err := s.externalFirstFactor(ctx, in, check)
+	if err != nil {
+		return nil, err
+	}
+	if challenge != nil {
+		return &LoginSessionResult{UserID: userID, MFAChallenge: *challenge}, nil
+	}
+	raw, err := s.createLoginSession(ctx, userID, in.TenantID, in.IP, in.UserAgent, in.Method, "")
+	if err != nil {
+		return nil, err
+	}
+	s.recordSignIn(ctx, userID, in.TenantID, in.UserAgent, httpx.GeoCountry(ctx))
+	return &LoginSessionResult{UserID: userID, RawCookie: raw}, nil
+}
+
+// externalFirstFactor runs an external sign-in up to its last step: the account it proved, the
+// hook's claims, and the challenge to meet when a second factor is due (nil when none is).
+func (s *Service) externalFirstFactor(ctx context.Context, in ExternalSignIn, check ExternalCheck) (uuid.UUID, map[string]any, *MFAChallenge, error) {
+	// Before the first factor, so the answer from a refused network is the same
+	// whether or not the credential is right.
+	if err := s.checkAddress(ctx, in.TenantID, uuid.Nil, in.IP, in.Method); err != nil {
+		return uuid.Nil, nil, nil, err
+	}
+	attempt, err := s.signInAttemptIn(ctx, in.TenantID, in.Account, in.IP)
+	if err != nil {
+		return uuid.Nil, nil, nil, err
+	}
+	failure := SignInFailure{TenantID: in.TenantID, Method: in.Method, IP: in.IP, UserAgent: in.UserAgent}
+	if err := s.refuseLocked(ctx, attempt, failure, nil); err != nil {
+		return uuid.Nil, nil, nil, err
+	}
+	userID, rejected, err := check(ctx)
+	if err != nil {
+		if rejected {
+			failure.Reason = FailureWrongPassword
+			if rerr := s.recordFailedSignIn(ctx, attempt, failure); rerr != nil {
+				return uuid.Nil, nil, nil, rerr
+			}
+		}
+		return uuid.Nil, nil, nil, err
+	}
+	if err := s.clearFailedSignIns(ctx, attempt); err != nil {
+		return uuid.Nil, nil, nil, err
+	}
+	if err := s.refuseInactiveAccount(ctx, userID, in.TenantID, in.Method, in.IP, in.UserAgent); err != nil {
+		return uuid.Nil, nil, nil, err
+	}
+	u, err := s.users.Get(ctx, userID)
+	if err != nil {
+		return uuid.Nil, nil, nil, err
+	}
+	claims, err := s.hookClaims(ctx, in.TenantID, u)
+	if err != nil {
+		return uuid.Nil, nil, nil, err
+	}
+	gate, err := s.mfaGateFor(ctx, userID, u.TenantID, in.TenantID)
+	if err != nil {
+		return uuid.Nil, nil, nil, err
+	}
+	switch s.nextSignInStep(ctx, userID, in.TenantID, gate, in.Method, "", in.IP, in.UserAgent, httpx.GeoCountry(ctx)) {
+	case stepChallenge:
+		challenge, err := s.challengeSignIn(ctx, userID, in.TenantID, claims, gate, in.Method, in.IP, in.UserAgent)
+		if err != nil {
+			return uuid.Nil, nil, nil, err
+		}
+		return userID, claims, &challenge, nil
+	case stepRiskEmail:
+		challenge, err := s.riskEmailChallenge(ctx, userID, in.TenantID, claims, in.Method, in.IP, in.UserAgent)
+		if err != nil {
+			return uuid.Nil, nil, nil, err
+		}
+		return userID, claims, &challenge, nil
+	}
+	return userID, claims, nil, nil
+}
+
+// BeginSSOLoginSession signs a person an organisation's identity provider authenticated (SAML or
+// OpenID Connect single sign-on) in to the hosted login: the organisation's address rules, then
+// the hosted login session. As the console's SSO sign-in, it asks for no second factor: the
+// identity provider decides how its people prove who they are.
+func (s *Service) BeginSSOLoginSession(ctx context.Context, userID, tenantID uuid.UUID, method, ip, ua string) (string, error) {
+	if err := s.checkAddress(ctx, tenantID, userID, ip, "hosted_"+method); err != nil {
+		return "", err
+	}
+	raw, err := s.createLoginSession(ctx, userID, tenantID, ip, ua, method, "")
+	if err != nil {
+		return "", err
+	}
+	s.recordSignIn(ctx, userID, tenantID, ua, httpx.GeoCountry(ctx))
+	return raw, nil
 }

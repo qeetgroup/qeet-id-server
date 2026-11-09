@@ -193,11 +193,14 @@ func TestEveryCSRFExemptionMatchesARoute(t *testing.T) {
 }
 
 // TestLoginSessionRoutesStayNarrow guards the routes that accept the hosted
-// login's session cookie in place of a bearer token: exactly the passkey list,
-// rename and enrolment routes, each mounted in the authenticated tree, open to
-// users only, and CSRF-checked. Removing a passkey stays token-only.
+// login's session cookie in place of a bearer token: exactly who is signed in,
+// and the passkey list, rename, removal and enrolment routes, each mounted in
+// the authenticated tree, open to users only, and CSRF-checked. Removing a
+// passkey still needs a recent sign-in or a step-up (StepUpRoutes), and the
+// last way to sign in can't be removed.
 func TestLoginSessionRoutesStayNarrow(t *testing.T) {
 	want := []string{
+		"DELETE /v1/passkeys/{id}",
 		"GET /v1/auth/me",
 		"GET /v1/me",
 		"GET /v1/me/organizations",

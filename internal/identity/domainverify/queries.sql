@@ -105,6 +105,10 @@ SELECT o.id, 'oidc'::text AS protocol, o.name FROM tenant.oidc_connections o
 WHERE o.tenant_id = sqlc.arg(tenant_id)::uuid AND o.status = 'active'
 ORDER BY protocol DESC, name;
 
+-- name: OrganisationName :one
+-- The name an organisation's people know it by, for its sign-in page.
+SELECT name FROM tenant.tenants WHERE id = @tenant_id AND deleted_at IS NULL;
+
 -- name: ListBreakGlassMembers :many
 SELECT b.user_id, u.email, u.display_name, b.created_by, b.created_at
 FROM tenant.break_glass_members b

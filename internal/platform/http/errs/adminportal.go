@@ -59,6 +59,6 @@ var (
 	ErrAdminPortalIDInvalid       = New(CodeAdminPortalIDInvalid, "That ID is invalid.")
 
 	// SAML connection input.
-	ErrAdminPortalSAMLFieldsRequired = New(CodeAdminPortalSAMLFieldsRequired, "Name, IdP entity ID, IdP SSO URL and IdP certificate are all required.")
+	ErrAdminPortalSAMLFieldsRequired = New(CodeAdminPortalSAMLFieldsRequired, "Name the connection, and give the IdP entity ID, SSO URL and certificate together (none of them makes a draft).")
 	ErrAdminPortalSAMLStatusInvalid  = New(CodeAdminPortalSAMLStatusInvalid, "Status must be draft, active or disabled.")
 )

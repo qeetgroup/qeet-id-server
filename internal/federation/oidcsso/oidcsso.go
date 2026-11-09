@@ -25,6 +25,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidcsso/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/returnto"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
@@ -96,6 +97,16 @@ type Service struct {
 	providers  *providerClient
 	appBaseURL string
 	nextSweep  atomic.Int64 // when this replica next deletes expired states and codes
+	// The hosted login's origin and the addresses a sign-in it starts may return to (SetHostedLogin).
+	loginBaseURL string
+	returnTo     returnto.Allowed
+}
+
+// SetHostedLogin lets a sign-in start on the hosted login: its answer goes back to
+// loginBaseURL's sign-in page, and its return_to must be a path or on one of origins.
+func (s *Service) SetHostedLogin(loginBaseURL string, origins ...string) {
+	s.loginBaseURL = strings.TrimRight(loginBaseURL, "/")
+	s.returnTo = returnto.Origins(origins...)
 }
 
 // NewService returns the service. Outbound requests to providers follow the

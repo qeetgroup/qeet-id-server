@@ -434,6 +434,7 @@ type domainService interface {
 	List(ctx context.Context, tenantID uuid.UUID) ([]domainverify.Domain, error)
 	Add(ctx context.Context, tenantID uuid.UUID, raw string, actor audit.Actor) (*domainverify.Domain, error)
 	Verify(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) (*domainverify.Domain, error)
+	UpdateSettings(ctx context.Context, id, tenantID uuid.UUID, sso, jit *bool, actor audit.Actor) (*domainverify.Domain, error)
 }
 
 // scimService is the slice of scim.Service the portal needs to manage the
@@ -493,6 +494,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 		r.Get("/admin-portal/domains", h.domainList)
 		r.Post("/admin-portal/domains", h.domainAdd)
 		r.Post("/admin-portal/domains/{id}/verify", h.domainVerify)
+		r.Patch("/admin-portal/domains/{id}", h.domainUpdate)
 	})
 }
 
@@ -806,7 +808,9 @@ func (h *Handler) samlCreate(w http.ResponseWriter, r *http.Request) {
 	in.Name = strings.TrimSpace(in.Name)
 	in.IdpEntityID = strings.TrimSpace(in.IdpEntityID)
 	in.IdpSSOURL = strings.TrimSpace(in.IdpSSOURL)
-	if in.Name == "" || in.IdpEntityID == "" || in.IdpSSOURL == "" || strings.TrimSpace(in.IdpCertificate) == "" {
+	// A name alone makes a draft, whose addresses go to the IdP before its details come back (the
+	// guided setup's order); any detail given brings the rest with it, as on the console.
+	if in.Name == "" || (!in.AwaitsIdP() && (in.IdpEntityID == "" || in.IdpSSOURL == "" || strings.TrimSpace(in.IdpCertificate) == "")) {
 		httpx.WriteError(w, r, errs.ErrAdminPortalSAMLFieldsRequired)
 		return
 	}
@@ -834,7 +838,7 @@ func (h *Handler) samlCreate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, conn)
+	httpx.WriteJSON(w, http.StatusCreated, h.withAddresses(r, conn))
 }
 
 func (h *Handler) samlGet(w http.ResponseWriter, r *http.Request) {
@@ -1161,6 +1165,43 @@ func (h *Handler) domainVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d, err := h.Domains.Verify(r.Context(), id, l.TenantID, portalActor(l, r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, d)
+}
+
+// domainUpdate turns single sign-on on or off for one of the organisation's verified domains, so
+// its people are sent to the identity provider the link is setting up (the guided setup's last
+// step). It needs both domain verification and SAML in the link, and touches no other setting.
+func (h *Handler) domainUpdate(w http.ResponseWriter, r *http.Request) {
+	l, err := h.resolve(r, CapabilityDomainVerification)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if !l.Has(CapabilitySAML) {
+		httpx.WriteError(w, r, errs.ErrAdminPortalCapabilityNotGranted)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrAdminPortalIDInvalid)
+		return
+	}
+	var in struct {
+		SSOEnabled *bool `json:"sso_enabled"`
+	}
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if in.SSOEnabled == nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("sso_enabled is required"))
+		return
+	}
+	d, err := h.Domains.UpdateSettings(r.Context(), id, l.TenantID, in.SSOEnabled, nil, portalActor(l, r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

@@ -312,16 +312,21 @@ func (q *Queries) GetClientLockedUntil(ctx context.Context, clientRowID uuid.UUI
 }
 
 const getClientName = `-- name: GetClientName :one
-SELECT name, tenant_id, logo_uri, client_uri FROM auth.oidc_clients WHERE client_id = $1
+SELECT c.name, c.tenant_id, c.logo_uri, c.client_uri, t.name AS tenant_name
+FROM auth.oidc_clients c
+LEFT JOIN tenant.tenants t ON t.id = c.tenant_id
+WHERE c.client_id = $1
 `
 
 type GetClientNameRow struct {
-	Name      string
-	TenantID  uuid.UUID
-	LogoUri   *string
-	ClientUri *string
+	Name       string
+	TenantID   uuid.UUID
+	LogoUri    *string
+	ClientUri  *string
+	TenantName *string
 }
 
+// The application's presentation, and the name of the organisation it belongs to.
 func (q *Queries) GetClientName(ctx context.Context, clientID string) (GetClientNameRow, error) {
 	row := q.db.QueryRow(ctx, getClientName, clientID)
 	var i GetClientNameRow
@@ -330,6 +335,7 @@ func (q *Queries) GetClientName(ctx context.Context, clientID string) (GetClient
 		&i.TenantID,
 		&i.LogoUri,
 		&i.ClientUri,
+		&i.TenantName,
 	)
 	return i, err
 }

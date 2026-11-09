@@ -151,8 +151,22 @@ func TestPortalLinkConfiguresOnlyWhatItGrants(t *testing.T) {
 	}
 	var conn saml.Connection
 	dbtest.Decode(t, rec, &conn)
-	if rec := portal(t, public, http.MethodPost, "/admin-portal/saml", "", session, map[string]string{"name": "Incomplete"}); !strings.Contains(rec.Body.String(), errs.CodeAdminPortalSAMLFieldsRequired) {
+	// A name alone is a draft, answered with the addresses the IdP needs before its details exist;
+	// a detail without the rest is refused.
+	var draft struct {
+		saml.Connection
+		saml.SPAddresses
+	}
+	rec = portal(t, public, http.MethodPost, "/admin-portal/saml", "", session, map[string]string{"name": "Okta draft"})
+	dbtest.Decode(t, rec, &draft)
+	if rec.Code != http.StatusCreated || draft.Status != "draft" || draft.ACSURL == "" || draft.EntityID == "" {
+		t.Errorf("a name-only draft: %d %s, want 201 draft with its addresses", rec.Code, rec.Body.String())
+	}
+	if rec := portal(t, public, http.MethodPost, "/admin-portal/saml", "", session, map[string]string{"name": "Incomplete", "idp_entity_id": "https://idp.example.test"}); !strings.Contains(rec.Body.String(), errs.CodeAdminPortalSAMLFieldsRequired) {
 		t.Errorf("an incomplete connection: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := portal(t, public, http.MethodDelete, "/admin-portal/saml/"+draft.ID.String(), "", session, nil); rec.Code != http.StatusNoContent {
+		t.Errorf("remove the draft: %d %s", rec.Code, rec.Body.String())
 	}
 	connPath := "/admin-portal/saml/" + conn.ID.String()
 	if rec := portal(t, public, http.MethodGet, "/admin-portal/saml", "", session, nil); !strings.Contains(rec.Body.String(), conn.ID.String()) {
@@ -194,7 +208,9 @@ func TestPortalLinkConfiguresOnlyWhatItGrants(t *testing.T) {
 		actions = append(actions, a)
 	}
 	rows.Close()
-	if strings.Join(actions, ",") != "saml.connection_created,saml.connection_updated,saml.connection_deleted" {
+	// The connection, the draft made and removed, then the connection activated and deleted.
+	want := "saml.connection_created,saml.connection_created,saml.connection_deleted,saml.connection_updated,saml.connection_deleted"
+	if strings.Join(actions, ",") != want {
 		t.Errorf("recorded %v; want each change, as the portal", actions)
 	}
 
@@ -421,6 +437,16 @@ func TestPortalFinishesAnSSOSetup(t *testing.T) {
 	dbtest.Decode(t, rec, &verified)
 	if rec.Code != http.StatusOK || verified.Status != "verified" || verified.VerifiedAt == nil {
 		t.Errorf("verify the domain: %d %s", rec.Code, rec.Body.String())
+	}
+	// Single sign-on for the verified domain: on through a link with SAML, never without it.
+	var routed domainverify.Domain
+	rec = portal(t, public, http.MethodPatch, "/admin-portal/domains/"+claimed.ID.String(), "", everything, map[string]bool{"sso_enabled": true})
+	dbtest.Decode(t, rec, &routed)
+	if rec.Code != http.StatusOK || !routed.SSOEnabled {
+		t.Errorf("turn on SSO for the domain: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := portal(t, public, http.MethodPatch, "/admin-portal/domains/"+claimed.ID.String(), "", session("domain_verification"), map[string]bool{"sso_enabled": false}); !strings.Contains(rec.Body.String(), errs.CodeAdminPortalCapabilityNotGranted) {
+		t.Errorf("turn off SSO without SAML in the link: %d %s", rec.Code, rec.Body.String())
 	}
 	rec = portal(t, public, http.MethodPost, "/admin-portal/domains", "", everything, map[string]string{"domain": dbtest.Domain(t, other)})
 	var squat domainverify.Domain

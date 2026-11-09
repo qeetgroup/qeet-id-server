@@ -757,6 +757,58 @@ func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, passwor
 	return res, nil
 }
 
+// LoginSession is Login for the hosted login: the same checks, ending in the hosted login
+// session, or the challenge to complete first.
+func (s *Service) LoginSession(ctx context.Context, connID uuid.UUID, username, password, ip, ua string) (res *auth.LoginSessionResult, resultError error) {
+	c, err := s.getFull(ctx, connID, uuid.Nil)
+	if err != nil {
+		return nil, err
+	}
+	started := time.Now()
+	var signedIn *uuid.UUID
+	defer func() { s.recordOperation(ctx, c, "sign-in", "user", started, resultError, username, signedIn) }()
+	// A draft connection is still being set up: it signs nobody in until an
+	// administrator turns it on.
+	switch c.Status {
+	case "active":
+	case "draft":
+		return nil, errs.ErrLDAPConnectionDraft
+	default:
+		return nil, errs.ErrLDAPConnectionDisabled
+	}
+	// The plan is checked at every sign-in, not only when the connection was
+	// set up, so one set up on a plan that has since lapsed signs no one in.
+	if err := s.requireLDAP(ctx, c.TenantID); err != nil {
+		return nil, err
+	}
+	if username == "" || password == "" {
+		return nil, errs.ErrLDAPCredentialsRequired
+	}
+	res, err = s.auth.SignInExternalSession(ctx, auth.ExternalSignIn{
+		TenantID:  c.TenantID,
+		Account:   provider + ":" + connID.String() + ":" + lockoutName(username),
+		Method:    provider,
+		IP:        ip,
+		UserAgent: ua,
+	}, func(ctx context.Context) (uuid.UUID, bool, error) {
+		du, err := s.authenticate(ctx, c, username, password)
+		if err != nil {
+			return uuid.Nil, errors.Is(err, errs.ErrLDAPInvalidCredentials), err
+		}
+		userID, err := s.findOrCreateUser(ctx, c.TenantID, connID, du,
+			audit.Actor{Type: provider, IP: ip, UserAgent: ua, RequestID: middleware.GetReqID(ctx)})
+		if err == nil {
+			signedIn = &userID
+		}
+		return userID, false, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	_ = s.q.TouchLdapLastLogin(ctx, connID)
+	return res, nil
+}
+
 // lockoutName is username as the lockout counts it: lower-cased, with runs of
 // spaces made one and none at either end, as directories compare names, so
 // one account's spellings share a counter.
@@ -767,6 +819,8 @@ func lockoutName(username string) string {
 // Handler serves the LDAP HTTP API.
 type Handler struct {
 	Service *Service
+	// CookieSecure marks the hosted login session cookie Secure; off only in development.
+	CookieSecure bool
 }
 
 // Mount registers the LDAP routes on r.
@@ -782,6 +836,37 @@ func (h *Handler) Mount(r chi.Router) {
 // MountPublic registers the LDAP routes that take no user token.
 func (h *Handler) MountPublic(r chi.Router) {
 	r.Post("/ldap/{id}/authenticate", h.authenticateHTTP)
+	r.Post("/ldap/{id}/session", h.sessionHTTP)
+}
+
+// sessionHTTP signs a person in to the hosted login with their directory user name and password,
+// as POST /v1/auth/session does with a password: the session cookie, or the challenge to complete
+// first at POST /v1/auth/session/mfa.
+func (h *Handler) sessionHTTP(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	var body struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	res, err := h.Service.LoginSession(r.Context(), id, body.Username, body.Password, httpx.ClientIP(r), r.UserAgent())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if res.MFARequired {
+		httpx.WriteJSON(w, http.StatusOK, res.Body())
+		return
+	}
+	auth.SetLoginSessionCookie(w, res.RawCookie, h.CookieSecure)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": res.UserID})
 }
 
 func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID, resourceID uuid.UUID, action string, meta map[string]any) error {

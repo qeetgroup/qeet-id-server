@@ -422,6 +422,18 @@ func (q *Queries) MarkDomainVerified(ctx context.Context, arg MarkDomainVerified
 	return i, err
 }
 
+const organisationName = `-- name: OrganisationName :one
+SELECT name FROM tenant.tenants WHERE id = $1 AND deleted_at IS NULL
+`
+
+// The name an organisation's people know it by, for its sign-in page.
+func (q *Queries) OrganisationName(ctx context.Context, tenantID uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, organisationName, tenantID)
+	var name string
+	err := row.Scan(&name)
+	return name, err
+}
+
 const saveLoginDomainCheck = `-- name: SaveLoginDomainCheck :exec
 INSERT INTO tenant.login_domain_checks (tenant_id, host, checked_at, result)
 VALUES ($1, $2, $3, $4)

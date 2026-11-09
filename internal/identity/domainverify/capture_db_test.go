@@ -342,12 +342,16 @@ func TestDiscoverRoutesByDomainAlone(t *testing.T) {
 	}
 	want := []DiscoveredConnection{
 		{ID: saml, Protocol: "saml", Name: "Okta", Method: "redirect", LoginPath: "/saml/login/" + saml.String()},
-		{ID: ldap, Protocol: "ldap", Name: "Directory", Method: "credentials", LoginPath: "/ldap/" + ldap.String() + "/authenticate"},
+		{ID: ldap, Protocol: "ldap", Name: "Directory", Method: "credentials", LoginPath: "/ldap/" + ldap.String() + "/authenticate", SessionPath: "/ldap/" + ldap.String() + "/session"},
+	}
+	var orgName string
+	if err := dbtest.Pool(t).QueryRow(dbtest.Context(t), `SELECT name FROM tenant.tenants WHERE id = $1`, tenant).Scan(&orgName); err != nil {
+		t.Fatal(err)
 	}
 	for _, email := range []string{member.Email, dbtest.Unique("nobody") + "@" + strings.ToUpper(domain)} {
 		d, err := svc.Discover(dbtest.Context(t), email)
-		if err != nil || !d.SSO || !slices.Equal(d.Connections, want) {
-			t.Errorf("%s: %+v, %v; want routed to %+v", email, d, err, want)
+		if err != nil || !d.SSO || !slices.Equal(d.Connections, want) || d.Organization != orgName {
+			t.Errorf("%s: %+v, %v; want routed to %+v by %q", email, d, err, want, orgName)
 		}
 	}
 	if d, err := svc.Discover(dbtest.Context(t), dbtest.Unique("x")+"@example.test"); err != nil || d.SSO {

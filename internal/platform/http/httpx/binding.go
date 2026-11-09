@@ -61,6 +61,9 @@ func (b BindingCookie) Holds(r *http.Request, id string) bool {
 	return false
 }
 
+// Held returns the ceremonies this browser began, oldest first.
+func (b BindingCookie) Held(r *http.Request) []string { return b.held(r) }
+
 // Remove forgets a finished ceremony.
 func (b BindingCookie) Remove(w http.ResponseWriter, r *http.Request, id string) {
 	var kept []string

@@ -30,6 +30,7 @@ const (
 	CodeOIDCSSOAccountAdministers      = "oidc_connection.account_administers"
 	CodeOIDCSSOJITNotAllowed           = "oidc_connection.jit_not_allowed"
 	CodeOIDCSSOLoginCodeRequired       = "oidc_connection.login_code_required"
+	CodeOIDCSSOReturnToInvalid         = "oidc_connection.return_to_invalid"
 	CodeOIDCSSOLoginCodeInvalid        = "oidc_connection.login_code_invalid"
 	CodeOIDCSSOLoginCodeUsed           = "oidc_connection.login_code_used"
 	CodeOIDCSSOLoginCodeExpired        = "oidc_connection.login_code_expired"
@@ -81,6 +82,7 @@ var (
 	ErrOIDCSSOAccountAdministers = New(CodeOIDCSSOAccountAdministers,
 		"This account administers the organization, so single sign-on can't take it over by its email address. Sign in with the account's own password or passkey.")
 	ErrOIDCSSOLoginCodeRequired       = New(CodeOIDCSSOLoginCodeRequired, "A sign-in code is required.")
+	ErrOIDCSSOReturnToInvalid         = New(CodeOIDCSSOReturnToInvalid, "That return address isn't allowed. Start signing in again from the application.")
 	ErrOIDCSSOLoginCodeInvalid        = New(CodeOIDCSSOLoginCodeInvalid, "That sign-in code is invalid. Please sign in again.")
 	ErrOIDCSSOLoginCodeUsed           = New(CodeOIDCSSOLoginCodeUsed, "That sign-in code has already been used. Please sign in again.")
 	ErrOIDCSSOLoginCodeExpired        = New(CodeOIDCSSOLoginCodeExpired, "That sign-in code has expired. Please sign in again.")
