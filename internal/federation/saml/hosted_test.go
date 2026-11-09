@@ -38,3 +38,41 @@ func TestLoginRefusesAReturnAddressItDoesntAllow(t *testing.T) {
 		}
 	}
 }
+
+// TestAFailedHostedSignInGoesBackToTheHostedLogin checks that a sign-in the hosted login began
+// returns there with a generic error and its way back to the application when it fails, and that
+// one without a stored return address, or with no hosted login configured, gets the error itself.
+func TestAFailedHostedSignInGoesBackToTheHostedLogin(t *testing.T) {
+	const accounts = "https://accounts.example.test"
+	back := "https://api.example.test/oauth/authorize?client_id=portal&state=s1"
+	configured := &Service{}
+	configured.SetHostedLogin(accounts, "https://api.example.test")
+	for _, tc := range []struct {
+		name     string
+		service  *Service
+		returnTo string
+		want     int
+	}{
+		{"a hosted sign-in", configured, back, http.StatusFound},
+		{"a console sign-in", configured, "", http.StatusBadRequest},
+		{"no hosted login configured", &Service{}, back, http.StatusBadRequest},
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/saml/acs/x", nil)
+		(&Handler{Service: tc.service}).acsFailed(rec, req, uuid.New(), tc.returnTo, errs.ErrSAMLResponseMissing)
+		if rec.Code != tc.want {
+			t.Errorf("%s: %d %s, want %d", tc.name, rec.Code, rec.Body.String(), tc.want)
+			continue
+		}
+		if tc.want != http.StatusFound {
+			continue
+		}
+		want := accounts + "/sign-in?" + url.Values{"error": {"sso"}, "return_to": {back}}.Encode()
+		if got := rec.Header().Get("Location"); got != want {
+			t.Errorf("%s: to %s, want %s", tc.name, got, want)
+		}
+		if strings.Contains(rec.Body.String(), errs.CodeSAMLResponseMissing) {
+			t.Errorf("%s: the redirect names the detail: %s", tc.name, rec.Body.String())
+		}
+	}
+}

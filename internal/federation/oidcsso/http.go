@@ -13,6 +13,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/returnto"
 )
 
 // Handler serves the connection administration routes and the browser-facing
@@ -285,6 +286,11 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	})
 	if startedHere {
 		h.binding().Remove(w, r, state)
+	}
+	if err != nil && returnTo != "" && h.Service.loginBaseURL != "" {
+		// Recorded for the organisation; the hosted login says only that it didn't work.
+		http.Redirect(w, r, returnto.Failed(h.Service.loginBaseURL, returnTo, err), http.StatusFound)
+		return
 	}
 	if err != nil {
 		httpx.WriteError(w, r, err)

@@ -131,7 +131,10 @@ type Callback struct {
 // CompleteSignIn spends the sign-in's state, then, when this browser began it,
 // trades the code for an ID token, validates it, finds or provisions the
 // person it names and returns a one-time code the console trades for a
-// session at ExchangeLogin. Each refusal is recorded as a failed sign-in.
+// session at ExchangeLogin, and the hosted login at its session route, with
+// the return_to the hosted login stored when it began ("" for the console's).
+// A refusal after the state is found to be this browser's still returns that
+// return_to. Each refusal is recorded as a failed sign-in.
 func (s *Service) CompleteSignIn(ctx context.Context, cb Callback) (loginCode, returnTo string, err error) {
 	c, err := s.loadForSignIn(ctx, cb.ConnectionID)
 	if c == nil {
@@ -164,42 +167,45 @@ func (s *Service) CompleteSignIn(ctx context.Context, cb Callback) (loginCode, r
 	if !cb.StartedHere {
 		return "", "", errs.ErrOIDCSSOOtherBrowser
 	}
+	// From here the sign-in is this browser's own: a failure still says where the hosted login's
+	// sign-in goes back to.
+	back := deref(st.ReturnTo)
 	if cb.ProviderError != "" {
-		return "", "", errs.ErrOIDCSSOProviderRefused
+		return "", back, errs.ErrOIDCSSOProviderRefused
 	}
 	if cb.Code == "" {
-		return "", "", errs.ErrOIDCSSOCallbackInvalid
+		return "", back, errs.ErrOIDCSSOCallbackInvalid
 	}
 	// Checked again as the answer arrives, so a plan that has since lapsed
 	// signs no one in.
 	if err := s.RequireSSO(ctx, c.TenantID); err != nil {
-		return "", "", err
+		return "", back, err
 	}
 	doc, rules, err := s.providerFor(ctx, c)
 	if err != nil {
-		return "", "", err
+		return "", back, err
 	}
 	rawIDToken, err := s.providers.exchangeCode(ctx, doc, c.ClientID, c.clientSecret, cb.Code, st.RedirectUri, st.CodeVerifier)
 	if err != nil {
-		return "", "", errs.ErrOIDCSSOTokenExchangeFailed.Wrap(err)
+		return "", back, errs.ErrOIDCSSOTokenExchangeFailed.Wrap(err)
 	}
 	rules.nonceHash = st.NonceHash
 	claims, err := s.providers.verifyIDToken(ctx, rawIDToken, doc.JWKSURI, rules)
 	if err != nil {
-		return "", "", errs.ErrOIDCSSOIDTokenInvalid.Wrap(err)
+		return "", back, errs.ErrOIDCSSOIDTokenInvalid.Wrap(err)
 	}
 	if userID, err = s.findOrCreateUser(ctx, c, c.profileOf(claims)); err != nil {
-		return "", "", err
+		return "", back, err
 	}
 	if s.auth != nil {
 		// A suspended or deleted account gets no code to sign in with.
 		if err := s.auth.CheckSignInAccount(ctx, userID, c.TenantID, provider, cb.IP, cb.UserAgent); err != nil {
-			return "", "", err
+			return "", back, err
 		}
 	}
 	rawCode, codeHash, err := codes.URLToken()
 	if err != nil {
-		return "", "", err
+		return "", back, err
 	}
 	if err := s.q.InsertOidcConnectionLoginCode(ctx, dbgen.InsertOidcConnectionLoginCodeParams{
 		CodeHash:     codeHash,
@@ -207,10 +213,10 @@ func (s *Service) CompleteSignIn(ctx context.Context, cb Callback) (loginCode, r
 		UserID:       userID,
 		ExpiresAt:    time.Now().UTC().Add(loginCodeTTL),
 	}); err != nil {
-		return "", "", err
+		return "", back, err
 	}
 	s.touchLastLogin(ctx, c)
-	return rawCode, deref(st.ReturnTo), nil
+	return rawCode, back, nil
 }
 
 // recordFailure records a refused sign-in through c in the organisation's

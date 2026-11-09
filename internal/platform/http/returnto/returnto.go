@@ -4,10 +4,13 @@
 package returnto
 
 import (
+	"errors"
 	"net/url"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // Allowed is the set of origins a return address may point at, as "scheme://host[:port]".
@@ -53,4 +56,16 @@ func (a Allowed) Valid(returnTo string) bool {
 	}
 	_, ok := a[strings.ToLower(u.Scheme+"://"+u.Host)]
 	return ok
+}
+
+// Failed is where a sign-in the hosted login began goes when it fails after the identity
+// provider: back to the hosted sign-in page with a generic error code, never the detail (the
+// server's log keeps it), and with the way back to the application so the person can try again.
+// A suspended or deleted account is told so, as at password sign-in.
+func Failed(loginBaseURL, returnTo string, err error) string {
+	q := url.Values{"error": {"sso"}, "return_to": {returnTo}}
+	if errors.Is(err, errs.ErrAuthAccountInactive) {
+		q.Set("error", "account_inactive")
+	}
+	return loginBaseURL + "/sign-in?" + q.Encode()
 }

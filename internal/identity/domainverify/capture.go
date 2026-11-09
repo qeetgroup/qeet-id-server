@@ -2,12 +2,14 @@ package domainverify
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify/dbgen"
@@ -217,10 +219,13 @@ type DiscoveredConnection struct {
 
 // Discovery is where an address signs in. SSO is true when the organisation
 // managing its domain sends the domain to its identity provider, through
-// Connections.
+// Connections. Organization is that organisation's name, for the sign-in page
+// to say whose sign-in it is; like the connections' names it is the same for
+// every address on the domain.
 type Discovery struct {
-	SSO         bool                   `json:"sso"`
-	Connections []DiscoveredConnection `json:"connections"`
+	SSO          bool                   `json:"sso"`
+	Organization string                 `json:"organization_name,omitempty"`
+	Connections  []DiscoveredConnection `json:"connections"`
 }
 
 // Discover returns where email signs in, judged by its domain alone: every
@@ -251,6 +256,13 @@ func (s *Service) Discover(ctx context.Context, email string) (*Discovery, error
 		out.Connections = append(out.Connections, d)
 	}
 	out.SSO = len(out.Connections) > 0
+	if out.SSO {
+		name, err := s.q.OrganisationName(ctx, managed.TenantID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		out.Organization = name
+	}
 	return out, nil
 }
 

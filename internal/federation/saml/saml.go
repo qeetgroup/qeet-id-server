@@ -765,6 +765,28 @@ func (s *Service) storeAuthnRequest(ctx context.Context, connectionID uuid.UUID,
 	return err
 }
 
+// hostedReturn is the return_to stored by the latest pending sign-in, among requestIDs, that the
+// hosted login began on the connection; "" when there is none.
+func (s *Service) hostedReturn(ctx context.Context, connectionID uuid.UUID, requestIDs []string) string {
+	if len(requestIDs) == 0 {
+		return ""
+	}
+	var stored string
+	err := s.pool.QueryRow(ctx, `
+		SELECT return_to FROM auth.saml_authn_requests
+		WHERE connection_id = $1 AND request_id = ANY($2) AND return_to IS NOT NULL AND expires_at > NOW()
+		ORDER BY expires_at DESC
+		LIMIT 1
+	`, connectionID, requestIDs).Scan(&stored)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Error("saml: read a pending sign-in's return address", "err", err, "connection", connectionID)
+		}
+		return ""
+	}
+	return stored
+}
+
 // ConsumeValidatedResponse atomically reserves the response and assertion IDs
 // against replay and consumes the matching AuthnRequest, returning where the
 // hosted login asked the browser to go back to ("" for a console sign-in). Call
@@ -1462,33 +1484,36 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 	if h.answerTestSignIn(w, r, conn) {
 		return
 	}
+	// From here a failure of a sign-in the hosted login began goes back to its sign-in page.
+	hostedReturnTo := ""
+	fail := func(err error) { h.acsFailed(w, r, conn.ID, hostedReturnTo, err) }
 	if err := signInStatus(conn.Status); err != nil {
-		httpx.WriteError(w, r, err)
+		fail(err)
 		return
 	}
 	// The plan is checked when the assertion arrives too, so a connection set
 	// up on a plan that has since lapsed signs no one in.
 	if err := h.Service.RequireSSO(r.Context(), conn.TenantID); err != nil {
-		httpx.WriteError(w, r, err)
+		fail(err)
 		return
 	}
 	if err := httpx.ParseForm(r, httpx.MaxSAMLBodyBytes); err != nil {
-		httpx.WriteError(w, r, err)
+		fail(err)
 		return
 	}
 	encoded := r.PostFormValue("SAMLResponse")
 	if encoded == "" {
-		httpx.WriteError(w, r, errs.ErrSAMLResponseMissing)
+		fail(errs.ErrSAMLResponseMissing)
 		return
 	}
 	certs, err := h.Service.signingCertificates(r.Context(), conn)
 	if err != nil {
-		httpx.WriteError(w, r, err)
+		fail(err)
 		return
 	}
 	if len(certs) == 0 {
 		slog.Error("saml acs: no readable IdP certificate", "connection", conn.ID)
-		httpx.WriteError(w, r, errs.ErrSAMLConnectionMisconfigured)
+		fail(errs.ErrSAMLConnectionMisconfigured)
 		return
 	}
 	key, err := h.Service.decryptionKey(r.Context(), conn)
@@ -1498,7 +1523,7 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 	}
 	response, info, err := h.Service.validateResponse(h.publicBase(r), conn, certs, key, encoded, time.Now())
 	if err != nil {
-		httpx.WriteError(w, r, err)
+		fail(err)
 		return
 	}
 
@@ -1510,22 +1535,22 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 	}
 	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" {
-		httpx.WriteError(w, r, errs.ErrSAMLAssertionNoEmail)
+		fail(errs.ErrSAMLAssertionNoEmail)
 		return
 	}
 	requestID, assertionIDs, err := trustedCorrelation(response)
 	if err != nil {
-		httpx.WriteError(w, r, err)
+		fail(err)
 		return
 	}
 	allowIdPInitiated, err := h.Service.AllowsIdPInitiated(r.Context(), conn.ID)
 	if err != nil {
-		httpx.WriteError(w, r, err)
+		fail(err)
 		return
 	}
 	returnTo, err := h.Service.ConsumeValidatedResponse(r.Context(), conn.ID, requestID, response.ID, assertionIDs, allowIdPInitiated)
 	if err != nil {
-		httpx.WriteError(w, r, err)
+		fail(err)
 		return
 	}
 	// An answer to a request completes only in the browser that sent it, and
@@ -1533,16 +1558,17 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 	// to bind, so it is opt-in.
 	if requestID != "" {
 		if !h.binding().Holds(r, requestID) {
-			httpx.WriteError(w, r, errs.ErrSAMLOtherBrowser)
+			fail(errs.ErrSAMLOtherBrowser)
 			return
 		}
 		h.binding().Remove(w, r, requestID)
+		hostedReturnTo = returnTo
 	}
 	ctx := r.Context()
 	groupsAttribute, err := h.Service.groupsAttribute(ctx, conn)
 	if err != nil {
 		slog.Error("saml acs: read the groups attribute", "err", err, "connection", conn.ID)
-		httpx.WriteError(w, r, errs.ErrInternalServer)
+		fail(errs.ErrInternalServer)
 		return
 	}
 	groups, withheld := assertedGroups(info.Values, groupsAttribute)
@@ -1551,24 +1577,24 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		groups: groups, groupsWithheld: withheld,
 	}, audit.Actor{Type: provider, IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)})
 	if e := errs.As(err); e != nil && e.Code != errs.CodeInternal {
-		httpx.WriteError(w, r, err)
+		fail(err)
 		return
 	}
 	if err != nil {
 		slog.Error("saml acs: provisioning failed", "err", err, "connection", conn.ID)
-		httpx.WriteError(w, r, errs.ErrInternalServer)
+		fail(errs.ErrInternalServer)
 		return
 	}
 
 	rawCode, codeHash, err := codes.URLToken()
 	if err != nil {
 		slog.Error("saml acs: generate login code", "err", err)
-		httpx.WriteError(w, r, errs.ErrInternalServer)
+		fail(errs.ErrInternalServer)
 		return
 	}
 	if err := h.Service.insertLoginCode(ctx, codeHash, userID, conn.TenantID, time.Now().UTC().Add(loginCodeTTL)); err != nil {
 		slog.Error("saml acs: persist login code", "err", err)
-		httpx.WriteError(w, r, errs.ErrInternalServer)
+		fail(errs.ErrInternalServer)
 		return
 	}
 	h.Service.touchLastLogin(ctx, conn.ID)
@@ -1582,6 +1608,23 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		target = h.Service.loginBaseURL + "/sign-in?" + url.Values{"return_to": {returnTo}}.Encode() + "#saml_code=" + rawCode
 	}
 	http.Redirect(w, r, target, http.StatusFound)
+}
+
+// acsFailed answers a sign-in that failed after its connection was found. One the hosted login
+// began goes back to its sign-in page (returnto.Failed), to the return_to stored when it began:
+// returnTo once the answer is bound to this browser, else that of this browser's latest pending
+// request on the connection, named by its binding cookie, which scripts and other sites can't
+// set. Any other sign-in gets the error itself.
+func (h *Handler) acsFailed(w http.ResponseWriter, r *http.Request, connectionID uuid.UUID, returnTo string, err error) {
+	if h.Service.loginBaseURL != "" && returnTo == "" {
+		returnTo = h.Service.hostedReturn(r.Context(), connectionID, h.binding().Held(r))
+	}
+	if h.Service.loginBaseURL == "" || returnTo == "" {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	slog.Warn("saml acs: sign-in failed", "err", err, "connection", connectionID)
+	http.Redirect(w, r, returnto.Failed(h.Service.loginBaseURL, returnTo, err), http.StatusFound)
 }
 
 func trustedCorrelation(response *samltypes.Response) (string, []string, error) {

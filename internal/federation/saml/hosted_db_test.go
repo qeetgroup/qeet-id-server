@@ -57,3 +57,41 @@ func TestAHostedSignInReturnsToTheHostedLogin(t *testing.T) {
 		t.Errorf("the code again: %d %s, want %s", again.Code, again.Body.String(), errs.CodeSAMLLoginCodeUsed)
 	}
 }
+
+// TestAFailedHostedSignInReturnsToTheHostedLogin checks that an answer that fails validation, for
+// a sign-in this browser began on the hosted login, goes back to the hosted login's sign-in page
+// with a generic error and the return address stored when it began, found by the browser's
+// binding cookie; and that another browser posting it gets the error itself.
+func TestAFailedHostedSignInReturnsToTheHostedLogin(t *testing.T) {
+	sp := newSPSide(t)
+	const accounts = "https://accounts.example.test"
+	sp.handler.Service.SetHostedLogin(accounts, testPublicBase)
+	idp := newUpstreamIdP(t)
+	tenant := dbtest.Tenant(t)
+	conn := sp.connect(t, tenant, idp)
+	email := dbtest.Unique("asha") + "@" + dbtest.Domain(t, tenant)
+	returnTo := testPublicBase + "/oauth/authorize?client_id=portal&state=s2"
+
+	rec := sp.send(httptest.NewRequestWithContext(dbtest.Context(t), http.MethodGet,
+		"/saml/login/"+conn.ID.String()+"?return_to="+url.QueryEscape(returnTo), nil))
+	location, _ := url.Parse(rec.Header().Get("Location"))
+	if rec.Code != http.StatusFound || location == nil {
+		t.Fatalf("login with return_to: %d %s", rec.Code, rec.Body.String())
+	}
+	ar, err := decodeAuthnRequest(location.Query().Get("SAMLRequest"), http.MethodGet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsigned := idp.respond(t, conn.ID, answer{inResponseTo: ar.ID, email: email, unsigned: true})
+
+	stranger := *sp
+	stranger.browser = nil
+	if other := stranger.post(t, conn.ID, unsigned); other.Code == http.StatusFound {
+		t.Errorf("another browser: redirected to %s, want the error itself", other.Header().Get("Location"))
+	}
+	answered := sp.post(t, conn.ID, unsigned)
+	want := accounts + "/sign-in?" + url.Values{"error": {"sso"}, "return_to": {returnTo}}.Encode()
+	if got := answered.Header().Get("Location"); answered.Code != http.StatusFound || got != want {
+		t.Fatalf("ACS: %d %s %s, want the hosted login's sign-in with the error", answered.Code, got, answered.Body.String())
+	}
+}
