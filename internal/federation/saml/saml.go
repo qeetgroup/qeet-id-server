@@ -217,6 +217,10 @@ func (in *CreateInput) awaitsIdP() bool {
 		strings.TrimSpace(in.IdpCertificate) == ""
 }
 
+// AwaitsIdP reports whether the input names a draft before any of its IdP's details exist, so
+// its service-provider addresses can go to the IdP first (the admin portal's guided setup).
+func (in *CreateInput) AwaitsIdP() bool { return in.awaitsIdP() }
+
 // validStatus reports whether status is one a connection or service provider
 // can have.
 func validStatus(status string) bool {

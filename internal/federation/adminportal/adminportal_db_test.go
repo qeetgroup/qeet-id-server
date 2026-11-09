@@ -151,8 +151,22 @@ func TestPortalLinkConfiguresOnlyWhatItGrants(t *testing.T) {
 	}
 	var conn saml.Connection
 	dbtest.Decode(t, rec, &conn)
-	if rec := portal(t, public, http.MethodPost, "/admin-portal/saml", "", session, map[string]string{"name": "Incomplete"}); !strings.Contains(rec.Body.String(), errs.CodeAdminPortalSAMLFieldsRequired) {
+	// A name alone is a draft, answered with the addresses the IdP needs before its details exist;
+	// a detail without the rest is refused.
+	var draft struct {
+		saml.Connection
+		saml.SPAddresses
+	}
+	rec = portal(t, public, http.MethodPost, "/admin-portal/saml", "", session, map[string]string{"name": "Okta draft"})
+	dbtest.Decode(t, rec, &draft)
+	if rec.Code != http.StatusCreated || draft.Status != "draft" || draft.ACSURL == "" || draft.EntityID == "" {
+		t.Errorf("a name-only draft: %d %s, want 201 draft with its addresses", rec.Code, rec.Body.String())
+	}
+	if rec := portal(t, public, http.MethodPost, "/admin-portal/saml", "", session, map[string]string{"name": "Incomplete", "idp_entity_id": "https://idp.example.test"}); !strings.Contains(rec.Body.String(), errs.CodeAdminPortalSAMLFieldsRequired) {
 		t.Errorf("an incomplete connection: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := portal(t, public, http.MethodDelete, "/admin-portal/saml/"+draft.ID.String(), "", session, nil); rec.Code != http.StatusNoContent {
+		t.Errorf("remove the draft: %d %s", rec.Code, rec.Body.String())
 	}
 	connPath := "/admin-portal/saml/" + conn.ID.String()
 	if rec := portal(t, public, http.MethodGet, "/admin-portal/saml", "", session, nil); !strings.Contains(rec.Body.String(), conn.ID.String()) {

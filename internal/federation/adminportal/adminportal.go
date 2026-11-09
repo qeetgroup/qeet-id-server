@@ -806,7 +806,9 @@ func (h *Handler) samlCreate(w http.ResponseWriter, r *http.Request) {
 	in.Name = strings.TrimSpace(in.Name)
 	in.IdpEntityID = strings.TrimSpace(in.IdpEntityID)
 	in.IdpSSOURL = strings.TrimSpace(in.IdpSSOURL)
-	if in.Name == "" || in.IdpEntityID == "" || in.IdpSSOURL == "" || strings.TrimSpace(in.IdpCertificate) == "" {
+	// A name alone makes a draft, whose addresses go to the IdP before its details come back (the
+	// guided setup's order); any detail given brings the rest with it, as on the console.
+	if in.Name == "" || (!in.AwaitsIdP() && (in.IdpEntityID == "" || in.IdpSSOURL == "" || strings.TrimSpace(in.IdpCertificate) == "")) {
 		httpx.WriteError(w, r, errs.ErrAdminPortalSAMLFieldsRequired)
 		return
 	}
@@ -834,7 +836,7 @@ func (h *Handler) samlCreate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, conn)
+	httpx.WriteJSON(w, http.StatusCreated, h.withAddresses(r, conn))
 }
 
 func (h *Handler) samlGet(w http.ResponseWriter, r *http.Request) {
