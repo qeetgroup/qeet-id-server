@@ -438,6 +438,23 @@ func (s *Service) AllowedSignInMethods(ctx context.Context, tenantID uuid.UUID) 
 	return m.Password, m.Passkey, m.MagicLink, err
 }
 
+// HostedSignInPolicy is what tenantID's hosted sign-in pages say before anyone signs in: the
+// rules a new password must meet (so the page can tick them off as they are met; the server still
+// checks on submit), how long a sign-in link works and how long a device is remembered. None of it
+// is secret: every rule is told to anyone who tries a password that breaks it.
+func (s *Service) HostedSignInPolicy(ctx context.Context, tenantID uuid.UUID) (minLength int, upper, number, symbol bool, magicLinkMinutes, rememberDeviceDays int, err error) {
+	p := DefaultPolicy()
+	if tenantID != uuid.Nil {
+		tp, gerr := s.Get(ctx, tenantID)
+		if gerr != nil {
+			return 0, false, false, false, 0, 0, gerr
+		}
+		p = *tp
+	}
+	return p.PasswordMinLength, p.PasswordRequireUppercase, p.PasswordRequireNumber, p.PasswordRequireSymbol,
+		p.MagicLinkTTLMinutes, p.RememberDeviceDays, nil
+}
+
 // PasswordEnabled reports whether the tenant permits password sign-in
 // (password_enabled); uuid.Nil is not restricted.
 func (s *Service) PasswordEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error) {

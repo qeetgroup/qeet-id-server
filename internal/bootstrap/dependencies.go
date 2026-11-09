@@ -491,7 +491,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Sales:          &sales.Handler{Service: salesService},
 		Analytics:      &analytics.Handler{Reader: analyticsReader},
 		ServiceHealth:  &servicehealth.Handler{Service: serviceHealth},
-		OIDC:           &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Methods: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: !cfg.IsDev(), PublicBaseURL: cfg.PublicBaseURL},
+		OIDC:           &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Methods: authPolicyService, Policy: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: !cfg.IsDev(), PublicBaseURL: cfg.PublicBaseURL},
 		Passkey:        &passkey.Handler{Service: passkeyService, CookieSecure: !cfg.IsDev()},
 		Social:         &social.Handler{Service: socialService, CookieSecure: !cfg.IsDev(), LoginBaseURL: cfg.LoginBaseURL, PublicBaseURL: cfg.PublicBaseURL},
 		Group: &group.Handler{Service: groupService, GrantCheck: rbacRepo.CheckGrantGroup, ReadsRoles: func(r *http.Request) bool {

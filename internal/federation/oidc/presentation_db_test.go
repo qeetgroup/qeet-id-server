@@ -3,10 +3,15 @@
 package oidc
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -34,7 +39,7 @@ func TestApplicationLogoAndHomePage(t *testing.T) {
 	if rec.Code != http.StatusCreated || created.Client.LogoURI != logo || created.Client.ClientURI != home {
 		t.Fatalf("create: %d %s, want the logo and home page kept", rec.Code, rec.Body.String())
 	}
-	context := func(clientID string) map[string]any {
+	loginContext := func(clientID string) map[string]any {
 		t.Helper()
 		var out map[string]any
 		rec := browse(t, p.public, http.MethodGet, "/oauth/login-context?client_id="+clientID+"&logo_uri=https://evil.example.test/x.png", nil, nil)
@@ -43,7 +48,7 @@ func TestApplicationLogoAndHomePage(t *testing.T) {
 		}
 		return out
 	}
-	if got := context(created.Client.ClientID); got["logo_uri"] != logo || got["client_uri"] != home {
+	if got := loginContext(created.Client.ClientID); got["logo_uri"] != logo || got["client_uri"] != home {
 		t.Errorf("login context: %v, want the registered logo and home page", got)
 	}
 
@@ -75,8 +80,58 @@ func TestApplicationLogoAndHomePage(t *testing.T) {
 	if patched.LogoURI != "" || patched.ClientURI != "https://notes.acme.example.test" {
 		t.Errorf("clear the logo, move the home page: %+v", patched)
 	}
-	got := context(created.Client.ClientID)
+	got := loginContext(created.Client.ClientID)
 	if _, ok := got["logo_uri"]; ok || got["client_uri"] != "https://notes.acme.example.test" {
 		t.Errorf("login context after the edit: %v, want no logo_uri and the new home page", got)
+	}
+}
+
+// fakePolicy is an organisation's hosted sign-in policy, as authpolicy would read it.
+type fakePolicy struct{ err error }
+
+func (f fakePolicy) HostedSignInPolicy(context.Context, uuid.UUID) (int, bool, bool, bool, int, int, error) {
+	return 12, true, true, false, 15, 30, f.err
+}
+
+// TestLoginContextPolicy checks that the hosted sign-in page's context carries the organisation's
+// password rules and lifetimes, and leaves them out when they can't be read.
+func TestLoginContextPolicy(t *testing.T) {
+	p := newProvider(t)
+	tenant := dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: p.svc}).Mount)
+	var created struct {
+		Client Client `json:"client"`
+	}
+	dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodPost, "/tenants/"+tenant.String()+"/oidc/clients",
+		map[string]any{"name": "Acme Notes", "redirect_uris": []string{testRedirect}}), &created)
+
+	loginContext := func(reader HostedPolicyReader) map[string]any {
+		t.Helper()
+		public := chi.NewRouter()
+		(&Handler{Service: p.svc, Policy: reader}).MountPublic(public)
+		var out map[string]any
+		rec := browse(t, public, http.MethodGet, "/oauth/login-context?client_id="+created.Client.ClientID, nil, nil)
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || rec.Code != http.StatusOK {
+			t.Fatalf("login context: %d %s", rec.Code, rec.Body.String())
+		}
+		return out
+	}
+
+	got := loginContext(fakePolicy{})
+	rules, _ := got["password_policy"].(map[string]any)
+	if rules["min_length"] != float64(12) || rules["require_uppercase"] != true || rules["require_number"] != true || rules["require_symbol"] != false {
+		t.Errorf("password_policy: %v, want the organisation's rules", got["password_policy"])
+	}
+	if got["magic_link_ttl_minutes"] != float64(15) || got["remember_device_days"] != float64(30) {
+		t.Errorf("lifetimes: %v / %v, want 15 and 30", got["magic_link_ttl_minutes"], got["remember_device_days"])
+	}
+	for _, reader := range []HostedPolicyReader{nil, fakePolicy{err: errors.New("down")}} {
+		got := loginContext(reader)
+		for _, key := range []string{"password_policy", "magic_link_ttl_minutes", "remember_device_days"} {
+			if _, ok := got[key]; ok {
+				t.Errorf("reader %v: %s present, want it left out", reader, key)
+			}
+		}
 	}
 }
