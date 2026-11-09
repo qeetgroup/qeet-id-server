@@ -526,6 +526,9 @@ func NoStoreRoutes() []string {
 		"POST /v1/oauth/authorize/decision",
 		"POST /v1/agents/token",
 		"POST /ldap/{id}/authenticate",
+		"POST /ldap/{id}/session",
+		"POST /saml/session",
+		"POST /v1/oidc-connections/session",
 		"GET /saml/idp/{tenantID}/sso",
 		"POST /saml/idp/{tenantID}/sso",
 

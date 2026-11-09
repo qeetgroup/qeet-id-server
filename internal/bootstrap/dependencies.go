@@ -376,6 +376,11 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	oidcSSOService.SetCipher(sharedCipher)
 	samlService.SetEgressPolicy(outboundPolicy) // IdP metadata URLs
 	samlService.SetCipher(sharedCipher)         // the connections' SP encryption keys
+	// A SAML or OpenID Connect sign-in started on the hosted login returns there: the same return_to
+	// allowlist as the hosted social sign-in's.
+	ssoReturnOrigins := append([]string{cfg.AppBaseURL, cfg.LoginBaseURL}, cfg.AllowedOrigins()...)
+	samlService.SetHostedLogin(cfg.LoginBaseURL, ssoReturnOrigins...)
+	oidcSSOService.SetHostedLogin(cfg.LoginBaseURL, ssoReturnOrigins...)
 
 	samlIdPKeyPEM, samlIdPCertPEM := samlIdPIdentity(cfg)
 	samlIdP, err := saml.NewIdP(pool, samlIdPKeyPEM, samlIdPCertPEM, cfg.LoginBaseURL, authService)
@@ -503,7 +508,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		TokenVault:   &tokenvault.Handler{Service: tokenVaultService, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev()},
 		SAML:         samlHandler,
 		AdminPortal:  &adminportal.Handler{Service: adminPortalService, SAML: samlService, SAMLSignIn: samlHandler, SCIM: scimService, Domains: domainVerifyService, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev()},
-		LDAP:         &ldap.Handler{Service: ldapService},
+		LDAP:         &ldap.Handler{Service: ldapService, CookieSecure: !cfg.IsDev()},
 		SSOGroups:    &ssosync.Handler{Service: ssosync.NewService(pool), GrantCheck: rbacRepo.CheckGrantGroup},
 		OIDCSSO:      &oidcsso.Handler{Service: oidcSSOService, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev()},
 		Directory:    &directory.Handler{Service: directoryService},

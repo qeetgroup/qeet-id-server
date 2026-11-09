@@ -210,6 +210,9 @@ type DiscoveredConnection struct {
 	Name      string    `json:"name"`
 	Method    string    `json:"method"`
 	LoginPath string    `json:"login_path"`
+	// SessionPath, for a credentials connection, takes the same user name and password from the
+	// hosted login and answers with its session instead of a token pair.
+	SessionPath string `json:"session_path,omitempty"`
 }
 
 // Discovery is where an address signs in. SSO is true when the organisation
@@ -243,6 +246,7 @@ func (s *Service) Discover(ctx context.Context, email string) (*Discovery, error
 			d.LoginPath = "/v1/oidc-connections/" + c.ID.String() + "/login"
 		case "ldap":
 			d.Method, d.LoginPath = "credentials", "/ldap/"+c.ID.String()+"/authenticate"
+			d.SessionPath = "/ldap/" + c.ID.String() + "/session"
 		}
 		out.Connections = append(out.Connections, d)
 	}

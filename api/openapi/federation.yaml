@@ -2511,6 +2511,46 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /saml/session:
+    post:
+      operationId: post_saml_session
+      summary: Hosted sign-in session (public)
+      description: 'Trades the one-time login code a hosted-login SAML sign-in came back with (the hosted login''s /sign-in URL fragment, saml_code) for the hosted-login session, as POST /v1/auth/session answers: the qe_ls cookie and the user''s id. The code is single-use and short-lived (401 saml.login_code_invalid, saml.login_code_used or saml.login_code_expired). The organisation''s network rules apply (403 auth.address_not_allowed), and an account that is not active is refused (403 auth.account_inactive). As the console''s SAML sign-in, no second factor is asked: the identity provider decides how its people sign in. The session is recorded as a saml sign-in. Mounted at the root, not under /v1, and unauthenticated; CSRF-checked.'
+      tags:
+        - SAML
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  description: The saml_code from the URL fragment.
+      responses:
+        '200':
+          description: Signed in to the hosted login; the hosted-login session cookie (qe_ls) is set.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                    format: uuid
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /saml/idp/{tenantID}/metadata:
     get:
       operationId: get_saml_idp_ByTenantID_metadata
@@ -2650,6 +2690,12 @@ paths:
         - name: id
           in: path
           required: true
+          schema:
+            type: string
+        - name: return_to
+          in: query
+          required: false
+          description: "For a sign-in started on the hosted login, where the browser goes back to once it's signed in (the application's authorize request): a path, or an absolute URL on an allowed origin (400 saml.return_to_invalid otherwise). The IdP's answer then returns to the hosted login's /sign-in with the one-time code in the URL fragment, for POST /saml/session."
           schema:
             type: string
       security: []
@@ -3759,7 +3805,7 @@ paths:
     post:
       operationId: post_v1_sso_discovery
       summary: Discover where an address signs in (public)
-      description: 'Home-realm discovery: says whether an email address signs in through its organisation''s identity provider, and through which connections. It is judged by the address''s domain alone, so every address on a domain gets the same answer whether or not it has an account. sso is true when the organisation that verified the domain (or the closest verified domain above it) has switched sso_enabled on for it and has an active SAML, LDAP or OpenID Connect connection; those addresses'' own sign-in methods are then refused with 403 auth.sso_required, except for the organisation''s break-glass members. Each connection gives login_path, below the API''s address: a browser goes to it for SAML and OpenID Connect (method redirect), and the directory login name and password are posted to it for LDAP (method credentials). An address that is not routed answers sso false with no connections. Unauthenticated; rate-limited like sign-in.'
+      description: 'Home-realm discovery: says whether an email address signs in through its organisation''s identity provider, and through which connections. It is judged by the address''s domain alone, so every address on a domain gets the same answer whether or not it has an account. sso is true when the organisation that verified the domain (or the closest verified domain above it) has switched sso_enabled on for it and has an active SAML, LDAP or OpenID Connect connection; those addresses'' own sign-in methods are then refused with 403 auth.sso_required, except for the organisation''s break-glass members. Each connection gives login_path, below the API''s address: a browser goes to it for SAML and OpenID Connect (method redirect), and the directory login name and password are posted to it for LDAP (method credentials). The hosted login adds return_to to a redirect, and posts a credentials connection''s sign-in to session_path, which answers with the hosted-login session. An address that is not routed answers sso false with no connections. Unauthenticated; rate-limited like sign-in.'
       tags:
         - OIDC Connections
       security: []
@@ -3804,6 +3850,9 @@ paths:
                           enum: [redirect, credentials]
                         login_path:
                           type: string
+                        session_path:
+                          type: string
+                          description: For a credentials connection, where the hosted login posts the same user name and password for its session.
         '400':
           $ref: '#/components/responses/BadRequest'
         '422':
@@ -3824,6 +3873,12 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: return_to
+          in: query
+          required: false
+          description: "For a sign-in started on the hosted login, where the browser goes back to once it's signed in (the application's authorize request): a path, or an absolute URL on an allowed origin (400 oidc_connection.return_to_invalid otherwise). The provider's answer then returns to the hosted login's /sign-in with the one-time code in the URL fragment, for POST /v1/oidc-connections/session."
+          schema:
+            type: string
       security: []
       responses:
         '302':
@@ -3918,6 +3973,90 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/oidc-connections/session:
+    post:
+      operationId: post_v1_oidc_connections_session
+      summary: Hosted sign-in session (public)
+      description: 'Trades the one-time login code a hosted-login OpenID Connect sign-in came back with (the hosted login''s /sign-in URL fragment, oidc_code) for the hosted-login session, as POST /v1/auth/session answers: the qe_ls cookie and the user''s id. The code is single-use and short-lived (401 oidc_connection.login_code_invalid, oidc_connection.login_code_used or oidc_connection.login_code_expired). The organisation''s network rules apply (403 auth.address_not_allowed), and an account that is not active is refused (403 auth.account_inactive). As the console''s sign-in through a connection, no second factor is asked. The session is recorded as an oidc sign-in. Unauthenticated; CSRF-checked.'
+      tags:
+        - OIDC Connections
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  description: The oidc_code from the URL fragment.
+      responses:
+        '200':
+          description: Signed in to the hosted login; the hosted-login session cookie (qe_ls) is set.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                    format: uuid
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /ldap/{id}/session:
+    post:
+      operationId: post_ldap_ById_session
+      summary: Hosted sign-in session (public)
+      description: 'POST /ldap/{id}/authenticate for the hosted login: the same checks, answered as POST /v1/auth/session is, with the hosted-login session cookie (qe_ls) and the user''s id, or the challenge to complete first at POST /v1/auth/session/mfa. Mounted at the root, not under /v1, and unauthenticated; CSRF-checked.'
+      tags:
+        - LDAP
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+                  format: password
+      responses:
+        '200':
+          description: Signed in to the hosted login (the qe_ls cookie is set and the user's id answered), or the challenge to complete at POST /v1/auth/session/mfa.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '402': {description: 'The organisation''s plan does not include LDAP (billing.upgrade_required).'}
         '403':
           $ref: '#/components/responses/Forbidden'
         '429':

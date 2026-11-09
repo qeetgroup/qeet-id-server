@@ -25,6 +25,7 @@ func init() {
 		errs.CodeSAMLOtherBrowser:             http.StatusForbidden,
 		errs.CodeSAMLConnectionMisconfigured:  http.StatusInternalServerError,
 		errs.CodeSAMLRequestInvalid:           http.StatusBadRequest,
+		errs.CodeSAMLReturnToInvalid:          http.StatusBadRequest,
 		errs.CodeSAMLResponseMissing:          http.StatusBadRequest,
 		errs.CodeSAMLAssertionInvalid:         http.StatusUnauthorized,
 		errs.CodeSAMLAssertionConditions:      http.StatusUnauthorized,

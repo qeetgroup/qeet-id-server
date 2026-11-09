@@ -60,7 +60,11 @@ func (s *Service) sweep(ctx context.Context) {
 // URL to send the browser to and the state to bind to that browser. The state,
 // PKCE verifier and nonce are kept, hashed where the provider echoes them, for
 // the callback; redirectURI is where the provider sends the browser back.
-func (s *Service) BeginSignIn(ctx context.Context, id uuid.UUID, redirectURI string) (authURL, state string, err error) {
+func (s *Service) BeginSignIn(ctx context.Context, id uuid.UUID, redirectURI, returnTo string) (authURL, state string, err error) {
+	// A sign-in started on the hosted login names where the browser goes back to.
+	if returnTo != "" && (s.loginBaseURL == "" || !s.returnTo.Valid(returnTo)) {
+		return "", "", errs.ErrOIDCSSOReturnToInvalid
+	}
 	c, err := s.loadForSignIn(ctx, id)
 	if err != nil {
 		return "", "", err
@@ -94,6 +98,7 @@ func (s *Service) BeginSignIn(ctx context.Context, id uuid.UUID, redirectURI str
 		NonceHash:    nonceHash,
 		RedirectUri:  redirectURI,
 		ExpiresAt:    time.Now().UTC().Add(stateTTL),
+		ReturnTo:     nonEmpty(returnTo),
 	}); err != nil {
 		return "", "", err
 	}
@@ -127,10 +132,10 @@ type Callback struct {
 // trades the code for an ID token, validates it, finds or provisions the
 // person it names and returns a one-time code the console trades for a
 // session at ExchangeLogin. Each refusal is recorded as a failed sign-in.
-func (s *Service) CompleteSignIn(ctx context.Context, cb Callback) (loginCode string, err error) {
+func (s *Service) CompleteSignIn(ctx context.Context, cb Callback) (loginCode, returnTo string, err error) {
 	c, err := s.loadForSignIn(ctx, cb.ConnectionID)
 	if c == nil {
-		return "", err
+		return "", "", err
 	}
 	var userID uuid.UUID
 	defer func() {
@@ -139,62 +144,62 @@ func (s *Service) CompleteSignIn(ctx context.Context, cb Callback) (loginCode st
 		}
 	}()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if cb.State == "" {
-		return "", errs.ErrOIDCSSOCallbackInvalid
+		return "", "", errs.ErrOIDCSSOCallbackInvalid
 	}
 	st, err := s.q.ConsumeOidcConnectionState(ctx, codes.Hash(cb.State))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", errs.ErrOIDCSSOStateInvalid
+		return "", "", errs.ErrOIDCSSOStateInvalid
 	}
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if st.ConnectionID != c.ID || !time.Now().Before(st.ExpiresAt) {
-		return "", errs.ErrOIDCSSOStateInvalid
+		return "", "", errs.ErrOIDCSSOStateInvalid
 	}
 	// A sign-in completes only in the browser that began it, or whoever began
 	// one could have someone else's browser finish it as themselves.
 	if !cb.StartedHere {
-		return "", errs.ErrOIDCSSOOtherBrowser
+		return "", "", errs.ErrOIDCSSOOtherBrowser
 	}
 	if cb.ProviderError != "" {
-		return "", errs.ErrOIDCSSOProviderRefused
+		return "", "", errs.ErrOIDCSSOProviderRefused
 	}
 	if cb.Code == "" {
-		return "", errs.ErrOIDCSSOCallbackInvalid
+		return "", "", errs.ErrOIDCSSOCallbackInvalid
 	}
 	// Checked again as the answer arrives, so a plan that has since lapsed
 	// signs no one in.
 	if err := s.RequireSSO(ctx, c.TenantID); err != nil {
-		return "", err
+		return "", "", err
 	}
 	doc, rules, err := s.providerFor(ctx, c)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	rawIDToken, err := s.providers.exchangeCode(ctx, doc, c.ClientID, c.clientSecret, cb.Code, st.RedirectUri, st.CodeVerifier)
 	if err != nil {
-		return "", errs.ErrOIDCSSOTokenExchangeFailed.Wrap(err)
+		return "", "", errs.ErrOIDCSSOTokenExchangeFailed.Wrap(err)
 	}
 	rules.nonceHash = st.NonceHash
 	claims, err := s.providers.verifyIDToken(ctx, rawIDToken, doc.JWKSURI, rules)
 	if err != nil {
-		return "", errs.ErrOIDCSSOIDTokenInvalid.Wrap(err)
+		return "", "", errs.ErrOIDCSSOIDTokenInvalid.Wrap(err)
 	}
 	if userID, err = s.findOrCreateUser(ctx, c, c.profileOf(claims)); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if s.auth != nil {
 		// A suspended or deleted account gets no code to sign in with.
 		if err := s.auth.CheckSignInAccount(ctx, userID, c.TenantID, provider, cb.IP, cb.UserAgent); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 	rawCode, codeHash, err := codes.URLToken()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if err := s.q.InsertOidcConnectionLoginCode(ctx, dbgen.InsertOidcConnectionLoginCodeParams{
 		CodeHash:     codeHash,
@@ -202,10 +207,10 @@ func (s *Service) CompleteSignIn(ctx context.Context, cb Callback) (loginCode st
 		UserID:       userID,
 		ExpiresAt:    time.Now().UTC().Add(loginCodeTTL),
 	}); err != nil {
-		return "", err
+		return "", "", err
 	}
 	s.touchLastLogin(ctx, c)
-	return rawCode, nil
+	return rawCode, deref(st.ReturnTo), nil
 }
 
 // recordFailure records a refused sign-in through c in the organisation's
@@ -383,37 +388,60 @@ func (s *Service) findOrCreateUser(ctx context.Context, c *signInConnection, p p
 // ExchangeLogin trades a one-time login code for a token pair, while the
 // connection that issued it is still active.
 func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*auth.TokenPair, error) {
+	userID, tenantID, err := s.consumeLoginCode(ctx, rawCode)
+	if err != nil {
+		return nil, err
+	}
+	return s.auth.IssuePair(ctx, userID, tenantID, ip, ua, provider)
+}
+
+// consumeLoginCode spends a one-time code the callback issued, once, and returns whom it signs in.
+func (s *Service) consumeLoginCode(ctx context.Context, rawCode string) (uuid.UUID, uuid.UUID, error) {
 	if rawCode == "" {
-		return nil, errs.ErrOIDCSSOLoginCodeRequired
+		return uuid.Nil, uuid.Nil, errs.ErrOIDCSSOLoginCodeRequired
 	}
 	codeHash := codes.Hash(rawCode)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return uuid.Nil, uuid.Nil, err
 	}
 	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
 	row, err := q.ConsumeOidcConnectionLoginCode(ctx, codeHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrOIDCSSOLoginCodeInvalid
+		return uuid.Nil, uuid.Nil, errs.ErrOIDCSSOLoginCodeInvalid
 	}
 	if err != nil {
-		return nil, err
+		return uuid.Nil, uuid.Nil, err
 	}
 	if row.UsedAt.Valid {
-		return nil, errs.ErrOIDCSSOLoginCodeUsed
+		return uuid.Nil, uuid.Nil, errs.ErrOIDCSSOLoginCodeUsed
 	}
 	if !time.Now().Before(row.ExpiresAt) {
-		return nil, errs.ErrOIDCSSOLoginCodeExpired
+		return uuid.Nil, uuid.Nil, errs.ErrOIDCSSOLoginCodeExpired
 	}
 	if err := signInStatus(row.Status); err != nil {
-		return nil, err
+		return uuid.Nil, uuid.Nil, err
 	}
 	if err := q.MarkOidcConnectionLoginCodeUsed(ctx, codeHash); err != nil {
-		return nil, err
+		return uuid.Nil, uuid.Nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+		return uuid.Nil, uuid.Nil, err
 	}
-	return s.auth.IssuePair(ctx, row.UserID, row.TenantID, ip, ua, provider)
+	return row.UserID, row.TenantID, nil
+}
+
+func nonEmpty(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
+}
+
+func deref(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
 }

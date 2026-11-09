@@ -256,7 +256,7 @@ func (s *Service) checkTestAnswer(ctx context.Context, base string, conn *Connec
 	}
 	// Reserving its IDs keeps the answer from being presented again anywhere.
 	// The test is its own correlation, so no AuthnRequest is consumed.
-	if err := s.ConsumeValidatedResponse(ctx, conn.ID, "", response.ID, assertionIDs, true); err != nil {
+	if _, err := s.ConsumeValidatedResponse(ctx, conn.ID, "", response.ID, assertionIDs, true); err != nil {
 		if e := errs.As(err); e != nil && e.Code != errs.CodeInternal {
 			return fail(e, nil)
 		}

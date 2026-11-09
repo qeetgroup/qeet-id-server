@@ -3,11 +3,13 @@ package oidcsso
 import (
 	"context"
 	"net/http"
+	"net/url"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -36,6 +38,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 	r.Get("/oidc-connections/{id}/login", h.login)
 	r.Get("/oidc-connections/{id}/callback", h.callback)
 	r.Post("/oidc-connections/exchange", h.exchange)
+	r.Post("/oidc-connections/session", h.session)
 }
 
 // binding ties a sign-in to the browser that began it, so the callback
@@ -250,7 +253,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	authURL, state, err := h.Service.BeginSignIn(r.Context(), id, h.redirectURI(r, id))
+	authURL, state, err := h.Service.BeginSignIn(r.Context(), id, h.redirectURI(r, id), r.URL.Query().Get("return_to"))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -271,7 +274,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	state := query.Get("state")
 	startedHere := h.binding().Holds(r, state)
-	code, err := h.Service.CompleteSignIn(r.Context(), Callback{
+	code, returnTo, err := h.Service.CompleteSignIn(r.Context(), Callback{
 		ConnectionID:  id,
 		State:         state,
 		Code:          query.Get("code"),
@@ -287,7 +290,37 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	// A sign-in the hosted login started goes back to its sign-in page, which trades the code at
+	// /v1/oidc-connections/session and continues to return_to.
+	if returnTo != "" && h.Service.loginBaseURL != "" {
+		http.Redirect(w, r, h.Service.loginBaseURL+"/sign-in?"+url.Values{"return_to": {returnTo}}.Encode()+"#oidc_code="+code, http.StatusFound)
+		return
+	}
 	http.Redirect(w, r, h.Service.appBaseURL+"/sso/callback#oidc_code="+code, http.StatusFound)
+}
+
+// session trades a sign-in the hosted login started for the hosted login session, as
+// POST /v1/auth/session answers: the session cookie and the user's id.
+func (h *Handler) session(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Code string `json:"code"`
+	}
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	userID, tenantID, err := h.Service.consumeLoginCode(r.Context(), body.Code)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	raw, err := h.Service.auth.BeginSSOLoginSession(r.Context(), userID, tenantID, provider, httpx.ClientIP(r), r.UserAgent())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	auth.SetLoginSessionCookie(w, raw, h.CookieSecure)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": userID})
 }
 
 func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {

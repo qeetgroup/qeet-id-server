@@ -40,6 +40,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/returnto"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
@@ -93,6 +94,16 @@ type Service struct {
 	egress           *egress.Policy
 	metadataHTTP     *http.Client
 	box              *envelope.Cipher
+	// The hosted login's origin and the addresses a sign-in it starts may return to (SetHostedLogin).
+	loginBaseURL string
+	returnTo     returnto.Allowed
+}
+
+// SetHostedLogin lets a sign-in start on the hosted login: its answer goes back to
+// loginBaseURL's sign-in page, and its return_to must be a path or on one of origins.
+func (s *Service) SetHostedLogin(loginBaseURL string, origins ...string) {
+	s.loginBaseURL = strings.TrimRight(loginBaseURL, "/")
+	s.returnTo = returnto.Origins(origins...)
 }
 
 // replaySweepInterval is how often any one replica collects expired SAML
@@ -738,7 +749,7 @@ func withinValidity(assertions []samltypes.Assertion, now time.Time) bool {
 	return true
 }
 
-func (s *Service) storeAuthnRequest(ctx context.Context, connectionID uuid.UUID, requestID string) error {
+func (s *Service) storeAuthnRequest(ctx context.Context, connectionID uuid.UUID, requestID, returnTo string) error {
 	if strings.TrimSpace(requestID) == "" || len(requestID) > 1024 {
 		return errs.ErrSAMLRequestInvalid
 	}
@@ -748,44 +759,47 @@ func (s *Service) storeAuthnRequest(ctx context.Context, connectionID uuid.UUID,
 		}
 	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.saml_authn_requests (request_id, connection_id, expires_at)
-		VALUES ($1, $2, $3)
-	`, requestID, connectionID, time.Now().UTC().Add(authnRequestTTL))
+		INSERT INTO auth.saml_authn_requests (request_id, connection_id, expires_at, return_to)
+		VALUES ($1, $2, $3, NULLIF($4, ''))
+	`, requestID, connectionID, time.Now().UTC().Add(authnRequestTTL), returnTo)
 	return err
 }
 
 // ConsumeValidatedResponse atomically reserves the response and assertion IDs
-// against replay and consumes the matching AuthnRequest. Call it only after the
-// signature and conditions are validated. An empty requestID (IdP-initiated) is
-// refused with ErrSAMLRequestCorrelation unless allowIdPInitiated.
-func (s *Service) ConsumeValidatedResponse(ctx context.Context, connectionID uuid.UUID, requestID, responseID string, assertionIDs []string, allowIdPInitiated bool) error {
+// against replay and consumes the matching AuthnRequest, returning where the
+// hosted login asked the browser to go back to ("" for a console sign-in). Call
+// it only after the signature and conditions are validated. An empty requestID
+// (IdP-initiated) is refused with ErrSAMLRequestCorrelation unless
+// allowIdPInitiated.
+func (s *Service) ConsumeValidatedResponse(ctx context.Context, connectionID uuid.UUID, requestID, responseID string, assertionIDs []string, allowIdPInitiated bool) (string, error) {
+	returnTo := ""
 	idpInitiated := strings.TrimSpace(requestID) == ""
 	if idpInitiated && !allowIdPInitiated {
-		return errs.ErrSAMLRequestCorrelation
+		return "", errs.ErrSAMLRequestCorrelation
 	}
 	if !idpInitiated && len(requestID) > 1024 {
-		return errs.ErrSAMLRequestCorrelation
+		return "", errs.ErrSAMLRequestCorrelation
 	}
 	if strings.TrimSpace(responseID) == "" || len(responseID) > 1024 || len(assertionIDs) == 0 || len(assertionIDs) > 16 {
-		return errs.ErrSAMLAssertionInvalid
+		return "", errs.ErrSAMLAssertionInvalid
 	}
 	ids := make([]struct{ kind, id string }, 0, len(assertionIDs)+1)
 	ids = append(ids, struct{ kind, id string }{"response", responseID})
 	for _, assertionID := range assertionIDs {
 		if strings.TrimSpace(assertionID) == "" || len(assertionID) > 1024 {
-			return errs.ErrSAMLAssertionInvalid
+			return "", errs.ErrSAMLAssertionInvalid
 		}
 		ids = append(ids, struct{ kind, id string }{"assertion", assertionID})
 	}
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer tx.Rollback(ctx)
 	if sweepDue(&s.nextReplaySweep) {
 		if _, err := tx.Exec(ctx, `DELETE FROM auth.saml_replay_ids WHERE expires_at <= NOW()`); err != nil {
-			return err
+			return "", err
 		}
 	}
 	for _, candidate := range ids {
@@ -795,10 +809,10 @@ func (s *Service) ConsumeValidatedResponse(ctx context.Context, connectionID uui
 			ON CONFLICT DO NOTHING
 		`, connectionID, candidate.kind, candidate.id, time.Now().UTC().Add(replayIDTTL))
 		if err != nil {
-			return err
+			return "", err
 		}
 		if tag.RowsAffected() != 1 {
-			return errs.ErrSAMLReplayDetected
+			return "", errs.ErrSAMLReplayDetected
 		}
 	}
 	// Correlation is consumed only for SP-initiated responses. An opted-in
@@ -806,18 +820,23 @@ func (s *Service) ConsumeValidatedResponse(ctx context.Context, connectionID uui
 	// running this would find no row and reject every one of them. The replay
 	// reservations above still ran, which is what actually stops a resend.
 	if !idpInitiated {
-		tag, err := tx.Exec(ctx, `
+		var stored *string
+		err := tx.QueryRow(ctx, `
 			DELETE FROM auth.saml_authn_requests
 			WHERE request_id = $1 AND connection_id = $2 AND expires_at > NOW()
-		`, requestID, connectionID)
-		if err != nil {
-			return err
+			RETURNING return_to
+		`, requestID, connectionID).Scan(&stored)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", errs.ErrSAMLRequestCorrelation
 		}
-		if tag.RowsAffected() != 1 {
-			return errs.ErrSAMLRequestCorrelation
+		if err != nil {
+			return "", err
+		}
+		if stored != nil {
+			returnTo = *stored
 		}
 	}
-	return tx.Commit(ctx)
+	return returnTo, tx.Commit(ctx)
 }
 
 // signInStatus refuses a sign-in through a connection that isn't active: a
@@ -970,38 +989,45 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 
 // ExchangeLogin trades a one-time SAML login code for a Qeet token pair.
 func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*auth.TokenPair, error) {
-	if rawCode == "" {
-		return nil, errs.ErrSAMLLoginCodeRequired
-	}
-	codeHash := codes.Hash(rawCode)
-
-	tx, err := s.pool.Begin(ctx)
+	userID, tenantID, err := s.consumeLoginCode(ctx, rawCode)
 	if err != nil {
 		return nil, err
+	}
+	return s.auth.IssuePair(ctx, userID, tenantID, ip, ua, provider)
+}
+
+// consumeLoginCode spends a one-time code the ACS issued, once, and returns whom it signs in.
+func (s *Service) consumeLoginCode(ctx context.Context, rawCode string) (uuid.UUID, uuid.UUID, error) {
+	if rawCode == "" {
+		return uuid.Nil, uuid.Nil, errs.ErrSAMLLoginCodeRequired
+	}
+	codeHash := codes.Hash(rawCode)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
 	}
 	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
-
 	row, err := q.ConsumeSamlLoginCode(ctx, codeHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrSAMLLoginCodeInvalid
+		return uuid.Nil, uuid.Nil, errs.ErrSAMLLoginCodeInvalid
 	}
 	if err != nil {
-		return nil, err
+		return uuid.Nil, uuid.Nil, err
 	}
 	if row.UsedAt.Valid {
-		return nil, errs.ErrSAMLLoginCodeUsed
+		return uuid.Nil, uuid.Nil, errs.ErrSAMLLoginCodeUsed
 	}
 	if time.Now().After(row.ExpiresAt) {
-		return nil, errs.ErrSAMLLoginCodeExpired
+		return uuid.Nil, uuid.Nil, errs.ErrSAMLLoginCodeExpired
 	}
 	if err := q.MarkSamlLoginCodeUsed(ctx, codeHash); err != nil {
-		return nil, err
+		return uuid.Nil, uuid.Nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+		return uuid.Nil, uuid.Nil, err
 	}
-	return s.auth.IssuePair(ctx, row.UserID, row.TenantID, ip, ua, provider)
+	return row.UserID, row.TenantID, nil
 }
 
 // insertLoginCode persists a one-time code issued at the ACS endpoint.
@@ -1080,6 +1106,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 	r.Get("/saml/login/{id}", h.login)
 	r.Post("/saml/acs/{id}", h.acs) // CSRF-exempt (see router.go); validated by signature
 	r.Post("/saml/exchange", h.exchange)
+	r.Post("/saml/session", h.session)
 
 	// IdP side (Qeet as IdP), per organisation: metadata + SingleSignOnService
 	// (redirect + POST).
@@ -1357,6 +1384,13 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
 		return
 	}
+	// A sign-in started on the hosted login names where the browser goes back to (the
+	// application's authorize request); its answer then returns to the hosted login.
+	returnTo := r.URL.Query().Get("return_to")
+	if returnTo != "" && (h.Service.loginBaseURL == "" || !h.Service.returnTo.Valid(returnTo)) {
+		httpx.WriteError(w, r, errs.ErrSAMLReturnToInvalid)
+		return
+	}
 	conn, err := h.Service.getByID(r.Context(), id)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -1404,7 +1438,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrInternalServer)
 		return
 	}
-	if err := h.Service.storeAuthnRequest(r.Context(), conn.ID, requestID); err != nil {
+	if err := h.Service.storeAuthnRequest(r.Context(), conn.ID, requestID, returnTo); err != nil {
 		slog.Error("saml login: persist request", "err", err, "connection", conn.ID)
 		httpx.WriteError(w, r, errs.ErrInternalServer)
 		return
@@ -1489,7 +1523,8 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.ConsumeValidatedResponse(r.Context(), conn.ID, requestID, response.ID, assertionIDs, allowIdPInitiated); err != nil {
+	returnTo, err := h.Service.ConsumeValidatedResponse(r.Context(), conn.ID, requestID, response.ID, assertionIDs, allowIdPInitiated)
+	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1538,9 +1573,14 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 	}
 	h.Service.touchLastLogin(ctx, conn.ID)
 
-	// Hand the SPA the one-time code in the URL fragment (never sent to a
-	// server / proxy log); the SPA trades it at /saml/exchange.
+	// Hand the page the one-time code in the URL fragment (never sent to a
+	// server / proxy log). A console sign-in trades it at /saml/exchange; one
+	// the hosted login started goes back to its sign-in page, which trades it at
+	// /saml/session and continues to return_to.
 	target := h.Service.appBaseURL + "/sso/callback#saml_code=" + rawCode
+	if returnTo != "" && h.Service.loginBaseURL != "" {
+		target = h.Service.loginBaseURL + "/sign-in?" + url.Values{"return_to": {returnTo}}.Encode() + "#saml_code=" + rawCode
+	}
 	http.Redirect(w, r, target, http.StatusFound)
 }
 
@@ -1567,6 +1607,31 @@ func trustedCorrelation(response *samltypes.Response) (string, []string, error) 
 		}
 	}
 	return requestID, assertionIDs, nil
+}
+
+// session trades a sign-in the hosted login started for the hosted login session: the one-time
+// code from the identity provider's answer, then the organisation's address rules. It answers as
+// POST /v1/auth/session does, with the session cookie and the user's id.
+func (h *Handler) session(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Code string `json:"code"`
+	}
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	userID, tenantID, err := h.Service.consumeLoginCode(r.Context(), body.Code)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	raw, err := h.Service.auth.BeginSSOLoginSession(r.Context(), userID, tenantID, provider, httpx.ClientIP(r), r.UserAgent())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	auth.SetLoginSessionCookie(w, raw, h.CookieSecure)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": userID})
 }
 
 func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {
