@@ -436,6 +436,16 @@ func TestPortalFinishesAnSSOSetup(t *testing.T) {
 	if rec.Code != http.StatusOK || verified.Status != "verified" || verified.VerifiedAt == nil {
 		t.Errorf("verify the domain: %d %s", rec.Code, rec.Body.String())
 	}
+	// Single sign-on for the verified domain: on through a link with SAML, never without it.
+	var routed domainverify.Domain
+	rec = portal(t, public, http.MethodPatch, "/admin-portal/domains/"+claimed.ID.String(), "", everything, map[string]bool{"sso_enabled": true})
+	dbtest.Decode(t, rec, &routed)
+	if rec.Code != http.StatusOK || !routed.SSOEnabled {
+		t.Errorf("turn on SSO for the domain: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := portal(t, public, http.MethodPatch, "/admin-portal/domains/"+claimed.ID.String(), "", session("domain_verification"), map[string]bool{"sso_enabled": false}); !strings.Contains(rec.Body.String(), errs.CodeAdminPortalCapabilityNotGranted) {
+		t.Errorf("turn off SSO without SAML in the link: %d %s", rec.Code, rec.Body.String())
+	}
 	rec = portal(t, public, http.MethodPost, "/admin-portal/domains", "", everything, map[string]string{"domain": dbtest.Domain(t, other)})
 	var squat domainverify.Domain
 	dbtest.Decode(t, rec, &squat)
