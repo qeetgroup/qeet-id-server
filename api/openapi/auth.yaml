@@ -1906,8 +1906,7 @@ paths:
         trimmed. Markup is stored as typed and must be shown as text. Another
         user's passkey, like an unknown id, is not found and is left unchanged.
         Also accepts the hosted-login session cookie (qe_ls), with the CSRF
-        token, in place of a bearer token. Delete passkey does not: it takes a
-        bearer token only. Audited as passkey.renamed, with the new and previous
+        token, in place of a bearer token, as Delete passkey does. Audited as passkey.renamed, with the new and previous
         name, in the audit trail of the organization the session is in.
       tags:
         - Passkeys
@@ -1967,7 +1966,8 @@ paths:
             type: string
       security:
         - bearerAuth: []
-      description: 'Deletes one of the caller''s passkeys. Needs a recent step-up. Audited as passkey.deleted (its id and name) in the audit trail of the organization the session is in, and the account holder is emailed that a passkey was removed. Removing the account''s only way to sign in is refused with 409 auth.last_sign_in_method and recorded there as auth.sign_in_method_removal_refused.'
+        - ssoCookie: []
+      description: 'Deletes one of the caller''s passkeys. Needs a recent step-up; with the hosted-login session cookie (qe_ls, and the CSRF token) in place of a bearer token, a sign-in within the organisation''s step-up window stands in for one, else 403 step_up_required. Audited as passkey.deleted (its id and name) in the audit trail of the organization the session is in, and the account holder is emailed that a passkey was removed. Removing the account''s only way to sign in is refused with 409 auth.last_sign_in_method and recorded there as auth.sign_in_method_removal_refused.'
       responses:
         '204':
           description: No Content

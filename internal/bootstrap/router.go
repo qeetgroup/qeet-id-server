@@ -463,6 +463,7 @@ func LoginSessionRoutes() []string {
 		"GET /v1/me/organizations",
 		"GET /v1/passkeys",
 		"PATCH /v1/passkeys/{id}",
+		"DELETE /v1/passkeys/{id}",
 		"POST /v1/passkeys/register/begin",
 		"POST /v1/passkeys/register/finish",
 	}
