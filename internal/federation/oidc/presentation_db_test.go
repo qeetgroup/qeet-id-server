@@ -109,7 +109,7 @@ func TestLoginContextPolicy(t *testing.T) {
 	loginContext := func(reader HostedPolicyReader) map[string]any {
 		t.Helper()
 		public := chi.NewRouter()
-		(&Handler{Service: p.svc, Policy: reader}).MountPublic(public)
+		(&Handler{Service: p.svc, Policy: reader}).MountBrowser(public)
 		var out map[string]any
 		rec := browse(t, public, http.MethodGet, "/oauth/login-context?client_id="+created.Client.ClientID, nil, nil)
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || rec.Code != http.StatusOK {

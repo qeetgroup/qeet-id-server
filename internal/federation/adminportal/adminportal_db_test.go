@@ -208,7 +208,9 @@ func TestPortalLinkConfiguresOnlyWhatItGrants(t *testing.T) {
 		actions = append(actions, a)
 	}
 	rows.Close()
-	if strings.Join(actions, ",") != "saml.connection_created,saml.connection_updated,saml.connection_deleted" {
+	// The connection, the draft made and removed, then the connection activated and deleted.
+	want := "saml.connection_created,saml.connection_created,saml.connection_deleted,saml.connection_updated,saml.connection_deleted"
+	if strings.Join(actions, ",") != want {
 		t.Errorf("recorded %v; want each change, as the portal", actions)
 	}
 
