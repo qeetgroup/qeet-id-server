@@ -260,6 +260,11 @@ func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 			out["remember_device_days"] = deviceDays
 		}
 	}
+	// The organisation's name, so the pages can say whose rules apply ("Brightleaf Foods asks
+	// for a second step"). Absent when it can't be read.
+	if client.TenantName != "" {
+		out["organization_name"] = client.TenantName
+	}
 	// The application's registered logo and home page, absent when not set.
 	if client.LogoURI != "" {
 		out["logo_uri"] = client.LogoURI

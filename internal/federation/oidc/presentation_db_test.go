@@ -94,7 +94,7 @@ func (f fakePolicy) HostedSignInPolicy(context.Context, uuid.UUID) (int, bool, b
 }
 
 // TestLoginContextPolicy checks that the hosted sign-in page's context carries the organisation's
-// password rules and lifetimes, and leaves them out when they can't be read.
+// name, password rules and lifetimes, and leaves the policy out when it can't be read.
 func TestLoginContextPolicy(t *testing.T) {
 	p := newProvider(t)
 	tenant := dbtest.Tenant(t)
@@ -119,6 +119,9 @@ func TestLoginContextPolicy(t *testing.T) {
 	}
 
 	got := loginContext(fakePolicy{})
+	if name, _ := got["organization_name"].(string); name == "" {
+		t.Errorf("organization_name: %v, want the organisation's name", got["organization_name"])
+	}
 	rules, _ := got["password_policy"].(map[string]any)
 	if rules["min_length"] != float64(12) || rules["require_uppercase"] != true || rules["require_number"] != true || rules["require_symbol"] != false {
 		t.Errorf("password_policy: %v, want the organisation's rules", got["password_policy"])

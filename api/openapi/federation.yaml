@@ -655,6 +655,9 @@ paths:
                     type: string
                     format: uri
                     description: The application's registered home page (https); absent when not set. The hosted page shows its host.
+                  organization_name:
+                    type: string
+                    description: The name of the organisation the application belongs to, so the hosted pages can say whose rules apply. Absent when it can't be read.
                   password_policy:
                     type: object
                     description: The rules the organisation's new passwords must meet, so the hosted pages can show them as they are met. The server still checks them when a password is set. Absent when the policy can't be read.
