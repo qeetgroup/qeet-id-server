@@ -99,9 +99,9 @@ sast:
 		go build -o "$$bin" github.com/securego/gosec/v2/cmd/gosec) || exit 1; }; \
 	"$$bin" -quiet -conf .gosec.json -exclude-dir='.*dbgen' -exclude-generated ./...
 
-# Every check CI runs, locally: build, every test with the race detector, the
-# database ones too (needs Docker), lint (with vet), generated SQL, and the
-# vulnerability and security scans.
+# The full local gate before a push (CI runs only Verify): build, every test
+# with the race detector, the database ones too (needs Docker), lint (with
+# vet), generated SQL, and the vulnerability and security scans.
 ci:
 	go build ./...
 	$(MAKE) test-db lint sqlc-check vuln sast

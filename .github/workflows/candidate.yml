@@ -1,0 +1,125 @@
+name: candidate
+
+# A push to release/YEAR.MONTH.0 or hotfix/YEAR.MONTH.N builds the image testers
+# run: Verify first, then a scan, then one immutable, commit-addressed image,
+# ghcr.io/qeetgroup/qeet-id-server:sha-<commit>, with the in.qeet.* labels the
+# Qeet ID Kit reads (qeet-id-kit: docs/application-contract.md). The kit
+# numbers the test copies (YEAR.MONTH.N-rc.K); this workflow never does. When
+# the branch merges into main, deploy.yml promotes this same image to
+# production, so what ships is what was tested.
+
+on:
+  push:
+    branches: ["release/**", "hotfix/**"]
+
+concurrency:
+  group: candidate-${{ github.ref }}
+  cancel-in-progress: false # every pushed commit gets its image; deploy needs the last one
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  image:
+    name: Candidate image
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Release metadata
+        id: meta
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if ! release=$(scripts/release/version.sh "$REF_NAME"); then
+            echo "::error::$REF_NAME is not a release/YEAR.MONTH.0 or hotfix/YEAR.MONTH.N branch (see above)"
+            exit 1
+          fi
+          schema=$(find internal/platform/database/migrations -name '*.up.sql' \
+            | sed -E 's#.*/0*([0-9]+)_[^/]*$#\1#' | sort -n | tail -1)
+          {
+            echo "release=$release"
+            echo "schema=$schema"
+            echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "image=ghcr.io/$GITHUB_REPOSITORY"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Scan for critical vulnerabilities before publishing
+        env:
+          # Run as the project's own image, pinned by digest, not as an action.
+          TRIVY: aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
+        run: |
+          docker buildx build . --platform linux/amd64 --tag qeet-id-server:scan --load
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY" image \
+            --exit-code 1 --severity CRITICAL --ignore-unfixed --no-progress qeet-id-server:scan
+
+      # The binary reports vYEAR.MONTH.N on GET /version, the tag production
+      # gives it, so the promoted image passes the deploy's version check as is.
+      - name: Build and push linux/amd64 + linux/arm64
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          RELEASE: ${{ steps.meta.outputs.release }}
+          SCHEMA: ${{ steps.meta.outputs.schema }}
+          CREATED: ${{ steps.meta.outputs.created }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          ref="$IMAGE:sha-$GITHUB_SHA"
+          # sha-<commit> tags are immutable: a re-run must not move them.
+          if out=$(docker buildx imagetools inspect "$ref" 2>&1); then
+            echo "::notice::$ref already published; leaving it untouched."
+            exit 0
+          elif ! grep -qiE 'not found|manifest unknown' <<<"$out"; then
+            echo "::error::cannot check $ref: $out"
+            exit 1
+          fi
+          labels=(
+            "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY"
+            "org.opencontainers.image.revision=$GITHUB_SHA"
+            "org.opencontainers.image.version=$RELEASE"
+            "org.opencontainers.image.created=$CREATED"
+            "in.qeet.release=$RELEASE"
+            "in.qeet.source-branch=$REF_NAME"
+            "in.qeet.id.schema-version=$SCHEMA"
+          )
+          args=()
+          for l in "${labels[@]}"; do args+=(--label "$l" --annotation "index:$l"); done
+          docker buildx build . \
+            --platform linux/amd64,linux/arm64 \
+            --build-arg VERSION="v$RELEASE" \
+            --build-arg COMMIT="$GITHUB_SHA" \
+            --build-arg DATE="$CREATED" \
+            "${args[@]}" \
+            --tag "$ref" \
+            --sbom=true \
+            --provenance=mode=max \
+            --metadata-file "$RUNNER_TEMP/build.json" \
+            --push
+          digest=$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/build.json")
+          {
+            echo "### Candidate image"
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Image | \`$ref\` |"
+            echo "| Digest | \`$digest\` |"
+            echo "| Release | \`$RELEASE\` (schema $SCHEMA), from \`$REF_NAME\` |"
+            echo "| Attestations | SBOM (SPDX) and SLSA provenance, attached to the image |"
+            echo
+            echo "Make the next test copy in qeet-id-kit → Actions → **publish-candidate** with release \`$RELEASE\` and server = \`$GITHUB_SHA\`."
+          } >> "$GITHUB_STEP_SUMMARY"

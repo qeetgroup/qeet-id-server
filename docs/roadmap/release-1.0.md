@@ -47,7 +47,7 @@ On PR #533 and the release/1.0.0 merges, GitHub refused to start any CI job beca
 
 **What Qeet ID has today:**
 
-- CI has six jobs: Build & test, Database tests, Lint, Vulnerability scan, Security scan and Release image.
+- CI runs one Verify job (build, vet, lint, generated SQL, vulnerability scan); the tests and the security scan run locally before each push (make ci). candidate.yml builds the image for testing on each release branch.
 - The last local full make ci passed the tests, lint, the sqlc check and the vulnerability scan; four security-scan warnings were then annotated and that scan re-run on its own.
 - Production deploys the image CI builds (ghcr.io/qeetgroup/qeet-id-server:sha-<commit>); it is never rebuilt by hand.
 

@@ -172,7 +172,7 @@ make dev-secrets      # generate local dev key material
 make build            # go build -o bin/qeet-id ./cmd/api
 make test             # go test ./...
 make test-db          # every test, database ones too, race detector on, one shared PostgreSQL (needs Docker)
-make ci               # everything CI checks: build, test-db, lint, sqlc-check, vuln, sast
+make ci               # the full local gate before a push: build, test-db, lint, sqlc-check, vuln, sast
 make lint             # go vet + golangci-lint, as CI runs it
 make sqlc             # regenerate dbgen/ from queries.sql
 make sqlc-check       # fail if dbgen/ is stale
@@ -191,17 +191,33 @@ Single test: `go test ./internal/access/authentication/... -run TestName`
 
 ---
 
+## Branches and releases
+
+| Branch | What it is |
+|---|---|
+| `develop` | Where every change lands |
+| `main` | Production. It changes only by a merged release or hotfix branch (or to be brought level with `develop`) |
+| `release/YEAR.MONTH.0` | The monthly release, cut from `develop` (e.g. `release/2027.1.0`). After the cut it takes fixes only, and is deleted once released |
+| `hotfix/YEAR.MONTH.N` | An urgent fix to that month's release, from `main`, counting from 1 (e.g. `hotfix/2027.1.1`) |
+
+Versions have no leading zeros (`2027.1.0`, not `2027.01.0`); `scripts/release/version.sh` is the
+rule. A fix during testing is made on `develop` first, then copied to the release branch, so no fix
+is lost from the next release. Test copies (`2027.1.0-rc.1`, `-rc.2` …) are numbered by
+`qeet-id-kit`, never here.
+
 ## What CI enforces
 
-| Job | Runs |
+| Workflow | Runs |
 |---|---|
-| `test` | `go build ./...`, `go vet ./...`, `go test -race -count=1 ./...` — includes the OpenAPI route-coverage and document-validity gates and the static guards: tenant filter (`internal/platform/database/tenantguard`), pool use inside a transaction (`…/txguard`), error-code statuses and `.env.example` completeness; reports coverage |
-| `database` | `go test -tags integration ./...` — tenant-isolation and sign-in tests against PostgreSQL (testcontainers) |
-| `lint` | `golangci-lint` v2.15.0 on the whole tree; `sqlc diff` in every package |
-| `vuln` | `govulncheck ./cmd/... ./internal/...` blocking, plus an advisory full-tree scan |
-| `sast` | `gosec` — blocking; an accepted finding needs `// #nosec <rule> -- <reason>` (`.gosec.json`) |
-| `image` | On push to `release/**` only, after `test`/`database`/`lint`/`vuln`: scan the image with Trivy (blocking on fixable critical CVEs), then publish `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>` (amd64+arm64) with an SBOM and SLSA provenance attached, for the Qeet ID Kit (`qeet-id-kit`). Base images are pinned by digest and every action by commit SHA. Never computes an RC number |
-| `deploy` | On push to `main` only: build, deploy to AWS via OIDC, then tag |
+| `ci.yml` · Verify | On pull requests and before every candidate image: `go build ./...` and `go vet ./...`, `golangci-lint` v2.15.0 on the whole tree (gofmt and goimports included), `sqlc diff` in every package, `govulncheck ./cmd/... ./internal/...` |
+| `candidate.yml` | On push to `release/**` or `hotfix/**`, after Verify: scan the image with Trivy (blocking on fixable critical CVEs), then publish `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>` (amd64+arm64) with an SBOM and SLSA provenance attached, for the Qeet ID Kit (`qeet-id-kit`). Base images are pinned by digest and every action by commit SHA. Never computes an RC number |
+| `deploy.yml` | On a merged `release/…` or `hotfix/…` pull request into `main`: copy that branch's tested candidate image to ECR as `vYEAR.MONTH.N` (never rebuilt), roll the host via OIDC and SSM, then tag. Any other push to `main` deploys nothing. A manual run with `rollback_to` rolls back |
+
+The unit and database tests and `gosec` are not in CI: they run locally before every push
+(`make ci`). They include the OpenAPI route-coverage and document-validity gates and the static
+guards: tenant filter (`internal/platform/database/tenantguard`), pool use inside a transaction
+(`…/txguard`), error-code statuses and `.env.example` completeness. An accepted `gosec` finding
+needs `// #nosec <rule> -- <reason>` (`.gosec.json`).
 
 ---
 
@@ -214,6 +230,9 @@ make lint
 make test-db               # if you touched SQL, tenant scoping or sign-in
 git diff                   # no secrets, no unrelated changes, no generated junk
 ```
+
+Before a push to `develop`, a release or a hotfix branch, run the full local gate, `make ci`: CI
+runs only Verify, so the tests are yours to run.
 
 ---
 

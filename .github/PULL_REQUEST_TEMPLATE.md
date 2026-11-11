@@ -13,7 +13,6 @@ Fixes #
 
 ## Checklist
 
-- [ ] `make test` passes locally
-- [ ] `make lint` passes locally
+- [ ] `make ci` passes locally (the tests run here, not in CI)
 - [ ] No secrets or credentials committed
 - [ ] OpenAPI spec updated if endpoints changed

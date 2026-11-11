@@ -1,14 +1,21 @@
 name: deploy
 
+# Production releases only what was tested. A merged release/YEAR.MONTH.0 or
+# hotfix/YEAR.MONTH.N pull request into main releases exactly that version:
+# the image candidate.yml built from the branch's last commit — the one testers
+# ran — is copied to ECR as vYEAR.MONTH.N (never rebuilt), the host switches
+# to it, and only then is the version tagged and released. Any other push to
+# main, such as bringing main level with develop, releases nothing.
+
 on:
   push:
-    branches: [main] # every merge to main builds, deploys, then tags
+    branches: [main]
   workflow_dispatch:
     inputs:
       rollback_to:
         description: >-
-          Roll production back to this released version (vX.Y.Z, or a full commit sha) instead of
-          building. Its image must still be in ECR, and its build must run on the current schema.
+          Roll production back to this released version (vYEAR.MONTH.N, or a full commit sha) instead of
+          releasing. Its image must still be in ECR, and its build must run on the current schema.
         required: false
         default: ""
 
@@ -17,70 +24,83 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write  # push the version tag after a successful deploy
-  id-token: write  # required for GitHub OIDC → AWS role assumption
-  pull-requests: read  # find the merged release/x.y.z pull request (version)
+  contents: write # push the version tag after a successful deploy
+  id-token: write # required for GitHub OIDC → AWS role assumption
+  pull-requests: read # find the merged release or hotfix pull request (version)
+  packages: read # read the tested image from GHCR
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
 
 jobs:
+  version:
+    name: Release version
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      source: ${{ steps.version.outputs.source }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # every tag, to check the new version is the newest
+          persist-credentials: false
+
+      - name: Version from the merged branch
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Fails the job when GitHub can't be asked; an empty answer is a direct push.
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+            --jq '[.[] | select(.merged_at != null and .base.ref == "main")][0] // empty | "\(.head.ref) \(.head.sha)"')
+          read -r head source <<< "$pr"
+          case "$head" in
+            release/* | hotfix/*) ;;
+            *)
+              echo "::notice::${head:-A direct push} into main is not a release; nothing is deployed."
+              exit 0
+              ;;
+          esac
+          if ! release=$(scripts/release/version.sh "$head"); then
+            echo "::error::$head can't be released (see above)"
+            exit 1
+          fi
+          tag="v$release"
+          latest=$(git tag --list 'v*' --sort=-version:refname | head -1)
+          if git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then
+            echo "::error::$tag already exists"
+            exit 1
+          fi
+          if [ -n "$latest" ] && [ "$(printf '%s\n' "${latest#v}" "$release" | sort -V | tail -1)" != "$release" ]; then
+            echo "::error::$head is not newer than $latest"
+            exit 1
+          fi
+          echo "Latest: ${latest:-none}  →  new: $tag (image from $head at $source)"
+          {
+            echo "tag=$tag"
+            echo "source=$source"
+          } >> "$GITHUB_OUTPUT"
+
   deploy:
-    # Production deploys only from main — a manual run on another branch (the
-    # default branch is develop) does nothing.
-    if: github.ref == 'refs/heads/main' && inputs.rollback_to == ''
+    name: Deploy ${{ needs.version.outputs.tag }}
+    needs: version
+    if: needs.version.outputs.tag != ''
     runs-on: ubuntu-latest
     environment:
       name: production
       url: https://api.id.qeet.in
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0 # full history to find latest tag
-
-      - name: Determine next version
-        id: version
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          latest=$(git tag --list 'v*' --sort=-version:refname | head -1)
-          latest=${latest:-v0.0.0}
-          # A merged release/x.y.z pull request releases exactly x.y.z, so every
-          # Qeet ID repository tags the same product version
-          # (qeet-id-kit: docs/release-process.md).
-          head=""
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            head=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
-              --jq '[.[] | select(.merged_at != null and .base.ref == "main") | .head.ref][0] // ""')
-          fi
-          if [[ $head =~ ^release/([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-            new_tag="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
-            if git rev-parse -q --verify "refs/tags/$new_tag" > /dev/null; then
-              echo "::error::$new_tag already exists"
-              exit 1
-            fi
-            if [ "$(printf '%s\n' "${latest#v}" "${new_tag#v}" | sort -V | tail -1)" != "${new_tag#v}" ]; then
-              echo "::error::$head is not newer than $latest"
-              exit 1
-            fi
-          else
-            IFS='.' read -r major minor patch <<< "${latest#v}"
-            new_tag="v${major}.${minor}.$((patch + 1))"
-          fi
-          echo "Latest: $latest  →  new: $new_tag"
-          echo "tag=$new_tag" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
-      # main accepts only pull requests that passed CI (branch ruleset), so this
-      # repeats the CI test job as a last check on the merged commit.
-      - name: Build, vet & unit test
-        run: |
-          go build ./...
-          go vet ./...
-          go test -race -count=1 ./...
+      # crane copies every platform of an image, with its attestations, from
+      # one registry to another without rebuilding it. Pinned, not @latest.
+      - name: Install crane
+        run: go install github.com/google/go-containerregistry/cmd/crane@v0.22.1
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
@@ -90,32 +110,37 @@ jobs:
 
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
-      # moving "latest" (the registry refuses to overwrite a tag, qeet-id-deploy).
-      # The build args stamp the version and commit that /version reports.
-      - name: Build & push image
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      # ECR refuses to overwrite a tag (qeet-id-deploy), so a re-run after a
+      # failed roll finds the version already there: fine when it is the same
+      # image, refused when it is another.
+      - name: Promote the tested image to ECR
         env:
           REPO: ${{ vars.ECR_REPOSITORY_URL }}
-          VERSION: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.tag }}
+          SOURCE: ${{ needs.version.outputs.source }}
         run: |
-          # A re-run after a failed roll finds the version already pushed: fine
-          # for the same commit, refused for another (tags are immutable).
-          repo_name="${REPO#*/}"
-          if tags=$(aws ecr describe-images --repository-name "$repo_name" --image-ids "imageTag=$VERSION" \
-              --query 'imageDetails[0].imageTags' --output text 2> /dev/null); then
-            if grep -qw "$GITHUB_SHA" <<< "$tags"; then
-              echo "$VERSION is already in ECR for this commit; not pushing it again"
-              exit 0
-            fi
-            echo "::error::$VERSION is already in ECR for another commit ($tags); a version can't be overwritten"
+          src="ghcr.io/$GITHUB_REPOSITORY:sha-$SOURCE"
+          if ! want=$(crane digest "$src"); then
+            echo "::error::$src doesn't exist: the release branch's last commit has no candidate image (candidate.yml). Production is untouched."
             exit 1
           fi
-          docker build \
-            --build-arg VERSION="$VERSION" \
-            --build-arg COMMIT="$GITHUB_SHA" \
-            --build-arg DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            -t "${REPO}:${VERSION}" -t "${REPO}:${GITHUB_SHA}" .
-          docker push "${REPO}:${VERSION}"
-          docker push "${REPO}:${GITHUB_SHA}"
+          if have=$(crane digest "$REPO:$VERSION" 2> /dev/null); then
+            if [ "$have" = "$want" ]; then
+              echo "$VERSION is already in ECR as this image ($want); not copying it again"
+              exit 0
+            fi
+            echo "::error::$VERSION is already in ECR as another image ($have, want $want); a version can't be overwritten"
+            exit 1
+          fi
+          crane copy "$src" "$REPO:$VERSION"
+          crane tag "$REPO:$VERSION" "$GITHUB_SHA"
+          echo "Promoted $src ($want) to $REPO:$VERSION"
 
       # The host switches to exactly this tag (redeploy.sh <version>), records
       # the version it replaces, and refuses a build that can't run on the
@@ -125,12 +150,13 @@ jobs:
           SSM_PREFIX: /qeet-id/prod
           API_URL: ${{ vars.API_URL || 'https://api.id.qeet.in' }}
           ECR_REPOSITORY_URL: ${{ vars.ECR_REPOSITORY_URL }}
-        run: scripts/deploy/roll-host.sh "${{ steps.version.outputs.tag }}"
+          VERSION: ${{ needs.version.outputs.tag }}
+        run: scripts/deploy/roll-host.sh "$VERSION"
 
       # Tag + release AFTER a successful deploy so every tag == a live deployed version.
       - name: Push version tag and create GitHub release
         env:
-          VERSION: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.tag }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name  "github-actions[bot]"
@@ -140,7 +166,7 @@ jobs:
           gh release create "$VERSION" \
             --title "$VERSION" \
             --generate-notes \
-            --repo "${{ github.repository }}"
+            --repo "$GITHUB_REPOSITORY"
 
   # Manual rollback: Actions → deploy → Run workflow on main, with rollback_to.
   # Builds nothing and tags nothing; switches the host to a version already in
@@ -148,13 +174,16 @@ jobs:
   # or its build can't run on the current schema (restore or roll forward
   # instead: operations/runbooks/deployment.md in qeet-id-files).
   rollback:
-    if: github.ref == 'refs/heads/main' && inputs.rollback_to != ''
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.rollback_to != ''
     runs-on: ubuntu-latest
     environment:
       name: production
       url: https://api.id.qeet.in
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
