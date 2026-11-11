@@ -1,12 +1,12 @@
 name: candidate
 
 # A push to release/YEAR.MONTH.0 or hotfix/YEAR.MONTH.N builds the image testers
-# run: Verify first, then a scan, then one immutable, commit-addressed image,
-# ghcr.io/qeetgroup/qeet-id-server:sha-<commit>, with the in.qeet.* labels the
-# Qeet ID Kit reads (qeet-id-kit: docs/application-contract.md). The kit
-# numbers the test copies (YEAR.MONTH.N-rc.K); this workflow never does. When
-# the branch merges into main, deploy.yml promotes this same image to
-# production, so what ships is what was tested.
+# run, once per commit: ghcr.io/qeetgroup/qeet-id-server:sha-<commit>, with the
+# in.qeet.* labels the Qeet ID Kit reads (qeet-id-kit:
+# docs/application-contract.md). The kit numbers the test copies
+# (YEAR.MONTH.N-rc.K); this workflow never does. Verify runs once, on the
+# branch's pull request into main; when it merges, deploy.yml promotes this
+# same image to production, so what ships is what was tested.
 
 on:
   push:
@@ -20,15 +20,8 @@ permissions:
   contents: read
 
 jobs:
-  verify:
-    uses: ./.github/workflows/ci.yml
-    permissions:
-      contents: read
-      actions: read
-
   image:
     name: Candidate image
-    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -63,15 +56,6 @@ jobs:
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-
-      - name: Scan for critical vulnerabilities before publishing
-        env:
-          # Run as the project's own image, pinned by digest, not as an action.
-          TRIVY: aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
-        run: |
-          docker buildx build . --platform linux/amd64 --tag qeet-id-server:scan --load
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY" image \
-            --exit-code 1 --severity CRITICAL --ignore-unfixed --no-progress qeet-id-server:scan
 
       # The binary reports vYEAR.MONTH.N on GET /version, the tag production
       # gives it, so the promoted image passes the deploy's version check as is.

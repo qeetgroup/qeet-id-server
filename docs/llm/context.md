@@ -558,12 +558,10 @@ documents, including API-auth security classification.
 
 | Job | What it runs |
 |---|---|
-| `test` | `go build ./...` · `go vet ./...` · `go test -race -count=1 ./...` |
-| `database` | `go test -tags integration ./...` against PostgreSQL (testcontainers) |
-| `lint` | `golangci-lint` v2.15.0 on the whole tree · `sqlc diff` in every package |
-| `vuln` | `govulncheck ./cmd/... ./internal/...` blocking · advisory full-tree scan |
-| `sast` | `gosec` — blocking; `#nosec` needs a rule and a reason |
-| `deploy` | On push to `main`: build, deploy to AWS via GitHub OIDC, then tag |
+| `verify` (`ci.yml`) | On pull requests into `develop` and `main`: `go build ./...` · `go vet ./...` · `golangci-lint` v2.15.0 · `govulncheck ./cmd/... ./internal/...` · gitleaks |
+| `image` (`candidate.yml`) | On push to `release/**` or `hotfix/**`: the test image `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>` |
+| `deploy` (`deploy.yml`) | A merged release or hotfix into `main`: that tested image to ECR, roll the host via GitHub OIDC, then tag |
+| local (`make ci`) | `go test -race` with the database tests · `sqlc diff` · `gosec` (`#nosec` needs a rule and a reason) |
 
 `.golangci.yml` enables `errcheck`, `govet`, `staticcheck`, `misspell`, `unused`, `ineffassign`,
 `errorlint`, `nilerr`, `bodyclose`, `sqlclosecheck`, `rowserrcheck`, `nolintlint`, `forbidigo` and
