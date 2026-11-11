@@ -270,9 +270,12 @@ The included [Dockerfile](./Dockerfile) builds the API as a distroless, non-root
 [Docker Compose](./docker-compose.yml) is intentionally a local dependency stack; it does not
 package the application.
 
-The [deployment workflow](./.github/workflows/deploy.yml) runs on every push to `main`: it builds
-and pushes the image to AWS ECR, rolls the configured host through AWS Systems Manager, then tags
-and releases the new version only after the roll succeeds. Production configuration must provide
+Releases are monthly and named after the month they ship: `release/2027.1.0` is cut from
+`develop`, testers run its [candidate image](./.github/workflows/candidate.yml), and merging it into
+`main` releases `v2027.1.0`; urgent fixes are `hotfix/2027.1.1`. The
+[deployment workflow](./.github/workflows/deploy.yml) copies that tested image to AWS ECR without
+rebuilding it, rolls the configured host through AWS Systems Manager, then tags and releases the
+version only after the roll succeeds. Production configuration must provide
 durable signing keys, explicit origins, TLS termination, and external secrets. Helm, Kubernetes, and
 Terraform assets are not shipped in this repository.
 

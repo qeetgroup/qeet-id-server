@@ -578,7 +578,9 @@ same lint as CI.
   non-root user, `EXPOSE 4001`.
 - `docker-compose.yml` — **local dependencies only**: postgres :5001, nats :4222, mailpit :8025.
 - Terraform, Caddy, compose for production and the rollout live in **`qeet-id-deploy`**.
-- `.github/workflows/deploy.yml` pushes to AWS on merge to `main`.
+- `.github/workflows/candidate.yml` builds the image testers run, on push to `release/YEAR.MONTH.0`
+  or `hotfix/YEAR.MONTH.N`; `.github/workflows/deploy.yml` promotes that same image to AWS when the
+  branch merges into `main`.
 
 Migrations apply on startup, so a deploy is also a migration.
 

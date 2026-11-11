@@ -219,8 +219,10 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Linter config | `.golangci.yml` |
 | Container | `Dockerfile` |
 | Local dependencies | `docker-compose.yml` — postgres :5001, nats :4222, mailpit :8025 |
-| CI | `.github/workflows/ci.yml` — test · lint · vuln · sast |
-| Deploy (on `main`) | `.github/workflows/deploy.yml` |
+| CI | `.github/workflows/ci.yml` — Verify: build · vet · lint · sqlc diff · vuln |
+| Candidate image (on `release/**`, `hotfix/**`) | `.github/workflows/candidate.yml` |
+| Deploy (merged release or hotfix into `main`) | `.github/workflows/deploy.yml` |
+| Release version from a branch name | `scripts/release/version.sh` |
 
 **Deployment manifests are not in this repository** — Terraform and the rollout live in
 `qeetgroup/qeet-id-deploy`.
