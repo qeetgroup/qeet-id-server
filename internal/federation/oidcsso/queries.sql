@@ -72,14 +72,14 @@ UPDATE tenant.oidc_connections SET last_login_at = NOW() WHERE id = @id AND tena
 -- ==========================================================================
 
 -- name: InsertOidcConnectionState :exec
-INSERT INTO auth.oidc_connection_states (state_hash, connection_id, code_verifier, nonce_hash, redirect_uri, expires_at)
-VALUES (@state_hash, @connection_id, @code_verifier, @nonce_hash, @redirect_uri, @expires_at);
+INSERT INTO auth.oidc_connection_states (state_hash, connection_id, code_verifier, nonce_hash, redirect_uri, expires_at, return_to)
+VALUES (@state_hash, @connection_id, @code_verifier, @nonce_hash, @redirect_uri, @expires_at, sqlc.narg(return_to));
 
 -- ConsumeOidcConnectionState spends a state as it reads it, so a callback
 -- carrying it succeeds at most once.
 -- name: ConsumeOidcConnectionState :one
 DELETE FROM auth.oidc_connection_states WHERE state_hash = @state_hash
-RETURNING connection_id, code_verifier, nonce_hash, redirect_uri, expires_at;
+RETURNING connection_id, code_verifier, nonce_hash, redirect_uri, expires_at, return_to;
 
 -- name: DeleteExpiredOidcConnectionStates :exec
 DELETE FROM auth.oidc_connection_states WHERE expires_at <= NOW();

@@ -18,6 +18,7 @@ const (
 	CodeSAMLOtherBrowser             = "saml.other_browser"
 	CodeSAMLConnectionMisconfigured  = "saml.connection_misconfigured"
 	CodeSAMLRequestInvalid           = "saml.request_invalid"
+	CodeSAMLReturnToInvalid          = "saml.return_to_invalid"
 	CodeSAMLResponseMissing          = "saml.response_missing"
 	CodeSAMLAssertionInvalid         = "saml.assertion_invalid"
 	CodeSAMLAssertionConditions      = "saml.assertion_conditions"
@@ -72,6 +73,7 @@ var (
 	ErrSAMLOtherBrowser             = New(CodeSAMLOtherBrowser, "This sign-in was started in another browser. Sign in again from the browser you are using.")
 	ErrSAMLConnectionMisconfigured  = New(CodeSAMLConnectionMisconfigured, "This SAML connection isn't configured correctly. Contact your administrator.")
 	ErrSAMLRequestInvalid           = New(CodeSAMLRequestInvalid, "The SAML request was malformed.")
+	ErrSAMLReturnToInvalid          = New(CodeSAMLReturnToInvalid, "That return address isn't allowed. Start signing in again from the application.")
 	ErrSAMLResponseMissing          = New(CodeSAMLResponseMissing, "The SAML response is missing.")
 	ErrSAMLAssertionInvalid         = New(CodeSAMLAssertionInvalid, "We couldn't validate the SAML assertion.")
 	ErrSAMLAssertionConditions      = New(CodeSAMLAssertionConditions, "The SAML assertion is expired or wasn't intended for this service. Please sign in again.").AsRetryable()

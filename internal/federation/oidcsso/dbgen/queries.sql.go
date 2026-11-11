@@ -44,7 +44,7 @@ func (q *Queries) ConsumeOidcConnectionLoginCode(ctx context.Context, codeHash s
 
 const consumeOidcConnectionState = `-- name: ConsumeOidcConnectionState :one
 DELETE FROM auth.oidc_connection_states WHERE state_hash = $1
-RETURNING connection_id, code_verifier, nonce_hash, redirect_uri, expires_at
+RETURNING connection_id, code_verifier, nonce_hash, redirect_uri, expires_at, return_to
 `
 
 type ConsumeOidcConnectionStateRow struct {
@@ -53,6 +53,7 @@ type ConsumeOidcConnectionStateRow struct {
 	NonceHash    string
 	RedirectUri  string
 	ExpiresAt    time.Time
+	ReturnTo     *string
 }
 
 // ConsumeOidcConnectionState spends a state as it reads it, so a callback
@@ -66,6 +67,7 @@ func (q *Queries) ConsumeOidcConnectionState(ctx context.Context, stateHash stri
 		&i.NonceHash,
 		&i.RedirectUri,
 		&i.ExpiresAt,
+		&i.ReturnTo,
 	)
 	return i, err
 }
@@ -387,8 +389,8 @@ func (q *Queries) InsertOidcConnectionLoginCode(ctx context.Context, arg InsertO
 
 const insertOidcConnectionState = `-- name: InsertOidcConnectionState :exec
 
-INSERT INTO auth.oidc_connection_states (state_hash, connection_id, code_verifier, nonce_hash, redirect_uri, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO auth.oidc_connection_states (state_hash, connection_id, code_verifier, nonce_hash, redirect_uri, expires_at, return_to)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
 
 type InsertOidcConnectionStateParams struct {
@@ -398,6 +400,7 @@ type InsertOidcConnectionStateParams struct {
 	NonceHash    string
 	RedirectUri  string
 	ExpiresAt    time.Time
+	ReturnTo     *string
 }
 
 // ==========================================================================
@@ -411,6 +414,7 @@ func (q *Queries) InsertOidcConnectionState(ctx context.Context, arg InsertOidcC
 		arg.NonceHash,
 		arg.RedirectUri,
 		arg.ExpiresAt,
+		arg.ReturnTo,
 	)
 	return err
 }

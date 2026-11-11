@@ -463,6 +463,7 @@ func LoginSessionRoutes() []string {
 		"GET /v1/me/organizations",
 		"GET /v1/passkeys",
 		"PATCH /v1/passkeys/{id}",
+		"DELETE /v1/passkeys/{id}",
 		"POST /v1/passkeys/register/begin",
 		"POST /v1/passkeys/register/finish",
 	}
@@ -525,6 +526,9 @@ func NoStoreRoutes() []string {
 		"POST /v1/oauth/authorize/decision",
 		"POST /v1/agents/token",
 		"POST /ldap/{id}/authenticate",
+		"POST /ldap/{id}/session",
+		"POST /saml/session",
+		"POST /v1/oidc-connections/session",
 		"GET /saml/idp/{tenantID}/sso",
 		"POST /saml/idp/{tenantID}/sso",
 

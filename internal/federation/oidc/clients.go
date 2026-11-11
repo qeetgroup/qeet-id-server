@@ -427,10 +427,11 @@ func (s *Service) ClientName(ctx context.Context, clientID string) (name string,
 // ClientBrand is how the hosted sign-in page presents an application: its
 // organisation and the name, logo and home page registered for it.
 type ClientBrand struct {
-	Name      string
-	TenantID  uuid.UUID
-	LogoURI   string
-	ClientURI string
+	Name       string
+	TenantID   uuid.UUID
+	LogoURI    string
+	ClientURI  string
+	TenantName string
 }
 
 // ClientBrand returns the application's registered presentation, never anything
@@ -443,7 +444,7 @@ func (s *Service) ClientBrand(ctx context.Context, clientID string) (*ClientBran
 	if err != nil {
 		return nil, err
 	}
-	return &ClientBrand{Name: row.Name, TenantID: row.TenantID, LogoURI: derefStr(row.LogoUri), ClientURI: derefStr(row.ClientUri)}, nil
+	return &ClientBrand{Name: row.Name, TenantID: row.TenantID, LogoURI: derefStr(row.LogoUri), ClientURI: derefStr(row.ClientUri), TenantName: derefStr(row.TenantName)}, nil
 }
 
 // presentationURIRule is what logo_uri and client_uri must be.
