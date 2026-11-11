@@ -4,13 +4,17 @@ name: ci
 # is formatted and linted (golangci-lint, the database tests included), its
 # generated SQL is current, and what ships has no known vulnerability.
 #
-# Runs on pull requests, and before every candidate image (candidate.yml calls
-# it). The unit and database tests and gosec run locally before every push
-# (make ci, AGENTS.md "Before you finish"), not here.
+# Runs once per change: on pull requests into develop and main, and on every
+# push to a release or hotfix branch (candidate.yml calls it before building
+# the test image). A release or hotfix branch into main is therefore already
+# tested: when its candidate build passed for that exact commit and the branch
+# holds everything on main, nothing runs again. The unit and database tests
+# and gosec run locally before every push (make ci, AGENTS.md "Before you
+# finish"), not here.
 
 on:
   pull_request:
-    branches: [develop, main, "release/**"]
+    branches: [develop, main]
   workflow_call:
 
 concurrency:
@@ -25,11 +29,40 @@ jobs:
     name: Verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read # whether the candidate build passed
     steps:
+      - name: Already tested?
+        id: tested
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD: ${{ github.head_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          case "$HEAD" in
+            release/* | hotfix/*) ;;
+            *)
+              echo "### $HEAD into main is not a release: verifying it, and deploy.yml will deploy nothing" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
+          passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/candidate.yml/runs?head_sha=$HEAD_SHA&status=success" --jq .total_count)
+          behind=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$HEAD_SHA" --jq .behind_by)
+          if [ "$passed" -gt 0 ] && [ "$behind" = 0 ]; then
+            echo "tested=true" >> "$GITHUB_OUTPUT"
+            echo "### $HEAD passed Verify in its candidate build and holds all of main: nothing runs again" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### $HEAD: verifying it (passed candidate builds of this commit: $passed; commits on main it lacks: $behind)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.tested.outputs.tested != 'true'
         with:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.tested.outputs.tested != 'true'
         with:
           go-version-file: go.mod
           cache: true
@@ -38,12 +71,14 @@ jobs:
       # (a prebuilt golangci-lint built with an older Go refuses go.mod's newer
       # target). Pinned, not @latest; the same versions as the Makefile.
       - name: Install golangci-lint, sqlc and govulncheck
+        if: steps.tested.outputs.tested != 'true'
         run: |
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
           go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
           go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
 
       - name: Build and vet
+        if: steps.tested.outputs.tested != 'true'
         run: |
           go build ./...
           go vet ./...
@@ -51,10 +86,12 @@ jobs:
       # The whole tree, including the integration-tagged database tests;
       # gofmt and goimports run as golangci-lint formatters.
       - name: Format and lint
+        if: steps.tested.outputs.tested != 'true'
         run: golangci-lint run --build-tags=integration ./...
 
       # dbgen/ must be what sqlc generates from each package's queries.sql.
       - name: Generated SQL is up to date
+        if: steps.tested.outputs.tested != 'true'
         run: |
           fail=0
           while IFS= read -r cfg; do
@@ -66,4 +103,5 @@ jobs:
       # What actually ships (cmd/ and internal/), with go.mod's toolchain, so
       # the standard library that is built in is covered too.
       - name: Known vulnerabilities in what ships
+        if: steps.tested.outputs.tested != 'true'
         run: govulncheck ./cmd/... ./internal/...

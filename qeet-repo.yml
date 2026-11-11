@@ -112,7 +112,7 @@ security:
 ci:
   workflows: [.github/workflows/ci.yml, .github/workflows/candidate.yml, .github/workflows/deploy.yml]
   jobs: [verify, image, version, deploy, rollback]
-  verify: "ci.yml — build, vet, golangci-lint, sqlc diff, govulncheck; tests, database tests and gosec run locally (make ci)"
+  verify: "ci.yml — build, vet, golangci-lint, sqlc diff, govulncheck; on PRs into develop and main and before every candidate image (a tested, up-to-date release into main skips it); tests, database tests and gosec run locally (make ci)"
   branches: "develop · main (production) · release/YEAR.MONTH.0 (monthly) · hotfix/YEAR.MONTH.N — scripts/release/version.sh"
   deploy_trigger: merged release/… or hotfix/… pull request into main
   release_image: "candidate.yml — push to release/** or hotfix/**, after Verify: ghcr.io/qeetgroup/qeet-id-server:sha-<commit>, linux/amd64+arm64, OCI + in.qeet.* labels (consumed by the Qeet ID Kit, qeet-id-kit); deploy.yml promotes it to ECR unchanged"

@@ -209,7 +209,7 @@ is lost from the next release. Test copies (`2027.1.0-rc.1`, `-rc.2` …) are nu
 
 | Workflow | Runs |
 |---|---|
-| `ci.yml` · Verify | On pull requests and before every candidate image: `go build ./...` and `go vet ./...`, `golangci-lint` v2.15.0 on the whole tree (gofmt and goimports included), `sqlc diff` in every package, `govulncheck ./cmd/... ./internal/...` |
+| `ci.yml` · Verify | On pull requests into `develop` and `main`, and before every candidate image; a release or hotfix branch into `main` skips it when its candidate build passed for that commit and it holds all of `main`: `go build ./...` and `go vet ./...`, `golangci-lint` v2.15.0 on the whole tree (gofmt and goimports included), `sqlc diff` in every package, `govulncheck ./cmd/... ./internal/...` |
 | `candidate.yml` | On push to `release/**` or `hotfix/**`, after Verify: scan the image with Trivy (blocking on fixable critical CVEs), then publish `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>` (amd64+arm64) with an SBOM and SLSA provenance attached, for the Qeet ID Kit (`qeet-id-kit`). Base images are pinned by digest and every action by commit SHA. Never computes an RC number |
 | `deploy.yml` | On a merged `release/…` or `hotfix/…` pull request into `main`: copy that branch's tested candidate image to ECR as `vYEAR.MONTH.N` (never rebuilt), roll the host via OIDC and SSM, then tag. Any other push to `main` deploys nothing. A manual run with `rollback_to` rolls back |
 
