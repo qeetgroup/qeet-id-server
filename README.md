@@ -132,7 +132,7 @@ bounded context must not import `cmd/*` or `internal/bootstrap`.
 
 ## 🚀 Quick start
 
-**You need:** Go 1.27 or newer (it fetches the pinned toolchain, go1.27.3, itself) &middot; Docker (with Compose) &middot; `make` &middot; `openssl`
+**You need:** Go 1.27 or newer (it fetches the pinned toolchain, go1.27.4, itself) &middot; Docker (with Compose) &middot; `make` &middot; `openssl`
 
 ```bash
 git clone https://github.com/qeetgroup/qeet-id-server.git
