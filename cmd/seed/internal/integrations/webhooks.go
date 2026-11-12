@@ -339,6 +339,16 @@ type delivery struct {
 	attempt               int32
 	created               time.Time
 	delivered, next, dead *time.Time
+	tries                 []try // each attempt, as the dispatcher records it
+}
+
+// try is one attempt to deliver: when, the answer (a status, or an error
+// before one) and how long it took.
+type try struct {
+	at       time.Time
+	status   *int32
+	err      *string
+	duration int32 // milliseconds
 }
 
 // deliveries writes the organisation's webhook delivery history: every event
@@ -357,7 +367,7 @@ func (d *dev) deliveries(o *world.Org) {
 		}
 	}
 	events := d.orgEvents(o, wanted)
-	var rows [][]any
+	var rows, attempts [][]any
 	for _, s := range subs {
 		list := events
 		if s.spec.tested > 0 {
@@ -369,7 +379,11 @@ func (d *dev) deliveries(o *world.Org) {
 			if (e.typ != webhook.TestEvent && !slices.Contains(s.spec.events, e.typ)) || e.at.Before(s.from) || !e.at.Before(s.until) {
 				continue
 			}
-			rows = append(rows, d.deliver(o, s, e).row())
+			r := d.deliver(o, s, e)
+			rows = append(rows, r.row())
+			for _, t := range r.tries {
+				attempts = append(attempts, []any{uuid.New(), o.ID, r.id, t.at, t.status, t.duration, t.err})
+			}
 		}
 	}
 	_, err := w.Admin.CopyFrom(w.Ctx, pgx.Identifier{"tenant", "webhook_deliveries"},
@@ -377,6 +391,10 @@ func (d *dev) deliveries(o *world.Org) {
 			"attempt", "created_at", "delivered_at", "next_attempt_at", "dead_at"},
 		pgx.CopyFromRows(rows))
 	w.Check(err, "webhook deliveries of "+o.Spec.Slug)
+	_, err = w.Admin.CopyFrom(w.Ctx, pgx.Identifier{"tenant", "webhook_delivery_attempts"},
+		[]string{"id", "tenant_id", "delivery_id", "attempted_at", "status_code", "duration_ms", "error"},
+		pgx.CopyFromRows(attempts))
+	w.Check(err, "webhook delivery attempts of "+o.Spec.Slug)
 }
 
 func (r delivery) row() []any {
@@ -397,12 +415,16 @@ func (d *dev) deliver(o *world.Org, s sub, e event) delivery {
 			body := s.spec.ok
 			r.body = &body
 		}
-		at := created.Add(time.Duration(120+w.Rand.IntN(700)) * time.Millisecond)
+		took := int32(120 + w.Rand.IntN(700))
+		at := created.Add(time.Duration(took) * time.Millisecond)
 		if w.Chance(0.03) {
 			// A blip: the first try failed, the retry got through.
 			r.attempt = 2
+			code, msg := int32(503), "non-2xx response"
+			r.tries = append(r.tries, try{at: created, status: &code, err: &msg, duration: int32(80 + w.Rand.IntN(300))})
 			at = created.Add(time.Duration(25+w.Rand.IntN(20)) * time.Second)
 		}
+		r.tries = append(r.tries, try{at: at.Add(-time.Duration(took) * time.Millisecond), status: &status, duration: took})
 		r.delivered, r.next = &at, &created
 		return r
 	}
@@ -412,6 +434,15 @@ func (d *dev) deliver(o *world.Org, s sub, e event) delivery {
 	r.attempt = int32(attempts)
 	status, body, msg := failure(s.spec, w)
 	r.status, r.body, r.err = status, body, &msg
+	for _, at := range tryTimes(created, attempts) {
+		took := int32(90 + w.Rand.IntN(900))
+		if status == nil && s.spec.fails == "timeout" {
+			took = 10000 // the client's timeout
+		} else if status == nil {
+			took = int32(2 + w.Rand.IntN(30)) // the name didn't resolve
+		}
+		r.tries = append(r.tries, try{at: at, status: status, err: &msg, duration: took})
+	}
 	if dead {
 		r.dead = &last
 		return r
@@ -443,6 +474,22 @@ func schedule(created, until time.Time) (attempts int, last, next time.Time, dea
 		}
 		t = t.Add(backoff)
 	}
+}
+
+// tryTimes are when the dispatcher made a delivery's first n attempts, first
+// tried at created, on schedule's backoff.
+func tryTimes(created time.Time, n int) []time.Time {
+	out := make([]time.Time, 0, n)
+	t := created
+	for i := 1; i <= n; i++ {
+		out = append(out, t)
+		backoff := time.Duration(1<<min(i-1, 8)) * 30 * time.Second
+		if backoff > time.Hour {
+			backoff = time.Hour
+		}
+		t = t.Add(backoff * 3 / 4)
+	}
+	return out
 }
 
 // failure is the status, body and error of a failed delivery to s.

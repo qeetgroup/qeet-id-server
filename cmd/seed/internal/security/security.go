@@ -24,8 +24,11 @@ func Seed(w *world.World) {
 	detections(w)
 	botTraffic(w)
 	auditAnomalies(w)
+	controlOwners(w)
+	recordAudits(w)
 	evidence(w)
 	verificationRuns(w)
+	statusIncidents(w)
 	summarise(w)
 }
 
