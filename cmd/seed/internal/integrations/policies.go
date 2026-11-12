@@ -285,7 +285,7 @@ func (d *dev) rebac(o *world.Org) {
 		at := d.when(o, 200)
 		s := &relSession{o: o, by: person(o, at, email("rohan@qeet.in")), at: at}
 		eng := "group:engineering"
-		for _, t := range []string{"Identity Platform", "Payments", "Frontend", "Site Reliability"} {
+		for _, t := range []string{"Qeet ID", "Qeet Pay", "Qeet People", "Qeet Notify", "Qeet Logs", "Qeet AI", "Qeet Circle", "Qeetrix", "Site Reliability"} {
 			s.add(eng, "member", s.members(t))
 		}
 		s.members("Security Engineering")
@@ -293,7 +293,7 @@ func (d *dev) rebac(o *world.Org) {
 		s.members("Finance")
 		ids := d.write(s)
 		d.leaversLeave(o, ids)
-		d.joinersJoin(o, at, s.by, []string{"Identity Platform", "Payments", "Frontend", "Site Reliability", "Security Engineering", "Product Management", "Finance"})
+		d.joinersJoin(o, at, s.by, []string{"Qeet ID", "Qeet Pay", "Qeet People", "Qeet Notify", "Qeet Logs", "Qeet AI", "Qeet Circle", "Qeetrix", "Site Reliability", "Security Engineering", "Product Management", "Finance"})
 
 		at = d.when(o, 190)
 		s = &relSession{o: o, by: person(o, at, email("aarav@qeet.in")), at: at}

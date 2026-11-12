@@ -14,15 +14,16 @@ func date(y int, m time.Month, d int) time.Time { return time.Date(y, m, d, 9, 0
 func specs(w *world.World) []world.OrgSpec {
 	return []world.OrgSpec{
 		{
-			Slug: "qeet", Name: "Qeet Group", Domain: "qeet.in", Industry: "Software — identity and payments",
+			Slug: "qeet", Name: "Qeet Group", Domain: "qeet.in", Industry: "Software — identity, payments, HR, notifications and AI",
 			City: "Bengaluru", Country: "IN", TimeZone: "Asia/Kolkata", Region: "ap-south-1",
-			Plan: "enterprise", Currency: "INR", Billing: "active", Annual: true, Since: date(2025, 8, 18), Size: 46,
+			Plan: "enterprise", Currency: "INR", Billing: "active", Annual: true, Since: date(2025, 8, 18), Size: 60,
 			Locales: []world.Locale{world.India, world.India, world.India, world.India, world.India, world.India, world.Europe},
 			Brand:   world.Brand{Primary: "#F26D0E", Secondary: "#D85301", Background: "#FFF8F2"},
-			Features: world.Features{SSO: "google", SSOStatus: "active", LDAP: true, Social: []string{"google", "microsoft"},
-				MagicLink: true, Passkeys: true, MFA: "optional", Webhooks: true, Apps: []string{"web", "spa", "native", "device", "m2m"}},
+			Features: world.Features{SSO: "google", SSOStatus: "active", LDAP: true, Social: []string{"google", "microsoft", "github"},
+				MagicLink: true, Passkeys: true, MFA: "optional", Webhooks: true, Apps: []string{"web", "spa", "device", "m2m"}},
+			// One engineering team per product, as Qeet Group is organised.
 			Depts: []world.Dept{
-				{Name: "Engineering", Teams: []string{"Identity Platform", "Payments", "Frontend", "Site Reliability"}, Share: 18, Role: world.RoleDeveloper,
+				{Name: "Engineering", Teams: []string{"Qeet ID", "Qeet Pay", "Qeet People", "Qeet Notify", "Qeet Logs", "Qeet AI", "Qeet Circle", "Qeetrix", "Site Reliability"}, Share: 26, Role: world.RoleDeveloper,
 					Titles: []string{"Software Engineer", "Software Engineer", "Senior Software Engineer", "Senior Software Engineer", "Staff Engineer", "Engineering Manager"}, Head: "VP Engineering"},
 				{Name: "Security", Teams: []string{"Security Engineering", "Governance, Risk & Compliance"}, Share: 4, Role: world.RoleSecurity,
 					Titles: []string{"Security Engineer", "Senior Security Engineer", "GRC Analyst"}, Head: "Head of Security"},
@@ -36,8 +37,10 @@ func specs(w *world.World) []world.OrgSpec {
 					Titles: []string{"Account Executive", "Sales Development Representative", "Partnerships Manager"}, Head: "VP Sales"},
 				{Name: "Operations", Teams: []string{"Finance", "People"}, Share: 4, Role: world.RoleMember,
 					Titles: []string{"Finance Manager", "People Partner", "Office Manager"}, Head: "Head of Operations"},
+				{Name: "Trust & Safety", Teams: []string{"Circle Safety"}, Share: 3, Role: world.RoleHelpdesk,
+					Titles: []string{"Trust & Safety Analyst", "Trust & Safety Analyst", "Content Policy Specialist"}, Head: "Head of Trust & Safety"},
 			},
-			Story: "Qeet Group runs on Qeet ID itself: every feature is switched on and configured.",
+			Story: "Qeet Group runs every product on Qeet ID: its staff sign in to Qeet Pay, People, Notify, Logs, AI and the Circle staff console with it.",
 		},
 		{
 			Slug: "qeet-sandbox", Name: "Qeet Sandbox", Domain: "qeet.in", Industry: "Internal testing",
@@ -100,7 +103,7 @@ func specs(w *world.World) []world.OrgSpec {
 			Plan: "pro", Currency: "EUR", Billing: "active", Since: date(2026, 2, 2), Size: 38,
 			Locales: []world.Locale{world.Germany, world.Germany, world.Germany, world.Europe, world.Europe, world.UnitedStates},
 			Brand:   world.Brand{Primary: "#6D28D9", Secondary: "#A78BFA", Background: "#F5F3FF"},
-			Features: world.Features{SSO: "google", SSOStatus: "active", Social: []string{"google", "microsoft"}, MagicLink: true,
+			Features: world.Features{SSO: "google", SSOStatus: "active", Social: []string{"google", "microsoft", "github", "apple", "discord"}, MagicLink: true,
 				Passkeys: true, SelfSignup: true, MFA: "optional", Webhooks: true, Apps: []string{"web", "spa", "native", "device", "m2m"}},
 			Depts: []world.Dept{
 				{Name: "Engineering", Teams: []string{"Core Platform", "CLI & SDKs", "Infrastructure"}, Share: 20, Role: world.RoleDeveloper,
@@ -112,7 +115,7 @@ func specs(w *world.World) []world.OrgSpec {
 				{Name: "Operations", Teams: []string{"Finance & People"}, Share: 4, Role: world.RoleMember,
 					Titles: []string{"Operations Manager", "People Partner"}, Head: "COO"},
 			},
-			Story: "A Berlin developer-tools start-up: its own customers sign up through the hosted pages with Google, Microsoft, magic links or passkeys.",
+			Story: "A Berlin developer-tools start-up: its own customers sign up through the hosted pages with Google, Microsoft, GitHub, Apple, Discord, magic links or passkeys.",
 		},
 		{
 			Slug: "aster", Name: "Aster Retail", Domain: "asterretail.in", Industry: "Retail — D2C fashion",
@@ -120,7 +123,7 @@ func specs(w *world.World) []world.OrgSpec {
 			Plan: "starter", Currency: "INR", Billing: "active", Since: date(2026, 4, 14), Size: 22,
 			Locales: []world.Locale{world.India},
 			Brand:   world.Brand{Primary: "#BE185D", Secondary: "#F472B6", Background: "#FFF1F2"},
-			Features: world.Features{Social: []string{"google"}, MagicLink: true, Passkeys: true, MFA: "optional",
+			Features: world.Features{Social: []string{"google", "facebook"}, MagicLink: true, Passkeys: true, MFA: "optional",
 				Webhooks: true, Apps: []string{"web", "spa"}},
 			Depts: []world.Dept{
 				{Name: "E-commerce", Teams: []string{"Storefront", "Catalogue"}, Share: 8, Role: world.RoleMember,
@@ -170,8 +173,8 @@ func specs(w *world.World) []world.OrgSpec {
 			Plan: "starter", Currency: "GBP", Billing: "canceled", Since: date(2026, 3, 9), Size: 3,
 			Locales:  []world.Locale{world.Britain},
 			Brand:    world.Brand{Primary: "#1D4ED8", Secondary: "#60A5FA", Background: "#EFF6FF"},
-			Features: world.Features{Social: []string{"google"}, MagicLink: true, Passkeys: true, MFA: "optional", Apps: []string{"spa"}},
-			Story:    "A three-partner London studio that cancelled Starter and is back on Free.",
+			Features: world.Features{Social: []string{"google", "facebook", "x"}, MagicLink: true, Passkeys: true, MFA: "optional", Apps: []string{"spa"}},
+			Story:    "A three-partner London studio that cancelled Starter and is back on Free; it signs in with Google, Facebook or X, the accounts it runs for clients.",
 		},
 		{
 			Slug: "fjord", Name: "Fjord Analytics", Domain: "fjordanalytics.no", Industry: "Data consultancy",

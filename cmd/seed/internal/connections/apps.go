@@ -57,24 +57,40 @@ const day = 24 * time.Hour
 
 // catalogue is each organisation's applications, by organisation slug.
 var catalogue = map[string][]appSpec{
+	// Qeet Group's own products, each signing its staff in with Qeet ID the way
+	// the Qeet ID SDKs do (a callback at /auth/callback), and the services
+	// that call one product's API from another.
 	"qeet": {
-		{name: "Example Web App", kind: "web", clientID: "qci_example_app", secret: "example-app-dev-secret-change-me",
-			redirects: []string{"http://localhost:3010/api/auth/callback"}, postLogout: []string{"http://localhost:3010", "http://localhost:3010/"},
-			grants: webGrants, scopes: userScopes, after: day, hosted: true, tester: "saibabu@qeet.in",
-			note: "examples/nextjs-app"},
-		{name: "Example SPA (React)", kind: "spa", clientID: "qci_example_spa",
-			redirects: []string{"http://localhost:3020/callback"}, postLogout: []string{"http://localhost:3020", "http://localhost:3020/"},
-			grants: []string{codeGrant}, scopes: userScopes, after: day + 10*time.Minute},
-		{name: "Qeet Pay Dashboard", kind: "web",
-			redirects: []string{"https://dashboard.pay.qeet.in/api/auth/callback/qeet-id"}, postLogout: []string{"https://dashboard.pay.qeet.in/"},
-			backchannel: "https://dashboard.pay.qeet.in/api/auth/backchannel-logout",
-			grants:      webGrants, scopes: []string{"openid", "profile", "email", "phone"}, after: 4 * day, users: 0.5,
-			resource: [2]string{"https://api.pay.qeet.in/", "Qeet Pay API"}},
-		{name: "Qeet Logs", kind: "web", redirects: []string{"https://logs.qeet.in/oauth2/callback"}, postLogout: []string{"https://logs.qeet.in/"},
-			frontchannel: "https://logs.qeet.in/oauth2/frontchannel-logout", grants: webGrants, scopes: userScopes, after: 12 * day, users: 0.45},
-		{name: "Qeet Mobile", kind: "native", redirects: []string{"in.qeet.mobile:/oauth2redirect"},
-			grants: webGrants, scopes: []string{"openid", "profile", "email", "phone"}, after: 21 * day, users: 0.3},
+		{name: "Qeet Pay Console", kind: "web", clientID: "qci_qeet_pay_console", secret: "qeet-pay-console-dev-secret",
+			redirects:   []string{"https://console.pay.qeet.in/auth/callback", "http://localhost:3010/auth/callback"},
+			postLogout:  []string{"https://console.pay.qeet.in/", "http://localhost:3010/"},
+			backchannel: "https://console.pay.qeet.in/auth/backchannel-logout",
+			grants:      webGrants, scopes: []string{"openid", "profile", "email", "phone"}, after: day, users: 0.5,
+			hosted: true, tester: "saibabu@qeet.in", resource: [2]string{"https://api.pay.qeet.in/", "Qeet Pay API"}},
+		{name: "Qeet People", kind: "web", redirects: []string{"https://people.qeet.in/auth/callback"},
+			postLogout: []string{"https://people.qeet.in/"}, backchannel: "https://people.qeet.in/auth/backchannel-logout",
+			grants: webGrants, scopes: []string{"openid", "profile", "email", "phone"}, after: 6 * day, users: 0.9,
+			resource: [2]string{"https://api.people.qeet.in/", "Qeet People API"}},
+		{name: "Qeet AI Console", kind: "spa", clientID: "qci_qeet_ai_console",
+			redirects:  []string{"https://ai.qeet.in/auth/callback", "http://localhost:3020/auth/callback"},
+			postLogout: []string{"https://ai.qeet.in/", "http://localhost:3020/"},
+			grants:     []string{codeGrant}, scopes: userScopes, after: day + 10*time.Minute, users: 0.3},
+		{name: "Qeet Notify Console", kind: "web", redirects: []string{"https://notify.qeet.in/auth/callback"},
+			postLogout: []string{"https://notify.qeet.in/"}, grants: webGrants, scopes: userScopes, after: 9 * day, users: 0.25,
+			resource: [2]string{"https://notify.api.qeet.in/", "Qeet Notify API"}},
+		{name: "Qeet Logs", kind: "web", redirects: []string{"https://logs.qeet.in/auth/callback"}, postLogout: []string{"https://logs.qeet.in/"},
+			frontchannel: "https://logs.qeet.in/auth/frontchannel-logout", grants: webGrants, scopes: userScopes, after: 12 * day, users: 0.45,
+			resource: [2]string{"https://api.logs.qeet.in/", "Qeet Logs API"}},
+		{name: "Qeet Circle Staff Console", kind: "web", redirects: []string{"https://console.circle.qeet.in/auth/callback"},
+			postLogout: []string{"https://console.circle.qeet.in/"}, backchannel: "https://console.circle.qeet.in/auth/backchannel-logout",
+			grants: webGrants, scopes: userScopes, after: 70 * day, users: 0.15},
 		{name: "Qeet CLI", kind: "device", clientID: "qci_qeet_cli", grants: deviceGrants, scopes: userScopes, after: 35 * day},
+		// Qeet Pay sends payment receipts and failed-payment notices through Qeet Notify.
+		{name: "Qeet Pay → Qeet Notify", kind: "m2m", grants: []string{exchangeGrant}, scopes: []string{"notify.send"},
+			after: 30 * day, reviewed: true},
+		// Qeet People pays salaries through Qeet Pay on payroll day.
+		{name: "Qeet People payroll → Qeet Pay", kind: "m2m", grants: []string{exchangeGrant}, scopes: []string{"payouts.write", "payouts.read"},
+			after: 55 * day, reviewed: true, rotated: true},
 		{name: "Billing Reconciler", kind: "m2m", grants: []string{exchangeGrant}, scopes: []string{"billing.read", "invoices.write"},
 			after: 50 * day, reviewed: true},
 		{name: "Support Desk (legacy)", kind: "web", redirects: []string{"https://support.qeet.in/auth/oidc/callback"},
@@ -397,7 +413,7 @@ func (f *fed) grants(o *world.Org, a *app, ip string) {
 				}
 			}
 		}
-		if !revoked && i >= 2 && (a.spec.name == "Qeet Pay Dashboard" || a.spec.hosted) {
+		if !revoked && i >= 2 && (a.spec.name == "Qeet Pay Console" || a.spec.hosted) {
 			f.revokeGrant(o, a, p, later(t.Add(4*time.Hour), w.Now.Add(-3*day)))
 			revoked = true
 		}
