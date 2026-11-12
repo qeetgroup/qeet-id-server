@@ -3,7 +3,8 @@
 // people, connections, applications and integrations, and months of
 // sign-in and audit history. It drives the API's own services, so hashes,
 // encryption and permissions are real; history the API only writes as it
-// happens is written directly and the audit chains rehashed. Dev only.
+// happens is written directly and the audit chains rehashed. A developer's
+// workstation (make seed) and the kit's DEV only.
 package main
 
 import (
@@ -49,8 +50,12 @@ func main() {
 
 	cfg, err := config.Load()
 	world.Must(err, "load config")
-	if !cfg.IsDev() {
-		log.Fatalf("seed: refusing to run with SERVICE_ENV=%q (dev only)", cfg.ServiceEnv)
+	// Every seeded account shares one known password, so the seed runs only on
+	// a developer's workstation and in the kit's DEV, never in TEST, STAGING or
+	// production.
+	kitDev := cfg.ServiceEnv == config.EnvLocal && cfg.ServiceProfile == "dev"
+	if !cfg.IsDev() && !kitDev {
+		log.Fatalf("seed: refusing to run with SERVICE_ENV=%q SERVICE_PROFILE=%q (a workstation or the kit's DEV only)", cfg.ServiceEnv, cfg.ServiceProfile)
 	}
 	// Without a fixed vault key the seed and the API would each make their own,
 	// and the API couldn't read anything the seed encrypted.
@@ -82,7 +87,7 @@ func main() {
 	hash, err := password.Hash(seedPassword)
 	world.Must(err, "hash password")
 	w := world.New(ctx, cfg, pool, admin, seedPassword, hash)
-	gettingStarted(w, cfg)
+	gettingStarted(w, cfg, kitDev)
 
 	steps := []struct {
 		name string
@@ -137,13 +142,25 @@ func empty(ctx context.Context, admin *pgxpool.Pool) {
 }
 
 // gettingStarted opens the summary with where everything runs and what a
-// tester meets first.
-func gettingStarted(w *world.World, cfg *config.Config) {
+// tester meets first: the kit's DEV addresses there, the workstation's
+// otherwise.
+func gettingStarted(w *world.World, cfg *config.Config, kitDev bool) {
 	const section = "Before you start"
-	w.Note(section, "API      make dev                (http://localhost:%s)", cfg.HTTPPort)
-	w.Note(section, "Console  %-22s  sign in with a test account below", cfg.AppBaseURL)
-	w.Note(section, "Hosted   %-22s  the hosted sign-in pages; open an app's authorize URL below", cfg.LoginBaseURL)
-	w.Note(section, "Mail     http://localhost:8025  (Mailpit) — codes, magic links, invitations and resets land here")
-	w.Note(section, "A first sign-in from a browser the account hasn't used asks for a code sent by email: read it in Mailpit.")
-	w.Note(section, "Every account's password is %s. Re-run with `make seed-reset`: it empties the database first.", w.Password)
+	if kitDev {
+		mail := strings.Replace(cfg.AppBaseURL, "://console.", "://mail.", 1)
+		w.Note(section, "Console  %-34s  sign in with a test account below", cfg.AppBaseURL)
+		w.Note(section, "Hosted   %-34s  the hosted sign-in pages; open an app's authorize URL below", cfg.LoginBaseURL)
+		w.Note(section, "Mail     %-34s  codes, magic links, invitations and resets land here", mail)
+	} else {
+		w.Note(section, "API      make dev                (http://localhost:%s)", cfg.HTTPPort)
+		w.Note(section, "Console  %-22s  sign in with a test account below", cfg.AppBaseURL)
+		w.Note(section, "Hosted   %-22s  the hosted sign-in pages; open an app's authorize URL below", cfg.LoginBaseURL)
+		w.Note(section, "Mail     http://localhost:8025  (Mailpit) — codes, magic links, invitations and resets land here")
+	}
+	w.Note(section, "A first sign-in from a browser the account hasn't used asks for a code sent by email: read it in the mail inbox.")
+	again := "make seed-reset"
+	if kitDev {
+		again = "the kit's DEV seed command"
+	}
+	w.Note(section, "Every account's password is %s. Re-run with %s: it empties the database first.", w.Password, again)
 }

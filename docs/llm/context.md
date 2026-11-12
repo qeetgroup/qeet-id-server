@@ -251,7 +251,7 @@ violated the pattern and will usually break R1 or R2.
 | `cmd/worker` | Background workers standalone | Run to scale workers independently of API replicas |
 | `cmd/scheduler` | Scheduled maintenance, standalone (the API also runs it embedded) | Each job claimed in `platform.scheduled_job_runs` — once per interval across instances |
 | `cmd/migrate` | golang-migrate wrapper | Structured exit codes for init containers |
-| `cmd/seed` | Demo data | **Development only.** Drives real services, so hashes and audit chains are real |
+| `cmd/seed` | Demo data | **A workstation and the kit's DEV only** (`SERVICE_ENV=dev`, or `local` with profile `dev`). Drives real services, so hashes and audit chains are real |
 
 ---
 

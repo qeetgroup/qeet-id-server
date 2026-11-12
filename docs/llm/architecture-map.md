@@ -26,7 +26,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Background workers | `cmd/worker/main.go` |
 | Scheduled maintenance | `internal/bootstrap/maintenance.go` (jobs) · `internal/platform/worker/scheduled.go` (runner) |
 | Migration runner | `cmd/migrate/main.go` |
-| Demo data (dev only) | `cmd/seed/` — `main.go` runs the steps in `internal/` (census, accounts, connections, integrations, security, activity) |
+| Demo data (a workstation and the kit's DEV only) | `cmd/seed/` — `main.go` runs the steps in `internal/` (census, accounts, connections, integrations, security, activity) |
 
 ## Composition root — where everything is wired
 

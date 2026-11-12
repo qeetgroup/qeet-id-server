@@ -25,12 +25,18 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
                 -X github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo.Commit=${COMMIT} \
                 -X github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo.Date=${DATE}" \
       -o /out/qeet-id-scheduler ./cmd/scheduler
+# SEED=true adds the demo-data seed (cmd/seed) as /qeet-id-seed, for the kit's
+# DEV only: it refuses to run anywhere else. Release images are built without it.
+ARG SEED=false
+RUN if [ "$SEED" = true ]; then \
+      CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -o /out/qeet-id-seed ./cmd/seed; \
+    fi
 
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329
-COPY --from=build /out/qeet-id-server /qeet-id-server
-# The API runs the scheduled jobs itself (embedded workers); the standalone
-# scheduler is here for deployments that run them apart.
-COPY --from=build /out/qeet-id-scheduler /qeet-id-scheduler
+# The API, and the standalone scheduler for deployments that run the scheduled
+# jobs apart (the API runs them itself, as embedded workers); and the seed when
+# it was built.
+COPY --from=build /out/ /
 EXPOSE 4001
 USER nonroot:nonroot
 # SIGTERM starts a graceful stop that ends within SHUTDOWN_TIMEOUT (20s by

@@ -169,15 +169,21 @@ That is the whole setup. Everything else on this page is reference.
   separate migrate step to remember.
 - **`make seed`** loads fictional, production-shaped demo data in about a minute, so every console
   and hosted-login screen has something to show:
-  - Ten organisations: Qeet Group and customers on every plan and stage (Enterprise on Okta or
-    Microsoft Entra with SCIM, a Pro trial, a past-due Starter, a cancelled one, a brand-new Free one).
-  - About 290 people with roles, teams and managers, and the organisations' SSO, SCIM, LDAP,
-    applications, API keys, webhooks, agents and policies.
-  - 90 days of sessions, sign-ins, audit, email and billing history.
+  - Ten organisations: Qeet Group, whose own products (Qeet Pay, Qeet People, Qeet Notify, Qeet Logs,
+    Qeet AI and the Qeet Circle staff console) are its applications, and customers on every plan
+    and stage (Enterprise on Okta or Microsoft Entra with SCIM, a Pro trial, a past-due Starter, a
+    cancelled one, a brand-new Free one).
+  - About 300 people with roles, teams and managers, and the organisations' SSO (SAML and OpenID
+    Connect, with group mappings and break-glass members), SCIM, LDAP, social sign-in (Google,
+    Microsoft, GitHub, Apple, Discord, Facebook and X), applications, API keys, webhooks, agents,
+    policies, access requests and compliance owners and audits.
+  - 90 days of sessions, sign-ins, access decisions, audit, webhook, email and billing history.
 
   It needs `SECRETS_KEY` set, so the API can read what it encrypts. **It prints what you need to
   test, so read its output**: test accounts for each role, TOTP secrets, hosted sign-in URLs for each
   organisation's app, API keys and invitation links. `make seed-reset` empties the database first.
+  The kit's DEV runs the same seed with `bash macos/dev/seed.sh`. To add a feature to it, see
+  [docs/llm/workflows.md](docs/llm/workflows.md#add-a-feature-to-the-demo-data).
 
 ### Useful endpoints
 

@@ -1,6 +1,6 @@
 # Workflows — qeet-id-server
 
-**Level:** L2 — repository · **Last verified:** 2026-08-28
+**Level:** L2 — repository · **Last verified:** 2026-11-12
 **Verification scope:** every command below was checked against the `Makefile` and
 `.github/workflows/ci.yml`. Every path was confirmed to exist.
 
@@ -256,6 +256,46 @@ go build ./... && go test -race ./...
 
 CI runs `govulncheck`. A new dependency in an authentication, cryptography or payment path needs
 review before merge.
+
+---
+
+## Add a feature to the demo data
+
+The demo data (`cmd/seed`) is how people test end to end: every console and hosted-login screen
+should have something real to show. When a change adds a feature, a table or a screen, extend the
+seed in the same change.
+
+1. **Find its step.** `main.go` runs six, each a package under `cmd/seed/internal/`:
+
+   | Step | What it seeds |
+   | :--- | :--- |
+   | `census` | Organisations, people, roles, groups (`orgs.go` is the cast: who, where, which plan and features) |
+   | `accounts` | Branding, domains, policies, invitations, suspensions, data requests, access requests, notifications |
+   | `connections` | Applications, single sign-on (SAML, OpenID Connect), group mappings, break-glass, directories, SCIM, social sign-in |
+   | `integrations` | API keys, agents, webhooks, secrets, ABAC and ReBAC policies, access decisions, log streaming |
+   | `security` | Second factors, devices, threats, compliance owners and audits, evidence, status incidents |
+   | `activity` | Sessions, sign-ins, audit and billing history |
+
+2. **Write through the API's own service** (`w.Deps.<Handler>.Service`), not SQL, so validation,
+   encryption, permissions, audit rows and notifications are the real ones. Insert directly only what
+   the API writes as it happens (sessions, deliveries, access decisions), in exactly its shape.
+3. **Date it.** Wrap each call in `w.At(t, fn)`: it moves every timestamp `fn` wrote to `t`. A date
+   the API sets in the future, such as an expiry, stays where it is: set it after the call, and after
+   anything that would refuse it as expired.
+4. **Choose the people the product would.** Use the helpers (`adminAt`, `actorOn`, `person`) and
+   respect the rules: an administrator acts on someone only if they hold every permission that person
+   holds, and a deny policy on an attribute the request lacks refuses.
+5. **Keep it real but harmless.** Qeet Group's products and `qeet.in` addresses are real. Customers
+   are invented, on domains that don't resolve, so no seeded email, webhook or sign-in reaches a
+   real company. Client IDs, secrets and subjects are in each vendor's own format. No real person's
+   data. Every account shares one password.
+6. **Tell the tester.** Add a `w.Note(section, ...)` line for anything worth trying, and set
+   `Login` on a fixed person in `census` when an account demonstrates something.
+7. **Check it.** `make seed-reset`, then count the rows in every table: a table left empty should be
+   one a sign-in fills and expires within minutes (codes, challenges, states). Run `make lint`.
+
+In the kit's DEV the same seed runs with `bash macos/dev/seed.sh` (Windows: `.\windows\dev\seed.cmd`).
+It replaces everything in DEV. TEST and STAGING never have it.
 
 ---
 
