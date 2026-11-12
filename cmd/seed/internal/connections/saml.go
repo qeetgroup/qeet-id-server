@@ -182,6 +182,8 @@ func (f *fed) sso(o *world.Org) {
 		idpInitiated = &yes
 	}
 	f.samlStatus(o, adminAt(o, times.samlActive), times.samlActive, conn, "active", idpInitiated)
+	f.groupSync(o, conn, times.samlActive)
+	f.breakGlass(o, times.samlActive)
 	w.Exec("saml last sign-in", `UPDATE tenant.saml_connections SET last_login_at = $3 WHERE id = $1 AND tenant_id = $2`,
 		conn, o.ID, f.ago(8*time.Minute, 58*time.Minute))
 
@@ -248,6 +250,7 @@ func (f *fed) samlStatus(o *world.Org, by *world.Person, t time.Time, id uuid.UU
 // sp is an application that signs people in with Qeet ID as its SAML IdP.
 type sp struct {
 	name, entityID, acs, status, cert string
+	access                            spec // who may sign in to it, when not everyone
 }
 
 // serviceProviders registers the SaaS applications an Enterprise organisation
@@ -275,15 +278,22 @@ func (f *fed) serviceProviders(o *world.Org) {
 		"salesforce": {name: "Salesforce", entityID: "https://" + label + ".my.salesforce.com",
 			acs: "https://" + label + ".my.salesforce.com?so=00D" + f.token(alnum, 12)},
 	}
-	plan := map[string][]struct{ app, status string }{
-		"qeet":      {{"atlassian", "active"}, {"slack", "active"}, {"aws", "draft"}},
-		"northwind": {{"salesforce", "active"}, {"zoom", "active"}, {"aws", "draft"}},
-		"meridian":  {{"zoom", "active"}, {"slack", "draft"}},
+	// AWS is for the engineers who run production only, and Salesforce for the
+	// people who talk to borrowers; everyone else's applications are open to all.
+	plan := map[string][]struct {
+		app, status string
+		access      spec
+	}{
+		"qeet": {{app: "atlassian", status: "active"}, {app: "slack", status: "active"},
+			{app: "aws", status: "draft", access: spec{groups: []string{"Site Reliability", "Qeet ID"}, users: []string{"aarav@qeet.in"}}}},
+		"northwind": {{app: "salesforce", status: "active", access: spec{groups: []string{"Customer Service", "Collections"}, users: []string{"kavya.menon@northwindcapital.in"}}},
+			{app: "zoom", status: "active"}, {app: "aws", status: "draft", access: spec{groups: []string{"Platform Engineering"}}}},
+		"meridian": {{app: "zoom", status: "active"}, {app: "slack", status: "draft"}},
 	}[o.Spec.Slug]
 	start := f.setupTimes(o).samlActive.Add(3 * 24 * time.Hour)
 	for i, item := range plan {
 		s := catalogue[item.app]
-		s.status = item.status
+		s.status, s.access = item.status, item.access
 		at := start.Add(time.Duration(i*9)*24*time.Hour + time.Duration(w.Rand.IntN(5))*time.Hour)
 		if item.status == "draft" {
 			at = w.WorkHours(w.Days(float64(4+w.Rand.IntN(10))), o.Loc)
@@ -317,6 +327,7 @@ func (f *fed) serviceProvider(o *world.Org, by *world.Person, t time.Time, s sp)
 		})
 	})
 	f.record(t, o, by, "saml.sp_created", "saml_service_provider", &id, map[string]any{"name": s.name, "entity_id": s.entityID})
+	f.assign(o, by, t.Add(20*time.Minute), id, s.access)
 	if s.status != "active" {
 		return
 	}

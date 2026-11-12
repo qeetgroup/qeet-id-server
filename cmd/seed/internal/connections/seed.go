@@ -1,7 +1,9 @@
 // Package connections seeds how each organisation connects to other systems:
-// OIDC applications and their grants, SAML connections and service providers,
-// LDAP directories, SCIM provisioning and directory sync, social providers,
-// linked identities and enterprise-setup links.
+// OIDC applications and their grants, SAML and OpenID Connect identity
+// providers with their group mappings and break-glass members, SAML service
+// providers and who is assigned to them, LDAP directories, SCIM provisioning
+// and directory sync, social providers, linked identities and enterprise-setup
+// links.
 package connections
 
 import (
@@ -25,6 +27,7 @@ func Seed(w *world.World) {
 	for _, o := range w.Orgs {
 		f.social(o)
 		f.sso(o)
+		f.oidcConnection(o)
 		f.directories(o)
 		f.serviceProviders(o)
 		f.applications(o)

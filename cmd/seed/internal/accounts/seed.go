@@ -1,7 +1,8 @@
 // Package accounts seeds each organisation's own settings and its people's
 // account states: profile and logo, branding, domains, email templates,
 // security, sign-in and retention policies, invitations, suspended and deleted
-// accounts, group roles and templates, notifications and data requests.
+// accounts, group roles and templates, notifications, data requests and access
+// requests.
 package accounts
 
 import (
@@ -59,6 +60,7 @@ func Seed(w *world.World) {
 		s.exports(o)
 		s.accounts(o)
 		s.erasures(o)
+		s.accessRequests(o)
 	}
 	s.enrolmentDemo()
 	s.notifications()

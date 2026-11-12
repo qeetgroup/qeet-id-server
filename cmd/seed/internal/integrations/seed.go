@@ -1,7 +1,8 @@
 // Package integrations seeds each organisation's integrations: API keys, service
 // principals, AI agents, webhooks and their deliveries, auth hooks, secrets,
 // token-vault connections, verifiable credentials, ABAC policies,
-// relationship tuples, rate-limit overrides and log streaming.
+// relationship tuples, the access decisions they answered, rate-limit
+// overrides and log streaming.
 package integrations
 
 import (
@@ -34,6 +35,7 @@ func Seed(w *world.World) {
 		d.credentials(o)
 		d.abac(o)
 		d.rebac(o)
+		d.decisions(o)
 		d.rateLimits(o)
 		d.authHooks(o)
 		d.logSinks(o)
@@ -49,6 +51,7 @@ func Seed(w *world.World) {
 	w.Note(s, "  auto-disabled (staging Notify, with a bell alert). Endpoints don't resolve: live deliveries fail with \"no such host\".")
 	w.Note(s, "API keys: expiring soon, expired (Rohan's CLI), revoked (leaked Statuspage key); agents active/suspended; secrets rotated.")
 	w.Note(s, "ABAC versions: \"Contractors: business hours only\" (3); ReBAC: object document:readme (Qeet, Lumen, Northwind, Meridian).")
+	w.Note(s, "Access decisions: a month of the products' questions (Qeet Logs, Qeet Pay, Qeet People, Qeet AI), with the policy refusals.")
 	w.Note(s, "Auth hooks: enabled fail-open at Northwind and Meridian — a sign-in there records auth_hook.skipped; Qeet's are off.")
 	w.Note(s, "Log streaming: Qeet HTTP (healthy), Northwind Splunk HEC (healthy) + old ArcSight (off), Meridian Datadog (403).")
 }
