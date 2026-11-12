@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/cmd/seed/internal/world"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // seeder carries what the identity step's parts share: the API's handlers for
@@ -79,6 +80,26 @@ func by(o *world.Org, t time.Time, roles ...string) *world.Person {
 	for _, role := range roles {
 		for _, p := range o.People {
 			if p.Role == role && p.ID != uuid.Nil && t.Sub(p.Joined) > 7*24*time.Hour && activeAt(p, t) {
+				return p
+			}
+		}
+	}
+	return o.Owner
+}
+
+// actorOn is by for a change to target's account: the first person holding one
+// of roles whom the API lets act on target (they hold every permission target
+// holds, as rbac's act-on check asks), else the owner. A security analyst can't
+// suspend a developer who holds apikey.write; an administrator does it instead.
+func (s *seeder) actorOn(o *world.Org, target *world.Person, t time.Time, roles ...string) *world.Person {
+	check := s.w.Deps.User.ActOnCheck
+	for _, role := range roles {
+		for _, p := range o.People {
+			if p.Role != role || p.ID == uuid.Nil || p.ID == target.ID || t.Sub(p.Joined) <= 7*24*time.Hour || !activeAt(p, t) {
+				continue
+			}
+			tenant, id := o.ID, p.ID
+			if check(s.w.Ctx, &httpx.Principal{TenantID: &tenant, UserID: &id, ActorType: "user"}, o.ID, target.ID) == nil {
 				return p
 			}
 		}

@@ -306,6 +306,9 @@ func (f *fed) serviceProvider(o *world.Org, by *world.Person, t time.Time, s sp)
 		w.Tx("SAML service provider "+s.name, func(tx pgx.Tx) error {
 			created, err := w.Deps.SAML.IdP.CreateSP(w.Ctx, tx, o.ID, saml.CreateSPInput{
 				Name: s.name, EntityID: s.entityID, ACSURL: s.acs, Certificate: s.cert, Status: "draft",
+				// The certificate is the one the app signs its requests with
+				// (Salesforce's request signing certificate).
+				RequireSignedRequests: s.cert != "",
 			})
 			if err == nil {
 				id = created.ID

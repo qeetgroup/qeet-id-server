@@ -31,9 +31,15 @@ type abacEdit struct {
 }
 
 const (
-	contractorHours = `{"all":[{"attr":"subject.employment_type","op":"eq","value":"contractor"},` +
+	// The contractor policies apply only where the caller says who is a
+	// contractor and what time it is (an application's access check does; the
+	// console's own requests carry neither), so they test that both are known:
+	// a deny on an unknown attribute refuses.
+	contractorHours = `{"all":[{"attr":"subject.employment_type","op":"exists"},{"attr":"context.hour","op":"exists"},` +
+		`{"attr":"subject.employment_type","op":"eq","value":"contractor"},` +
 		`{"any":[{"attr":"context.hour","op":"lt","value":9},{"attr":"context.hour","op":"gte","value":18}]}]}`
-	contractorHoursWide = `{"all":[{"attr":"subject.employment_type","op":"eq","value":"contractor"},` +
+	contractorHoursWide = `{"all":[{"attr":"subject.employment_type","op":"exists"},{"attr":"context.hour","op":"exists"},` +
+		`{"attr":"context.weekday","op":"exists"},{"attr":"subject.employment_type","op":"eq","value":"contractor"},` +
 		`{"any":[{"attr":"context.hour","op":"lt","value":8},{"attr":"context.hour","op":"gte","value":20},` +
 		`{"attr":"context.weekday","op":"in","value":["Sat","Sun"]}]}]}`
 	withoutMFA = `{"not":{"attr":"context.mfa","op":"eq","value":true}}`
@@ -46,12 +52,20 @@ func outside(countries ...string) string {
 	return `{"all":[{"attr":"context.country","op":"exists"},{"attr":"context.country","op":"nin","value":` + string(b) + `}]}`
 }
 
+// within is a condition true where the request comes from a known country in
+// countries. A deny on an unknown attribute refuses (it fails closed), so the
+// country must be known first or every request without one is refused.
+func within(countries ...string) string {
+	b, _ := json.Marshal(countries)
+	return `{"all":[{"attr":"context.country","op":"exists"},{"attr":"context.country","op":"in","value":` + string(b) + `}]}`
+}
+
 // abacSpecs are each Pro or Enterprise organisation's ABAC policies.
 var abacSpecs = map[string][]abacSpec{
 	"qeet": {
 		{name: "Block sanctioned countries", description: "Refuse every action from comprehensively sanctioned jurisdictions (OFAC/UN lists).",
 			effect: "deny", resource: "*", action: "*", priority: 1000, enabled: true, by: []who{email("priya@qeet.in")}, created: 300,
-			condition: `{"attr":"context.country","op":"in","value":["CU","IR","KP","SY"]}`},
+			condition: within("CU", "IR", "KP", "SY")},
 		{name: "Contractors: business hours only", description: "Contractors may work 09:00–18:00 IST.",
 			effect: "deny", resource: "*", action: "*", priority: 500, enabled: true, by: []who{email("priya@qeet.in")}, created: 200,
 			condition: contractorHours, edits: []abacEdit{

@@ -52,14 +52,10 @@ func (s *seeder) suspend(o *world.Org, p *world.Person) {
 	w := s.w
 	path := "/users/" + p.ID.String()
 	switch p.Source {
-	case "scim", "ldap":
+	case "scim", "ldap", "policy":
 		s.deactivate(o, p, p.Since, p.Source)
-	case "policy":
-		w.At(p.Since, func() { s.api.do(o, nil, "system", "PATCH", path, map[string]any{"status": "suspended"}) })
-		w.Exec("suspended by policy "+p.Email, `UPDATE "user".users SET suspension_source = 'policy', suspension_reason = $3
-			WHERE id = $1 AND tenant_id = $2`, p.ID, o.ID, p.Reason)
 	default:
-		actor := by(o, p.Since, world.RoleSecurity, world.RoleITAdmin, world.RoleAdmin)
+		actor := s.actorOn(o, p, p.Since, world.RoleSecurity, world.RoleITAdmin, world.RoleAdmin)
 		w.At(p.Since, func() {
 			s.api.do(o, actor, "", "PATCH", path, map[string]any{"status": "suspended"})
 		})
@@ -69,7 +65,7 @@ func (s *seeder) suspend(o *world.Org, p *world.Person) {
 	// week or two, except where an investigation is still open.
 	reviewed := p.Since.Before(w.Days(10)) && risks[p.Reason] != "high"
 	at := clamp(w, p.Since.Add(time.Duration(40+w.Rand.IntN(5*60))*time.Minute))
-	reviewer := by(o, at, world.RoleSecurity, world.RoleITAdmin, world.RoleAdmin)
+	reviewer := s.actorOn(o, p, at, world.RoleSecurity, world.RoleITAdmin, world.RoleAdmin)
 	review := "pending"
 	if reviewed {
 		review = "reviewed"
@@ -85,7 +81,8 @@ func (s *seeder) suspend(o *world.Org, p *world.Person) {
 
 // deactivate suspends p as their identity provider does: SCIM sets active to
 // false (recorded as a SCIM update, reason "provider"), and the directory sync
-// disables an account removed from Active Directory.
+// disables an account removed from Active Directory. Source "policy" is the
+// organisation's inactivity policy, recorded as the platform's own change.
 func (s *seeder) deactivate(o *world.Org, p *world.Person, at time.Time, source string) {
 	w := s.w
 	action, reason := "user.updated", "provider"
@@ -94,9 +91,14 @@ func (s *seeder) deactivate(o *world.Org, p *world.Person, at time.Time, source 
 	if o.Spec.Features.SSO == "entra" {
 		ip, ua = "198.51.100.236", "Microsoft Azure AD SCIM Client"
 	}
-	if source == "ldap" {
+	actorType := source
+	switch source {
+	case "ldap":
 		action, reason, ip, ua = "user.suspended", p.Reason, "", ""
 		meta = map[string]any{"reason": "account disabled in Active Directory", "dn": p.ExternalID}
+	case "policy":
+		action, reason, ip, ua, actorType = "user.suspended", p.Reason, "", "", "system"
+		meta = map[string]any{"reason": "no sign-in within the inactivity policy's limit"}
 	}
 	if reason == "" {
 		reason = "other"
@@ -112,7 +114,7 @@ func (s *seeder) deactivate(o *world.Org, p *world.Person, at time.Time, source 
 				return err
 			}
 			id := p.ID
-			return audit.Record(w.Ctx, tx, audit.Event{TenantID: &o.ID, ActorType: source, Action: action,
+			return audit.Record(w.Ctx, tx, audit.Event{TenantID: &o.ID, ActorType: actorType, Action: action,
 				ResourceType: "user", ResourceID: &id, IP: ip, UserAgent: ua, Metadata: meta})
 		})
 	})
@@ -125,7 +127,7 @@ func (s *seeder) remove(o *world.Org, p *world.Person) {
 	if p.Provisioned == "scim" || p.Provisioned == "ldap" {
 		s.deactivate(o, p, p.Since.Add(-time.Duration(18+w.Rand.IntN(30))*time.Hour), p.Provisioned)
 	}
-	actor := by(o, p.Since, world.RoleITAdmin, world.RoleAdmin)
+	actor := s.actorOn(o, p, p.Since, world.RoleITAdmin, world.RoleAdmin)
 	w.At(p.Since, func() { s.api.do(o, actor, "", "DELETE", "/users/"+p.ID.String(), nil) })
 	s.tell(o, event{at: p.Since.Add(time.Minute), kind: "info", title: "Account deleted: " + p.Name(),
 		detail: fmt.Sprintf("%s deleted %s's account. It can be restored from Deleted users until it is purged.", actor.Name(), p.Email),
@@ -161,7 +163,7 @@ func (s *seeder) enrolmentDemo() {
 		return
 	}
 	at := w.Days(1.6)
-	admin := by(o, at, world.RoleAdmin)
+	admin := s.actorOn(o, p, at, world.RoleAdmin)
 	if sec := o.Person("priya@qeet.in"); sec != nil && sec.Status == world.StatusActive {
 		admin = sec
 	}
