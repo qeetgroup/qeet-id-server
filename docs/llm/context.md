@@ -17,7 +17,7 @@ PostgreSQL database, one deployable binary, five bounded contexts as enforced pa
 | | |
 |---|---|
 | Module | `github.com/qeetgroup/qeet-id-server` |
-| Language | Go 1.27.0 (toolchain 1.27.3) |
+| Language | Go 1.27.0 (toolchain 1.27.4) |
 | Router | chi v5 |
 | Database | PostgreSQL, pgx v5, hand-written SQL via sqlc |
 | Binaries | `api`, `worker`, `scheduler`, `migrate`, `seed` |
@@ -558,12 +558,10 @@ documents, including API-auth security classification.
 
 | Job | What it runs |
 |---|---|
-| `test` | `go build ./...` · `go vet ./...` · `go test -race -count=1 ./...` |
-| `database` | `go test -tags integration ./...` against PostgreSQL (testcontainers) |
-| `lint` | `golangci-lint` v2.15.0 on the whole tree · `sqlc diff` in every package |
-| `vuln` | `govulncheck ./cmd/... ./internal/...` blocking · advisory full-tree scan |
-| `sast` | `gosec` — blocking; `#nosec` needs a rule and a reason |
-| `deploy` | On push to `main`: build, deploy to AWS via GitHub OIDC, then tag |
+| `verify` (`ci.yml`) | On pull requests into `develop` and `main`: `go build ./...` · `go vet ./...` · `golangci-lint` v2.15.0 · `govulncheck ./cmd/... ./internal/...` · gitleaks |
+| `image` (`candidate.yml`) | On push to `release/**` or `hotfix/**`: the test image `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>` |
+| `deploy` (`deploy.yml`) | A merged release or hotfix into `main`: that tested image to ECR, roll the host via GitHub OIDC, then tag |
+| local (`make ci`) | `go test -race` with the database tests · `sqlc diff` · `gosec` (`#nosec` needs a rule and a reason) |
 
 `.golangci.yml` enables `errcheck`, `govet`, `staticcheck`, `misspell`, `unused`, `ineffassign`,
 `errorlint`, `nilerr`, `bodyclose`, `sqlclosecheck`, `rowserrcheck`, `nolintlint`, `forbidigo` and
@@ -574,7 +572,7 @@ same lint as CI.
 
 **This repository builds a container. It does not own its deployment.**
 
-- `Dockerfile` — build on `golang:1.27.3-alpine` (same Go as go.mod's toolchain), ship on `gcr.io/distroless/static-debian13:nonroot`,
+- `Dockerfile` — build on `golang:1.27.4-alpine` (same Go as go.mod's toolchain), ship on `gcr.io/distroless/static-debian13:nonroot`,
   non-root user, `EXPOSE 4001`.
 - `docker-compose.yml` — **local dependencies only**: postgres :5001, nats :4222, mailpit :8025.
 - Terraform, Caddy, compose for production and the rollout live in **`qeet-id-deploy`**.

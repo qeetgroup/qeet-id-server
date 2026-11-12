@@ -30,8 +30,8 @@ repository:
 
 runtime:
   language: Go
-  version: "1.26.0"      # go.mod; toolchain go1.27.3
-  build_image: golang:1.27.3-alpine
+  version: "1.26.0"      # go.mod; toolchain go1.27.4
+  build_image: golang:1.27.4-alpine
   runtime_image: gcr.io/distroless/static-debian13:nonroot
   port: 4001
 
@@ -112,10 +112,10 @@ security:
 ci:
   workflows: [.github/workflows/ci.yml, .github/workflows/candidate.yml, .github/workflows/deploy.yml]
   jobs: [verify, image, version, deploy, rollback]
-  verify: "ci.yml — build, vet, golangci-lint, sqlc diff, govulncheck; tests, database tests and gosec run locally (make ci)"
+  verify: "ci.yml — on PRs into develop and main: compile (build, vet), golangci-lint, govulncheck, gitleaks; tests, database tests, sqlc diff and gosec run locally (make ci)"
   branches: "develop · main (production) · release/YEAR.MONTH.0 (monthly) · hotfix/YEAR.MONTH.N — scripts/release/version.sh"
   deploy_trigger: merged release/… or hotfix/… pull request into main
-  release_image: "candidate.yml — push to release/** or hotfix/**, after Verify: ghcr.io/qeetgroup/qeet-id-server:sha-<commit>, linux/amd64+arm64, OCI + in.qeet.* labels (consumed by the Qeet ID Kit, qeet-id-kit); deploy.yml promotes it to ECR unchanged"
+  release_image: "candidate.yml — push to release/** or hotfix/**: ghcr.io/qeetgroup/qeet-id-server:sha-<commit>, linux/amd64+arm64, OCI + in.qeet.* labels (consumed by the Qeet ID Kit, qeet-id-kit); deploy.yml promotes it to ECR unchanged"
 
 llm_context:
   canonical: docs/llm/context.md
