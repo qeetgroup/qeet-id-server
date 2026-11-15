@@ -1,8 +1,8 @@
 # Architecture Map — qeet-id-server
 
-**Level:** L2 — repository · **Last verified:** 2026-08-28
-**Verification scope:** every path below was confirmed to exist on disk. Line numbers were read from
-the file at that revision and may drift — the file is authoritative, the line number is a hint.
+**Level:** L2 — repository · **Last verified:** 2026-11-15
+**Verification scope:** every path and named entry point below was checked against the repository at
+`a552dc34`. The file is authoritative; this page is a navigation aid.
 
 A navigation index. "Where is X?" answered in one hop. For *how* things work, read
 [context.md](context.md).
@@ -184,7 +184,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 
 | Concern | Path |
 |---|---|
-| **All 81 env vars, defaults, `Validate()`** | `internal/platform/config/config.go` |
+| **All 138 env vars, defaults, `Validate()`** | `internal/platform/config/config.go` |
 | Variable reference | `.env.example` — placeholders only |
 | Structured logging | `internal/platform/observability/logging/` |
 | Prometheus metrics | `internal/platform/observability/metrics/` |

@@ -128,7 +128,8 @@ Do not weaken authentication, authorization, CSRF or origin checks, token valida
 handling, secret handling, cryptography, or tenant isolation — **including to make a test pass**.
 
 If the implementation does not meet an L0 or L1 requirement, that is a **finding to report**, not a
-standard to redefine. Record it against the product register in `qeet-id-context/DRIFT-REGISTER.md`.
+standard to redefine. Record the product-level divergence in `qeet-id-context` and its
+`CONTEXT-CHANGELOG.md`; do not cite the retired `DRIFT-REGISTER.md`.
 
 Two behaviours look like bugs and are **deliberate, with ADRs**: the rate limiter fails **open** when
 its store errors, and auth hooks default to **fail-open**. Do not "fix" either.

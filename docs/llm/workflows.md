@@ -1,6 +1,6 @@
 # Workflows — qeet-id-server
 
-**Level:** L2 — repository · **Last verified:** 2026-11-12
+**Level:** L2 — repository · **Last verified:** 2026-11-15
 **Verification scope:** every command below was checked against the `Makefile` and
 `.github/workflows/ci.yml`. Every path was confirmed to exist.
 
@@ -136,9 +136,11 @@ Escalate before implementing.
 7  verify                          make test
 ```
 
-**Remember:** route-level RBAC applies to **user JWTs only**. API keys and service principals bypass
-it and are bounded by their encoded scopes. A permission change may not affect machine callers at
-all — check both paths.
+**Remember:** every authenticated route has one `RoutePolicy`. Users need the named role permission;
+API keys, service principals and agents must be admitted by actor type and carry one of the route's
+machine scopes (unless the policy explicitly delegates a resource-derived scope check to the
+handler). Application-issued user tokens need both the user's permission and the route's approved
+OAuth scope. Check every caller type when a permission changes.
 
 **ABAC fails closed** by design. Do not "fix" a denial by loosening the evaluator.
 
@@ -154,7 +156,7 @@ all — check both paths.
 3  internal/bootstrap/router.go                where the guard is applied
 4  every affected queries.sql                  the predicate
 5  tests                            cross-tenant denial, at every layer touched
-6  report, do not resolve           any gap goes to qeet-id-context/DRIFT-REGISTER.md
+6  report, do not resolve           record product-level drift in qeet-id-context and its changelog
 ```
 
 **Restructuring the chi route tree counts as a tenant-isolation change** — the guard depends on

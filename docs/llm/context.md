@@ -1,11 +1,12 @@
 # Repository Context — qeet-id-server
 
 **Level:** L2 — repository · **Status:** active · **Evidence state:** verified
-**Last verified:** 2026-08-28
-**Verification scope:** package structure, dependency rules, router wiring, migrations, config
-surface, CI jobs and test layout were read from source on this revision. Paths cited under
-**Evidence** were confirmed to exist. Claims about the *product* are inherited from L1 and not
-re-derived here.
+**Last verified:** 2026-11-15
+**Verification scope:** package structure, dependency rules, router and route-policy wiring,
+authentication and authorization enforcement, tenant row security, migrations, configuration,
+workers, OpenAPI coverage and test layout were checked against `a552dc34`. Focused bootstrap,
+HTTP-security, token and authorization tests passed. Live providers, deployed infrastructure and
+production state were not checked. Claims about the *product* are inherited from L1.
 
 ---
 
@@ -47,8 +48,8 @@ require.
 | What exactly does this function do? | **L3/L4** — the source |
 
 **Policy flows down and is not overridden here.** If this implementation does not meet an L0 or L1
-requirement, that is a finding recorded in `qeet-id-context/DRIFT-REGISTER.md` — not a redefinition
-of the standard.
+requirement, that is a product-level divergence to record in `qeet-id-context` and its
+`CONTEXT-CHANGELOG.md` — not a redefinition of the standard.
 
 ---
 
@@ -257,11 +258,14 @@ violated the pattern and will usually break R1 or R2.
 
 ## Configuration
 
-**Evidence:** `internal/platform/config/config.go` — a single struct with **81 `envconfig` tags**.
+**Evidence:** `internal/platform/config/config.go` — a single struct with **138 `envconfig` tags**.
 
-Only **two** are required: `DB_URL` and `JWT_SECRET`. Everything else has a default or gates a
-capability off. Grouped by concern: service, database, tokens, crypto/KMS, HTTP/CORS/CSRF, URLs,
-WebAuthn, social providers, email, SMS, Redis/NATS, billing, password hygiene, observability, AI.
+`DB_URL` is required to connect. Many fields have development defaults or gate optional
+capabilities, but a non-development process has additional mandatory combinations enforced by
+`Config.Validate()`: secure JWT signing and retirement settings, a secrets provider and its key
+material, an email provider, explicit CORS origins, safe public URLs, and environment-specific host
+rules. The fields cover service, database, tokens, crypto/KMS, HTTP/CORS/CSRF, URLs, WebAuthn,
+social providers, email, push, SMS, Redis/NATS, billing, password hygiene, observability, and AI.
 
 `.env.example` documents every variable with **placeholders only**. `.env` and `.secrets/` exist
 locally, are gitignored, and must never be read into a committed file.
@@ -288,13 +292,13 @@ One PostgreSQL database, **seven schemas**: `auth`, `tenant`, `user`, `rbac`, `a
 `qeetai`.
 
 - **Driver:** pgx v5. **Queries:** hand-written SQL in `queries.sql`, compiled by **sqlc** into
-  `dbgen/` packages. 52 `queries.sql`/`sqlc.yaml` pairs, 52 `dbgen` directories.
+  `dbgen/` packages. 53 `queries.sql`/`sqlc.yaml` pairs and 53 `dbgen` directories.
 - **Generated `dbgen/` code is never hand-edited.** Change `queries.sql` and regenerate.
 - Transactions are opened at the service layer, so a domain write and its outbox row commit together.
 
 ### Migrations
 
-**Evidence:** `internal/platform/database/migrations/` — 228 up/down pairs, `0001`–`0229` (`0082` intentionally absent)
+**Evidence:** `internal/platform/database/migrations/` — 232 up/down pairs, `0001`–`0233` (`0082` intentionally absent)
 (`0082` is absent and must not be reused). Embedded with `//go:embed *.sql` in `runner.go` and
 applied on startup.
 
@@ -413,8 +417,11 @@ For the product-level flow narrative, read `qeet-id-context/FLOWS/`.
 The **route → permission map** lives in `internal/bootstrap/permissions.go` and is consumed by
 `rbac.Enforce` as router middleware.
 
-> **Route-level RBAC applies to user JWTs only.** API keys and service principals bypass it and are
-> bounded by the scopes encoded in the credential. Scoping at issue time is the control.
+Every authenticated route has a `RoutePolicy` and an unlisted route is denied. A user needs the
+policy's role permission. API keys, service principals and agents are checked by actor type and need
+one of its machine scopes, unless the policy explicitly leaves a resource-derived scope check to the
+handler. A token issued to an application needs both its user's permission and the route's approved
+OAuth scope. ABAC denies are evaluated by the composed checker and override a role grant.
 
 ## Tokens and cryptography
 
@@ -444,8 +451,9 @@ Qeet ID is both a **service provider** (consuming a customer IdP over SAML, LDAP
 
 Protocol endpoints are mounted at the **root, not under `/v1`**, because the specifications require
 fixed locations — `.well-known/*`, `/scim/v2`, `/saml/*`, `/ldap/*`. `/oauth/introspect` and
-`/oauth/revoke` also sit at the root, which is a deviation from the L0 URL standard: deliberate, and
-advertised in the discovery document (`qeet-id-context` QID-005).
+`/oauth/revoke` also sit at the root. The discovery and RFC 8414 authorization-server metadata
+documents advertise the actual endpoints; protected-resource metadata is served for OAuth/MCP
+discovery.
 
 **SAML, SCIM and LDAP parse untrusted external input** — the highest-risk surface in this repository.
 
@@ -528,8 +536,9 @@ any mounted route is undocumented. A route cannot silently appear.
 
 **A route change and its spec change belong in the same commit.**
 
-> The specs list only `localhost` servers — production `api.id.qeet.in` appears in none of them
-> (`qeet-id-context` QID-004). Do not treat the spec as a working client configuration.
+Every document lists `https://api.id.qeet.in` first and `http://localhost:4001` second. Runtime OIDC
+metadata derives public protocol URLs from the validated public base URL rather than trusting a
+request host in production.
 
 ## Testing
 
@@ -538,16 +547,16 @@ any mounted route is undocumented. A route cannot silently appear.
 | Unit | alongside source | `go test ./...` |
 | **OpenAPI coverage gate** | `internal/bootstrap/openapi_coverage_test.go` | with unit tests |
 
-CI runs unit tests with `-race`. Unit tests are **colocated** (`_test.go` beside the source,
-in-package) — 69 of them. There is no `testdata/` or `mocks/` directory.
+Tests are **colocated** (`_test.go` beside the source). The current tree has 330 Go test files and
+1,289 `Test*` functions; 169 files are integration-tagged and run through the database test gate.
+Counts are orientation only—package and behavior coverage matter more than totals.
 
 **Coverage gaps worth knowing before you change these:**
 
 | Package | Unit tests |
 |---|---|
-| `identity/{tenant,groups,invitations,verification}` | none |
-| `access/recovery`, `access/authorization/authzen` | none |
-| `developer/principal`, `operations/notifications` | none |
+| `operations/notifications` | no direct package test; exercised through wider flows |
+| Protocol and lifecycle paths | several depend on integration-tagged database tests in addition to direct unit tests |
 
 `internal/bootstrap/permissions_test.go` walks the exact authenticated production mounts and
 requires an explicit route policy. `internal/bootstrap/openapi_coverage_test.go` walks all three
@@ -646,9 +655,12 @@ What review a change needs. Cross-repository impact is expanded in
 ## Known constraints
 
 - **Product is pre-1.0.** The API contract is not frozen.
-- **Tenant isolation is application-layer**, not database-enforced.
-- **Access-token revocation is bounded by the 10-minute TTL** — there is no per-request database
-  revocation check.
+- **Tenant isolation is layered.** Principal/path checks and explicit query predicates are the first
+  layer; PostgreSQL row-level security protects organisation-owned tables on organisation-admin
+  requests. Account-level flows and workers still depend on correct predicates.
+- **First-party session access tokens are checked against live session state on each request.** OAuth
+  application tokens follow their grant/introspection rules; relying parties must still consume
+  revocation/logout signals according to their integration.
 - **Single PostgreSQL instance**, no read replica. It is the single point of failure.
 - **No staging environment exists** — `api.id.staging.qeet.in` does not resolve.
 - **Rate limiting fails open** when its store errors, and **auth hooks default to fail-open**. Both
@@ -657,12 +669,10 @@ What review a change needs. Cross-repository impact is expanded in
 
 ## Known technical debt
 
-Repository-local documentation inconsistencies found on this revision. Product-level drift lives in
-`qeet-id-context/DRIFT-REGISTER.md`; these are the ones local to this repository:
-
-| Issue | Detail |
-|---|---|
-| Old `CLAUDE.md` `.claude/` agents | Referenced `.claude/agents/*` — **no `.claude/` directory exists** (QID-020) |
+Repository-local documentation was reconciled with `a552dc34` on 15 Nov 2026. New product-level
+divergences belong in `qeet-id-context` and its `CONTEXT-CHANGELOG.md`; repository implementation
+claims belong here. Keep counts and status claims tied to a verification scope rather than treating
+an old audit as current state.
 
 ## Documentation authority
 

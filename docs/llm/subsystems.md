@@ -2,11 +2,10 @@
 
 **Level:** L2 — repository (lightweight L3 navigation + L4 pointers)
 **Status:** active · **Evidence state:** verified
-**Last verified:** 2026-08-28
-**Verification scope:** every filename below was confirmed to exist. Purpose lines are quoted from
-the package's own doc comment where one exists, and marked `no package doc` where none does.
-Dependency lines come from the actual import graph. Test mappings come from each integration test's
-imports.
+**Last verified:** 2026-11-15
+**Verification scope:** every filename below was confirmed against `a552dc34`. Purpose lines come
+from package comments where present; dependency lines were checked against the import graph and test
+mappings against the current colocated and integration-tagged tests.
 
 ---
 
@@ -37,13 +36,13 @@ Every leaf package additionally carries `queries.sql` + `sqlc.yaml` + a generate
 Hand-written Go, excluding generated `dbgen/`:
 
 ```text
-operations  10.9k  ████████████
-access       9.6k  ███████████
-federation   9.6k  ███████████
-platform     7.6k  ████████
-identity     4.8k  █████
-developer    4.0k  ████
-bootstrap    1.5k  ██
+federation  41.1k  █████████████████
+access      35.6k  ███████████████
+platform    24.9k  ██████████
+operations  24.8k  ██████████
+identity    15.9k  ██████
+developer    9.3k  ████
+bootstrap    5.4k  ██
 ```
 
 Roughly 30–35% of each bounded context's raw line count is generated code.
@@ -106,7 +105,7 @@ authpolicy/authpolicy.go   password rules, permitted login methods
 **Tests** `rbac/enforce_test.go`, `abac/abac_test.go`, `rebac/rebac_test.go` · integration:
 `authz_test.go`
 
-> `authzen/` has **no unit test**. Coverage is integration-only.
+`authzen/` now has a direct package test as well as wider authorization coverage.
 
 ---
 
@@ -136,7 +135,7 @@ recovery/recovery.go forgot-password, magic link
 **Tests** `mfa/mfa_test.go`, `passkeys/login_decode_test.go` · integration:
 `passkey_ceremony_test.go` (uses `virtualwebauthn`), `recovery_test.go`
 
-> `recovery/` has **no unit test** — integration-only.
+`recovery/` has direct package tests and database-backed recovery flow coverage.
 
 ---
 
@@ -191,8 +190,8 @@ verification/{http.go,verification.go} · domainverify/domainverify.go
 **Tests** `users/{repository,bulk,import_adapters}_test.go`, `domainverify/domainverify_test.go` ·
 integration: `identity_modules_test.go`, `flows_test.go`
 
-> **`identity/users` and `identity/tenant` have no package doc comment**, and `tenant`, `groups`,
-> `invitations` and `verification` have **no unit tests** — integration-only.
+`identity/users` and `identity/tenant` still have no package doc comment. Tenant, groups,
+invitations and verification now all have direct package tests in addition to wider flow coverage.
 
 ---
 
@@ -264,7 +263,7 @@ credentials/vc/vc.go         W3C JWT-VC
 **Tests** `agents/agent_test.go`, `api-keys/apikey_test.go`, `webhooks/webhook_test.go`,
 `credentials/secrets/{secret,kms}_test.go` · integration: `agent_test.go`, `ops_dev_modules_test.go`
 
-> **No bounded context imports `developer`.** It is a leaf. `principal/` has no unit test.
+**No bounded context imports `developer`.** It is a leaf. `principal/` has direct package tests.
 
 ---
 
@@ -343,7 +342,7 @@ crypto/envelope/          AES-256-GCM encryption under the data key, key ids for
 crypto/envelope/reseal/   moves stored values to the current key (secrets-reencrypt job)
 crypto/totp/              TOTP codes
 crypto/hibp/              breached-password k-anonymity
-config/config.go          81 env vars + Config.Validate() boot gate
+config/config.go          138 env vars + Config.Validate() boot gate
 database/postgres/pool.go     "owns the single pgx pool shared by every module"
 database/migrations/runner.go //go:embed *.sql
 events/outbox/{outbox,nats}.go
@@ -351,8 +350,8 @@ worker/worker.go · cache/ratelimit/ · messaging/ · observability/ · ai/
 ```
 
 **Tests** `http/httpx/{auth,csrf,middleware}_test.go`, `crypto/tokens/jwt_test.go`,
-`config/config_test.go`, `events/outbox/{outbox,nats}_test.go`, `worker/worker_test.go` — 24 unit
-tests, the densest coverage in the repository
+`config/config_test.go`, `events/outbox/{outbox,nats}_test.go`, `worker/worker_test.go`; platform has
+the repository's broadest direct infrastructure coverage.
 
 > The `errs/` ↔ `error_status_*.go` pairing is 1:1 by domain. A new error domain needs a file in
 > **both**.
@@ -370,18 +369,19 @@ of platform
 **L4 pointers**
 
 ```text
-dependencies.go   505 lines — constructs every service and repository
+dependencies.go   582 lines — constructs every service and repository
 keys.go · mail.go · infra.go · sso.go · adapters.go — its building blocks (keys, message chain, limits, SSO identity, adapters)
-router.go         347 lines — middleware chain, route tree, all mounts
-permissions.go    216 lines — "METHOD /chi/route/pattern" → required permission
-app.go            131 lines — assembly
-lifecycle.go       88 lines — startup / graceful shutdown
-server.go          30 lines — HTTP server
+router.go         705 lines — middleware chain, route tree, all mounts
+permissions.go    561 lines — "METHOD /chi/route/pattern" → route policy
+app.go            241 lines — assembly
+lifecycle.go      196 lines — startup / graceful shutdown
+server.go          37 lines — HTTP server
 ```
 
 `permissions.go` documents its own contract: *"the authorization policy table consumed by
-`rbac.Enforce` … Only end-user principals are gated (API keys / service principals bypass — see
-`rbac.Enforce`); routes absent here are ungated (public, self-service, or tenant-create)."*
+`rbac.Enforce` … Every authenticated route has a `RoutePolicy`; users, application-issued user
+tokens, API keys, service principals and agents are each checked according to that policy. Routes
+absent from the table are denied."*
 
 **Tests** `permissions_test.go` and `openapi_coverage_test.go` walk the production router: every
 authenticated route needs an explicit policy, and every route must be in the OpenAPI spec.

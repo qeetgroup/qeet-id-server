@@ -1,8 +1,9 @@
 # Boundaries — qeet-id-server
 
-**Level:** L2 — repository · **Last verified:** 2026-08-28
-**Verification scope:** ownership derived from the repository tree and from the L1 repository map in
-`qeet-id-context/REPOSITORIES.md`. Boundary rules R1/R2 are enforced by `depguard` in `.golangci.yml`.
+**Level:** L2 — repository · **Last verified:** 2026-11-15
+**Verification scope:** ownership, inputs, outputs and security boundaries were checked against the
+repository at `a552dc34`; the L1 repository map supplies the cross-repository ownership. Boundary
+rules R1/R2 were checked against `depguard` in `.golangci.yml`.
 
 What this repository owns, what it must not touch, and which changes leave it.
 
@@ -53,7 +54,7 @@ artifact.
 | SAML assertions, SCIM calls, LDAP binds | Customer identity providers | per tenant |
 | Social OAuth callbacks | Google, GitHub, Microsoft, Apple, custom | per tenant |
 | Payment webhooks | Stripe, Razorpay | optional |
-| Configuration | 81 environment variables | `DB_URL`, `JWT_SECRET` required |
+| Configuration | 138 environment variables | `DB_URL` plus the environment-specific requirements enforced by `Config.Validate()` |
 | Persistent state | PostgreSQL | **required** |
 
 ## Outputs

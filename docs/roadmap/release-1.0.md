@@ -2,18 +2,28 @@
 
 The ideas for after 1.0 are in [ideas.md](ideas.md); how they fit together is in the [README](README.md).
 
-This epic holds the seven checks Qeet ID 1.0 has to pass before real customers use it. The 1.0 server code is finished and merged into develop and release/1.0.0. These checks prove that it works once deployed, together with the console, the hosted login page and the SDKs.
+> **Status note (verified 15 Nov 2026):** this is the October 2026 release-readiness review and its
+> seven evidence gates, not a live deployment-status page. The code, migration range and branch
+> model have moved since it was written. Re-read the current Jira issues, workflow runs, release
+> branch and deploy/kit state before using a “where things stand” statement below operationally.
+
+This review defines seven checks Qeet ID 1.0 has to pass before real customers use it. The checks
+prove that the selected release candidate works once deployed together with the console, hosted
+login pages and SDKs; a merge or a large unit-test suite is not that evidence.
 
 Unit and database tests show that the code does what it should in isolation. They don't show that a real customer can sign in through the deployed login page, that we can recover from a lost database, or that the service stays up under load. Launching without that evidence means the first customers find the problems for us.
 
 The checks came out of an independent review of the backend in October 2026.
 
-**Where things stand:**
+**Where things stood when reviewed, with the 15 Nov 2026 repository check noted:**
 
-- The 1.0 server code is merged (PRs #533 to #535, 29 October 2026).
-- CI has not run on it yet, because GitHub Actions billing failed (see G-01).
-- Production on AWS is stopped until 1.0 to save cost, so there is no deployed environment yet.
-- The console, hosted login, SDKs and deploy configuration still need the changes that match the new server; those have their own tickets.
+- The October server candidate was merged in PRs #533 to #535 on 29 October 2026. The repository has
+  advanced since then; the exact candidate must be selected again.
+- GitHub records later CI attempts. The latest checked server Verify run (12 Nov 2026, `7cfbe8b7`)
+  failed before recording any steps, so it is not green evidence for the current candidate.
+- Production and staging state are owned by deploy/kit and were not re-verified from this repository.
+- Console, hosted-login, SDK and deploy compatibility must be read from their current repositories
+  and Jira issues rather than inferred from this dated review.
 
 **How to get there:**
 
@@ -43,7 +53,11 @@ completion or from a large feature count.
 
 **Why we need it.** CI is our proof that the released code builds and passes every test and security scan, and that the image we deploy is the one that was tested.
 
-On PR #533 and the release/1.0.0 merges, GitHub refused to start any CI job because the qeetgroup organisation's Actions billing failed ("recent account payments have failed or your spending limit needs to be increased"). So the merged 1.0 code has never had a CI run, and no release image exists. Earlier green runs on a laptop don't cover the final commits.
+On PR #533 and the October `release/1.0.0` merges, GitHub refused to start any CI job because the
+qeetgroup organisation's Actions billing failed. Later workflow attempts exist, but the latest
+server Verify run checked on 15 Nov 2026 failed before recording a step. Neither that attempt nor an
+earlier green run on a laptop proves the current candidate, and this repository does not establish
+that a release image exists.
 
 **What Qeet ID has today:**
 
@@ -54,7 +68,7 @@ On PR #533 and the release/1.0.0 merges, GitHub refused to start any CI job beca
 **Steps:**
 
 - Fix GitHub Actions billing or the spending limit for the qeetgroup organisation (Settings, Billing & plans).
-- Re-run CI on the head of release/1.0.0.
+- Run CI on the exact current release-candidate commit.
 - Fix anything that fails on a branch from develop and merge it the normal way.
 - Record the release-candidate commit, the image digest and the configuration it is meant to run with (supported features and environment variables).
 
@@ -62,7 +76,7 @@ On PR #533 and the release/1.0.0 merges, GitHub refused to start any CI job beca
 
 - All six CI jobs pass on one commit and its release image is published.
 - The commit and image digest are written on this ticket.
-- Any later commit on release/1.0.0 gets a new full run before release.
+- Any later candidate commit gets a new full run before release.
 
 **Depends on:**
 
@@ -112,7 +126,9 @@ Social sign-in (GitHub, Facebook, X, Discord and Apple) has only been tested aga
 
 **Why we need it.** A backup that has never been restored is not one we can rely on. Part of Qeet ID's data is encrypted with keys that rotate, so a restore also needs the right key versions; otherwise stored secrets can't be read.
 
-The 1.0 upgrade adds database migrations 0165 to 0229. Some build indexes while the service keeps running ("concurrently"), and an interrupted build leaves an invalid index that has to be cleaned up before retrying.
+The current candidate adds database migrations through 0233 (232 pairs in total; 0082 is
+intentionally absent). Some build indexes while the service keeps running (`CONCURRENTLY`), and an
+interrupted build can leave an invalid index that has to be cleaned up before retrying.
 
 **What Qeet ID has today:**
 
@@ -125,7 +141,9 @@ The 1.0 upgrade adds database migrations 0165 to 0229. Some build indexes while 
 - Restore a backup into an isolated environment with the encryption and signing key versions it needs.
 - After the restore, check sign-in, reading stored secrets (for example SAML keys and webhook secrets), organisation isolation and audit-chain verification.
 - Measure how much data could be lost (recovery point objective, RPO) and how long recovery takes (recovery time objective, RTO).
-- Run migrations 0165 to 0229 on a copy of production data; interrupt one concurrent index build and recover from it.
+- Run every migration newer than the last production schema through 0233 on a copy of production
+  data; interrupt one concurrent index build and recover from it. Re-read the highest migration when
+  selecting the candidate instead of assuming 0233 remains final.
 - Write down the rollback or roll-forward path.
 
 **Done when:**

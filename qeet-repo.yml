@@ -8,7 +8,7 @@ context:
   type: repository
   level: L2
   canonical: true
-  last_verified: "2026-08-28"
+  last_verified: "2026-11-15"
 
 inheritance:
   organization:
@@ -30,7 +30,7 @@ repository:
 
 runtime:
   language: Go
-  version: "1.26.0"      # go.mod; toolchain go1.27.4
+  version: "1.27.0"      # go.mod; toolchain go1.27.4
   build_image: golang:1.27.4-alpine
   runtime_image: gcr.io/distroless/static-debian13:nonroot
   port: 4001
@@ -75,12 +75,12 @@ contracts:
 data:
   database: postgresql
   driver: pgx/v5
-  query_codegen: sqlc      # 52 queries.sql + sqlc.yaml pairs -> dbgen packages
+  query_codegen: sqlc      # 53 queries.sql + sqlc.yaml pairs -> dbgen packages
   migrations:
     path: internal/platform/database/migrations/
     tool: golang-migrate
     embedded: true         # //go:embed *.sql in runner.go
-    range: "0001..0229"    # 228 pairs; 0082 absent
+    range: "0001..0233"    # 232 pairs; 0082 absent
     schemas: [auth, tenant, "user", rbac, audit, platform, qeetai]
 
 http:
@@ -98,7 +98,7 @@ dependencies:
 
 security:
   tenant_isolation:
-    mechanism: application-layer, backed by row-level security
+    mechanism: principal/path/query enforcement, backed by row-level security
     rls: true              # migration 0160: tenant_isolation on organisation-owned tables, organisation-administration requests only
     guard: internal/platform/http/httpx/auth.go  # EnforceTenantScope, RequireTenant
   authentication: internal/platform/http/httpx/auth.go
