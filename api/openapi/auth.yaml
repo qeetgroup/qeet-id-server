@@ -640,7 +640,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Principal'
+                $ref: '#/components/schemas/CallerPrincipal'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/auth/refresh:
@@ -5920,7 +5920,11 @@ components:
     scimBearer:
       type: http
       scheme: bearer
-      description: 'Per-tenant SCIM provisioning token presented by the IdP: `Authorization: Bearer <scim-token>`. Distinct from user JWTs; rotated via the SCIM admin endpoints.'
+      description: 'An organisation''s SCIM provisioning token, presented by its identity
+        provider: `Authorization: Bearer <scim-token>`. Distinct from user JWTs. An organisation
+        can hold several, managed under /v1/tenants/{tenantID}/scim/tokens. A revoked or
+        expired token, and every token of an organisation that is suspended or due for deletion,
+        is refused with 401.'
     clientCredentials:
       type: oauth2
       description: OAuth 2.0 client credentials. Clients authenticate at the token endpoint via form params (`client_id`/`client_secret`) or HTTP Basic. Revocation/introspection use the same client auth.
@@ -5932,7 +5936,10 @@ components:
       type: apiKey
       in: cookie
       name: qe_ls
-      description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session and consumed by the OAuth authorize/consent flow, and by the few signed-in routes the hosted login calls itself (listing, renaming and adding passkeys). State-changing calls made with it need the CSRF token.
+      description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session
+        and consumed by the OAuth authorize/consent flow, and by the few signed-in routes
+        the hosted login calls itself (listing, renaming and adding passkeys). State-changing
+        calls made with it need the CSRF token.
   responses:
     Overloaded:
       description: The server is too busy to check or set a password or code now, so the request was refused and changed nothing (`server.overloaded`, retryable). Try again after the seconds Retry-After gives, also sent as `metadata.retry_after`.
@@ -5970,11 +5977,12 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Conflict:
-      description: Resource conflict
+      description: Conflicts with the resource's current state, such as a duplicate or an
+        invalid lifecycle transition
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            "$ref": "#/components/schemas/Error"
     Unprocessable:
       description: Validation failed
       content:
@@ -6162,6 +6170,15 @@ components:
               description: Correlates with the X-Request-Id header
     TokenPair:
       type: object
+      required:
+      - access_token
+      - expires_at
+      - idle_expires_at
+      - refresh_token
+      - session_expires_at
+      - session_id
+      - token_type
+      - user_id
       properties:
         access_token:
           type: string
@@ -6176,19 +6193,16 @@ components:
         session_expires_at:
           type: string
           format: date-time
-          description: >-
-            When the session ends however active it is: the organisation's
-            maximum session age from sign-in (the platform default where it
-            sets none). Switching organisation never moves it later.
+          description: 'When the session ends however active it is: the organisation''s
+            maximum session age from sign-in (the platform default where it sets none).
+            Switching organisation never moves it later.'
         idle_expires_at:
           type: string
           format: date-time
-          description: >-
-            When the session ends unless it is renewed before then: the
-            organisation's idle timeout from this sign-in or renewal, never
-            after session_expires_at. Clients can warn the user ahead of either
-            time; the server refuses a renewal after them with 401
-            auth.session_timed_out whatever the client does.
+          description: 'When the session ends unless it is renewed before then: the organisation''s
+            idle timeout from this sign-in or renewal, never after session_expires_at. Clients
+            can warn the user ahead of either time; the server refuses a renewal after them
+            with 401 auth.session_timed_out whatever the client does.'
         session_id:
           type: string
           format: uuid
@@ -6198,8 +6212,9 @@ components:
         tenant_id:
           type: string
           format: uuid
-          nullable: true
-    Principal:
+          description: The organisation the token is scoped to; absent for a session that
+            belongs to no organisation.
+    CallerPrincipal:
       type: object
       properties:
         user_id:
@@ -6685,11 +6700,16 @@ components:
         display_name:
           type: string
           nullable: true
+        avatar_url:
+          type: string
+          nullable: true
+          description: The person's picture as a data:image/ URL, or null for none.
         status:
           type: string
           enum:
-            - active
-            - suspended
+          - active
+          - invited
+          - suspended
         metadata:
           type: object
           additionalProperties: true
@@ -6700,6 +6720,67 @@ components:
         updated_at:
           type: string
           format: date-time
+        roles:
+          type: array
+          items:
+            type: string
+          description: Role names in the tenant reading the user, on the list and GET /v1/users/{id}.
+        assigned_roles:
+          type: array
+          description: The same roles with their IDs.
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+        mfa_enabled:
+          type: boolean
+          description: True if the user has a confirmed TOTP, a verified OTP factor, or
+            a push device; on the list and GET /v1/users/{id}.
+        groups_count:
+          type: integer
+          description: Number of groups the user belongs to in this tenant; on the list
+            and GET /v1/users/{id}.
+        last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Their most recent session activity or sign-in in this tenant, or
+            null; on the list and GET /v1/users/{id}.
+        last_seen_ip:
+          type: string
+          nullable: true
+          description: The address of that session or sign-in, or null.
+        home_tenant_name:
+          type: string
+          nullable: true
+          description: The name of the organisation that manages the account (tenant_id).
+        suspension:
+          type: object
+          nullable: true
+          description: On GET /v1/users/{id}, for a suspended person whose home is this
+            tenant; absent otherwise.
+          properties:
+            reason:
+              type: string
+            source:
+              type: string
+            suspended_at:
+              type: string
+              format: date-time
+              nullable: true
+            suspended_by:
+              type: string
+              format: uuid
+              nullable: true
+              description: The person who last suspended them by hand; null for a suspension
+                by policy or provisioning.
+            suspended_by_email:
+              type: string
+              nullable: true
     Role:
       type: object
       properties:

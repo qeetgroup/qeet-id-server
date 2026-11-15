@@ -3384,7 +3384,11 @@ components:
     scimBearer:
       type: http
       scheme: bearer
-      description: 'Per-tenant SCIM provisioning token presented by the IdP: `Authorization: Bearer <scim-token>`. Distinct from user JWTs; rotated via the SCIM admin endpoints.'
+      description: 'An organisation''s SCIM provisioning token, presented by its identity
+        provider: `Authorization: Bearer <scim-token>`. Distinct from user JWTs. An organisation
+        can hold several, managed under /v1/tenants/{tenantID}/scim/tokens. A revoked or
+        expired token, and every token of an organisation that is suspended or due for deletion,
+        is refused with 401.'
     clientCredentials:
       type: oauth2
       description: OAuth 2.0 client credentials. Clients authenticate at the token endpoint via form params (`client_id`/`client_secret`) or HTTP Basic. Revocation/introspection use the same client auth.
@@ -3396,7 +3400,10 @@ components:
       type: apiKey
       in: cookie
       name: qe_ls
-      description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session and consumed by the OAuth authorize/consent flow.
+      description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session
+        and consumed by the OAuth authorize/consent flow, and by the few signed-in routes
+        the hosted login calls itself (listing, renaming and adding passkeys). State-changing
+        calls made with it need the CSRF token.
   parameters:
     IdempotencyKey:
       name: Idempotency-Key
@@ -3457,11 +3464,12 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Conflict:
-      description: Resource conflict
+      description: Conflicts with the resource's current state, such as a duplicate or an
+        invalid lifecycle transition
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            "$ref": "#/components/schemas/Error"
     Unprocessable:
       description: Validation failed
       content:
@@ -3645,9 +3653,9 @@ components:
         status:
           type: string
           enum:
-            - active
-            - invited
-            - suspended
+          - active
+          - invited
+          - suspended
         metadata:
           type: object
           additionalProperties: true
@@ -3660,7 +3668,8 @@ components:
           format: date-time
         roles:
           type: array
-          items: { type: string }
+          items:
+            type: string
           description: Role names in the tenant reading the user, on the list and GET /v1/users/{id}.
         assigned_roles:
           type: array
@@ -3668,19 +3677,25 @@ components:
           items:
             type: object
             properties:
-              id: { type: string, format: uuid }
-              name: { type: string }
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
         mfa_enabled:
           type: boolean
-          description: True if the user has a confirmed TOTP, a verified OTP factor, or a push device; on the list and GET /v1/users/{id}.
+          description: True if the user has a confirmed TOTP, a verified OTP factor, or
+            a push device; on the list and GET /v1/users/{id}.
         groups_count:
           type: integer
-          description: Number of groups the user belongs to in this tenant; on the list and GET /v1/users/{id}.
+          description: Number of groups the user belongs to in this tenant; on the list
+            and GET /v1/users/{id}.
         last_seen_at:
           type: string
           format: date-time
           nullable: true
-          description: Their most recent session activity or sign-in in this tenant, or null; on the list and GET /v1/users/{id}.
+          description: Their most recent session activity or sign-in in this tenant, or
+            null; on the list and GET /v1/users/{id}.
         last_seen_ip:
           type: string
           nullable: true
@@ -3692,13 +3707,26 @@ components:
         suspension:
           type: object
           nullable: true
-          description: On GET /v1/users/{id}, for a suspended person whose home is this tenant; absent otherwise.
+          description: On GET /v1/users/{id}, for a suspended person whose home is this
+            tenant; absent otherwise.
           properties:
-            reason: { type: string }
-            source: { type: string }
-            suspended_at: { type: string, format: date-time, nullable: true }
-            suspended_by: { type: string, format: uuid, nullable: true, description: The person who last suspended them by hand; null for a suspension by policy or provisioning. }
-            suspended_by_email: { type: string, nullable: true }
+            reason:
+              type: string
+            source:
+              type: string
+            suspended_at:
+              type: string
+              format: date-time
+              nullable: true
+            suspended_by:
+              type: string
+              format: uuid
+              nullable: true
+              description: The person who last suspended them by hand; null for a suspension
+                by policy or provisioning.
+            suspended_by_email:
+              type: string
+              nullable: true
     UserStats:
       type: object
       properties:
@@ -4052,14 +4080,22 @@ components:
           type: string
     TokenPair:
       type: object
-      required: [access_token, expires_at, idle_expires_at, refresh_token, session_expires_at, session_id, token_type, user_id]
+      required:
+      - access_token
+      - expires_at
+      - idle_expires_at
+      - refresh_token
+      - session_expires_at
+      - session_id
+      - token_type
+      - user_id
       properties:
         access_token:
           type: string
-        expires_at:
+        token_type:
           type: string
-          format: date-time
-        idle_expires_at:
+          example: Bearer
+        expires_at:
           type: string
           format: date-time
         refresh_token:
@@ -4067,17 +4103,27 @@ components:
         session_expires_at:
           type: string
           format: date-time
+          description: 'When the session ends however active it is: the organisation''s
+            maximum session age from sign-in (the platform default where it sets none).
+            Switching organisation never moves it later.'
+        idle_expires_at:
+          type: string
+          format: date-time
+          description: 'When the session ends unless it is renewed before then: the organisation''s
+            idle timeout from this sign-in or renewal, never after session_expires_at. Clients
+            can warn the user ahead of either time; the server refuses a renewal after them
+            with 401 auth.session_timed_out whatever the client does.'
         session_id:
+          type: string
+          format: uuid
+        user_id:
           type: string
           format: uuid
         tenant_id:
           type: string
           format: uuid
-        token_type:
-          type: string
-        user_id:
-          type: string
-          format: uuid
+          description: The organisation the token is scoped to; absent for a session that
+            belongs to no organisation.
     AuthenticatorSelection:
       type: object
       properties:
@@ -4130,7 +4176,17 @@ components:
           type: string
     Domain:
       type: object
-      required: [created_at, dns_record_name, dns_record_type, dns_record_value, domain, id, jit_enabled, sso_enabled, status, verification_token]
+      required:
+      - created_at
+      - dns_record_name
+      - dns_record_type
+      - dns_record_value
+      - domain
+      - id
+      - jit_enabled
+      - sso_enabled
+      - status
+      - verification_token
       properties:
         created_at:
           type: string
@@ -4148,7 +4204,8 @@ components:
           format: uuid
         jit_enabled:
           type: boolean
-          description: Single sign-on creates an account at sign-in for an address on the domain that has none.
+          description: Single sign-on creates an account at sign-in for an address on the
+            domain that has none.
         last_checked_at:
           type: string
           format: date-time
@@ -4156,7 +4213,9 @@ components:
           type: string
         sso_enabled:
           type: boolean
-          description: Addresses on the domain sign in only through the organisation's active SAML, LDAP or OpenID Connect connection (break-glass members and administrators single sign-on can't sign in excepted).
+          description: Addresses on the domain sign in only through the organisation's active
+            SAML, LDAP or OpenID Connect connection (break-glass members and administrators
+            single sign-on can't sign in excepted).
         status:
           type: string
         verification_token:

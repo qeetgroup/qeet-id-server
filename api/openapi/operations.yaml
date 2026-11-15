@@ -3882,7 +3882,11 @@ components:
     scimBearer:
       type: http
       scheme: bearer
-      description: 'Per-tenant SCIM provisioning token presented by the IdP: `Authorization: Bearer <scim-token>`. Distinct from user JWTs; rotated via the SCIM admin endpoints.'
+      description: 'An organisation''s SCIM provisioning token, presented by its identity
+        provider: `Authorization: Bearer <scim-token>`. Distinct from user JWTs. An organisation
+        can hold several, managed under /v1/tenants/{tenantID}/scim/tokens. A revoked or
+        expired token, and every token of an organisation that is suspended or due for deletion,
+        is refused with 401.'
     clientCredentials:
       type: oauth2
       description: OAuth 2.0 client credentials. Clients authenticate at the token endpoint via form params (`client_id`/`client_secret`) or HTTP Basic. Revocation/introspection use the same client auth.
@@ -3894,7 +3898,10 @@ components:
       type: apiKey
       in: cookie
       name: qe_ls
-      description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session and consumed by the OAuth authorize/consent flow.
+      description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session
+        and consumed by the OAuth authorize/consent flow, and by the few signed-in routes
+        the hosted login calls itself (listing, renaming and adding passkeys). State-changing
+        calls made with it need the CSRF token.
   responses:
     Overloaded:
       description: The server is too busy to check or set a password or code now, so the request was refused and changed nothing (`server.overloaded`, retryable). Try again after the seconds Retry-After gives, also sent as `metadata.retry_after`.
