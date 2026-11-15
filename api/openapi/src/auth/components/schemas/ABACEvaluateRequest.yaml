@@ -1,0 +1,59 @@
+type: object
+required:
+  - action
+description: >-
+  Input for an ABAC policy evaluation. Subject/resource/context carry the
+  attribute bags.
+properties:
+  subject:
+    type: object
+    description: Subject (caller) attributes, e.g. {"id":"user:123","department":"eng"}.
+    additionalProperties: true
+  resource:
+    type: object
+    description: Resource attributes.
+    properties:
+      type:
+        type: string
+        description: Resource type, e.g. "document".
+      id:
+        type: string
+        description: Resource identifier.
+      attrs:
+        type: object
+        description: >-
+          Additional resource attributes; type and id above win over attributes
+          of those names.
+        additionalProperties: true
+  action:
+    type: string
+    description: The action being attempted, e.g. "read"; policies see it as action.name.
+  action_attrs:
+    type: object
+    description: >-
+      Optional attributes of the action, the action namespace beside action.name
+      (which wins over an attribute of that name), e.g. {"channel":"api"}.
+    additionalProperties: true
+  context:
+    type: object
+    description: Request-context attributes, e.g. {"ip":"1.2.3.4","hour":14}.
+    additionalProperties: true
+  draft:
+    description: >-
+      An unsaved policy to evaluate with the stored ones, writing nothing. It is
+      checked as a save is (name may be left out); with replaces, it stands in
+      for that stored policy. It applies only when enabled and its resource type
+      and action match the request, so a disabled draft only takes the replaced
+      policy out.
+    allOf:
+      - $ref: ./ABACPolicyCreate.yaml
+      - type: object
+        properties:
+          replaces:
+            type:
+              - string
+              - 'null'
+            format: uuid
+            description: >-
+              The stored policy the draft stands in for; one the organisation
+              doesn't have is 404.

@@ -1,0 +1,11 @@
+type: object
+required:
+  - checks
+  - ok
+properties:
+  checks:
+    type: array
+    items:
+      $ref: ./TestCheck.yaml
+  ok:
+    type: boolean

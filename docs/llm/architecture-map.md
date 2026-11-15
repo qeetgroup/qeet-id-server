@@ -199,7 +199,8 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 
 | | |
 |---|---|
-| **OpenAPI 3.1 — 5 documents** | `api/openapi/{auth,management,federation,developer,operations}.yaml` |
+| **OpenAPI 3.1 — 5 documents** (generated, committed) | `api/openapi/{auth,management,federation,developer,operations}.yaml` |
+| OpenAPI sources — edit these, then `make openapi` | `api/openapi/src/<document>/` (`openapi.yaml`, `paths/<tag>/`, `components/`), `api/openapi/src/shared/` |
 | Spec conventions | `api/openapi/README.md` |
 | Postman collection | `api/postman/` |
 | AI tool catalogue | `api/qeetai/tools.manifest.json` |
@@ -210,6 +211,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 |---|---|
 | Unit | `_test.go` beside the source |
 | **OpenAPI route coverage gate** | `internal/bootstrap/openapi_coverage_test.go` |
+| OpenAPI validity and cross-document consistency | `internal/bootstrap/openapi_valid_test.go`, `openapi_consistency_test.go` |
 
 ## Build, CI, deploy
 
@@ -219,7 +221,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Linter config | `.golangci.yml` |
 | Container | `Dockerfile` |
 | Local dependencies | `docker-compose.yml` — postgres :5001, nats :4222, mailpit :8025 |
-| Hosted Verify | `.github/workflows/ci.yml` — build · vet · lint · vulnerability scan · secret scan; no Go tests or sqlc/gosec gate |
+| Hosted Verify | `.github/workflows/ci.yml` — build · vet · lint · vulnerability scan · API contract checks · secret scan; no other Go tests or sqlc/gosec gate |
 | Candidate image (on `release/**`, `hotfix/**`) | `.github/workflows/candidate.yml` |
 | Deploy (merged release or hotfix into `main`) | `.github/workflows/deploy.yml` |
 | Release version from a branch name | `scripts/release/version.sh` |

@@ -15,6 +15,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 type scimFixture struct {
@@ -103,13 +104,14 @@ func TestOperationClassificationAndFilterBounds(test *testing.T) {
 			test.Fatalf("sign-in status %d classified %s/%s, want a critical failure", status, outcome, severity)
 		}
 	}
-	for _, query := range []string{"days=0", "days=91", "limit=0", "limit=101", "offset=-1", "status=invalid"} {
+	for _, query := range []string{"days=0", "days=91", "limit=0", "limit=101", "cursor=not-a-cursor", "status=invalid"} {
 		if _, err := parseEventFilter(httptest.NewRequest(http.MethodGet, "/?"+query, nil)); err == nil {
 			test.Fatalf("accepted invalid filter %s", query)
 		}
 	}
-	filter, err := parseEventFilter(httptest.NewRequest(http.MethodGet, "/?days=30&limit=50&offset=25&status=failed", nil))
-	if err != nil || filter.Limit != 50 || filter.Offset != 25 || filter.Status != "failed" {
+	at, id := time.Date(2026, 11, 15, 10, 0, 0, 0, time.UTC), uuid.New()
+	filter, err := parseEventFilter(httptest.NewRequest(http.MethodGet, "/?days=30&limit=50&cursor="+paging.EncodeTimeUUID(at, id)+"&status=failed", nil))
+	if err != nil || filter.Limit != 50 || !filter.After.Set || !filter.After.Time.Equal(at) || filter.After.ID != id || filter.Status != "failed" {
 		test.Fatalf("invalid parsed filter: %+v %v", filter, err)
 	}
 }

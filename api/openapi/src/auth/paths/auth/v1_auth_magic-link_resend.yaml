@@ -1,0 +1,40 @@
+post:
+  operationId: resendMagicLink
+  summary: Magic link — send a new one
+  description: >-
+    Sends a new sign-in link in place of the one a token names — used, expired
+    or not — to the same address, opening in the same place and continuing the
+    same journey, so the user need not type the address again. Answers the same
+    whatever the token names, and is bounded like the start call (429). As
+    there, the link is stored and emailed after the answer, so whether the email
+    could be delivered does not change it. On a domain whose organisation
+    requires single sign-on, the resend is refused with 403 auth.sso_required
+    and no link is sent (see the SSORequired response).
+  tags:
+    - Auth
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - token
+          properties:
+            token:
+              type: string
+  responses:
+    '200':
+      description: A neutral confirmation message
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+    '403':
+      $ref: ../../components/responses/SSORequired.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

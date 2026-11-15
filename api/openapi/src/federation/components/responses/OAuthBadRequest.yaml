@@ -1,0 +1,8 @@
+description: The token request was refused (RFC 6749 §5.2).
+headers:
+  X-Request-Id:
+    $ref: ../../../shared/headers/RequestId.yaml
+content:
+  application/json:
+    schema:
+      $ref: ../schemas/OAuthError.yaml

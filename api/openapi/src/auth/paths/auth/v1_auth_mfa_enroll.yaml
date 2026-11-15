@@ -1,0 +1,48 @@
+post:
+  operationId: enrollSignInTotp
+  summary: Set up an authenticator app to sign in
+  description: >-
+    For an enrolment challenge — the account must have a second factor and holds
+    none — starts an authenticator app and returns its secret and otpauth://
+    provisioning URL. A code from the app then completes the challenge (POST
+    /v1/auth/mfa or /v1/auth/session/mfa). Calling again replaces the app not
+    yet confirmed. Refused (400) for a challenge that is not an enrolment one;
+    answers mfa challenge expired once the account holds a factor. Used by both
+    sign-in flows.
+  tags:
+    - Auth
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - mfa_token
+          properties:
+            mfa_token:
+              type: string
+  responses:
+    '200':
+      description: OK
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              secret:
+                type: string
+              provisioning_url:
+                type: string
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '503':
+      $ref: ../../../shared/responses/Overloaded.yaml

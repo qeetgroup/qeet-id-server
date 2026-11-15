@@ -1,0 +1,45 @@
+post:
+  operationId: startTrial
+  description: >-
+    Starts a time-limited trial of the requested plan for the tenant and returns
+    the resulting subscription. Scoped to the tenant named in the path. When the
+    trial expires the subscription follows the normal billing lifecycle unless a
+    paid plan is selected first.
+  summary: Start a tenant plan trial
+  tags:
+    - Billing
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - plan_code
+          properties:
+            plan_code:
+              type: string
+              description: >-
+                The plan to try, starter or pro (or their _year plans); any
+                other plan is refused with billing.trial_not_eligible.
+            currency:
+              type: string
+              description: >-
+                ISO 4217 code of a currency the plan is priced in, such as INR;
+                USD when omitted or not a valid code.
+  responses:
+    '200':
+      description: Trial subscription
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/Subscription.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml

@@ -1,0 +1,27 @@
+get:
+  operationId: getAuditAnomalySummary
+  description: >-
+    Returns aggregate counts of detected anomalies for the tenant, including
+    currently open anomalies, those resolved in the last seven days, and the
+    number scored as high severity. Anomalies come from scoring the append-only
+    audit log against a per-actor behavioral baseline. Intended to drive an
+    at-a-glance security dashboard.
+  summary: Audit anomaly summary
+  tags:
+    - Audit
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: '{ open: int, resolved_7d: int, high_score_open: int }'
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/Summary.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml

@@ -1,0 +1,37 @@
+get:
+  operationId: getConsentRequest
+  description: >-
+    Returns the stored authorization request the hosted consent screen is
+    showing: the client and the scopes it asks for. The request must belong to
+    the caller's hosted-login session and be undecided and unexpired; otherwise
+    400 oidc.consent_request_invalid.
+  summary: Authorize request (consent)
+  tags:
+    - OIDC
+  parameters:
+    - in: query
+      name: request_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - ssoCookie: []
+  responses:
+    '200':
+      description: The stored request
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              request_id:
+                type: string
+              client_id:
+                type: string
+              scope:
+                type: string
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml

@@ -1,0 +1,55 @@
+post:
+  operationId: beginPasskeySignUp
+  description: >-
+    Starts the passwordless counterpart to email/password signup, returning the
+    WebAuthn credential-creation options the authenticator needs to mint a
+    passkey. No password is created and no user exists yet; the account is
+    materialized only when the ceremony completes. Finish registration by
+    returning the signed attestation to the passkey-signup finish call. An
+    address already taken is refused, here or at the finish call, with the
+    neutral 422 unprocessable of POST /v1/auth/signup, which does not name the
+    reason; every attempt here takes at least the same minimum time. On a domain
+    whose organisation requires single sign-on, the ceremony is refused with 403
+    auth.sso_required and nothing is created (see the SSORequired response).
+  summary: Passkey-first signup begin (tenant-less)
+  tags:
+    - Passkeys
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - email
+          properties:
+            email:
+              type: string
+            display_name:
+              type: string
+    description: >-
+      Starts a passwordless counterpart to POST /auth/signup — no password is
+      created.
+  responses:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - publicKey
+              - session_id
+            properties:
+              publicKey:
+                $ref: ../../../shared/schemas/PublicKeyCredentialCreationOptions.yaml
+              session_id:
+                type: string
+                format: uuid
+    '403':
+      $ref: ../../components/responses/SSORequired.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -1,0 +1,12 @@
+type: object
+required:
+  - blocked_24h
+  - challenged_24h
+  - threshold
+properties:
+  blocked_24h:
+    type: integer
+  challenged_24h:
+    type: integer
+  threshold:
+    type: number

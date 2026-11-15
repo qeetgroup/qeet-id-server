@@ -1,0 +1,14 @@
+description: Resource not found
+headers:
+  X-Request-Id:
+    $ref: ../headers/RequestId.yaml
+content:
+  application/json:
+    example:
+      error:
+        code: not_found
+        message: We couldn't find what you're looking for.
+        translation_key: not_found
+        request_id: api-1/Kx9fQ2mW7a-000131
+    schema:
+      $ref: ../schemas/Error.yaml

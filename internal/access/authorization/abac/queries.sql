@@ -16,10 +16,12 @@ FROM auth.abac_policies
 WHERE id = @id AND tenant_id = @tenant_id;
 
 -- name: ListAbacPolicies :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, tenant_id, name, description, effect, resource_type, action, condition, priority, enabled, created_at, updated_at, version, updated_by
 FROM auth.abac_policies
 WHERE tenant_id = @tenant_id
-ORDER BY priority DESC, name;
+ORDER BY priority DESC, name
+LIMIT 1001;
 
 -- name: UpdateAbacPolicy :one
 UPDATE auth.abac_policies
@@ -40,11 +42,12 @@ WHERE p.id = @id AND p.tenant_id = @tenant_id;
 
 -- name: ListAbacPolicyVersions :many
 -- A policy's saved versions, newest first.
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT version, name, description, effect, resource_type, action, condition, priority, enabled, saved_by, saved_at
 FROM auth.abac_policy_versions
 WHERE policy_id = @policy_id AND tenant_id = @tenant_id
 ORDER BY version DESC
-LIMIT 200;
+LIMIT 1001;
 
 -- name: GetAbacPolicyVersion :one
 SELECT version, name, description, effect, resource_type, action, condition, priority, enabled, saved_by, saved_at

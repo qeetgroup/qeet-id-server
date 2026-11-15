@@ -1,0 +1,241 @@
+openapi: 3.1.0
+info:
+  title: Qeet ID — Identity Management API
+  version: 0.2.0
+  description: >-
+    Tenants, domains, users, groups, and invitations for Qeet ID.
+
+
+    ## Start here — the tenant lifecycle
+
+
+    1. A newly registered user has **no tenant**. Create one with `POST
+    /v1/tenants`; the caller becomes the tenant **owner**.
+
+    2. (Optional) Prove control of a domain under **Domains** to unlock
+    domain-based features.
+
+    3. Add and manage users, organize them into groups, and invite teammates.
+
+
+    The `register → tenant-less user → create tenant → owner` sequence is the
+    most common early surprise: authentication happens in the Authentication &
+    Access API; tenant creation happens here.
+
+
+    ## Authentication
+
+
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization:
+    ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token),
+    `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session).
+    CSRF protection applies only to cookie sessions (`ssoCookie`): requests
+    authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the
+    client-credentials token exchange (POST /v1/oauth/token) and the directory
+    sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the
+    request. Basic credentials do not bypass it. A request that fails the check
+    is refused with 403 `csrf_failed`.
+
+
+    The responses of tenant creation and invitation acceptance, including
+    accepting with an existing account (sign-in tokens), are sent with
+    `Cache-Control: no-store` and `Pragma: no-cache`.
+
+
+    Every response carries an `X-Request-Id` header naming the request; quote it
+    when reporting a problem. An error body repeats it as `error.request_id`.
+
+
+    ## Related APIs
+
+
+    - **Authentication & Access API** — login, passkeys, MFA, authorization
+
+    - **Federation API** — OIDC/OAuth provider, SAML, SCIM, LDAP, social
+
+    - **Developer API** — API keys, agents, webhooks, vaults
+
+    - **Operations API** — audit, analytics, billing
+
+
+    ## Contract maintenance
+
+
+    This document covers routes mounted by internal/bootstrap/router.go.
+    internal/bootstrap/openapi_coverage_test.go walks the production mount
+    helpers and fails when a mounted operation is undocumented, a documented
+    operation is stale, or API-auth security declarations disagree with runtime
+    classification.
+servers:
+  - url: https://api.id.qeet.in
+    description: Production
+  - url: http://localhost:4001
+    description: Local (make dev)
+tags:
+  - name: Tenants
+    description: Tenant (workspace) CRUD.
+  - name: Domains
+    description: >-
+      Tenant domain ownership — claim a domain, verify it via DNS, and manage
+      verified domains.
+  - name: Users
+    description: User CRUD, password set, and soft-delete recycle bin (restore/purge).
+  - name: Verification
+    description: Email and phone verification flows.
+  - name: Groups
+    description: User groups and membership.
+  - name: Invites
+    description: Tenant member invitations.
+  - name: Branding
+    description: Per-tenant hosted-login branding.
+paths:
+  /v1/me/organizations:
+    $ref: paths/tenants/v1_me_organizations.yaml
+  /v1/tenants:
+    $ref: paths/tenants/v1_tenants.yaml
+  /v1/tenants/{tenantID}:
+    $ref: paths/tenants/v1_tenants_{tenantID}.yaml
+  /v1/tenants/{tenantID}/deletion/cancel:
+    $ref: paths/tenants/v1_tenants_{tenantID}_deletion_cancel.yaml
+  /v1/tenants/{tenantID}/login-domain/check:
+    $ref: paths/domains/v1_tenants_{tenantID}_login-domain_check.yaml
+  /v1/tenants/{tenantID}/login-domain:
+    $ref: paths/domains/v1_tenants_{tenantID}_login-domain.yaml
+  /v1/tenants/{tenantID}/domains:
+    $ref: paths/domains/v1_tenants_{tenantID}_domains.yaml
+  /v1/tenants/{tenantID}/domains/{id}/verify:
+    $ref: paths/domains/v1_tenants_{tenantID}_domains_{id}_verify.yaml
+  /v1/tenants/{tenantID}/domains/{id}:
+    $ref: paths/domains/v1_tenants_{tenantID}_domains_{id}.yaml
+  /v1/tenants/{tenantID}/break-glass-members:
+    $ref: paths/domains/v1_tenants_{tenantID}_break-glass-members.yaml
+  /v1/tenants/{tenantID}/break-glass-members/{userID}:
+    $ref: paths/domains/v1_tenants_{tenantID}_break-glass-members_{userID}.yaml
+  /v1/users/suspended:
+    $ref: paths/users/v1_users_suspended.yaml
+  /v1/users/{id}/reactivate:
+    $ref: paths/users/v1_users_{id}_reactivate.yaml
+  /v1/users/{id}/suspension:
+    $ref: paths/users/v1_users_{id}_suspension.yaml
+  /v1/users/trends:
+    $ref: paths/users/v1_users_trends.yaml
+  /v1/users/stats:
+    $ref: paths/users/v1_users_stats.yaml
+  /v1/users:
+    $ref: paths/users/v1_users.yaml
+  /v1/users/bulk:
+    $ref: paths/users/v1_users_bulk.yaml
+  /v1/users/bulk/import:
+    $ref: paths/users/v1_users_bulk_import.yaml
+  /v1/users/deleted:
+    $ref: paths/users/v1_users_deleted.yaml
+  /v1/users/{id}:
+    $ref: paths/users/v1_users_{id}.yaml
+  /v1/users/{id}/password:
+    $ref: paths/users/v1_users_{id}_password.yaml
+  /v1/users/{id}/mfa:
+    $ref: paths/users/v1_users_{id}_mfa.yaml
+  /v1/users/{id}/trusted-devices:
+    $ref: paths/users/v1_users_{id}_trusted-devices.yaml
+  /v1/users/{id}/trusted-devices/{deviceID}:
+    $ref: paths/users/v1_users_{id}_trusted-devices_{deviceID}.yaml
+  /v1/users/{id}/push-devices:
+    $ref: paths/users/v1_users_{id}_push-devices.yaml
+  /v1/users/{id}/push-devices/{deviceID}:
+    $ref: paths/users/v1_users_{id}_push-devices_{deviceID}.yaml
+  /v1/users/{id}/security:
+    $ref: paths/users/v1_users_{id}_security.yaml
+  /v1/users/{id}/sessions:
+    $ref: paths/users/v1_users_{id}_sessions.yaml
+  /v1/users/{id}/sessions/revoke-all:
+    $ref: paths/users/v1_users_{id}_sessions_revoke-all.yaml
+  /v1/users/{id}/access:
+    $ref: paths/users/v1_users_{id}_access.yaml
+  /v1/users/{id}/mfa-required:
+    $ref: paths/users/v1_users_{id}_mfa-required.yaml
+  /v1/users/{id}/purge:
+    $ref: paths/users/v1_users_{id}_purge.yaml
+  /v1/users/{id}/membership:
+    $ref: paths/users/v1_users_{id}_membership.yaml
+  /v1/users/{id}/restore:
+    $ref: paths/users/v1_users_{id}_restore.yaml
+  /v1/me:
+    $ref: paths/users/v1_me.yaml
+  /v1/users/{id}/verify/email/confirm:
+    $ref: paths/verification/v1_users_{id}_verify_email_confirm.yaml
+  /v1/me/email/change/start:
+    $ref: paths/verification/v1_me_email_change_start.yaml
+  /v1/me/email/change/confirm:
+    $ref: paths/verification/v1_me_email_change_confirm.yaml
+  /v1/users/{id}/verify/email/start:
+    $ref: paths/verification/v1_users_{id}_verify_email_start.yaml
+  /v1/users/{id}/verify/phone/confirm:
+    $ref: paths/verification/v1_users_{id}_verify_phone_confirm.yaml
+  /v1/users/{id}/verify/phone/start:
+    $ref: paths/verification/v1_users_{id}_verify_phone_start.yaml
+  /v1/groups:
+    $ref: paths/groups/v1_groups.yaml
+  /v1/groups/{id}:
+    $ref: paths/groups/v1_groups_{id}.yaml
+  /v1/groups/templates:
+    $ref: paths/groups/v1_groups_templates.yaml
+  /v1/groups/templates/{id}:
+    $ref: paths/groups/v1_groups_templates_{id}.yaml
+  /v1/groups/templates/{id}/apply:
+    $ref: paths/groups/v1_groups_templates_{id}_apply.yaml
+  /v1/groups/import:
+    $ref: paths/groups/v1_groups_import.yaml
+  /v1/groups/{id}/members:
+    $ref: paths/groups/v1_groups_{id}_members.yaml
+  /v1/groups/{id}/members/{userID}:
+    $ref: paths/groups/v1_groups_{id}_members_{userID}.yaml
+  /v1/tenants/{tenantID}/groups:
+    $ref: paths/groups/v1_tenants_{tenantID}_groups.yaml
+  /v1/invites:
+    $ref: paths/invites/v1_invites.yaml
+  /v1/invites/accept:
+    $ref: paths/invites/v1_invites_accept.yaml
+  /v1/invites/lookup:
+    $ref: paths/invites/v1_invites_lookup.yaml
+  /v1/invites/accept/passkey/begin:
+    $ref: paths/invites/v1_invites_accept_passkey_begin.yaml
+  /v1/invites/accept/passkey/finish:
+    $ref: paths/invites/v1_invites_accept_passkey_finish.yaml
+  /v1/me/invites:
+    $ref: paths/invites/v1_me_invites.yaml
+  /v1/me/invites/accept:
+    $ref: paths/invites/v1_me_invites_accept.yaml
+  /v1/me/invites/{id}/accept:
+    $ref: paths/invites/v1_me_invites_{id}_accept.yaml
+  /v1/me/invites/{id}/decline:
+    $ref: paths/invites/v1_me_invites_{id}_decline.yaml
+  /v1/invites/{id}:
+    $ref: paths/invites/v1_invites_{id}.yaml
+  /v1/invites/{id}/resend:
+    $ref: paths/invites/v1_invites_{id}_resend.yaml
+  /v1/tenants/{tenantID}/users/{id}/sessions/{sessionID}:
+    $ref: paths/users/v1_tenants_{tenantID}_users_{id}_sessions_{sessionID}.yaml
+  /v1/tenants/{tenantID}/users/{id}/passkeys:
+    $ref: paths/users/v1_tenants_{tenantID}_users_{id}_passkeys.yaml
+  /v1/tenants/{tenantID}/users/{id}/passkeys/{passkeyID}:
+    $ref: paths/users/v1_tenants_{tenantID}_users_{id}_passkeys_{passkeyID}.yaml
+  /v1/tenants/{tenantID}/users/{id}/sign-ins:
+    $ref: paths/users/v1_tenants_{tenantID}_users_{id}_sign-ins.yaml
+  /v1/tenants/{tenantID}/invites:
+    $ref: paths/invites/v1_tenants_{tenantID}_invites.yaml
+  /v1/branding/{tenantID}/logo:
+    $ref: paths/branding/v1_branding_{tenantID}_logo.yaml
+  /v1/tenants/{tenantID}/branding:
+    $ref: paths/branding/v1_tenants_{tenantID}_branding.yaml
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: ../shared/securitySchemes/bearerAuth.yaml
+    apiKeyAuth:
+      $ref: ../shared/securitySchemes/apiKeyAuth.yaml
+    scimBearer:
+      $ref: ../shared/securitySchemes/scimBearer.yaml
+    clientCredentials:
+      $ref: ../shared/securitySchemes/clientCredentials.yaml
+    ssoCookie:
+      $ref: ../shared/securitySchemes/ssoCookie.yaml

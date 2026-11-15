@@ -1,0 +1,20 @@
+type: object
+description: Paginated activity history response.
+required:
+  - events
+properties:
+  events:
+    type: array
+    items:
+      $ref: ./ActivityEvent.yaml
+  next_cursor:
+    type: string
+    description: >-
+      Opaque cursor for the next page: the time and ID of the last event
+      returned. Present when more results exist; omitted on the last page.
+  total:
+    type: integer
+    description: How many events match, up to 10,000.
+  total_capped:
+    type: boolean
+    description: More than 10,000 events match.

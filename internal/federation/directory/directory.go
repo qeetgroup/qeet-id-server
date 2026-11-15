@@ -17,6 +17,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // Connection is a SCIM or LDAP directory connection, as listed.
@@ -203,5 +204,5 @@ func (handler *Handler) list(response http.ResponseWriter, request *http.Request
 		httpx.WriteError(response, request, err)
 		return
 	}
-	httpx.WriteJSON(response, http.StatusOK, map[string]any{"items": records})
+	httpx.WriteJSON(response, http.StatusOK, paging.List(records))
 }

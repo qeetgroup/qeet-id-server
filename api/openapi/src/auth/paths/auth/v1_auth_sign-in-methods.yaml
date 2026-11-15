@@ -1,0 +1,36 @@
+get:
+  operationId: listMySignInMethods
+  summary: My ways to sign in
+  tags:
+    - Auth
+  security:
+    - bearerAuth: []
+  description: >-
+    How many ways the caller's account can sign in: its password, each passkey,
+    and each linked identity that can still sign in (a SAML or directory link, a
+    social provider its organisation has switched on, or a social account
+    connected to the console account). Resetting a password by email is recovery
+    and is not counted. Removing the last way — a passkey, a connected account,
+    or an administrator unlinking an identity — is refused with 409
+    auth.last_sign_in_method and recorded (auth.sign_in_method_removal_refused);
+    use total to disable or explain that action first.
+  responses:
+    '200':
+      description: The counts
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              password:
+                type: boolean
+              passkeys:
+                type: integer
+              linked_identities:
+                type: integer
+              total:
+                type: integer
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

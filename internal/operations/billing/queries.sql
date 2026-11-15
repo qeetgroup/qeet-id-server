@@ -174,13 +174,14 @@ RETURNING tenant_id, plan_code, currency, amount_minor,
 
 -- name: ListInvoices :many
 -- Return the tenant's billing history, most recent first.
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, plan_code, currency, amount_minor, status, period_start, period_end, issued_at,
        taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply,
        invoice_number, kind, due_at, paid_at, billed_to, supplier_gstin, sac, emailed_at
 FROM tenant.invoices
 WHERE tenant_id = @tenant_id
 ORDER BY issued_at DESC
-LIMIT 100;
+LIMIT 1001;
 
 -- name: UpsertBillingPlan :one
 -- Idempotent seed upsert for the built-in plan catalogue.

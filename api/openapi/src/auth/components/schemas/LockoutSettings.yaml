@@ -1,0 +1,8 @@
+type: object
+properties:
+  threshold:
+    type: integer
+  window_minutes:
+    type: integer
+  duration_minutes:
+    type: integer

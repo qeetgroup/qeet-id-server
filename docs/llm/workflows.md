@@ -37,7 +37,7 @@ staging or production.
 5  wire it                         internal/bootstrap/dependencies.go
 6  mount it                        internal/bootstrap/router.go
 7  permission                      internal/bootstrap/permissions.go
-8  OpenAPI                         api/openapi/<context>.yaml     ← LOCAL TEST GATE FAILS WITHOUT THIS
+8  OpenAPI                         api/openapi/src/<context>/paths/<tag>/ + make openapi  ← LOCAL TEST GATE FAILS WITHOUT THIS
 9  tests                           unit
 10 verify                          make test
 ```
@@ -57,8 +57,10 @@ genuinely unauthenticated endpoints, and say why in the code.
 path or body, and carry `WHERE tenant_id = $1` into every query.
 
 **The coverage test will fail** if the route is not in an OpenAPI document —
-`internal/bootstrap/openapi_coverage_test.go`. It runs in the local `make ci` gate; hosted Verify
-does not run the Go test suites.
+`internal/bootstrap/openapi_coverage_test.go`. Add the path file under `api/openapi/src/`, list it
+in that document's `openapi.yaml` next to its tag's other paths, and run `make openapi`
+(`api/openapi/README.md`). It runs in the local `make ci` gate and in hosted
+Verify, which runs the API contract checks but not the other Go test suites.
 
 A new authenticated route **refuses access tokens issued to applications** (they carry `client_id`)
 by default: they are for the application's own use, not account or organisation management. Only routes
@@ -109,7 +111,7 @@ with why. `TestTenantTablesHaveRowSecurity` fails otherwise. A new schema needs 
 1  read the product flow           qeet-id-context/FLOWS/authentication.md  (what it should do)
 2  find the implementation         internal/access/{authentication,passkeys,mfa,recovery}/
 3  check session/token impact      does it change qe_ls, qe_td, or token claims?
-4  check API impact                api/openapi/auth.yaml
+4  check API impact                api/openapi/src/auth/
 5  security review                 SECURITY.md + qeet-context/SECURITY.md
 6  tests                           unit
 7  cross-repo                      qeet-id-context/CHANGE-MATRIX.md
@@ -199,7 +201,7 @@ tenant explicitly through the job payload.
 3  discovery impact                does the discovery document change? → every RP
 4  claims impact                   → EVERY Qeet product and external RPs
 5  spec conformance                cite the RFC; do not improvise
-6  api/openapi/federation.yaml
+6  api/openapi/src/federation/ + make openapi
 7  tests                           unit
 8  cross-repo                      qeet-id-context/CHANGE-MATRIX.md — coordinate BEFORE merging
 ```
@@ -218,7 +220,7 @@ There are **two token endpoints** — `/v1/oauth/token-code` (all OIDC grants) a
 2  internal/federation/<protocol>/
 3  parser safety                   SAML XML, SCIM payloads and LDAP responses are UNTRUSTED input
 4  spec conformance                cite the RFC or the SCIM/SAML profile — do not improvise
-5  api/openapi/federation.yaml
+5  api/openapi/src/federation/ + make openapi
 6  tests                           unit
 7  external impact                 a customer's Okta/Entra tenant is configured against this
 ```

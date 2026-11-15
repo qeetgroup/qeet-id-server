@@ -1,0 +1,30 @@
+type: object
+required:
+  - authorize_url
+  - client_id
+  - created_at
+  - id
+  - provider
+  - scopes
+  - token_url
+  - updated_at
+properties:
+  authorize_url:
+    type: string
+  client_id:
+    type: string
+  created_at:
+    type: string
+    format: date-time
+  id:
+    type: string
+    format: uuid
+  provider:
+    type: string
+  scopes:
+    type: string
+  token_url:
+    type: string
+  updated_at:
+    type: string
+    format: date-time

@@ -1,0 +1,25 @@
+post:
+  operationId: completeSandboxCheckout
+  description: >-
+    Completes the referenced checkout along the same path a real payment webhook
+    would take, then redirects the browser to the validated success URL. Returns
+    404 when the sandbox provider is not enabled. Used only in local development
+    to exercise the redirect-then-success flow without a payment account.
+  summary: Complete a development-only sandbox checkout
+  tags:
+    - Billing
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/x-www-form-urlencoded:
+        schema:
+          type: object
+          additionalProperties: true
+  responses:
+    '302':
+      description: Redirect to checkout success URL
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '413':
+      description: Form body too large

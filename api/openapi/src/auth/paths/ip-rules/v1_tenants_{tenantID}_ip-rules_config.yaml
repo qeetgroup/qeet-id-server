@@ -1,0 +1,59 @@
+put:
+  operationId: setIpRuleEnforcement
+  summary: Set enforcement
+  tags:
+    - IP Rules
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - enabled
+          properties:
+            enabled:
+              type: boolean
+  description: >-
+    Turns the organisation's address rules on or off ({"enabled": bool}). While
+    they are on, every sign-in to the organisation (password, passkey, magic
+    link, social, SAML, LDAP, invitation, organisation switch, application
+    authorization, device approval and the device's token collection) and every
+    session renewal asks them first. An address is refused when a deny rule
+    matches it, or when allow rules exist and none matches; deny wins. An
+    address that can't be read is refused. A refusal answers 403
+    auth.address_not_allowed (access_denied to an application), names no rule,
+    and is audited as auth.address_refused with the rule responsible, the
+    address and the path. Off, nothing is checked. Switching them on is refused
+    with 409 risk.rules_lock_out_caller when they would refuse the address the
+    request comes from (as are adding or removing a rule while they are on, when
+    the result would), so an admin can't lock themselves out; the console calls
+    from its own server, so its address must stay allowed. Switching them off
+    always works.
+  responses:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - enabled
+            properties:
+              enabled:
+                type: boolean
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -4,9 +4,11 @@ package user
 
 import (
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -365,5 +367,60 @@ func TestMemberFromElsewhereIsReadOnly(t *testing.T) {
 	}
 	if n := liveSessions(t, member.ID); n != 1 {
 		t.Errorf("another organisation's refused actions left %d live sessions, want 1", n)
+	}
+}
+
+// TestSuspendedPagesFollowTheirOrder checks that paging the suspended list by
+// its cursor reads every account once and in order: the newest suspension
+// first, ties by id, then the accounts another organisation manages, which
+// carry no suspension time, by id.
+func TestSuspendedPagesFollowTheirOrder(t *testing.T) {
+	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	at := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	type dated struct {
+		id uuid.UUID
+		at time.Time
+	}
+	var own []dated
+	for _, when := range []time.Time{at, at.Add(time.Hour), at.Add(time.Hour)} {
+		u := dbtest.User(t, tenant, tenant)
+		exec(t, `UPDATE "user".users SET status = 'suspended', suspended_at = $2 WHERE id = $1`, u.ID, when)
+		own = append(own, dated{u.ID, when})
+	}
+	var guests []uuid.UUID
+	for range 2 {
+		g := dbtest.User(t, other, other, tenant)
+		exec(t, `UPDATE "user".users SET status = 'suspended', suspended_at = now() WHERE id = $1`, g.ID)
+		guests = append(guests, g.ID)
+	}
+	slices.SortFunc(own, func(a, b dated) int {
+		if c := b.at.Compare(a.at); c != 0 {
+			return c
+		}
+		return strings.Compare(a.id.String(), b.id.String())
+	})
+	slices.SortFunc(guests, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
+	var want []uuid.UUID
+	for _, d := range own {
+		want = append(want, d.id)
+	}
+	want = append(want, guests...)
+
+	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)
+	var got []uuid.UUID
+	query := "?limit=2"
+	for range len(want) + 1 {
+		page := suspendedPage(t, as, query)
+		for _, u := range page.Items {
+			got = append(got, u.ID)
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		query = "?limit=2&cursor=" + url.QueryEscape(page.NextCursor)
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("paged %v, want %v", got, want)
 	}
 }

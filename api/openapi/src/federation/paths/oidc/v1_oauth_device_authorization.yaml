@@ -1,0 +1,45 @@
+post:
+  operationId: startDeviceAuthorization
+  summary: Device authorization
+  description: >-
+    Client-authenticated endpoint for input-constrained (CLI/TV/IoT) clients.
+    Returns a (device_code, user_code) pair plus the verification URIs; the
+    device then polls /v1/oauth/token-code with
+    grant_type=urn:ietf:params:oauth:grant-type:device_code. A client not
+    registered for the urn:ietf:params:oauth:grant-type:device_code grant is
+    refused with unauthorized_client, here and when polling.
+  tags:
+    - OIDC
+  security:
+    - clientCredentials: []
+  requestBody:
+    required: true
+    content:
+      application/x-www-form-urlencoded:
+        schema:
+          type: object
+          required:
+            - client_id
+          properties:
+            client_id:
+              type: string
+            client_secret:
+              type: string
+            scope:
+              type: string
+  responses:
+    '200':
+      description: Device authorization response
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/DeviceAuthorizationResponse.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml

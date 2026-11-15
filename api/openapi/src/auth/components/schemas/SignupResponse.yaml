@@ -1,0 +1,20 @@
+type: object
+properties:
+  user:
+    $ref: ../../../shared/schemas/User.yaml
+  access_token:
+    type: string
+  token_type:
+    type: string
+    example: Bearer
+  expires_at:
+    type: string
+    format: date-time
+  refresh_token:
+    type: string
+  session_id:
+    type: string
+    format: uuid
+  user_id:
+    type: string
+    format: uuid

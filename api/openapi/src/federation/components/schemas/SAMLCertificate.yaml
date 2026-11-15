@@ -1,0 +1,38 @@
+type: object
+properties:
+  id:
+    type: string
+    format: uuid
+  certificate:
+    type: string
+    description: PEM or base64 DER X.509 certificate
+  subject:
+    type: string
+    description: The certificate's subject; empty if it doesn't parse.
+  fingerprint_sha256:
+    type: string
+    description: SHA-256 fingerprint as colon-separated hex; empty if it doesn't parse.
+  not_before:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  not_after:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: >-
+      When the certificate expires; an assertion it signed is refused after
+      then.
+  source:
+    type: string
+    enum:
+      - manual
+      - metadata
+    description: >-
+      Whether an administrator added the certificate or the IdP's metadata
+      listed it.
+  created_at:
+    type: string
+    format: date-time

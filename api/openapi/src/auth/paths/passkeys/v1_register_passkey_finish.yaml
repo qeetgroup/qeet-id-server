@@ -1,0 +1,61 @@
+post:
+  operationId: finishPasskeySignUpInOrganization
+  description: >-
+    Completes passwordless hosted signup by verifying the authenticator
+    attestation and creating the user in the ceremony's tenant with the passkey
+    as its credential. On success it sets the hosted-login SSO cookie so the
+    browser continues into the OAuth authorize and consent flow rather than
+    returning bearer tokens. The account is passwordless and its passkey
+    satisfies MFA on its own. A body not sent as JSON is refused (415
+    unsupported_media_type). A ceremony finished after the organisation switched
+    passkeys off is refused with 403 passkey.disabled and nothing is created. An
+    address already taken is refused with the neutral 422 unprocessable of POST
+    /v1/auth/signup, which does not name the reason, and nothing is created.
+  summary: Passkey-first signup finish (tenant-scoped hosted signup)
+  tags:
+    - Passkeys
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - session_id
+            - credential
+          properties:
+            session_id:
+              type: string
+            credential:
+              type: object
+              additionalProperties: true
+            name:
+              type: string
+    description: >-
+      Verifies the attestation, creates the user in the ceremony's tenant, and
+      sets the hosted-login SSO cookie.
+  responses:
+    '201':
+      description: Created
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - user_id
+            properties:
+              user_id:
+                type: string
+                format: uuid
+    '415':
+      $ref: ../../components/responses/UnsupportedMediaType.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

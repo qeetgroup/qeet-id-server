@@ -1,0 +1,58 @@
+get:
+  operationId: startOidcConnectionSignIn
+  description: >-
+    Begins a sign-in through an OpenID Connect connection: it records the
+    sign-in's state, PKCE verifier (S256) and nonce, sets an HttpOnly cookie
+    binding the sign-in to this browser, and redirects the browser to the
+    provider's authorization endpoint, which must be https, asking for the
+    connection's scopes. The provider sends the browser back to GET
+    /v1/oidc-connections/{id}/callback. Only an active connection signs anyone
+    in: a draft one answers 403 oidc_connection.connection_draft and a disabled
+    one 403 oidc_connection.connection_disabled. A provider that can't be
+    reached answers 502 oidc_connection.provider_unreachable; a discovery
+    document that can't be used, or whose issuer isn't the connection's (unless
+    it serves many tenants and the connection lists those it accepts), 500
+    oidc_connection.misconfigured. The organisation's plan must include
+    enterprise SSO (402 billing.upgrade_required). Unauthenticated.
+  summary: Begin OIDC sign-in (public)
+  tags:
+    - OIDC Connections
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: return_to
+      in: query
+      required: false
+      description: >-
+        For a sign-in started on the hosted login, where the browser goes back
+        to once it's signed in (the application's authorize request): a path, or
+        an absolute URL on an allowed origin (400
+        oidc_connection.return_to_invalid otherwise). The provider's answer then
+        returns to the hosted login's /sign-in with the one-time code in the URL
+        fragment, for POST /v1/oidc-connections/session.
+      schema:
+        type: string
+  security: []
+  responses:
+    '302':
+      description: Redirect to the provider's authorization endpoint
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '402':
+      description: >-
+        The organisation's plan does not include enterprise SSO
+        (`billing.upgrade_required`).
+      content:
+        application/json:
+          schema:
+            $ref: ../../../shared/schemas/Error.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

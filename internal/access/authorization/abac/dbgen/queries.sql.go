@@ -194,8 +194,10 @@ SELECT id, tenant_id, name, description, effect, resource_type, action, conditio
 FROM auth.abac_policies
 WHERE tenant_id = $1
 ORDER BY priority DESC, name
+LIMIT 1001
 `
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListAbacPolicies(ctx context.Context, tenantID uuid.UUID) ([]AuthAbacPolicy, error) {
 	rows, err := q.db.Query(ctx, listAbacPolicies, tenantID)
 	if err != nil {
@@ -236,7 +238,7 @@ SELECT version, name, description, effect, resource_type, action, condition, pri
 FROM auth.abac_policy_versions
 WHERE policy_id = $1 AND tenant_id = $2
 ORDER BY version DESC
-LIMIT 200
+LIMIT 1001
 `
 
 type ListAbacPolicyVersionsParams struct {
@@ -259,6 +261,7 @@ type ListAbacPolicyVersionsRow struct {
 }
 
 // A policy's saved versions, newest first.
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListAbacPolicyVersions(ctx context.Context, arg ListAbacPolicyVersionsParams) ([]ListAbacPolicyVersionsRow, error) {
 	rows, err := q.db.Query(ctx, listAbacPolicyVersions, arg.PolicyID, arg.TenantID)
 	if err != nil {

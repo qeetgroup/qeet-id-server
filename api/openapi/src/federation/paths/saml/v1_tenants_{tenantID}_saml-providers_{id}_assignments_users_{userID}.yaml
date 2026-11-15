@@ -1,0 +1,78 @@
+post:
+  operationId: assignSamlAppToUser
+  description: >-
+    Assigns a person to one of the tenant's downstream Service Providers, so an
+    SP with assignment_required signs them in. Only a person whose home is the
+    tenant can be assigned, the only people its SPs sign in: anyone else,
+    including another tenant's, is refused with 404 saml.assignee_not_found.
+    Assigning someone already assigned changes nothing. The assignment is
+    audited as saml.sp_user_assigned, and needs a recent step-up.
+  summary: Assign a person to a SAML SP
+  tags:
+    - SAML
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: userID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '204':
+      description: Assigned
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+delete:
+  operationId: unassignSamlAppFromUser
+  description: >-
+    Removes a person's own assignment to one of the tenant's downstream Service
+    Providers; one through a group they belong to stays. A person not assigned
+    themselves answers 404. The removal is audited as saml.sp_user_unassigned,
+    and needs a recent step-up.
+  summary: Unassign a person from a SAML SP
+  tags:
+    - SAML
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: userID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '204':
+      description: Unassigned
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

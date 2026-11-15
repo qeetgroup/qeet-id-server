@@ -2,10 +2,12 @@
 -- Static queries against tenant.log_sinks and audit.events live here and are
 -- compiled by sqlc into ./dbgen.
 -- name: ListLogSinks :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, type, endpoint, enabled, last_forwarded_at, last_error, created_at
 FROM tenant.log_sinks
 WHERE tenant_id = @tenant_id
-ORDER BY created_at DESC;
+ORDER BY created_at DESC
+LIMIT 1001;
 
 -- name: SetLogSinkEnabled :execrows
 UPDATE tenant.log_sinks

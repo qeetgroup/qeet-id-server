@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -26,6 +27,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
@@ -105,10 +107,17 @@ func TestEventStoreTenantIsolationAndAlerts(test *testing.T) {
 	if notifications != 1 {
 		test.Fatalf("alert throttle produced %d notifications, want 1", notifications)
 	}
-	filter := eventFilter{Since: time.Now().Add(-time.Hour), Status: "failed", Limit: 1, Offset: 1}
+	filter := eventFilter{Since: time.Now().Add(-time.Hour), Status: "failed", Limit: 1}
+	first, err := service.Events(ctx, tenantID, filter)
+	if err != nil || first.Total != 2 || len(first.Items) != 1 || first.NextCursor == "" {
+		test.Fatalf("first page: %+v %v", first, err)
+	}
+	if filter.After, err = paging.ParseCursor(url.Values{"cursor": {first.NextCursor}}); err != nil {
+		test.Fatal(err)
+	}
 	page, err = service.Events(ctx, tenantID, filter)
-	if err != nil || page.Total != 2 || len(page.Items) != 1 {
-		test.Fatalf("pagination/filter mismatch: %+v %v", page, err)
+	if err != nil || page.Total != 2 || len(page.Items) != 1 || page.Items[0].ID == first.Items[0].ID || page.NextCursor != "" {
+		test.Fatalf("second page: %+v %v; want the other failed event and no further page", page, err)
 	}
 	connections, err := service.List(ctx, tenantID)
 	if err != nil {

@@ -7,10 +7,12 @@ VALUES (@tenant_id, @user_id, @name, @prefix, @key_hash, @scopes, @expires_at, s
 RETURNING id, tenant_id, user_id, name, prefix, scopes, expires_at, last_used_at, revoked_at, created_at, created_by, rotated_from;
 
 -- name: ListAPIKeys :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, tenant_id, user_id, name, prefix, scopes, expires_at, last_used_at, revoked_at, created_at, created_by, rotated_from
 FROM auth.api_keys
 WHERE tenant_id = $1
-ORDER BY created_at DESC;
+ORDER BY created_at DESC
+LIMIT 1001;
 
 -- CountActiveAPIKeys counts a tenant's non-revoked keys — the plan-limit check.
 -- name: CountActiveAPIKeys :one

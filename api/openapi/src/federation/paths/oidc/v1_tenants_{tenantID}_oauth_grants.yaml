@@ -1,0 +1,69 @@
+get:
+  operationId: listOauthGrants
+  description: >-
+    Lists the active consent grants the tenant's users have given to OIDC
+    clients, for administrative review, latest used first, a page at a time:
+    next_cursor fetches the next page and total counts every grant matching the
+    filter. Each names its application and person, when it began
+    (authorized_at), when the application was last issued tokens under it
+    (last_used_at), and when the person last consented to the application
+    (consented_at, null for an application that asks for none). Revoke a grant
+    with the delete endpoint, or several, or every grant of one application,
+    with the revoke endpoint, to force the client to obtain consent again on its
+    next authorization request.
+  summary: List active grants
+  tags:
+    - OIDC
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: client_id
+      in: query
+      required: false
+      description: Only the grants given to this application.
+      schema:
+        type: string
+    - name: limit
+      in: query
+      required: false
+      description: Page size, 1 to 500; 100 by default.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+    - name: cursor
+      in: query
+      required: false
+      description: The next_cursor of the previous page.
+      schema:
+        type: string
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Consent grants
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+              - total
+            properties:
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/Grant.yaml
+              next_cursor:
+                type: string
+                description: Present when there is another page.
+              total:
+                type: integer
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

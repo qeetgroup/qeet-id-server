@@ -1,0 +1,40 @@
+type: object
+required:
+  - name
+  - effect
+  - resource_type
+  - action
+properties:
+  name:
+    type: string
+    minLength: 1
+  description:
+    type: string
+  effect:
+    type: string
+    enum:
+      - allow
+      - deny
+  resource_type:
+    type: string
+    description: Resource type to match; '*' matches any resource type.
+    minLength: 1
+  action:
+    type: string
+    description: Action to match; '*' matches any action.
+    minLength: 1
+  condition:
+    type: object
+    description: >-
+      Optional condition tree. Omit or send {} for unconditional. Same grammar
+      as ABACPolicy.condition, including attribute references; a malformed
+      condition or reference is refused with 422 abac.condition_invalid.
+    additionalProperties: true
+  priority:
+    type: integer
+    default: 0
+    description: Higher priority policies are evaluated first.
+  enabled:
+    type: boolean
+    default: false
+    description: Whether the policy is evaluated; left out, it is saved disabled.

@@ -1,0 +1,79 @@
+type: object
+required:
+  - created_at
+  - disabled_at
+  - events
+  - id
+  - tenant_id
+  - url
+properties:
+  created_at:
+    type: string
+    format: date-time
+  disabled_at:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  disabled_reason:
+    type:
+      - string
+      - 'null'
+    enum:
+      - disabled
+      - failing
+      - null
+    description: Who disabled it, an administrator (disabled) or its failures (failing).
+  events:
+    type: array
+    items:
+      type: string
+  failing_since:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: When deliveries started failing, with no success since.
+  id:
+    type: string
+    format: uuid
+  previous_secret_expires_at:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: Until when the secret replaced by the last rotation also signs deliveries.
+  secret:
+    type: string
+  tenant_id:
+    type: string
+    format: uuid
+  url:
+    type: string
+  disabled_by:
+    type: string
+    format: uuid
+    description: The administrator who disabled it.
+  last_delivered_at:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: Its latest delivery.
+  last_status_code:
+    type:
+      - integer
+      - 'null'
+    description: The status its endpoint answered last.
+  counts:
+    type: object
+    description: >-
+      Its deliveries not yet tried (held while it is disabled), retrying, and
+      given up.
+    properties:
+      pending:
+        type: integer
+      retrying:
+        type: integer
+      gave_up:
+        type: integer

@@ -1,0 +1,61 @@
+post:
+  operationId: createLdapSession
+  summary: Hosted sign-in session (public)
+  description: >-
+    POST /ldap/{id}/authenticate for the hosted login: the same checks, answered
+    as POST /v1/auth/session is, with the hosted-login session cookie (qe_ls)
+    and the user's id, or the challenge to complete first at POST
+    /v1/auth/session/mfa. Mounted at the root, not under /v1, and
+    unauthenticated; CSRF-checked.
+  tags:
+    - LDAP
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - username
+            - password
+          properties:
+            username:
+              type: string
+            password:
+              type: string
+              format: password
+  responses:
+    '200':
+      description: >-
+        Signed in to the hosted login (the qe_ls cookie is set and the user's id
+        answered), or the challenge to complete at POST /v1/auth/session/mfa.
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '402':
+      description: >-
+        The organisation's plan does not include LDAP
+        (billing.upgrade_required).
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

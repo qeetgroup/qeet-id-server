@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const activeSuppression = `-- name: ActiveSuppression :one
@@ -124,13 +125,17 @@ const listMessagesTo = `-- name: ListMessagesTo :many
 SELECT id, template, status, status_reason, sent_at, updated_at
 FROM platform.email_messages
 WHERE tenant_id = $1 AND to_hash = $2
-ORDER BY sent_at DESC
-LIMIT $3
+  AND ($3::timestamptz IS NULL OR sent_at < $3
+       OR (sent_at = $3 AND id < $4::uuid))
+ORDER BY sent_at DESC, id DESC
+LIMIT $5
 `
 
 type ListMessagesToParams struct {
 	TenantID uuid.NullUUID
 	ToHash   string
+	BeforeTs pgtype.Timestamptz
+	BeforeID uuid.NullUUID
 	Lim      int32
 }
 
@@ -144,7 +149,13 @@ type ListMessagesToRow struct {
 }
 
 func (q *Queries) ListMessagesTo(ctx context.Context, arg ListMessagesToParams) ([]ListMessagesToRow, error) {
-	rows, err := q.db.Query(ctx, listMessagesTo, arg.TenantID, arg.ToHash, arg.Lim)
+	rows, err := q.db.Query(ctx, listMessagesTo,
+		arg.TenantID,
+		arg.ToHash,
+		arg.BeforeTs,
+		arg.BeforeID,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -174,12 +185,16 @@ const listSuppressions = `-- name: ListSuppressions :many
 SELECT id, address_hint, reason, detail, created_at
 FROM platform.email_suppressions
 WHERE tenant_id = $1 AND cleared_at IS NULL
-ORDER BY created_at DESC
-LIMIT $2
+  AND ($2::timestamptz IS NULL OR created_at < $2
+       OR (created_at = $2 AND id < $3::uuid))
+ORDER BY created_at DESC, id DESC
+LIMIT $4
 `
 
 type ListSuppressionsParams struct {
 	TenantID uuid.NullUUID
+	BeforeTs pgtype.Timestamptz
+	BeforeID uuid.NullUUID
 	Lim      int32
 }
 
@@ -192,7 +207,12 @@ type ListSuppressionsRow struct {
 }
 
 func (q *Queries) ListSuppressions(ctx context.Context, arg ListSuppressionsParams) ([]ListSuppressionsRow, error) {
-	rows, err := q.db.Query(ctx, listSuppressions, arg.TenantID, arg.Lim)
+	rows, err := q.db.Query(ctx, listSuppressions,
+		arg.TenantID,
+		arg.BeforeTs,
+		arg.BeforeID,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -1,0 +1,10 @@
+type: object
+properties:
+  authenticatorAttachment:
+    type: string
+  requireResidentKey:
+    type: boolean
+  residentKey:
+    type: string
+  userVerification:
+    type: string

@@ -1,0 +1,12 @@
+type: object
+required:
+  - dau
+  - wau
+  - week
+properties:
+  dau:
+    type: integer
+  wau:
+    type: integer
+  week:
+    type: string

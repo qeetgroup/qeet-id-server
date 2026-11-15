@@ -1,0 +1,12 @@
+type: object
+required:
+  - enrolled
+  - remaining
+  - total
+properties:
+  enrolled:
+    type: boolean
+  remaining:
+    type: integer
+  total:
+    type: integer

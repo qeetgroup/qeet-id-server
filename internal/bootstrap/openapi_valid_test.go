@@ -10,17 +10,26 @@ import (
 	validator "github.com/pb33f/libopenapi-validator"
 )
 
+// openAPIDocuments are the API documents in api/openapi, one per bounded context.
+var openAPIDocuments = []string{"auth.yaml", "management.yaml", "federation.yaml", "developer.yaml", "operations.yaml"}
+
+// openAPIDir is the api/openapi directory, found from this file so the tests
+// run from any working directory.
+func openAPIDir(t *testing.T) string {
+	t.Helper()
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate the OpenAPI documents")
+	}
+	return filepath.Join(filepath.Dir(source), "..", "..", "api", "openapi")
+}
+
 // TestOpenAPIDocumentsAreValid checks every OpenAPI document against the
 // OpenAPI 3.1 schema, and that every $ref in it resolves.
 func TestOpenAPIDocumentsAreValid(t *testing.T) {
-	_, source, _, _ := runtime.Caller(0)
-	files, err := filepath.Glob(filepath.Join(filepath.Dir(source), "..", "..", "api", "openapi", "*.yaml"))
-	if err != nil || len(files) < 5 {
-		t.Fatalf("found %d OpenAPI documents (%v)", len(files), err)
-	}
-	for _, file := range files {
-		t.Run(filepath.Base(file), func(t *testing.T) {
-			raw, err := os.ReadFile(file)
+	for _, name := range openAPIDocuments {
+		t.Run(name, func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join(openAPIDir(t), name))
 			if err != nil {
 				t.Fatal(err)
 			}

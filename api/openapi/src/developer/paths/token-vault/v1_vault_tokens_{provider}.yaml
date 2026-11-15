@@ -1,0 +1,25 @@
+delete:
+  operationId: disconnectAccount
+  description: >-
+    Disconnects the current user's stored third-party account for a provider,
+    deleting the vaulted tokens.
+  summary: Disconnect a third-party account
+  tags:
+    - Token Vault
+  parameters:
+    - name: provider
+      in: path
+      required: true
+      schema:
+        type: string
+  security:
+    - bearerAuth: []
+  responses:
+    '204':
+      description: No Content
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

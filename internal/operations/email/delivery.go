@@ -11,6 +11,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery"
 )
 
@@ -47,12 +48,18 @@ func (h *DeliveryHandler) messages(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("to must be an email address"))
 		return
 	}
-	items, err := h.Store.MessagesTo(r.Context(), tenantID, to.Address, listLimit(r))
+	after, err := paging.ParseCursor(r.URL.Query())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out := map[string]any{"items": items, "suppression": nil}
+	items, next, err := h.Store.MessagesTo(r.Context(), tenantID, to.Address, listLimit(r), after)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out := paging.Page(items, next)
+	out["suppression"] = nil
 	sup, err := h.Store.Suppressed(r.Context(), to.Address)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -77,12 +84,17 @@ func (h *DeliveryHandler) suppressions(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	items, err := h.Store.Suppressions(r.Context(), tenantID, listLimit(r))
+	after, err := paging.ParseCursor(r.URL.Query())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+	items, next, err := h.Store.Suppressions(r.Context(), tenantID, listLimit(r), after)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, paging.Page(items, next))
 }
 
 func (h *DeliveryHandler) clear(w http.ResponseWriter, r *http.Request) {

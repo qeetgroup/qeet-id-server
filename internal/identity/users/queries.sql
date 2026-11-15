@@ -59,11 +59,15 @@ WHERE id = @id AND deleted_at IS NULL
 RETURNING id, deleted_at, deleted_by;
 
 -- name: ListDeletedUsers :many
+-- The tenant's deleted users, newest deletion first, after the cursor's
+-- (deleted_at, id) when before_ts is set.
 SELECT id, email, display_name, deleted_at, created_at, deleted_by
 FROM "user".users
-WHERE tenant_id = $1 AND deleted_at IS NOT NULL
-ORDER BY deleted_at DESC
-LIMIT $2;
+WHERE tenant_id = @tenant_id AND deleted_at IS NOT NULL
+  AND (sqlc.narg('before_ts')::timestamptz IS NULL OR deleted_at < sqlc.narg('before_ts')
+       OR (deleted_at = sqlc.narg('before_ts') AND id < sqlc.narg('before_id')::uuid))
+ORDER BY deleted_at DESC, id DESC
+LIMIT @row_limit;
 
 -- name: RestoreUser :execrows
 UPDATE "user".users
@@ -137,6 +141,7 @@ LIMIT 1;
 -- timeout. Sessions in no tenant belong to the account, so only its home tenant
 -- sees them. ip goes through host() and COALESCE to scan as a plain string.
 -- name: ListUserActiveSessions :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT s.id, COALESCE(host(s.ip), '')::text AS ip, s.user_agent, s.created_at, s.last_seen_at,
        COALESCE(s.country, '')::text AS country, COALESCE(s.city, '')::text AS city
 FROM auth.sessions s
@@ -145,7 +150,7 @@ WHERE s.user_id = @user_id AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
   AND (s.tenant_id = @tenant_id::uuid OR (s.tenant_id IS NULL AND u.tenant_id = @tenant_id::uuid))
 ORDER BY s.last_seen_at DESC
-LIMIT 100;
+LIMIT 1001;
 
 -- ListUserRolesInTenant returns the roles directly assigned to a user within a
 -- tenant (group-inherited roles are reflected in effective permissions elsewhere).

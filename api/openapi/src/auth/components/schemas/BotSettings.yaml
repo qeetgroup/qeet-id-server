@@ -1,0 +1,18 @@
+type: object
+required:
+  - captcha
+  - honeypot
+  - score_threshold
+  - signature
+  - ua_check
+properties:
+  captcha:
+    type: boolean
+  honeypot:
+    type: boolean
+  score_threshold:
+    type: number
+  signature:
+    type: boolean
+  ua_check:
+    type: boolean

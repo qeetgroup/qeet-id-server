@@ -1,0 +1,22 @@
+get:
+  operationId: getSamlIdpCertificate
+  description: >-
+    Returns the certificate the tenant's SAML Identity Provider signs assertions
+    with, as PEM, the same one its metadata publishes, for Service Providers
+    that ask for the certificate on its own. Mounted at the root, not under /v1,
+    and unauthenticated. An unknown or inactive tenant returns 404.
+  summary: '[idp] IdP signing certificate'
+  tags:
+    - SAML
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security: []
+  responses:
+    '200':
+      description: The signing certificate, PEM
+      content:
+        application/x-pem-file:
+          schema:
+            type: string
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

@@ -1,0 +1,407 @@
+openapi: 3.1.0
+info:
+  title: Qeet ID — Federation API (OIDC/SAML/SCIM/LDAP/Social)
+  version: 0.2.0
+  description: >-
+    OAuth 2.0 / OIDC provider, social login, SAML, LDAP, and SCIM for Qeet ID.
+
+
+    ## Start here
+
+
+    Qeet ID federates in both directions — know which role applies:
+
+
+    - **Qeet ID → your app:** OIDC provider and SAML **Identity Provider**.
+
+    - **External IdP → Qeet ID:** SAML **Service Provider**, **OpenID Connect
+    relying party** for an organisation's own provider, **LDAP** client, and
+    **OAuth client** for social logins.
+
+    - **External IdP → Qeet ID (provisioning):** **SCIM** server.
+
+
+    ## Two OAuth token endpoints (current behavior)
+
+
+    - `POST /v1/oauth/token-code` — authorization_code, refresh_token,
+    device_code, token-exchange, and CIBA. Discovery advertises this as the
+    `token_endpoint`.
+
+    - `POST /v1/oauth/token` — **client_credentials only** (machine-to-machine).
+
+
+    These endpoints are not interchangeable.
+
+
+    ## Path prefixes
+
+
+    Discovery (`/.well-known/*`), `/oauth/revoke`, `/oauth/introspect`,
+    `/scim/v2/*`, `/saml/*`, and `/ldap/*` are mounted at the **root**, not
+    under `/v1`. Interactive OAuth endpoints (`/v1/oauth/*`) are under `/v1`.
+
+
+    ## Authentication
+
+
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization:
+    ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token),
+    `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session).
+    CSRF protection applies only to cookie sessions (`ssoCookie`): requests
+    authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the
+    client-credentials token exchange (POST /v1/oauth/token) and the directory
+    sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the
+    request. Basic credentials do not bypass it. A request that fails the check
+    is refused with 403 `csrf_failed`.
+
+
+    The responses of the two token endpoints, device and back-channel
+    authorization, the consent decision (an authorization code), directory
+    sign-in, social, SAML and OpenID Connect connection code exchange, the SAML
+    IdP's sign-on page (a signed assertion), and of the operations returning a
+    new client secret, service-principal credential, SCIM token or admin-portal
+    link, are sent with `Cache-Control: no-store` and `Pragma: no-cache`.
+
+
+    Every response carries an `X-Request-Id` header naming the request; quote it
+    when reporting a problem. An error body repeats it as `error.request_id`.
+
+
+    ## Related APIs
+
+
+    - **Authentication & Access API** — login, passkeys, MFA, authorization
+
+    - **Identity Management API** — tenants, users, groups, invitations
+
+    - **Developer API** — API keys, agents, webhooks, vaults
+
+    - **Operations API** — audit, analytics, billing
+
+
+    ## Contract maintenance
+
+
+    This document covers routes mounted by internal/bootstrap/router.go.
+    internal/bootstrap/openapi_coverage_test.go walks the production mount
+    helpers and fails when a mounted operation is undocumented, a documented
+    operation is stale, or API-auth security declarations disagree with runtime
+    classification.
+servers:
+  - url: https://api.id.qeet.in
+    description: Production
+  - url: http://localhost:4001
+    description: Local (make dev)
+tags:
+  - name: OIDC
+    description: >-
+      OpenID Connect / OAuth 2.0 provider: discovery, authorize, token,
+      userinfo, clients, grants, revocation, introspection, RP-initiated logout,
+      and machine-to-machine service principals.
+  - name: Social
+    description: Social/OAuth identity-provider login and account linking.
+  - name: SAML
+    description: >-
+      SAML 2.0 SSO — Qeet as Service Provider (consuming external IdPs) and as
+      Identity Provider (serving downstream SPs).
+  - name: OIDC Connections
+    description: >-
+      An organisation's own OpenID Connect identity provider (Microsoft Entra
+      ID, Okta, Google Workspace and the like), with Qeet as the relying party:
+      connection management and the browser sign-in.
+  - name: LDAP
+    description: LDAP / Active Directory connection management and bind authentication.
+  - name: Directory
+    description: Tenant-scoped directory connection inventory and synchronization metadata.
+  - name: SCIM
+    description: >-
+      SCIM 2.0 user/group provisioning (per-tenant bearer token presented by the
+      IdP) plus tenant-admin token management. The /scim/v2 surface returns the
+      RFC 7644 error envelope, not the standard Qeet error shape. Every /scim/v2
+      request needs an organisation whose plan includes SCIM, not only the
+      token's issue: a token issued on a plan that has since lapsed is answered
+      403 in that envelope.
+  - name: Admin Portal
+    description: >-
+      A unique, time-limited, capability-scoped link a tenant admin can hand to
+      their own IT admin — no Qeet ID account required — to configure the
+      tenant's SAML connection and test it, roll its SCIM token, or verify its
+      domains directly.
+paths:
+  /.well-known/jwks.json:
+    $ref: paths/oidc/.well-known_jwks.json.yaml
+  /.well-known/openid-configuration:
+    $ref: paths/oidc/.well-known_openid-configuration.yaml
+  /.well-known/oauth-authorization-server:
+    $ref: paths/oidc/.well-known_oauth-authorization-server.yaml
+  /.well-known/oauth-protected-resource:
+    $ref: paths/oidc/.well-known_oauth-protected-resource.yaml
+  /oauth/introspect:
+    $ref: paths/oidc/oauth_introspect.yaml
+  /oauth/revoke:
+    $ref: paths/oidc/oauth_revoke.yaml
+  /v1/oauth/authorize:
+    $ref: paths/oidc/v1_oauth_authorize.yaml
+  /v1/oauth/authorize/decision:
+    $ref: paths/oidc/v1_oauth_authorize_decision.yaml
+  /v1/oauth/authorize/request:
+    $ref: paths/oidc/v1_oauth_authorize_request.yaml
+  /v1/oauth/device:
+    $ref: paths/oidc/v1_oauth_device.yaml
+  /v1/oauth/device/decision:
+    $ref: paths/oidc/v1_oauth_device_decision.yaml
+  /v1/oauth/device_authorization:
+    $ref: paths/oidc/v1_oauth_device_authorization.yaml
+  /v1/oauth/bc-authorize:
+    $ref: paths/oidc/v1_oauth_bc-authorize.yaml
+  /v1/oauth/bc-authorize/pending:
+    $ref: paths/oidc/v1_oauth_bc-authorize_pending.yaml
+  /v1/oauth/bc-authorize/decision:
+    $ref: paths/oidc/v1_oauth_bc-authorize_decision.yaml
+  /v1/oauth/login-context:
+    $ref: paths/oidc/v1_oauth_login-context.yaml
+  /v1/oauth/logout/continue:
+    $ref: paths/oidc/v1_oauth_logout_continue.yaml
+  /v1/oauth/logout:
+    $ref: paths/oidc/v1_oauth_logout.yaml
+  /v1/oauth/token:
+    $ref: paths/oidc/v1_oauth_token.yaml
+  /v1/oauth/token-code:
+    $ref: paths/oidc/v1_oauth_token-code.yaml
+  /v1/oauth/userinfo:
+    $ref: paths/oidc/v1_oauth_userinfo.yaml
+  /v1/oidc/clients:
+    $ref: paths/oidc/v1_oidc_clients.yaml
+  /v1/oidc/clients/{id}:
+    $ref: paths/oidc/v1_oidc_clients_{id}.yaml
+  /v1/oidc/signing-keys:
+    $ref: paths/oidc/v1_oidc_signing-keys.yaml
+  /v1/service-principals:
+    $ref: paths/oidc/v1_service-principals.yaml
+  /v1/service-principals/{id}:
+    $ref: paths/oidc/v1_service-principals_{id}.yaml
+  /v1/tenants/{tenantID}/service-principals/{id}/rotate-secret:
+    $ref: paths/oidc/v1_tenants_{tenantID}_service-principals_{id}_rotate-secret.yaml
+  /v1/tenants/{tenantID}/service-principals/{id}/enable:
+    $ref: paths/oidc/v1_tenants_{tenantID}_service-principals_{id}_enable.yaml
+  /v1/tenants/{tenantID}/oauth/devices:
+    $ref: paths/oidc/v1_tenants_{tenantID}_oauth_devices.yaml
+  /v1/tenants/{tenantID}/oauth/devices/{id}:
+    $ref: paths/oidc/v1_tenants_{tenantID}_oauth_devices_{id}.yaml
+  /v1/tenants/{tenantID}/oidc/clients:
+    $ref: paths/oidc/v1_tenants_{tenantID}_oidc_clients.yaml
+  /v1/tenants/{tenantID}/oidc/clients/{id}:
+    $ref: paths/oidc/v1_tenants_{tenantID}_oidc_clients_{id}.yaml
+  /v1/tenants/{tenantID}/oidc/clients/{id}/auth-failures:
+    $ref: paths/oidc/v1_tenants_{tenantID}_oidc_clients_{id}_auth-failures.yaml
+  /v1/tenants/{tenantID}/oidc/resources:
+    $ref: paths/oidc/v1_tenants_{tenantID}_oidc_resources.yaml
+  /v1/tenants/{tenantID}/oidc/resources/{id}:
+    $ref: paths/oidc/v1_tenants_{tenantID}_oidc_resources_{id}.yaml
+  /v1/tenants/{tenantID}/oidc/clients/{id}/rotate-secret:
+    $ref: paths/oidc/v1_tenants_{tenantID}_oidc_clients_{id}_rotate-secret.yaml
+  /v1/tenants/{tenantID}/oidc/clients/shadow-ai:
+    $ref: paths/oidc/v1_tenants_{tenantID}_oidc_clients_shadow-ai.yaml
+  /v1/tenants/{tenantID}/oidc/clients/{id}/review:
+    $ref: paths/oidc/v1_tenants_{tenantID}_oidc_clients_{id}_review.yaml
+  /v1/tenants/{tenantID}/oauth/grants:
+    $ref: paths/oidc/v1_tenants_{tenantID}_oauth_grants.yaml
+  /v1/tenants/{tenantID}/oauth/grants/{id}:
+    $ref: paths/oidc/v1_tenants_{tenantID}_oauth_grants_{id}.yaml
+  /v1/tenants/{tenantID}/oauth/grants/revoke:
+    $ref: paths/oidc/v1_tenants_{tenantID}_oauth_grants_revoke.yaml
+  /v1/tenants/{tenantID}/service-principals:
+    $ref: paths/oidc/v1_tenants_{tenantID}_service-principals.yaml
+  /v1/social/exchange:
+    $ref: paths/social/v1_social_exchange.yaml
+  /v1/me/social/identities:
+    $ref: paths/social/v1_me_social_identities.yaml
+  /v1/me/social/identities/{id}:
+    $ref: paths/social/v1_me_social_identities_{id}.yaml
+  /v1/social/{provider}/link/start:
+    $ref: paths/social/v1_social_{provider}_link_start.yaml
+  /v1/social/link/complete:
+    $ref: paths/social/v1_social_link_complete.yaml
+  /v1/social/identities/{id}:
+    $ref: paths/social/v1_social_identities_{id}.yaml
+  /v1/social/providers:
+    $ref: paths/social/v1_social_providers.yaml
+  /v1/social/providers/{provider}:
+    $ref: paths/social/v1_social_providers_{provider}.yaml
+  /v1/social/{provider}/callback:
+    $ref: paths/social/v1_social_{provider}_callback.yaml
+  /v1/social/platform/providers:
+    $ref: paths/social/v1_social_platform_providers.yaml
+  /v1/social/{provider}/start:
+    $ref: paths/social/v1_social_{provider}_start.yaml
+  /v1/tenants/{tenantID}/social/providers:
+    $ref: paths/social/v1_tenants_{tenantID}_social_providers.yaml
+  /v1/users/{userID}/social/identities:
+    $ref: paths/social/v1_users_{userID}_social_identities.yaml
+  /saml/acs/{id}:
+    $ref: paths/saml/saml_acs_{id}.yaml
+  /saml/exchange:
+    $ref: paths/saml/saml_exchange.yaml
+  /saml/session:
+    $ref: paths/saml/saml_session.yaml
+  /saml/idp/{tenantID}/metadata:
+    $ref: paths/saml/saml_idp_{tenantID}_metadata.yaml
+  /saml/idp/{tenantID}/certificate:
+    $ref: paths/saml/saml_idp_{tenantID}_certificate.yaml
+  /saml/idp/{tenantID}/sso:
+    $ref: paths/saml/saml_idp_{tenantID}_sso.yaml
+  /saml/login/{id}:
+    $ref: paths/saml/saml_login_{id}.yaml
+  /saml/metadata/{id}:
+    $ref: paths/saml/saml_metadata_{id}.yaml
+  /v1/tenants/{tenantID}/saml:
+    $ref: paths/saml/v1_tenants_{tenantID}_saml.yaml
+  /v1/tenants/{tenantID}/saml-providers:
+    $ref: paths/saml/v1_tenants_{tenantID}_saml-providers.yaml
+  /v1/tenants/{tenantID}/saml-providers/{id}:
+    $ref: paths/saml/v1_tenants_{tenantID}_saml-providers_{id}.yaml
+  /v1/tenants/{tenantID}/saml/import:
+    $ref: paths/saml/v1_tenants_{tenantID}_saml_import.yaml
+  /v1/tenants/{tenantID}/saml/{id}/metadata:
+    $ref: paths/saml/v1_tenants_{tenantID}_saml_{id}_metadata.yaml
+  /v1/tenants/{tenantID}/saml/{id}/certificates:
+    $ref: paths/saml/v1_tenants_{tenantID}_saml_{id}_certificates.yaml
+  /v1/tenants/{tenantID}/saml/{id}/certificates/{certificateID}:
+    $ref: paths/saml/v1_tenants_{tenantID}_saml_{id}_certificates_{certificateID}.yaml
+  /v1/tenants/{tenantID}/saml-providers/{id}/assignments:
+    $ref: paths/saml/v1_tenants_{tenantID}_saml-providers_{id}_assignments.yaml
+  /v1/tenants/{tenantID}/saml-providers/{id}/assignments/users/{userID}:
+    $ref: paths/saml/v1_tenants_{tenantID}_saml-providers_{id}_assignments_users_{userID}.yaml
+  /v1/tenants/{tenantID}/saml-providers/{id}/assignments/groups/{groupID}:
+    $ref: paths/saml/v1_tenants_{tenantID}_saml-providers_{id}_assignments_groups_{groupID}.yaml
+  /v1/tenants/{tenantID}/saml/{id}/test:
+    $ref: paths/saml/v1_tenants_{tenantID}_saml_{id}_test.yaml
+  /v1/tenants/{tenantID}/saml/{id}/group-mappings:
+    $ref: paths/saml/v1_tenants_{tenantID}_saml_{id}_group-mappings.yaml
+  /v1/tenants/{tenantID}/saml/{id}/group-mappings/{mappingID}:
+    $ref: paths/saml/v1_tenants_{tenantID}_saml_{id}_group-mappings_{mappingID}.yaml
+  /v1/tenants/{tenantID}/saml/{id}:
+    $ref: paths/saml/v1_tenants_{tenantID}_saml_{id}.yaml
+  /v1/tenants/{tenantID}/oidc-connections:
+    $ref: paths/oidc-connections/v1_tenants_{tenantID}_oidc-connections.yaml
+  /v1/tenants/{tenantID}/oidc-connections/{id}:
+    $ref: paths/oidc-connections/v1_tenants_{tenantID}_oidc-connections_{id}.yaml
+  /v1/sso/discovery:
+    $ref: paths/oidc-connections/v1_sso_discovery.yaml
+  /v1/oidc-connections/{id}/login:
+    $ref: paths/oidc-connections/v1_oidc-connections_{id}_login.yaml
+  /v1/oidc-connections/{id}/callback:
+    $ref: paths/oidc-connections/v1_oidc-connections_{id}_callback.yaml
+  /v1/oidc-connections/exchange:
+    $ref: paths/oidc-connections/v1_oidc-connections_exchange.yaml
+  /v1/oidc-connections/session:
+    $ref: paths/oidc-connections/v1_oidc-connections_session.yaml
+  /ldap/{id}/session:
+    $ref: paths/ldap/ldap_{id}_session.yaml
+  /ldap/{id}/authenticate:
+    $ref: paths/ldap/ldap_{id}_authenticate.yaml
+  /v1/tenants/{tenantID}/ldap:
+    $ref: paths/ldap/v1_tenants_{tenantID}_ldap.yaml
+  /v1/tenants/{tenantID}/ldap/{id}:
+    $ref: paths/ldap/v1_tenants_{tenantID}_ldap_{id}.yaml
+  /v1/tenants/{tenantID}/ldap/{id}/test:
+    $ref: paths/ldap/v1_tenants_{tenantID}_ldap_{id}_test.yaml
+  /v1/tenants/{tenantID}/ldap/{id}/group-mappings:
+    $ref: paths/ldap/v1_tenants_{tenantID}_ldap_{id}_group-mappings.yaml
+  /v1/tenants/{tenantID}/ldap/{id}/group-mappings/{mappingID}:
+    $ref: paths/ldap/v1_tenants_{tenantID}_ldap_{id}_group-mappings_{mappingID}.yaml
+  /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings:
+    $ref: paths/directory/v1_tenants_{tenantID}_directory_connections_{connectionID}_mappings.yaml
+  /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings/{mappingID}:
+    $ref: paths/directory/v1_tenants_{tenantID}_directory_connections_{connectionID}_mappings_{mappingID}.yaml
+  /v1/tenants/{tenantID}/directory/connections/{connectionID}/mappings/preview:
+    $ref: paths/directory/v1_tenants_{tenantID}_directory_connections_{connectionID}_mappings_preview.yaml
+  /v1/tenants/{tenantID}/directory/errors:
+    $ref: paths/directory/v1_tenants_{tenantID}_directory_errors.yaml
+  /v1/tenants/{tenantID}/directory/errors/{eventID}/resolve:
+    $ref: paths/directory/v1_tenants_{tenantID}_directory_errors_{eventID}_resolve.yaml
+  /v1/tenants/{tenantID}/directory/errors/{eventID}/retry:
+    $ref: paths/directory/v1_tenants_{tenantID}_directory_errors_{eventID}_retry.yaml
+  /v1/tenants/{tenantID}/directory/activity:
+    $ref: paths/directory/v1_tenants_{tenantID}_directory_activity.yaml
+  /v1/tenants/{tenantID}/directory/alerts:
+    $ref: paths/directory/v1_tenants_{tenantID}_directory_alerts.yaml
+  /v1/tenants/{tenantID}/directory/alerts/{alertID}:
+    $ref: paths/directory/v1_tenants_{tenantID}_directory_alerts_{alertID}.yaml
+  /v1/tenants/{tenantID}/directory/profiles/{userID}:
+    $ref: paths/directory/v1_tenants_{tenantID}_directory_profiles_{userID}.yaml
+  /v1/tenants/{tenantID}/directory/connections:
+    $ref: paths/directory/v1_tenants_{tenantID}_directory_connections.yaml
+  /scim/v2/Groups:
+    $ref: paths/scim/scim_v2_Groups.yaml
+  /scim/v2/Groups/{id}:
+    $ref: paths/scim/scim_v2_Groups_{id}.yaml
+  /scim/v2/ResourceTypes:
+    $ref: paths/scim/scim_v2_ResourceTypes.yaml
+  /scim/v2/Schemas:
+    $ref: paths/scim/scim_v2_Schemas.yaml
+  /scim/v2/ServiceProviderConfig:
+    $ref: paths/scim/scim_v2_ServiceProviderConfig.yaml
+  /scim/v2/Users:
+    $ref: paths/scim/scim_v2_Users.yaml
+  /scim/v2/Users/{id}:
+    $ref: paths/scim/scim_v2_Users_{id}.yaml
+  /v1/tenants/{tenantID}/scim:
+    $ref: paths/scim/v1_tenants_{tenantID}_scim.yaml
+  /v1/tenants/{tenantID}/scim/token:
+    $ref: paths/scim/v1_tenants_{tenantID}_scim_token.yaml
+  /v1/tenants/{tenantID}/scim/tokens:
+    $ref: paths/scim/v1_tenants_{tenantID}_scim_tokens.yaml
+  /v1/tenants/{tenantID}/scim/tokens/{id}:
+    $ref: paths/scim/v1_tenants_{tenantID}_scim_tokens_{id}.yaml
+  /v1/tenants/{tenantID}/scim/tokens/{id}/rotate:
+    $ref: paths/scim/v1_tenants_{tenantID}_scim_tokens_{id}_rotate.yaml
+  /v1/tenants/{tenantID}/scim/groups:
+    $ref: paths/scim/v1_tenants_{tenantID}_scim_groups.yaml
+  /v1/tenants/{tenantID}/scim/users:
+    $ref: paths/scim/v1_tenants_{tenantID}_scim_users.yaml
+  /v1/tenants/{tenantID}/admin-portal/links:
+    $ref: paths/admin-portal/v1_tenants_{tenantID}_admin-portal_links.yaml
+  /v1/tenants/{tenantID}/admin-portal/links/{id}:
+    $ref: paths/admin-portal/v1_tenants_{tenantID}_admin-portal_links_{id}.yaml
+  /v1/admin-portal/session:
+    $ref: paths/admin-portal/v1_admin-portal_session.yaml
+  /v1/admin-portal/context:
+    $ref: paths/admin-portal/v1_admin-portal_context.yaml
+  /v1/admin-portal/saml:
+    $ref: paths/admin-portal/v1_admin-portal_saml.yaml
+  /v1/admin-portal/saml/{id}:
+    $ref: paths/admin-portal/v1_admin-portal_saml_{id}.yaml
+  /v1/admin-portal/saml/{id}/test:
+    $ref: paths/admin-portal/v1_admin-portal_saml_{id}_test.yaml
+  /v1/admin-portal/saml/{id}/test-sign-ins:
+    $ref: paths/admin-portal/v1_admin-portal_saml_{id}_test-sign-ins.yaml
+  /v1/admin-portal/saml/{id}/test-sign-ins/{testID}:
+    $ref: paths/admin-portal/v1_admin-portal_saml_{id}_test-sign-ins_{testID}.yaml
+  /v1/admin-portal/scim:
+    $ref: paths/admin-portal/v1_admin-portal_scim.yaml
+  /v1/admin-portal/scim/token:
+    $ref: paths/admin-portal/v1_admin-portal_scim_token.yaml
+  /v1/admin-portal/domains:
+    $ref: paths/admin-portal/v1_admin-portal_domains.yaml
+  /v1/admin-portal/domains/{id}/verify:
+    $ref: paths/admin-portal/v1_admin-portal_domains_{id}_verify.yaml
+  /v1/admin-portal/domains/{id}:
+    $ref: paths/admin-portal/v1_admin-portal_domains_{id}.yaml
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: ../shared/securitySchemes/bearerAuth.yaml
+    apiKeyAuth:
+      $ref: ../shared/securitySchemes/apiKeyAuth.yaml
+    scimBearer:
+      $ref: ../shared/securitySchemes/scimBearer.yaml
+    clientCredentials:
+      $ref: ../shared/securitySchemes/clientCredentials.yaml
+    ssoCookie:
+      $ref: ../shared/securitySchemes/ssoCookie.yaml
+    adminPortalLink:
+      $ref: components/securitySchemes/adminPortalLink.yaml
+    adminPortalCookie:
+      $ref: components/securitySchemes/adminPortalCookie.yaml

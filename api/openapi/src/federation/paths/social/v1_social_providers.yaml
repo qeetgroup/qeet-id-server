@@ -1,0 +1,72 @@
+post:
+  operationId: upsertSocialProvider
+  summary: Upsert provider
+  tags:
+    - Social
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          type: object
+          properties:
+            provider:
+              type: string
+            client_id:
+              type: string
+            client_secret:
+              type: string
+              writeOnly: true
+              description: >-
+                Required for a new provider. On a provider that exists, empty
+                keeps the stored secret. For Apple, the .p8 private key.
+            discovery_url:
+              type: string
+              description: >-
+                An OpenID Connect provider's public https discovery URL; ignored
+                for github, facebook, x, discord and apple.
+            apple_team_id:
+              type: string
+              description: Apple's team ID; required for apple.
+            apple_key_id:
+              type: string
+              description: The ID of the key client_secret holds; required for apple.
+    description: >-
+      Adds a provider to the caller's organisation, or replaces the settings of
+      one it has.
+  description: >-
+    Adds a social provider, or replaces the settings of one the organisation
+    already has. Replacing keeps whether the provider is switched on, and an
+    empty client_secret keeps the stored one. The secret is stored encrypted and
+    never returned. A provider named github, facebook, x, discord or apple uses
+    that provider's own OAuth 2.0 flow and needs no discovery URL (kind names
+    it); any other name is an OpenID Connect provider found by discovery_url.
+    For apple, client_id is the Services ID and client_secret the .p8 private
+    key with apple_team_id and apple_key_id: the server signs Apple's
+    short-lived client secret from them for each sign-in, and a key that can't
+    sign one is refused with 422. X signs in with PKCE. An address from GitHub,
+    X (confirmed_email) or Discord (verified) counts as verified; one from
+    Facebook doesn't, so it can make a new account but never sign in to an
+    existing one by its address. Audited as social_provider.created or
+    social_provider.updated (the fields saved and whether the secret was
+    replaced, never its value).
+  responses:
+    '201':
+      description: Created
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/Provider.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -1,0 +1,26 @@
+type: object
+properties:
+  preheader:
+    type: string
+    maxLength: 200
+  body_html:
+    type: string
+    maxLength: 200000
+  default_locale:
+    type: string
+    default: en
+  show_logo:
+    type: boolean
+    default: true
+  alignment:
+    type: string
+    enum:
+      - left
+      - center
+    default: center
+  translations:
+    type: object
+    maxProperties: 20
+    description: Non-English BCP-47 language variants; English remains the base content.
+    additionalProperties:
+      $ref: ./EmailLocalizedContent.yaml

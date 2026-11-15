@@ -32,14 +32,18 @@ ON CONFLICT (address_hash) WHERE cleared_at IS NULL DO NOTHING;
 SELECT id, template, status, status_reason, sent_at, updated_at
 FROM platform.email_messages
 WHERE tenant_id = @tenant_id AND to_hash = @to_hash
-ORDER BY sent_at DESC
+  AND (sqlc.narg('before_ts')::timestamptz IS NULL OR sent_at < sqlc.narg('before_ts')
+       OR (sent_at = sqlc.narg('before_ts') AND id < sqlc.narg('before_id')::uuid))
+ORDER BY sent_at DESC, id DESC
 LIMIT @lim;
 
 -- name: ListSuppressions :many
 SELECT id, address_hint, reason, detail, created_at
 FROM platform.email_suppressions
 WHERE tenant_id = @tenant_id AND cleared_at IS NULL
-ORDER BY created_at DESC
+  AND (sqlc.narg('before_ts')::timestamptz IS NULL OR created_at < sqlc.narg('before_ts')
+       OR (created_at = sqlc.narg('before_ts') AND id < sqlc.narg('before_id')::uuid))
+ORDER BY created_at DESC, id DESC
 LIMIT @lim;
 
 -- name: ClearSuppression :one

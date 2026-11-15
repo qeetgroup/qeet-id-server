@@ -51,11 +51,12 @@ WHERE tenant_id = @tenant_id::uuid AND status = 'pending' AND expires_at > NOW()
 SELECT pg_advisory_xact_lock(hashtext('seats'), hashtext(sqlc.arg(tenant_id)::uuid::text));
 
 -- name: ListInvites :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, tenant_id, email, role_id, status, expires_at, accepted_at, created_at
 FROM tenant.invites
 WHERE tenant_id = $1
 ORDER BY created_at DESC
-LIMIT 200;
+LIMIT 1001;
 
 -- name: RevokeInvite :one
 UPDATE tenant.invites SET status = 'revoked'
@@ -98,13 +99,14 @@ WHERE id = @id AND LOWER(email) = LOWER(@email) AND status = 'pending'
 RETURNING tenant_id, role_id;
 
 -- name: ListInvitesForEmail :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT i.id, i.tenant_id, i.email, i.role_id, i.expires_at, i.created_at,
        t.name AS tenant_name, t.slug AS tenant_slug
 FROM tenant.invites i
 JOIN tenant.tenants t ON t.id = i.tenant_id
 WHERE LOWER(i.email) = LOWER(@email) AND i.status = 'pending' AND i.expires_at > NOW()
 ORDER BY i.created_at DESC
-LIMIT 50;
+LIMIT 1001;
 
 -- name: MarkInviteExpired :exec
 UPDATE tenant.invites SET status = 'expired' WHERE id = $1;

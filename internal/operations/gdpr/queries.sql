@@ -22,12 +22,13 @@ RETURNING id, tenant_id, framework, generated_at, generated_by,
 -- name: ListEvidenceRuns :many
 -- List previous runs for a tenant+framework, most recent first.
 -- Controls are excluded from the list response (use GetEvidenceRun for full report).
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, tenant_id, framework, generated_at, generated_by,
        pass_count, fail_count, na_count
 FROM tenant.compliance_evidence_runs
 WHERE tenant_id = @tenant_id AND framework = @framework
 ORDER BY generated_at DESC
-LIMIT 100;
+LIMIT 1001;
 
 -- name: GetEvidenceRun :one
 -- Fetch a single evidence run with its full controls JSONB blob.
@@ -137,12 +138,13 @@ RETURNING subject_id;
 
 -- name: ListPurgeRequests :many
 -- List all purge requests for a tenant, most recent first.
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, tenant_id, subject_id, requested_by, reason, status,
        grace_until, completed_at, created_at, subject_email, subject_name
 FROM "user".purge_requests
 WHERE tenant_id = @tenant_id
 ORDER BY created_at DESC
-LIMIT 200;
+LIMIT 1001;
 
 -- name: PurgeUserPII :one
 -- Replace PII fields with redacted markers and soft-delete the user row,
@@ -185,11 +187,12 @@ VALUES (@tenant_id, @subject_id::uuid, @subject_id::uuid, @requested_by)
 RETURNING id, tenant_id, subject_id, requested_by, status, completed_at, created_at;
 
 -- name: ListExportRequests :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, tenant_id, subject_id, requested_by, status, error, completed_at, created_at
 FROM "user".export_requests
 WHERE tenant_id = @tenant_id
 ORDER BY created_at DESC
-LIMIT 200;
+LIMIT 1001;
 
 -- name: GetExportRequest :one
 SELECT id, tenant_id, subject_id, requested_by, status, payload, error,
@@ -330,11 +333,13 @@ WHERE tenant_id = @tenant_id AND framework = @framework
 ORDER BY generated_at DESC LIMIT 1;
 
 -- name: ListControlOwners :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT o.control_id, o.user_id, u.email, u.display_name, o.updated_at
 FROM tenant.compliance_control_owners o
 LEFT JOIN "user".users u ON u.id = o.user_id
 WHERE o.tenant_id = @tenant_id
-ORDER BY o.control_id;
+ORDER BY o.control_id
+LIMIT 1001;
 
 -- name: UpsertControlOwner :exec
 INSERT INTO tenant.compliance_control_owners (tenant_id, control_id, user_id, updated_by, updated_at)
@@ -355,11 +360,12 @@ SELECT EXISTS (
 );
 
 -- name: ListComplianceAudits :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, framework, kind, body, scope, reference, issued_on, expires_on, created_by, created_at
 FROM tenant.compliance_audits
 WHERE tenant_id = @tenant_id AND (sqlc.narg('framework')::text IS NULL OR framework = sqlc.narg('framework'))
 ORDER BY issued_on DESC, created_at DESC
-LIMIT 200;
+LIMIT 1001;
 
 -- name: InsertComplianceAudit :one
 INSERT INTO tenant.compliance_audits (tenant_id, framework, kind, body, scope, reference, issued_on, expires_on, created_by)

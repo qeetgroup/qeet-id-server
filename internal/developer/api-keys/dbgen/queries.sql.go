@@ -140,6 +140,7 @@ SELECT id, tenant_id, user_id, name, prefix, scopes, expires_at, last_used_at, r
 FROM auth.api_keys
 WHERE tenant_id = $1
 ORDER BY created_at DESC
+LIMIT 1001
 `
 
 type ListAPIKeysRow struct {
@@ -157,6 +158,7 @@ type ListAPIKeysRow struct {
 	RotatedFrom pgtype.UUID
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListAPIKeys(ctx context.Context, tenantID uuid.UUID) ([]ListAPIKeysRow, error) {
 	rows, err := q.db.Query(ctx, listAPIKeys, tenantID)
 	if err != nil {

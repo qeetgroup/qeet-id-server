@@ -1,0 +1,87 @@
+patch:
+  operationId: updateDomain
+  summary: Update domain settings
+  tags:
+    - Domains
+  description: >-
+    Toggles SSO routing and just-in-time provisioning. Each switch applies to
+    the addresses the domain manages once it is verified: the domain itself and
+    those below it that no closer verified domain takes. With sso_enabled on,
+    while the organisation has an active SAML, LDAP or OpenID Connect
+    connection, those addresses sign in only through it: password sign-in, magic
+    links, passkey sign-in, password resets and self sign-up answer 403
+    auth.sso_required (with the connections to use), except for the
+    organisation's break-glass members (see the break-glass-members calls) and
+    its administrators single sign-on can't sign in. With jit_enabled on, a
+    SAML, LDAP or OpenID Connect sign-in creates an account for an address that
+    has none; with it off, only existing members are adopted
+    (saml.jit_not_allowed / ldap.jit_not_allowed /
+    oidc_connection.jit_not_allowed otherwise). Both are off for a new domain.
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          properties:
+            sso_enabled:
+              type: boolean
+            jit_enabled:
+              type: boolean
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: ../../../shared/schemas/Domain.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+delete:
+  operationId: deleteDomain
+  description: >-
+    Removes a claimed or verified domain from the tenant. Any domain-based
+    features that depended on it stop applying. Re-adding the domain later
+    requires claiming and verifying it again.
+  summary: Remove domain
+  tags:
+    - Domains
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '204':
+      description: Domain removed
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

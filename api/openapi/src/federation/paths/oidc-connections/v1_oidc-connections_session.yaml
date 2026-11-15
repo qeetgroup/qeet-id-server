@@ -1,0 +1,56 @@
+post:
+  operationId: createOidcConnectionSession
+  summary: Hosted sign-in session (public)
+  description: >-
+    Trades the one-time login code a hosted-login OpenID Connect sign-in came
+    back with (the hosted login's /sign-in URL fragment, oidc_code) for the
+    hosted-login session, as POST /v1/auth/session answers: the qe_ls cookie and
+    the user's id. The code is single-use and short-lived (401
+    oidc_connection.login_code_invalid, oidc_connection.login_code_used or
+    oidc_connection.login_code_expired). The organisation's network rules apply
+    (403 auth.address_not_allowed), and an account that is not active is refused
+    (403 auth.account_inactive). As the console's sign-in through a connection,
+    no second factor is asked. The session is recorded as an oidc sign-in.
+    Unauthenticated; CSRF-checked.
+  tags:
+    - OIDC Connections
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - code
+          properties:
+            code:
+              type: string
+              description: The oidc_code from the URL fragment.
+  responses:
+    '200':
+      description: >-
+        Signed in to the hosted login; the hosted-login session cookie (qe_ls)
+        is set.
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+        Set-Cookie:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              user_id:
+                type: string
+                format: uuid
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml

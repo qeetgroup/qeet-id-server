@@ -1,0 +1,15 @@
+allOf:
+  - $ref: ./Page.yaml
+type: object
+properties:
+  items:
+    type: array
+    items:
+      $ref: ../../../shared/schemas/User.yaml
+  next_cursor:
+    type:
+      - string
+      - 'null'
+  total:
+    type: integer
+    description: How many members the filters match.

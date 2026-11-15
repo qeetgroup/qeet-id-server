@@ -1,0 +1,68 @@
+post:
+  operationId: finishPasskeySignIn
+  summary: Login finish
+  tags:
+    - Passkeys
+  security: []
+  requestBody:
+    required: false
+    content:
+      application/json:
+        example:
+          session_id: '018f2a72-3d4e-7f5a-9b6c-7d8e9f0a1b2c'
+          credential:
+            id: '3xQm7Lk2pR9vT0sWb4nYcE'
+            rawId: '3xQm7Lk2pR9vT0sWb4nYcE'
+            type: public-key
+            response:
+              authenticatorData: SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MFAAAAAQ
+              clientDataJSON: eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoicThWM205cFQxeFJ3ejBMa1liMk5jSHM0ZEZnSjZ1RW83aUFhNXRTdld5USJ9
+              signature: MEUCIQDFAKE-signatureFAKE-signatureFAKE
+              userHandle: AY8qcBorfD2eT1prfI2eDw
+        schema:
+          $ref: ../../components/schemas/loginFinishInput.yaml
+  description: >-
+    The token form of passkey sign-in: completes the ceremony with the assertion
+    and returns the token pair, setting no cookie, for a caller that keeps
+    tokens on a server (such as the console's). A browser signs in to the hosted
+    login with POST /v1/passkeys/login/session instead, so no token pair reaches
+    its script. A body not sent as JSON is refused (415 unsupported_media_type).
+    When the account's organisation has switched passkeys off, the sign-in is
+    refused with 403 passkey.disabled before the assertion is verified. A
+    refused ceremony or assertion is recorded in the organisation's audit trail
+    as auth.sign_in_failed (method passkey, reason the error code), naming the
+    account when it was identified. A passkey of an account on a domain whose
+    organisation requires single sign-on is refused with 403 auth.sso_required
+    (see the SSORequired response).
+  responses:
+    '201':
+      description: Created
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          example:
+            access_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.eyJzdWIiOiIwMThmMmE3MCJ9.FAKE-signature
+            token_type: Bearer
+            expires_at: '2026-09-24T10:30:00Z'
+            refresh_token: Jk3vQm9xT2pL0sWc8hYbR4nZaE6uFi1oPq7dGt5yHw0
+            session_expires_at: '2026-10-24T10:15:00Z'
+            idle_expires_at: '2026-10-01T10:15:00Z'
+            session_id: '018f2a70-5b6c-7d8e-9f01-2a3b4c5d6e7f'
+            user_id: '018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f'
+            tenant_id: '018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00'
+          schema:
+            $ref: ../../../shared/schemas/TokenPair.yaml
+    '403':
+      $ref: ../../components/responses/SSORequired.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '415':
+      $ref: ../../components/responses/UnsupportedMediaType.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

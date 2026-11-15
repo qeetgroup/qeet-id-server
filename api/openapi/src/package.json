@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "Builds the five API documents in api/openapi from these sources. Run make openapi from the repository root.",
+  "devDependencies": {
+    "@redocly/cli": "2.78.0"
+  }
+}

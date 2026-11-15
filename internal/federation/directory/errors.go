@@ -13,6 +13,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // ErrorSummary counts the directory errors on a page's filter.
@@ -39,7 +40,7 @@ type ErrorPage struct {
 	Connections  []Breakdown  `json:"connections"`
 	Remediations []Event      `json:"remediations"`
 	Limit        int          `json:"limit"`
-	Offset       int          `json:"offset"`
+	NextCursor   string       `json:"next_cursor,omitempty"`
 }
 
 type errorFilter struct {
@@ -52,7 +53,7 @@ const errorWhere = `tenant_id=$1 AND started_at >= $2 AND ($3='' OR connection_i
 
 // Errors returns one page of the tenant's directory errors.
 func (service *Service) Errors(ctx context.Context, tenantID uuid.UUID, filter errorFilter) (ErrorPage, error) {
-	page := ErrorPage{Items: []Event{}, Categories: []Breakdown{}, Connections: []Breakdown{}, Remediations: []Event{}, Limit: filter.Limit, Offset: filter.Offset}
+	page := ErrorPage{Items: []Event{}, Categories: []Breakdown{}, Connections: []Breakdown{}, Remediations: []Event{}, Limit: filter.Limit}
 	if tenantID == uuid.Nil || service.pool == nil {
 		return page, errs.ErrUnauthorized
 	}
@@ -65,7 +66,7 @@ func (service *Service) Errors(ctx context.Context, tenantID uuid.UUID, filter e
 	if unknown == 0 {
 		page.Summary.ImpactedUsers = &impacted
 	}
-	rows, err := service.pool.Query(ctx, `SELECT `+eventColumns+` FROM tenant.directory_events WHERE `+errorWhere+` ORDER BY started_at DESC,id DESC LIMIT $7 OFFSET $8`, append(args, filter.Limit, filter.Offset)...)
+	rows, err := service.pool.Query(ctx, `SELECT `+eventColumns+` FROM tenant.directory_events WHERE `+errorWhere+` AND (NOT $8::boolean OR (started_at,id) < ($9::timestamptz,$10::uuid)) ORDER BY started_at DESC,id DESC LIMIT $7`, append(args, filter.Limit+1, filter.After.Set, filter.After.Time, filter.After.ID)...)
 	if err != nil {
 		return page, err
 	}
@@ -82,6 +83,7 @@ func (service *Service) Errors(ctx context.Context, tenantID uuid.UUID, filter e
 	if err != nil {
 		return page, err
 	}
+	page.Items, page.NextCursor = paging.Next(page.Items, filter.Limit, eventKey)
 	for _, group := range []struct {
 		column      string
 		destination *[]Breakdown

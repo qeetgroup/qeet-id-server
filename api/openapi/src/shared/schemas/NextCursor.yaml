@@ -1,0 +1,4 @@
+type: string
+description: >-
+  Present when there is another page: send it back as cursor to read that page.
+  Absent on the last page.

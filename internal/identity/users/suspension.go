@@ -17,6 +17,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // SuspendedUser is a suspended account, as listed for review.
@@ -44,7 +45,7 @@ type SuspensionFilters struct {
 	Risk   string
 	Review string
 	Limit  int
-	Offset int
+	After  paging.Cursor
 }
 
 // SuspensionSummary counts the suspended accounts on the filter.
@@ -64,15 +65,15 @@ type SuspensionBreakdown struct {
 
 // SuspendedPage is one page of suspended accounts with their summary.
 type SuspendedPage struct {
-	Items   []SuspendedUser       `json:"items"`
-	Total   int                   `json:"total"`
-	Limit   int                   `json:"limit"`
-	Offset  int                   `json:"offset"`
-	Summary SuspensionSummary     `json:"summary"`
-	Reasons []SuspensionBreakdown `json:"reasons"`
-	Risks   []SuspensionBreakdown `json:"risks"`
-	Queue   []SuspendedUser       `json:"queue"`
-	Teams   []string              `json:"teams"`
+	Items      []SuspendedUser       `json:"items"`
+	Total      int                   `json:"total"`
+	Limit      int                   `json:"limit"`
+	NextCursor string                `json:"next_cursor,omitempty"`
+	Summary    SuspensionSummary     `json:"summary"`
+	Reasons    []SuspensionBreakdown `json:"reasons"`
+	Risks      []SuspensionBreakdown `json:"risks"`
+	Queue      []SuspendedUser       `json:"queue"`
+	Teams      []string              `json:"teams"`
 }
 
 func validSuspensionValue(value string, values ...string) bool {
@@ -102,15 +103,18 @@ func parseSuspensionFilters(request *http.Request) (SuspensionFilters, error) {
 	if !validSuspensionValue(filter.Review, "", "pending", "reviewed", "external") {
 		return filter, errs.ErrBadRequest
 	}
-	for key, destination := range map[string]*int{"limit": &filter.Limit, "offset": &filter.Offset} {
-		if raw := query.Get(key); raw != "" {
-			value, err := strconv.Atoi(raw)
-			if err != nil || value < 0 || value > 100000 || (key == "limit" && (value < 1 || value > 100)) {
-				return filter, errs.ErrBadRequest
-			}
-			*destination = value
+	if raw := query.Get("limit"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 100 {
+			return filter, errs.ErrBadRequest
 		}
+		filter.Limit = value
 	}
+	after, err := paging.ParseCursor(query)
+	if err != nil {
+		return filter, err
+	}
+	filter.After = after
 	return filter, nil
 }
 
@@ -139,7 +143,7 @@ func scanSuspended(row pgx.Row) (SuspendedUser, error) {
 
 // ListSuspended returns one page of the tenant's suspended accounts.
 func (repository *Repository) ListSuspended(ctx context.Context, tenantID uuid.UUID, filter SuspensionFilters) (SuspendedPage, error) {
-	page := SuspendedPage{Items: []SuspendedUser{}, Reasons: []SuspensionBreakdown{}, Risks: []SuspensionBreakdown{}, Queue: []SuspendedUser{}, Teams: []string{}, Limit: filter.Limit, Offset: filter.Offset}
+	page := SuspendedPage{Items: []SuspendedUser{}, Reasons: []SuspensionBreakdown{}, Risks: []SuspensionBreakdown{}, Queue: []SuspendedUser{}, Teams: []string{}, Limit: filter.Limit}
 	if tenantID == uuid.Nil {
 		return page, errs.ErrUnauthorized
 	}
@@ -149,7 +153,18 @@ func (repository *Repository) ListSuspended(ctx context.Context, tenantID uuid.U
 		return page, err
 	}
 	page.Total = page.Summary.Total
-	rows, err := repository.pool.Query(ctx, suspendedDataset+`SELECT `+suspendedColumns+` FROM suspended WHERE `+suspendedWhere+` ORDER BY suspended_at DESC NULLS LAST,id LIMIT $8 OFFSET $9`, append(args, filter.Limit, filter.Offset)...)
+	// The order is suspended_at newest first, then the never-dated (people
+	// another organisation manages) last, then id; a cursor's zero time stands
+	// for a NULL suspended_at.
+	var afterTime *time.Time
+	if filter.After.Set && !filter.After.Time.IsZero() {
+		afterTime = &filter.After.Time
+	}
+	rows, err := repository.pool.Query(ctx, suspendedDataset+`SELECT `+suspendedColumns+` FROM suspended WHERE `+suspendedWhere+`
+ AND (NOT $9::boolean
+  OR ($10::timestamptz IS NOT NULL AND (suspended_at < $10 OR (suspended_at = $10 AND id > $11) OR suspended_at IS NULL))
+  OR ($10::timestamptz IS NULL AND suspended_at IS NULL AND id > $11))
+ ORDER BY suspended_at DESC NULLS LAST,id LIMIT $8`, append(args, filter.Limit+1, filter.After.Set, afterTime, filter.After.ID)...)
 	if err != nil {
 		return page, err
 	}
@@ -166,6 +181,12 @@ func (repository *Repository) ListSuspended(ctx context.Context, tenantID uuid.U
 	if err != nil {
 		return page, err
 	}
+	page.Items, page.NextCursor = paging.Next(page.Items, filter.Limit, func(user SuspendedUser) (time.Time, uuid.UUID) {
+		if user.SuspendedAt == nil {
+			return time.Time{}, user.ID
+		}
+		return *user.SuspendedAt, user.ID
+	})
 	for _, group := range []struct {
 		column      string
 		destination *[]SuspensionBreakdown

@@ -1,0 +1,16 @@
+type: object
+required:
+  - email
+  - role_id
+  - tenant_id
+properties:
+  email:
+    type: string
+  role_id:
+    type:
+      - string
+      - 'null'
+    format: uuid
+  tenant_id:
+    type: string
+    format: uuid

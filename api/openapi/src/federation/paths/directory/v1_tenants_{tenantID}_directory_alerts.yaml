@@ -1,0 +1,86 @@
+get:
+  operationId: listDirectoryAlerts
+  summary: List directory failure alerts
+  description: >-
+    Requires connection.read. Every alert of the organisation, newest first,
+    with the person it notifies (user_id), when it was made and when it last
+    notified.
+  tags:
+    - Directory
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  responses:
+    '200':
+      description: The alerts
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/DirectoryAlert.yaml
+    '401':
+      description: Authentication required
+    '403':
+      description: Tenant mismatch or missing connection.read
+post:
+  operationId: createDirectoryAlert
+  summary: Create a directory failure alert
+  description: >-
+    Requires connection.write and a user principal. Creates an in-app alert for
+    the caller when the failure threshold is reached within 15 minutes.
+    Notifications are rate limited to once per alert per 15 minutes. Audited as
+    directory.alert_created.
+  tags:
+    - Directory
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - name
+            - threshold
+          properties:
+            name:
+              type: string
+              minLength: 1
+              maxLength: 100
+            connection_id:
+              type:
+                - string
+                - 'null'
+            threshold:
+              type: integer
+              minimum: 1
+              maximum: 100
+  responses:
+    '201':
+      description: Alert created
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/DirectoryAlert.yaml
+    '400':
+      description: Invalid alert settings
+    '401':
+      description: Authenticated user required
+    '403':
+      description: Tenant mismatch or missing connection.write
+    '404':
+      description: Connection not found in this tenant

@@ -1,0 +1,30 @@
+get:
+  operationId: getMetrics
+  description: >-
+    Exposes process and request metrics in Prometheus exposition format for
+    scraping by a metrics collector. The scraper presents METRICS_TOKEN as
+    `Authorization: Bearer <token>`; without the right token the endpoint
+    answers 404, as it does everywhere but development when no METRICS_TOKEN is
+    set, since its counters (sign-in throttles among them) would tell an
+    attacker how close they are to a limit. The payload reflects the instance's
+    current counters and gauges at the time of the call.
+  summary: Metrics (Prometheus)
+  tags:
+    - Health
+  security: []
+  responses:
+    '200':
+      description: Prometheus exposition format
+      content:
+        text/plain:
+          schema:
+            type: string
+    '404':
+      description: >-
+        Metrics are not served to this caller: no METRICS_TOKEN is configured
+        outside development, or the request did not send it as `Authorization:
+        Bearer <token>`. The same plain-text answer as an unknown path.
+      content:
+        text/plain:
+          schema:
+            type: string

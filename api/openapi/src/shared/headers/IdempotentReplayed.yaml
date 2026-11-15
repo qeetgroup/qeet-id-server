@@ -1,0 +1,7 @@
+description: >-
+  true when this is the stored answer to an earlier request with the same
+  Idempotency-Key and body, sent again rather than run twice. Absent otherwise.
+schema:
+  type: string
+  enum:
+    - 'true'

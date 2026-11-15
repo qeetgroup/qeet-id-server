@@ -1,0 +1,50 @@
+type: object
+required:
+  - created_at
+  - dns_record_name
+  - dns_record_type
+  - dns_record_value
+  - domain
+  - id
+  - jit_enabled
+  - sso_enabled
+  - status
+  - verification_token
+properties:
+  created_at:
+    type: string
+    format: date-time
+  dns_record_name:
+    type: string
+  dns_record_type:
+    type: string
+  dns_record_value:
+    type: string
+  domain:
+    type: string
+  id:
+    type: string
+    format: uuid
+  jit_enabled:
+    type: boolean
+    description: >-
+      Single sign-on creates an account at sign-in for an address on the domain
+      that has none.
+  last_checked_at:
+    type: string
+    format: date-time
+  last_error:
+    type: string
+  sso_enabled:
+    type: boolean
+    description: >-
+      Addresses on the domain sign in only through the organisation's active
+      SAML, LDAP or OpenID Connect connection (break-glass members and
+      administrators single sign-on can't sign in excepted).
+  status:
+    type: string
+  verification_token:
+    type: string
+  verified_at:
+    type: string
+    format: date-time

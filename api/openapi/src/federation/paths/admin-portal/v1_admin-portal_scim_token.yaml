@@ -1,0 +1,50 @@
+post:
+  operationId: replaceAllPortalScimTokens
+  summary: Rotate SCIM token (portal)
+  description: >-
+    Returns the full plaintext token exactly once, alongside the updated config
+    view.
+  tags:
+    - Admin Portal
+  security:
+    - adminPortalCookie: []
+  responses:
+    '200':
+      description: '{ token: string, config: object }'
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - config
+              - token
+            properties:
+              config:
+                $ref: ../../components/schemas/ConfigView.yaml
+              token:
+                type: string
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+delete:
+  operationId: revokeAllPortalScimTokens
+  description: >-
+    Revokes the tenant's SCIM provisioning token from the cookie-authenticated
+    admin portal, immediately stopping inbound SCIM provisioning until a new
+    token is issued; the link's capabilities must include scim. To keep
+    provisioning running, rotate to a fresh token instead with POST
+    /v1/admin-portal/scim/token. Scoped to the tenant bound to the portal
+    session.
+  summary: Revoke SCIM token (portal)
+  tags:
+    - Admin Portal
+  security:
+    - adminPortalCookie: []
+  responses:
+    '204':
+      description: Revoked
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml

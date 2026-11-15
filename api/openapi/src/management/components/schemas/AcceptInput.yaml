@@ -1,0 +1,12 @@
+type: object
+required:
+  - display_name
+  - password
+  - token
+properties:
+  display_name:
+    type: string
+  password:
+    type: string
+  token:
+    type: string

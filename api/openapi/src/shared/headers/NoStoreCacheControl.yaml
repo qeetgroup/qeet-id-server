@@ -1,0 +1,7 @@
+description: >-
+  no-store: the response carries a token, a secret or a sign-in session, so no
+  cache may keep it.
+schema:
+  type: string
+  enum:
+    - no-store

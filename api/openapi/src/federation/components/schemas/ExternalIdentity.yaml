@@ -1,0 +1,30 @@
+type: object
+required:
+  - email
+  - id
+  - linked_at
+  - provider
+  - subject
+  - tenant_id
+  - user_id
+properties:
+  email:
+    type:
+      - string
+      - 'null'
+  id:
+    type: string
+    format: uuid
+  linked_at:
+    type: string
+    format: date-time
+  provider:
+    type: string
+  subject:
+    type: string
+  tenant_id:
+    type: string
+    format: uuid
+  user_id:
+    type: string
+    format: uuid

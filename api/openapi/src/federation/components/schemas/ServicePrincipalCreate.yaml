@@ -1,0 +1,16 @@
+type: object
+required:
+  - tenant_id
+  - name
+properties:
+  tenant_id:
+    type: string
+    format: uuid
+  name:
+    type: string
+  description:
+    type: string
+  scopes:
+    type: array
+    items:
+      type: string

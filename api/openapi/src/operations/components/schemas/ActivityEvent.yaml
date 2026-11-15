@@ -1,0 +1,119 @@
+type: object
+description: >-
+  Unified representation of a domain event, derived from either the live NATS
+  outbox stream or the durable audit log. Category and severity are computed
+  from the event type and are never stored in the DB.
+required:
+  - id
+  - type
+  - category
+  - severity
+  - title
+  - at
+properties:
+  id:
+    type: string
+    format: uuid
+    description: >-
+      For audit-log events this is the stable audit.events row UUID. For live
+      NATS events a fresh UUID is generated per delivery. Reconnect with the
+      stream frame's `id`, not this.
+  type:
+    type: string
+    description: >-
+      Audit action string (e.g. "user.created", "auth.sign_in_failed").
+      Dot-namespaced; first segment is the resource type.
+    example: user.created
+  category:
+    type: string
+    description: Coarse operational category derived from the event type prefix.
+    enum:
+      - authentication
+      - authorization
+      - security
+      - directory
+      - developer
+      - system
+  severity:
+    type: string
+    description: >-
+      Derived from the words of the event type. critical — security incident
+      (token reuse, threat detection); error — a failure, lock or refusal
+      (auth.sign_in_failed, auth.account_locked); warning — a destructive or
+      sensitive change (delete, revoke, rotate, reset); success — positive
+      transition (create, enable, sign-in); info — everything else.
+    enum:
+      - info
+      - success
+      - warning
+      - error
+      - critical
+  title:
+    type: string
+    description: Human-readable title derived from the event type.
+    example: User Created
+  description:
+    type: string
+    description: Optional extended description.
+  actor:
+    $ref: ./ActivityActor.yaml
+  target:
+    $ref: ./ActivityTarget.yaml
+  at:
+    type: string
+    format: date-time
+    description: Event timestamp (UTC, RFC3339).
+  source:
+    type: string
+    description: Event source identifier (e.g. service name).
+  ip:
+    type: string
+    description: Requester IP address (dot-decimal or IPv6).
+  location:
+    type: string
+    description: >-
+      Where the request came from, approximately ("Pune, IN", or the country
+      alone), from what the trusted proxy reported (GEO_COUNTRY_HEADER,
+      GEO_CITY_HEADER), kept in the event's metadata.geo. Omitted when unknown;
+      there is no GeoIP lookup.
+  country:
+    type: string
+    description: The ISO 3166-1 alpha-2 country of location.
+  city:
+    type: string
+    description: The city of location, when the proxy names one.
+  device:
+    type: string
+    enum:
+      - desktop
+      - mobile
+      - tablet
+    description: The device type the user agent names; omitted when it names none.
+  os:
+    type: string
+    description: >-
+      The operating system the user agent names (Windows, macOS, iOS, iPadOS,
+      Android, ChromeOS, Linux).
+  browser:
+    type: string
+    description: Browser label parsed from user-agent (optional).
+  status:
+    type: string
+    description: Application-level status carried in the event (optional).
+  request_id:
+    type: string
+    description: >-
+      Correlation ID of the originating request (optional). Shared by all audit
+      events emitted while handling one request; drives the related-events
+      correlation and is copyable in the console.
+  metadata:
+    type: object
+    additionalProperties: true
+    description: >-
+      Domain-specific supplementary fields (non-normative). An event about a
+      role, group or ABAC policy carries target_name, its name when the event
+      was recorded, and role_name or group_name beside a role_id or group_id, so
+      one deleted since can still be named. People are named by id only (the
+      audit chain can't be changed, so a name in it would outlive the person's
+      erasure); look the id up for their current name. rebac.tuple_deleted
+      carries the removed tuple's object, relation and subject.

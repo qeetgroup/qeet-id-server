@@ -110,11 +110,13 @@ ORDER BY protocol DESC, name;
 SELECT name FROM tenant.tenants WHERE id = @tenant_id AND deleted_at IS NULL;
 
 -- name: ListBreakGlassMembers :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT b.user_id, u.email, u.display_name, b.created_by, b.created_at
 FROM tenant.break_glass_members b
 JOIN "user".users u ON u.id = b.user_id
 WHERE b.tenant_id = $1
-ORDER BY lower(u.email);
+ORDER BY lower(u.email)
+LIMIT 1001;
 
 -- name: IsTenantMember :one
 -- A member: the organisation is the account's home, or the account holds one

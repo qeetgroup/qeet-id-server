@@ -1,0 +1,64 @@
+get:
+  operationId: listSecurityAnomalies
+  description: >-
+    Lists recent login anomalies detected for the tenant for review by a
+    security operator. Each entry carries the anomaly's context and its open or
+    resolved state. Triage counts are available from the anomaly-summary call,
+    and an individual entry is closed with the resolve-anomaly call.
+  summary: List anomalies
+  tags:
+    - Threats
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    - name: cursor
+      in: query
+      required: false
+      description: The previous page's next_cursor.
+      schema:
+        type: string
+    - name: status
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - open
+          - resolved
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: A page of anomalies, newest first
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+              - total
+            properties:
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/Anomaly.yaml
+              next_cursor:
+                type: string
+                description: Present when there is a next page.
+              total:
+                type: integer
+                description: How many anomalies match.
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml

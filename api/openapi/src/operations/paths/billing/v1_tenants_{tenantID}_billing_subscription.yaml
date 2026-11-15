@@ -1,0 +1,94 @@
+get:
+  operationId: getSubscription
+  summary: Get subscription
+  tags:
+    - Billing
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Returns the organisation's subscription. A trial grants its plan until
+    trial_end, and a plan marked to cancel until current_period_end. Any other
+    plan renews at current_period_end: a free one starts its next period, and a
+    paid one is billed with an open renewal invoice and turns past_due, keeping
+    its plan for the payment grace (7 days unless configured) while that invoice
+    is paid, through POST
+    /v1/tenants/{tenantID}/billing/invoices/{invoiceID}/pay or by bank transfer.
+    Paid, it is active for the new period; still unpaid after the grace, or
+    ended by a trial or a cancellation, it is canceled, with ended_at, and the
+    organisation is on the free plan. Each change is audited as
+    billing.subscription_renewed, billing.subscription_past_due or
+    billing.subscription_ended. Requires billing.read.
+  responses:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/Subscription.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+put:
+  operationId: setSubscription
+  summary: Subscribe / change plan
+  tags:
+    - Billing
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - currency
+            - plan_code
+          properties:
+            currency:
+              type: string
+            plan_code:
+              type: string
+  description: >-
+    Puts the tenant on plan_code, priced in currency; no payment is taken here.
+    A free plan starts a new period with a zero invoice. A paid plan that costs
+    no more than the tenant's active subscription in the same currency and
+    billing interval takes over the period already paid for, while it lasts,
+    with no new invoice; the current plan itself changes nothing. Any other paid
+    plan, such as one that costs more, must go through checkout (POST
+    /v1/tenants/{tenantID}/billing/checkout) and is refused with 402
+    billing.checkout_required, unless invoice-only billing
+    (BILLING_ALLOW_UNPAID_ACTIVATION) is on and no card provider serves the
+    currency, which activates it with an open invoice.
+  responses:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/Subscription.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '402':
+      $ref: ../../components/responses/PaymentRequired.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

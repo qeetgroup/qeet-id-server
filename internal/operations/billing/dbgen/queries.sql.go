@@ -561,7 +561,7 @@ SELECT id, plan_code, currency, amount_minor, status, period_start, period_end, 
 FROM tenant.invoices
 WHERE tenant_id = $1
 ORDER BY issued_at DESC
-LIMIT 100
+LIMIT 1001
 `
 
 type ListInvoicesRow struct {
@@ -589,6 +589,7 @@ type ListInvoicesRow struct {
 }
 
 // Return the tenant's billing history, most recent first.
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListInvoices(ctx context.Context, tenantID uuid.UUID) ([]ListInvoicesRow, error) {
 	rows, err := q.db.Query(ctx, listInvoices, tenantID)
 	if err != nil {

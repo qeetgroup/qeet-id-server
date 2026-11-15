@@ -1,0 +1,8 @@
+type: apiKey
+in: cookie
+name: qe_ls
+description: >-
+  Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session
+  and consumed by the OAuth authorize/consent flow, and by the few
+  signed-in routes the hosted login calls itself (listing, renaming and
+  adding passkeys). State-changing calls made with it need the CSRF token.

@@ -1,0 +1,19 @@
+description: >-
+  The attempt was refused and not counted, the same answer whatever the password
+  and whether the address has an account. Either the sign-in lockout could not
+  be evaluated, its counters could not be read or written
+  (`auth.sign_in_unavailable`, retryable), or the server is too busy to check a
+  password now (`server.overloaded`, retryable, with Retry-After).
+headers:
+  X-Request-Id:
+    $ref: ../../../shared/headers/RequestId.yaml
+  Retry-After:
+    description: >-
+      With `server.overloaded`, seconds to wait before trying again (1 to 3),
+      also sent as `metadata.retry_after`.
+    schema:
+      type: integer
+content:
+  application/json:
+    schema:
+      $ref: ../../../shared/schemas/Error.yaml

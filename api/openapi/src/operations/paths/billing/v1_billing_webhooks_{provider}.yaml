@@ -1,0 +1,33 @@
+post:
+  operationId: receivePaymentWebhook
+  summary: Payment webhook
+  description: >-
+    Receives provider payment events. Authenticated by the provider's webhook
+    signature (no user session); on a verified successful payment the referenced
+    checkout is completed idempotently.
+  tags:
+    - Billing
+  security: []
+  parameters:
+    - name: provider
+      in: path
+      required: true
+      schema:
+        type: string
+        enum:
+          - stripe
+          - razorpay
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: true
+  responses:
+    '200':
+      description: Event acknowledged
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

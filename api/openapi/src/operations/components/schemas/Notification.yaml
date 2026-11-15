@@ -1,0 +1,24 @@
+type: object
+required:
+  - created_at
+  - id
+  - kind
+  - title
+properties:
+  created_at:
+    type: string
+    format: date-time
+  description:
+    type: string
+  href:
+    type: string
+  id:
+    type: string
+    format: uuid
+  kind:
+    type: string
+  read_at:
+    type: string
+    format: date-time
+  title:
+    type: string

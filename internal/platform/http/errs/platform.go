@@ -21,6 +21,7 @@ const (
 	CodeInternal            = "internal"
 	CodeNotImplemented      = "not_implemented"
 	CodeServerOverloaded    = "server.overloaded"
+	CodeCSRFFailed          = "csrf_failed"
 )
 
 // Default messages for the generic errors, shown when a handler doesn't set a
@@ -45,6 +46,10 @@ var (
 // as a password hash while every hashing slot and its queue are full. It is
 // answered 503 with Retry-After.
 var ErrServerOverloaded = New(CodeServerOverloaded, "The service is busy. Please try again in a moment.").AsRetryable()
+
+// ErrCSRFFailed refuses a cookie-authenticated mutation from an origin that is
+// not allowed, or without the CSRF cookie echoed in X-CSRF-Token.
+var ErrCSRFFailed = New(CodeCSRFFailed, "This request could not be verified. Reload the page and try again.")
 
 // ErrUnsupportedMediaType refuses a body not sent as JSON on a route that
 // accepts only JSON.

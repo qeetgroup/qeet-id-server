@@ -1,0 +1,59 @@
+post:
+  operationId: beginPasskeySignIn
+  summary: Login begin
+  tags:
+    - Passkeys
+  security: []
+  requestBody:
+    required: false
+    content:
+      application/json:
+        example:
+          email: ada@example.com
+        schema:
+          $ref: ../../components/schemas/loginBeginInput.yaml
+  description: >-
+    Begins a passkey sign-in ceremony and returns its session_id and the
+    WebAuthn request options. Every ceremony is discoverable: the options carry
+    no allowCredentials, and the answer is the same whether or not the email
+    (optional; an empty body is allowed) has an account or a passkey. With an
+    email, only a passkey of that account can finish the ceremony. The browser
+    that begins it is given an HttpOnly binding cookie (qe_passkey, __Host-
+    prefixed outside dev) naming the ceremony; only that browser can finish it
+    at POST /v1/passkeys/login/session. A body not sent as JSON is refused (415
+    unsupported_media_type). On a domain whose organisation requires single
+    sign-on, a ceremony begun with that email is refused with 403
+    auth.sso_required before the address is looked up (see the SSORequired
+    response).
+  responses:
+    '200':
+      description: >-
+        The ceremony's session_id and the WebAuthn request options (publicKey),
+        without allowCredentials
+      content:
+        application/json:
+          example:
+            publicKey:
+              challenge: q8V3m9pT1xRwz0LkYb2NcHs4dFgJ6uEo7iAa5tSvWyQ
+              rpId: id.qeet.in
+              userVerification: required
+            session_id: '018f2a72-3d4e-7f5a-9b6c-7d8e9f0a1b2c'
+          schema:
+            type: object
+            required:
+              - publicKey
+              - session_id
+            properties:
+              publicKey:
+                $ref: ../../components/schemas/PublicKeyCredentialRequestOptions.yaml
+              session_id:
+                type: string
+                format: uuid
+    '403':
+      $ref: ../../components/responses/SSORequired.yaml
+    '415':
+      $ref: ../../components/responses/UnsupportedMediaType.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

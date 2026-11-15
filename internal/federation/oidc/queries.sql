@@ -42,6 +42,7 @@ FROM auth.oidc_clients WHERE client_id = @client_id;
 SELECT post_logout_uris FROM auth.oidc_clients WHERE client_id = @client_id;
 
 -- name: ListShadowAICandidates :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT c.id, c.client_id, c.name, c.grant_types, c.created_at,
        COALESCE(g.live, 0)::bigint AS live_grants
 FROM auth.oidc_clients c
@@ -54,16 +55,19 @@ LEFT JOIN (
 WHERE c.tenant_id = @tenant_id
   AND c.reviewed_at IS NULL
   AND c.grant_types && @machine_grant_types::text[]
-ORDER BY live_grants DESC, c.created_at DESC;
+ORDER BY live_grants DESC, c.created_at DESC
+LIMIT 1001;
 
 -- name: ReviewOIDCClient :execrows
 UPDATE auth.oidc_clients SET reviewed_at = NOW(), reviewed_by = @reviewed_by
 WHERE id = @id AND tenant_id = @tenant_id;
 
 -- name: ListOIDCClients :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, tenant_id, client_id, type, name, redirect_uris,
        post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri, logo_uri, client_uri
-FROM auth.oidc_clients WHERE tenant_id = @tenant_id ORDER BY created_at DESC;
+FROM auth.oidc_clients WHERE tenant_id = @tenant_id ORDER BY created_at DESC
+LIMIT 1001;
 
 -- CountOIDCClientsByTenant counts a tenant's registered applications (relying
 -- parties) — the plan "apps" limit check.

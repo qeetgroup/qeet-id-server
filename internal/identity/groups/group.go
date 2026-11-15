@@ -206,8 +206,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor)
 	return &g, nil
 }
 
-// List returns every group in the tenant with its member count, counted in one
-// LEFT JOIN rather than a query per group.
+// List returns the tenant's groups with their member counts, counted in one
+// LEFT JOIN rather than a query per group: at most paging.MaxListItems+1, as
+// the handler truncates the rest.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Group, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT g.id, g.tenant_id, g.parent_id, g.name, g.description, g.created_at,
@@ -217,6 +218,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Group, error)
 		WHERE g.tenant_id = $1
 		GROUP BY g.id
 		ORDER BY g.name
+		LIMIT 1001
 	`, tenantID)
 	if err != nil {
 		return nil, err
@@ -578,7 +580,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		out = filterByRoles(out, role, grants)
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {

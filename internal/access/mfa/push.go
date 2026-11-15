@@ -23,6 +23,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -612,7 +613,7 @@ func (h *Handler) listPushDevices(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": devices})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(devices))
 }
 
 func (h *Handler) registerPushDevice(w http.ResponseWriter, r *http.Request) {
@@ -892,7 +893,7 @@ func (h *Handler) listMemberPushDevices(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }
 
 // revokeMemberPushDevice → DELETE /v1/users/{id}/push-devices/{deviceID}: an

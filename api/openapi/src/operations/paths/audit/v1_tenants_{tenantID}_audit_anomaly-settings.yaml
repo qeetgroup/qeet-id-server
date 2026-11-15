@@ -1,0 +1,61 @@
+get:
+  operationId: getAuditAnomalySettings
+  description: >-
+    Returns the tenant's anomaly-detection configuration, including whether
+    scoring is enabled, the score threshold above which an event is flagged, and
+    the minimum number of baseline events required before scoring begins.
+    Platform defaults are reported when the tenant has not customized the
+    settings.
+  summary: Get anomaly-detection settings
+  tags:
+    - Audit
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Settings
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/AuditAnomalySettings.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+put:
+  operationId: setAuditAnomalySettings
+  description: >-
+    Replaces the tenant's anomaly-detection configuration. The score threshold
+    must be between 0 and 1 and the minimum baseline count must be non-negative,
+    otherwise the request is rejected as unprocessable. Changes take effect on
+    the next background scoring pass, and the stored settings are returned.
+  summary: Update anomaly-detection settings
+  tags:
+    - Audit
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/AuditAnomalySettings.yaml
+  responses:
+    '200':
+      description: Updated
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/AuditAnomalySettings.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

@@ -1,0 +1,93 @@
+post:
+  operationId: evaluateAccessBatch
+  summary: AuthZEN evaluations
+  description: >-
+    OpenID AuthZEN access evaluations: several evaluations in one call, each
+    answered as the single evaluation endpoint answers one. The top-level
+    subject, resource, action and context are defaults; an evaluation that names
+    one of them replaces it whole. Decisions come back in the request's order.
+    options.evaluations_semantic is execute_all (the default),
+    deny_on_first_deny, which stops after the first deny, or
+    permit_on_first_permit, which stops after the first permit; the response
+    then holds the evaluations up to that one. An evaluation the caller got
+    wrong, such as one without a subject id, is denied with context.error
+    {status, code, message} and counts as a deny. At most 100 evaluations (more
+    is 422 authzen.too_many_evaluations); an unknown semantic is 422
+    authzen.evaluations_semantic_invalid. Without evaluations, the request is a
+    single evaluation and the response is a single decision. Requires role.read.
+  tags:
+    - AuthZEN
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          properties:
+            subject:
+              $ref: ../../components/schemas/AuthZENSubject.yaml
+            resource:
+              $ref: ../../components/schemas/AuthZENResource.yaml
+            action:
+              $ref: ../../components/schemas/AuthZENAction.yaml
+            context:
+              type: object
+              additionalProperties: true
+            evaluations:
+              type: array
+              maxItems: 100
+              items:
+                type: object
+                properties:
+                  subject:
+                    $ref: ../../components/schemas/AuthZENSubject.yaml
+                  resource:
+                    $ref: ../../components/schemas/AuthZENResource.yaml
+                  action:
+                    $ref: ../../components/schemas/AuthZENAction.yaml
+                  context:
+                    type: object
+                    additionalProperties: true
+            options:
+              type: object
+              properties:
+                evaluations_semantic:
+                  type: string
+                  enum:
+                    - execute_all
+                    - deny_on_first_deny
+                    - permit_on_first_permit
+  responses:
+    '200':
+      description: >-
+        { evaluations: [{ decision, context }] }, or a single { decision,
+        context } without evaluations.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              evaluations:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    decision:
+                      type: boolean
+                    context:
+                      type: object
+              decision:
+                type: boolean
+              context:
+                type: object
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

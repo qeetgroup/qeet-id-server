@@ -17,6 +17,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 const mappingColumns = `id,source_attribute,target_field,value_type,transform,pattern,enabled,required,version`
@@ -151,7 +152,7 @@ func (handler *Handler) mappings(response http.ResponseWriter, request *http.Req
 		httpx.WriteError(response, request, err)
 		return
 	}
-	httpx.WriteJSON(response, http.StatusOK, map[string]any{"items": items, "targets": profileTargets})
+	httpx.WriteJSON(response, http.StatusOK, paging.ListWith(items, map[string]any{"targets": profileTargets}))
 }
 
 func (handler *Handler) previewMappings(response http.ResponseWriter, request *http.Request) {
@@ -396,5 +397,5 @@ func (handler *Handler) profiles(response http.ResponseWriter, request *http.Req
 			items[i].ConnectionName = names[items[i].ConnectionID]
 		}
 	}
-	httpx.WriteJSON(response, http.StatusOK, map[string]any{"items": items})
+	httpx.WriteJSON(response, http.StatusOK, paging.List(items))
 }

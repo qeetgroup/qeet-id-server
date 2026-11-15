@@ -114,6 +114,7 @@ const listHooks = `-- name: ListHooks :many
 SELECT id, trigger, url, enabled, fail_open, created_at,
        last_called_at, last_outcome, last_status_code, call_count, skip_count, deny_count
 FROM tenant.auth_hooks WHERE tenant_id = $1 ORDER BY created_at DESC
+LIMIT 1001
 `
 
 type ListHooksRow struct {
@@ -133,6 +134,7 @@ type ListHooksRow struct {
 
 // Queries for the auth-hooks domain.
 // All queries are static; no dynamic SQL in this domain.
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListHooks(ctx context.Context, tenantID uuid.UUID) ([]ListHooksRow, error) {
 	rows, err := q.db.Query(ctx, listHooks, tenantID)
 	if err != nil {

@@ -1,0 +1,105 @@
+type: object
+required:
+  - id
+  - connection_id
+  - operation
+  - trigger
+  - resource_type
+  - started_at
+  - duration_ms
+  - status
+  - users_synced
+  - groups_synced
+  - retryable
+properties:
+  id:
+    type: string
+    format: uuid
+  connection_id:
+    type: string
+  operation:
+    type: string
+  trigger:
+    type: string
+    enum:
+      - push
+      - manual
+      - sign-in
+  resource_type:
+    type: string
+    enum:
+      - user
+      - group
+      - connection
+  resource_id:
+    type: string
+  started_at:
+    type: string
+    format: date-time
+  duration_ms:
+    type: integer
+    minimum: 0
+  http_status:
+    type: integer
+  status:
+    type: string
+    enum:
+      - success
+      - warning
+      - failed
+  users_synced:
+    type: integer
+    minimum: 0
+  groups_synced:
+    type: integer
+    minimum: 0
+  error_code:
+    type: string
+  message:
+    type: string
+  category:
+    type: string
+  severity:
+    type: string
+    enum:
+      - ''
+      - warning
+      - critical
+  resolution:
+    type: string
+    enum:
+      - open
+      - resolved
+      - retried
+  resolved_at:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  retry_of:
+    type:
+      - string
+      - 'null'
+    format: uuid
+  retryable:
+    type: boolean
+  reason:
+    type: string
+    description: >-
+      The failure's own code, such as ldap.dial_failed,
+      ldap.service_bind_failed, ldap.tls_verify_required or
+      ldap.invalid_credentials, or the SCIM error type an answer to the identity
+      provider gave (scim.uniqueness, say). Absent on a success, and on events
+      from before it was kept.
+  params:
+    type: object
+    additionalProperties:
+      type: string
+    description: 'Safe details of the failure: host, the directory server it used.'
+  subject:
+    type: string
+    description: The login name an LDAP sign-in tried.
+  user_id:
+    type: string
+    format: uuid
+    description: The person an LDAP sign-in was for, once the directory knew them.

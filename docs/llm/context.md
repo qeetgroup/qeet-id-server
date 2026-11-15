@@ -532,7 +532,9 @@ caller needs the result or the operation must be atomic with the response.
 ## API contracts
 
 `api/openapi/` — **five OpenAPI 3.1 documents**, split by bounded context, `info.version 0.2.0`.
-There is deliberately no monolithic spec.
+There is deliberately no monolithic spec. The documents are generated from `api/openapi/src/` (one
+file per path, shared definitions in `src/shared/`) by `make openapi` (Redocly CLI, pinned in
+`src/bun.lock`) and committed; `make openapi-check` fails when one is stale.
 
 **The coverage gate is the important part:** `internal/bootstrap/openapi_coverage_test.go` fails the build if
 any mounted route is undocumented. A route cannot silently appear.
@@ -549,6 +551,7 @@ request host in production.
 |---|---|---|
 | Unit | alongside source | `go test ./...` |
 | **OpenAPI coverage gate** | `internal/bootstrap/openapi_coverage_test.go` | with unit tests |
+| OpenAPI validity and consistency | `internal/bootstrap/openapi_valid_test.go`, `openapi_consistency_test.go` | with unit tests |
 
 Tests are **colocated** (`_test.go` beside the source). The current tree has 330 Go test files and
 1,289 `Test*` functions; 169 files are integration-tagged and run through the database test gate.
@@ -570,7 +573,7 @@ documents, including API-auth security classification.
 
 | Job | What it runs |
 |---|---|
-| `verify` (`ci.yml`) | On pull requests into `develop` and `main`: `go build ./...` · `go vet ./...` · `golangci-lint` v2.15.0 · `govulncheck ./cmd/... ./internal/...` · gitleaks |
+| `verify` (`ci.yml`) | On pull requests into `develop` and `main`: `go build ./...` · `go vet ./...` · `golangci-lint` v2.15.0 · `govulncheck ./cmd/... ./internal/...` · API contract (`make openapi-check`, the OpenAPI tests) · gitleaks |
 | `image` (`candidate.yml`) | On push to `release/**` or `hotfix/**`: the test image `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>` |
 | `deploy` (`deploy.yml`) | A merged release or hotfix into `main`: that tested image to ECR, roll the host via GitHub OIDC, then tag |
 | local (`make ci`) | `go test -race` with the database tests · `sqlc diff` · `gosec` (`#nosec` needs a rule and a reason) |

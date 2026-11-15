@@ -1,0 +1,12 @@
+type: object
+required:
+  - tenant
+  - user
+  - api_key
+properties:
+  tenant:
+    $ref: ./RateLimitBucket.yaml
+  user:
+    $ref: ./RateLimitBucket.yaml
+  api_key:
+    $ref: ./RateLimitBucket.yaml

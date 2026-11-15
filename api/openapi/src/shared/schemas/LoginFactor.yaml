@@ -1,0 +1,18 @@
+type: object
+properties:
+  type:
+    type: string
+    enum:
+      - totp
+      - recovery_code
+      - email
+      - sms
+      - passkey
+      - push
+  id:
+    type: string
+    format: uuid
+    description: An email or SMS factor's id.
+  destination:
+    type: string
+    description: An email or SMS factor's masked address or number.

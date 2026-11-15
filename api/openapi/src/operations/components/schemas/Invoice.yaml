@@ -1,0 +1,108 @@
+type: object
+required:
+  - amount_minor
+  - currency
+  - id
+  - invoice_number
+  - issued_at
+  - period_end
+  - period_start
+  - place_of_supply
+  - plan_code
+  - status
+  - tax_amount_minor
+  - tax_rate_bps
+  - tax_type
+  - taxable_amount_minor
+properties:
+  amount_minor:
+    type: integer
+    description: >-
+      The total charged, taxable_amount_minor plus tax_amount_minor; for a
+      checkout, what the payment provider charged.
+  currency:
+    type: string
+  id:
+    type: string
+    format: uuid
+  invoice_number:
+    type:
+      - string
+      - 'null'
+    description: >-
+      The GST invoice number, one series per Indian financial year (April to
+      March), such as 2026-27/000042. Null on an invoice that charges nothing.
+  issued_at:
+    type: string
+    format: date-time
+  period_end:
+    type: string
+    format: date-time
+  period_start:
+    type: string
+    format: date-time
+  place_of_supply:
+    type: string
+  plan_code:
+    type: string
+  status:
+    type: string
+    enum:
+      - paid
+      - open
+      - void
+    description: >-
+      paid when a payment was captured or nothing is owed; open until it is
+      paid, due at due_at, for a plan granted before payment (invoice-only
+      billing) or a renewal; void for a renewal no longer owed, because the
+      subscription ended or a new plan was bought.
+  kind:
+    type: string
+    enum:
+      - purchase
+      - renewal
+    description: >-
+      purchase for a plan bought or changed; renewal for the next period of a
+      plan, billed when its period ends.
+  due_at:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: >-
+      When an open invoice falls due; null once it is paid or when nothing was
+      owed.
+  paid_at:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  billed_to:
+    description: >-
+      The billing profile as it stood when the invoice was issued; null on
+      invoices issued before it was kept.
+    oneOf:
+      - $ref: ./BillingProfile.yaml
+      - type: 'null'
+  supplier_gstin:
+    type: string
+    description: The seller's GSTIN; empty when the operator has set none.
+  sac:
+    type: string
+    description: >-
+      The services accounting code of what was sold; empty when the operator has
+      set none.
+  emailed_at:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: When the invoice was emailed to its billing email.
+  tax_amount_minor:
+    type: integer
+  tax_rate_bps:
+    type: integer
+  tax_type:
+    type: string
+  taxable_amount_minor:
+    type: integer

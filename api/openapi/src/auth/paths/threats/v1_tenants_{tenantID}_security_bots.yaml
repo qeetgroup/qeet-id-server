@@ -1,0 +1,69 @@
+get:
+  operationId: getBotTelemetry
+  description: >-
+    Returns recent automated-traffic verdicts and aggregate statistics from bot
+    detection for the tenant, for review in the security dashboard. It reports
+    observed telemetry only and changes no configuration. Tune how detection
+    behaves with the bot-settings calls.
+  summary: Bot telemetry
+  tags:
+    - Threats
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    - name: cursor
+      in: query
+      required: false
+      description: The previous page's next_cursor.
+      schema:
+        type: string
+    - name: verdict
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - allowed
+          - challenged
+          - blocked
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Recent bot verdicts and stats
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - recent
+              - stats
+              - total
+            properties:
+              recent:
+                type: array
+                description: A page of detections, newest first.
+                items:
+                  $ref: ../../components/schemas/BotEvent.yaml
+              next_cursor:
+                type: string
+                description: Present when there is a next page.
+              total:
+                type: integer
+                description: How many detections match.
+              stats:
+                $ref: ../../components/schemas/Stats.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml

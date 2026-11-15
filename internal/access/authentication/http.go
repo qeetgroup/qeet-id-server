@@ -15,6 +15,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // BotEvaluator scores an auth attempt's User-Agent for bot-likeness and records
@@ -821,7 +822,7 @@ func (h *Handler) listOwnTrustedDevices(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }
 
 // forgetOwnTrustedDevices → DELETE /v1/auth/trusted-devices[/{id}]: forget one
@@ -883,7 +884,7 @@ func (h *Handler) listMemberTrustedDevices(w http.ResponseWriter, r *http.Reques
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }
 
 // forgetMemberTrustedDevices → DELETE /v1/users/{id}/trusted-devices[/{deviceID}]:

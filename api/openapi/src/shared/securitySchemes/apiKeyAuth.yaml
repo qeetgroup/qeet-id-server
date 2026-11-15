@@ -1,0 +1,6 @@
+type: apiKey
+in: header
+name: Authorization
+description: >-
+  API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey
+  ` prefix). Accepted on the same authenticated routes as bearerAuth.

@@ -1,0 +1,26 @@
+post:
+  operationId: submitSalesLead
+  description: >-
+    Records a contact-sales lead for follow-up and, on a best-effort basis,
+    notifies the configured sales inbox; a delivery failure does not fail the
+    request because the lead is already persisted. Available to any
+    authenticated user, including during onboarding before an organization
+    exists, with tenant and user recorded when known. Returns 202 to acknowledge
+    the lead was accepted for processing.
+  summary: Submit a contact-sales lead
+  tags:
+    - Sales
+  security:
+    - bearerAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: true
+  responses:
+    '202':
+      description: Lead accepted
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml

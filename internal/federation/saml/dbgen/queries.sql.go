@@ -1108,6 +1108,7 @@ const listSamlConnections = `-- name: ListSamlConnections :many
 SELECT id, tenant_id, name, idp_entity_id, idp_sso_url, idp_certificate,
        email_attribute, name_attribute, status, created_at, updated_at, last_login_at
 FROM tenant.saml_connections WHERE tenant_id = $1 ORDER BY created_at DESC
+LIMIT 1001
 `
 
 type ListSamlConnectionsRow struct {
@@ -1125,6 +1126,7 @@ type ListSamlConnectionsRow struct {
 	LastLoginAt    pgtype.Timestamptz
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListSamlConnections(ctx context.Context, tenantID uuid.UUID) ([]ListSamlConnectionsRow, error) {
 	rows, err := q.db.Query(ctx, listSamlConnections, tenantID)
 	if err != nil {
@@ -1359,8 +1361,10 @@ SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
        attributes, assignment_required, require_signed_requests, encrypt_assertions
 FROM tenant.saml_service_providers WHERE tenant_id = $1 ORDER BY created_at DESC
+LIMIT 1001
 `
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListSamlSPs(ctx context.Context, tenantID uuid.UUID) ([]TenantSamlServiceProvider, error) {
 	rows, err := q.db.Query(ctx, listSamlSPs, tenantID)
 	if err != nil {

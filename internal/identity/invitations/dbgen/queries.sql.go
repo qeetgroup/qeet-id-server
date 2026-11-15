@@ -366,7 +366,7 @@ SELECT id, tenant_id, email, role_id, status, expires_at, accepted_at, created_a
 FROM tenant.invites
 WHERE tenant_id = $1
 ORDER BY created_at DESC
-LIMIT 200
+LIMIT 1001
 `
 
 type ListInvitesRow struct {
@@ -380,6 +380,7 @@ type ListInvitesRow struct {
 	CreatedAt  time.Time
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListInvites(ctx context.Context, tenantID uuid.UUID) ([]ListInvitesRow, error) {
 	rows, err := q.db.Query(ctx, listInvites, tenantID)
 	if err != nil {
@@ -416,7 +417,7 @@ FROM tenant.invites i
 JOIN tenant.tenants t ON t.id = i.tenant_id
 WHERE LOWER(i.email) = LOWER($1) AND i.status = 'pending' AND i.expires_at > NOW()
 ORDER BY i.created_at DESC
-LIMIT 50
+LIMIT 1001
 `
 
 type ListInvitesForEmailRow struct {
@@ -430,6 +431,7 @@ type ListInvitesForEmailRow struct {
 	TenantSlug string
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListInvitesForEmail(ctx context.Context, email string) ([]ListInvitesForEmailRow, error) {
 	rows, err := q.db.Query(ctx, listInvitesForEmail, email)
 	if err != nil {

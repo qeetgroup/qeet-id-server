@@ -1,0 +1,121 @@
+type: object
+description: >-
+  Aggregate counts over the same filters as the history endpoint. All bucket
+  maps are zero-filled so the console renders a stable legend.
+required:
+  - total
+  - unique_actors
+  - security_alerts
+  - by_severity
+  - by_category
+  - by_outcome
+  - series
+  - bucket_seconds
+  - window
+properties:
+  total:
+    type: integer
+    format: int64
+    description: Total events in the window.
+  unique_actors:
+    type: integer
+    format: int64
+    description: Distinct people who acted in the window (actors.people).
+  actors:
+    type: object
+    description: >-
+      Distinct actors of each kind. API keys, agents and service principals are
+      told apart by the metadata.actor_id their events record, from this release
+      on.
+    properties:
+      people:
+        type: integer
+        format: int64
+      api_keys:
+        type: integer
+        format: int64
+      agents:
+        type: integer
+        format: int64
+      services:
+        type: integer
+        format: int64
+  security_alerts:
+    type: integer
+    format: int64
+    description: Count of critical-severity events (threat.* and incidents).
+  by_severity:
+    type: object
+    additionalProperties:
+      type: integer
+      format: int64
+    description: Event counts keyed by derived severity (all 5 keys present).
+  by_category:
+    type: object
+    additionalProperties:
+      type: integer
+      format: int64
+    description: Event counts keyed by derived category (all 6 keys present).
+  by_outcome:
+    type: object
+    additionalProperties:
+      type: integer
+      format: int64
+    description: 'Event counts keyed by outcome: success, warning, failed, info.'
+  series:
+    type: array
+    description: >-
+      Time-bucketed counts for sparklines (empty buckets omitted). Each bucket
+      carries the total plus per-outcome/severity breakdowns so the console can
+      draw a distinct sparkline per metric card.
+    items:
+      type: object
+      required:
+        - at
+        - count
+        - success
+        - warning
+        - failed
+        - info
+        - critical
+      properties:
+        at:
+          type: string
+          format: date-time
+          description: Bucket start (UTC, RFC3339).
+        count:
+          type: integer
+          format: int64
+          description: Total events in the bucket.
+        success:
+          type: integer
+          format: int64
+        warning:
+          type: integer
+          format: int64
+        failed:
+          type: integer
+          format: int64
+        info:
+          type: integer
+          format: int64
+        critical:
+          type: integer
+          format: int64
+  bucket_seconds:
+    type: integer
+    format: int64
+    description: Width of each series bucket in seconds.
+  window:
+    type: object
+    required:
+      - from
+      - to
+    description: Resolved aggregation window (defaulted/clamped server-side).
+    properties:
+      from:
+        type: string
+        format: date-time
+      to:
+        type: string
+        format: date-time

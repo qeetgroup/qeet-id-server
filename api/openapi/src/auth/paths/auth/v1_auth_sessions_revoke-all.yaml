@@ -1,0 +1,83 @@
+post:
+  operationId: signOutEverywhere
+  summary: Sign out everywhere
+  description: >-
+    Signs the caller out everywhere in a single all-or-nothing step and reports
+    how many sign-ins ended. It ends every one of the caller's sessions,
+    including the one behind the presented access token; every hosted-login
+    (browser) session, so the next authorization asks the person to sign in
+    again; and every refresh grant held by applications the person signed in to.
+    The response also clears the hosted-login cookie for a browser that calls
+    directly. The request takes no body. Refresh tokens, application grants and
+    the access tokens of the caller's own sessions stop working on this API as
+    soon as this returns; access tokens held by applications, and any a service
+    verifies offline, last until they expire (minutes). The presented access
+    token must belong to one of the caller's own sessions (an application's
+    access token is refused with 401). Repeating the call succeeds with every
+    count at 0 and changes nothing. If anything cannot be ended the call fails
+    and nothing is ended. To keep the current session, use the
+    revoke-other-sessions call instead.
+  tags:
+    - Auth
+  security:
+    - bearerAuth: []
+  responses:
+    '200':
+      description: The caller was signed out everywhere
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+        Set-Cookie:
+          description: Clears the hosted-login cookie (`qe_ls`).
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - revoked
+              - sessions
+              - hosted_login_sessions
+              - app_grants
+              - trusted_devices
+              - pending_authorizations
+            properties:
+              revoked:
+                type: integer
+                minimum: 0
+                description: >-
+                  Number of sign-ins ended by this call, all places together; 0
+                  when there were none.
+              sessions:
+                type: integer
+                minimum: 0
+                description: Sessions ended, the current one included.
+              hosted_login_sessions:
+                type: integer
+                minimum: 0
+                description: Hosted-login browser sessions ended.
+              app_grants:
+                type: integer
+                minimum: 0
+                description: Application refresh grants ended.
+              trusted_devices:
+                type: integer
+                minimum: 0
+                description: >-
+                  Devices remembered to skip the second factor that were
+                  forgotten; each is asked for the second factor at its next
+                  sign-in.
+              pending_authorizations:
+                type: integer
+                minimum: 0
+                description: >-
+                  Unredeemed authorisation codes spent, and device or
+                  back-channel sign-in requests (pending, or approved but not
+                  collected) denied.
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml

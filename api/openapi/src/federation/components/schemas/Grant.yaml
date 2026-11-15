@@ -1,0 +1,59 @@
+type: object
+required:
+  - authorized_at
+  - client_id
+  - client_name
+  - consented_at
+  - expires_at
+  - id
+  - issued_at
+  - last_used_at
+  - scopes
+  - user_email
+  - user_id
+  - user_name
+properties:
+  authorized_at:
+    type: string
+    format: date-time
+    description: When the grant began.
+  client_name:
+    type: string
+  consented_at:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: >-
+      When the person last consented to the application; null for an application
+      that asks for no consent.
+  last_used_at:
+    type: string
+    format: date-time
+    description: >-
+      When the application was last issued tokens under the grant (the same as
+      issued_at).
+  user_name:
+    type:
+      - string
+      - 'null'
+  client_id:
+    type: string
+  expires_at:
+    type: string
+    format: date-time
+  id:
+    type: string
+    format: uuid
+  issued_at:
+    type: string
+    format: date-time
+  scopes:
+    type: array
+    items:
+      type: string
+  user_email:
+    type: string
+  user_id:
+    type: string
+    format: uuid

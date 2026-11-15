@@ -1,0 +1,29 @@
+delete:
+  operationId: unlinkMySocialIdentity
+  description: >-
+    Detaches a linked social (OAuth) identity from the authenticated caller's
+    own account, scoped so a user can only unlink their own identities, with
+    Qeet acting as the OAuth client for the external provider. Establish a link
+    with the connect-provider flow at POST /v1/social/{provider}/link/start, and
+    list current links with GET /v1/me/social/identities.
+  summary: Unlink one of my connected social accounts
+  tags:
+    - Social
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+  responses:
+    '204':
+      description: No Content
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

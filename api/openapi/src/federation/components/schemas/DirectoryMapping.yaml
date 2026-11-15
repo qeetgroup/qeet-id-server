@@ -1,0 +1,51 @@
+type: object
+required:
+  - source_attribute
+  - target_field
+  - value_type
+  - transform
+  - enabled
+  - required
+properties:
+  id:
+    type: string
+    format: uuid
+    readOnly: true
+  source_attribute:
+    type: string
+    minLength: 1
+    maxLength: 128
+  target_field:
+    type: string
+    enum:
+      - email
+      - display_name
+      - first_name
+      - last_name
+      - department
+      - title
+      - manager_id
+      - groups
+  value_type:
+    type: string
+    enum:
+      - string
+      - array
+  transform:
+    type: string
+    enum:
+      - none
+      - trim
+      - lowercase
+      - uppercase
+      - extract
+  pattern:
+    type: string
+    maxLength: 256
+  enabled:
+    type: boolean
+  required:
+    type: boolean
+  version:
+    type: integer
+    minimum: 1

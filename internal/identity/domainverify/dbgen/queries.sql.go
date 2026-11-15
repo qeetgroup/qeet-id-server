@@ -315,6 +315,7 @@ FROM tenant.break_glass_members b
 JOIN "user".users u ON u.id = b.user_id
 WHERE b.tenant_id = $1
 ORDER BY lower(u.email)
+LIMIT 1001
 `
 
 type ListBreakGlassMembersRow struct {
@@ -325,6 +326,7 @@ type ListBreakGlassMembersRow struct {
 	CreatedAt   time.Time
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListBreakGlassMembers(ctx context.Context, tenantID uuid.UUID) ([]ListBreakGlassMembersRow, error) {
 	rows, err := q.db.Query(ctx, listBreakGlassMembers, tenantID)
 	if err != nil {

@@ -1,0 +1,105 @@
+get:
+  operationId: listMyTrustedDevices
+  summary: List my remembered devices
+  description: >-
+    Lists the caller's own remembered devices, in every organisation, newest
+    first: each device skips the second factor at sign-in until it expires or is
+    forgotten. A device is remembered for its organisation's
+    remember_device_days after the sign-in that remembered it, and is forgotten
+    when its owner changes their password, signs out everywhere, or has their
+    factors reset.
+  tags:
+    - Auth
+  security:
+    - bearerAuth: []
+  responses:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    tenant_id:
+                      type:
+                        - string
+                        - 'null'
+                      format: uuid
+                      description: The organisation the device was remembered in.
+                    device:
+                      type: string
+                      description: >-
+                        The device and browser in words, such as "Chrome on
+                        macOS".
+                    device_kind:
+                      type: string
+                      enum:
+                        - desktop
+                        - mobile
+                        - tablet
+                        - unknown
+                    user_agent:
+                      type: string
+                    created_at:
+                      type: string
+                      format: date-time
+                    last_used_at:
+                      type:
+                        - string
+                        - 'null'
+                      format: date-time
+                      description: When the device last skipped the second factor.
+                    expires_at:
+                      type: string
+                      format: date-time
+                    current:
+                      type: boolean
+                      description: The request came from this device.
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+delete:
+  operationId: forgetAllMyTrustedDevices
+  summary: Forget all my remembered devices
+  description: >-
+    Forgets every device the caller has remembered, so each is asked for the
+    second factor at its next sign-in. Each is audited as
+    auth.trusted_device_revoked.
+  tags:
+    - Auth
+  security:
+    - bearerAuth: []
+  responses:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              forgotten:
+                type: integer
+                description: How many devices were forgotten.
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

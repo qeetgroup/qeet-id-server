@@ -1,0 +1,16 @@
+type: object
+properties:
+  attempted_at:
+    type: string
+    format: date-time
+  status_code:
+    type:
+      - integer
+      - 'null'
+    description: Null when the endpoint gave no answer.
+  duration_ms:
+    type: integer
+  error:
+    type:
+      - string
+      - 'null'

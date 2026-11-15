@@ -1,0 +1,20 @@
+get:
+  operationId: getQeetAiStatus
+  summary: Qeet AI configuration status
+  description: >-
+    Returns whether the AI qeetai is configured server-side and which
+    provider/model is active. Never returns key material. Used by the console to
+    render the unconfigured setup state.
+  tags:
+    - Qeet AI
+  security:
+    - bearerAuth: []
+  responses:
+    '200':
+      description: Qeet AI status
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/QeetAIStatus.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml

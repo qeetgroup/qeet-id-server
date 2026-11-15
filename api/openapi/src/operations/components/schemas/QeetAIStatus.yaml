@@ -1,0 +1,12 @@
+type: object
+description: AI qeetai configuration state. Never contains key material.
+properties:
+  configured:
+    type: boolean
+    description: True when QEETAI_PROVIDER and QEETAI_API_KEY are set.
+  provider:
+    type: string
+    description: Provider name (e.g. "anthropic"); empty when not configured.
+  model:
+    type: string
+    description: Model identifier (e.g. "claude-sonnet-5"); empty when not configured.

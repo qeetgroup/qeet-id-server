@@ -1,0 +1,85 @@
+get:
+  operationId: listOidcResources
+  summary: List resources
+  description: >-
+    The organisation's registered resources (RFC 8707): the downstream services
+    its applications may ask tokens for, with the resource parameter at
+    authorize or the token endpoint. A token issued for a resource names it
+    alone as its audience, so the platform API and every other service refuse
+    it; an unregistered resource is refused with invalid_target.
+    server_client_id, when set, is the application that serves the resource and
+    may introspect tokens issued for it.
+  tags:
+    - OIDC
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Registered resources
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/OIDCResource.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+post:
+  operationId: registerOidcResource
+  summary: Register a resource
+  description: >-
+    Registers a resource: identifier is an absolute URI without a fragment (422
+    oidc.resource_invalid), unique on the platform (409 oidc.resource_exists)
+    and not on a domain another organization has verified (409
+    oidc.resource_domain_taken); server_client_id, optional, must be one of the
+    organisation's applications. Audited as oidc.resource_registered. Every
+    organization's tokens share one issuer, so a resource server should also
+    check the token's tenant_id claim is its own organization.
+  tags:
+    - OIDC
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - identifier
+          properties:
+            identifier:
+              type: string
+              format: uri
+            name:
+              type: string
+            server_client_id:
+              type: string
+  responses:
+    '201':
+      description: Registered
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/OIDCResource.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '409':
+      $ref: ../../../shared/responses/Conflict.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

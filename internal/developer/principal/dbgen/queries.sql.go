@@ -138,6 +138,7 @@ func (q *Queries) GetServicePrincipalForAuth(ctx context.Context, id uuid.UUID) 
 const listServicePrincipals = `-- name: ListServicePrincipals :many
 SELECT id, tenant_id, name, scopes, disabled_at, created_at, description, last_used_at, previous_secret_expires_at
 FROM auth.service_principals WHERE tenant_id = $1 ORDER BY created_at DESC
+LIMIT 1001
 `
 
 type ListServicePrincipalsRow struct {
@@ -152,6 +153,7 @@ type ListServicePrincipalsRow struct {
 	PreviousSecretExpiresAt pgtype.Timestamptz
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListServicePrincipals(ctx context.Context, tenantID uuid.UUID) ([]ListServicePrincipalsRow, error) {
 	rows, err := q.db.Query(ctx, listServicePrincipals, tenantID)
 	if err != nil {

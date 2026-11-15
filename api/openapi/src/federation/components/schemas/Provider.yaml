@@ -1,0 +1,46 @@
+type: object
+required:
+  - client_id
+  - created_at
+  - discovery_url
+  - enabled
+  - id
+  - kind
+  - provider
+  - tenant_id
+properties:
+  kind:
+    type: string
+    enum:
+      - oidc
+      - github
+      - facebook
+      - x
+      - discord
+      - apple
+    description: >-
+      oidc for a provider found by discovery_url, else the adapter its name
+      picks.
+  apple_team_id:
+    type: string
+  apple_key_id:
+    type: string
+  client_id:
+    type: string
+  created_at:
+    type: string
+    format: date-time
+  discovery_url:
+    type:
+      - string
+      - 'null'
+  enabled:
+    type: boolean
+  id:
+    type: string
+    format: uuid
+  provider:
+    type: string
+  tenant_id:
+    type: string
+    format: uuid

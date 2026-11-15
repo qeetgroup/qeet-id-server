@@ -1,0 +1,140 @@
+get:
+  operationId: getAiProviderConfig
+  description: >-
+    Returns the tenant's bring-your-own-key AI provider configuration with any
+    secret values masked. Absence of a configuration means the deployment's
+    platform fallback, or none, is in effect. Scoped to the caller's tenant and
+    restricted to organization administrators.
+  summary: Get masked tenant AI provider configuration
+  tags:
+    - Qeet AI
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: The organisation's effective provider configuration, its key masked.
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - source
+              - provider
+              - model
+              - base_url
+              - max_tokens
+              - last4
+              - platform_fallback
+            properties:
+              source:
+                type: string
+                enum:
+                  - tenant
+                  - platform
+                  - none
+                description: >-
+                  Whose key answers: the organisation's own, the deployment's,
+                  or none.
+              provider:
+                type: string
+              model:
+                type: string
+              base_url:
+                type: string
+                description: >-
+                  The organisation's own endpoint; empty for the Qeet-managed
+                  provider, whose endpoint is not shown.
+              max_tokens:
+                type: integer
+              last4:
+                type: string
+                description: The key's last four characters.
+              platform_fallback:
+                type: boolean
+                description: Whether the deployment has a key to fall back on.
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+put:
+  operationId: setAiProviderConfig
+  description: >-
+    Stores the tenant's own AI provider credentials so the assistant runs
+    against the tenant's key rather than the platform fallback, which unlocks it
+    regardless of plan. Secrets are encrypted at rest and are never returned in
+    full by the read endpoint. Restricted to organization administrators;
+    validate the credentials with the test operation before saving.
+  summary: Store tenant AI provider configuration
+  tags:
+    - Qeet AI
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          additionalProperties: true
+  responses:
+    '200':
+      description: The organisation's effective provider configuration, its key masked.
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - source
+              - provider
+              - model
+              - base_url
+              - max_tokens
+              - last4
+              - platform_fallback
+            properties:
+              source:
+                type: string
+                enum:
+                  - tenant
+                  - platform
+                  - none
+                description: >-
+                  Whose key answers: the organisation's own, the deployment's,
+                  or none.
+              provider:
+                type: string
+              model:
+                type: string
+              base_url:
+                type: string
+                description: >-
+                  The organisation's own endpoint; empty for the Qeet-managed
+                  provider, whose endpoint is not shown.
+              max_tokens:
+                type: integer
+              last4:
+                type: string
+                description: The key's last four characters.
+              platform_fallback:
+                type: boolean
+                description: Whether the deployment has a key to fall back on.
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+delete:
+  operationId: deleteAiProviderConfig
+  description: >-
+    Removes the tenant's bring-your-own-key AI provider configuration, reverting
+    to the deployment's platform fallback where one is available. Restricted to
+    organization administrators. Once removed, assistant availability again
+    depends on the tenant's plan.
+  summary: Delete tenant AI provider configuration
+  tags:
+    - Qeet AI
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '204':
+      description: Provider configuration deleted
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml

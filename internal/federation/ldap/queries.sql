@@ -3,10 +3,12 @@
 -- getFull (conditional WHERE tenant_id) stays hand-written in ldap.go.
 
 -- name: ListLdapConnections :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
        base_dn, user_filter, email_attribute, name_attribute, status,
        created_at, updated_at, last_login_at
-FROM tenant.ldap_connections WHERE tenant_id = @tenant_id ORDER BY created_at DESC;
+FROM tenant.ldap_connections WHERE tenant_id = @tenant_id ORDER BY created_at DESC
+LIMIT 1001;
 
 -- name: GetLdapConnection :one
 SELECT id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,

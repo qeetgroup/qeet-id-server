@@ -1,0 +1,35 @@
+type: object
+required:
+  - attempt
+  - created_at
+  - event_type
+  - id
+  - payload
+properties:
+  attempt:
+    type: integer
+  created_at:
+    type: string
+    format: date-time
+  dead_at:
+    type: string
+    format: date-time
+  delivered_at:
+    type: string
+    format: date-time
+  error:
+    type: string
+  event_type:
+    type: string
+  id:
+    type: string
+    format: uuid
+  next_attempt_at:
+    type: string
+    format: date-time
+  payload:
+    type: string
+  response_body:
+    type: string
+  status_code:
+    type: integer

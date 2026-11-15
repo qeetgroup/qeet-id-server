@@ -1,0 +1,11 @@
+description: >-
+  The body was not sent as JSON (`unsupported_media_type`). Routes that sign a
+  browser in accept only an application/json body, which a page on another site
+  cannot make the browser post.
+headers:
+  X-Request-Id:
+    $ref: ../../../shared/headers/RequestId.yaml
+content:
+  application/json:
+    schema:
+      $ref: ../../../shared/schemas/Error.yaml

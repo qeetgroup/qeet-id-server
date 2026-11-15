@@ -1,0 +1,66 @@
+get:
+  operationId: getRiskSettings
+  summary: Get risk settings
+  description: >-
+    Returns the medium/high risk-score thresholds, the level at which step-up
+    MFA is forced even for a trusted device, and the two additive adaptive-MFA
+    signals layered on top: impossible-travel (a login from a new country sooner
+    than min_travel_hours after the last one) and device reputation (a login
+    from a browser+OS combination never seen before for this user). Both are
+    independently toggled and off by default.
+  tags:
+    - Threats
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Risk settings
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/RiskSettings.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+put:
+  operationId: setRiskSettings
+  description: >-
+    Updates the tenant's adaptive-risk configuration, including the medium and
+    high risk-score thresholds, the level at which step-up MFA is forced even
+    for a trusted device, and the impossible-travel and device-reputation
+    signals. Both additive signals are off by default and take effect for
+    subsequent sign-ins once enabled. Retrieve the current values first with the
+    get-risk-settings call, since this call replaces the stored settings with
+    the submitted state. Audited as risk.settings_updated, naming the caller,
+    with each setting it changed (its old and new value) and the settings saved.
+  summary: Update risk settings
+  tags:
+    - Threats
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/RiskSettings.yaml
+  responses:
+    '200':
+      description: Updated settings
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/RiskSettings.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

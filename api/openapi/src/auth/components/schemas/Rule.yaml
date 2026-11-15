@@ -1,0 +1,24 @@
+type: object
+required:
+  - action
+  - cidr
+  - created_at
+  - id
+  - label
+  - tenant_id
+properties:
+  action:
+    type: string
+  cidr:
+    type: string
+  created_at:
+    type: string
+    format: date-time
+  id:
+    type: string
+    format: uuid
+  label:
+    type: string
+  tenant_id:
+    type: string
+    format: uuid

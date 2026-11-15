@@ -152,7 +152,7 @@ FROM auth.relation_tuples
 WHERE tenant_id = $1
 GROUP BY object_type
 ORDER BY object_type
-LIMIT 500
+LIMIT 1001
 `
 
 type ListRelationObjectTypesRow struct {
@@ -163,6 +163,7 @@ type ListRelationObjectTypesRow struct {
 
 // ListRelationObjectTypes counts, for each type of object the tenant's tuples
 // name, its objects and tuples.
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListRelationObjectTypes(ctx context.Context, tenantID uuid.UUID) ([]ListRelationObjectTypesRow, error) {
 	rows, err := q.db.Query(ctx, listRelationObjectTypes, tenantID)
 	if err != nil {

@@ -1,0 +1,29 @@
+type: object
+required:
+  - name
+properties:
+  name:
+    type: string
+  metadata_url:
+    type: string
+    format: uri
+    description: >-
+      Where to fetch the IdP's metadata from, and refresh it from later. Give
+      this or metadata_xml.
+  metadata_xml:
+    type: string
+    description: The IdP's SAML 2.0 metadata document. Give this or metadata_url.
+  idp_entity_id:
+    type: string
+    description: The entity id of the IdP to use, when the metadata describes several.
+  email_attribute:
+    type: string
+  name_attribute:
+    type: string
+  groups_attribute:
+    type: string
+    description: >-
+      The assertion attribute carrying a person's groups; empty reads the common
+      ones.
+  status:
+    type: string

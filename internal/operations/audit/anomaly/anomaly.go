@@ -22,6 +22,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 
 	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/audit/anomaly/dbgen"
 )
@@ -422,18 +423,34 @@ func rowToAnomaly(
 // List returns up to limit of the tenant's anomalies (50 if limit is not in
 // 1..200), newest first. status is "open" or "resolved"; empty returns both.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID, status string, limit int) ([]Anomaly, error) {
+	out, _, err := s.ListPage(ctx, tenantID, status, limit, paging.Cursor{})
+	return out, err
+}
+
+// ListPage is List from after the cursor, when one is set, with the next
+// page's cursor: empty on the last page.
+func (s *Service) ListPage(ctx context.Context, tenantID uuid.UUID, status string, limit int, after paging.Cursor) ([]Anomaly, string, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
+	var beforeTs pgtype.Timestamptz
+	var beforeID pgtype.UUID
+	if after.Set {
+		beforeTs = pgtype.Timestamptz{Time: after.Time, Valid: true}
+		beforeID = pgtype.UUID{Bytes: after.ID, Valid: true}
+	}
+	key := func(a Anomaly) (time.Time, uuid.UUID) { return a.CreatedAt, a.ID }
 	out := []Anomaly{}
 	if status != "" {
 		rows, err := s.q.ListAnomaliesFiltered(ctx, dbgen.ListAnomaliesFilteredParams{
 			TenantID: tenantID,
 			Status:   status,
-			RowLimit: int32(limit),
+			BeforeTs: beforeTs,
+			BeforeID: beforeID,
+			RowLimit: int32(limit + 1),
 		})
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		for _, r := range rows {
 			out = append(out, rowToAnomaly(r.ID, r.TenantID, r.EventID,
@@ -441,14 +458,17 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, status string, l
 				r.ResolvedAt, r.ResolvedBy, r.CreatedAt,
 				r.Action, r.ResourceType, r.Ip, r.EventAt))
 		}
-		return out, nil
+		out, next := paging.Next(out, limit, key)
+		return out, next, nil
 	}
 	rows, err := s.q.ListAnomalies(ctx, dbgen.ListAnomaliesParams{
 		TenantID: tenantID,
-		RowLimit: int32(limit),
+		BeforeTs: beforeTs,
+		BeforeID: beforeID,
+		RowLimit: int32(limit + 1),
 	})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	for _, r := range rows {
 		out = append(out, rowToAnomaly(r.ID, r.TenantID, r.EventID,
@@ -456,7 +476,8 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, status string, l
 			r.ResolvedAt, r.ResolvedBy, r.CreatedAt,
 			r.Action, r.ResourceType, r.Ip, r.EventAt))
 	}
-	return out, nil
+	out, next := paging.Next(out, limit, key)
+	return out, next, nil
 }
 
 // Summary returns the tenant's anomaly counts.
@@ -546,12 +567,17 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	out, err := h.Service.List(r.Context(), tenantID, status, limit)
+	after, err := paging.ParseCursor(r.URL.Query())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	out, next, err := h.Service.ListPage(r.Context(), tenantID, status, limit, after)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, paging.Page(out, next))
 }
 
 func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {

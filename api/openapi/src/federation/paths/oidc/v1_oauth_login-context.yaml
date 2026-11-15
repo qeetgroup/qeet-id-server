@@ -1,0 +1,104 @@
+get:
+  operationId: getLoginContext
+  description: >-
+    Returns the context the hosted-login application needs to render itself for
+    a given OAuth client: the client's display name, logo and home page, its
+    tenant, the tenant's enabled social login providers, self-registration and
+    remember-device flags, and optional per-tenant branding (only while the
+    tenant's plan includes custom_branding; otherwise none, and the hosted login
+    shows its default look). Consumed by the hosted login UI during the
+    authorize flow. It carries no tokens and performs no state change.
+    sign_in_methods ({password, passkey, magic_link}) says which first-factor
+    methods the client's organisation allows, so the hosted login offers only
+    those. password_policy, magic_link_ttl_minutes and remember_device_days are
+    the organisation's settings the hosted pages show before anyone signs in.
+    logo_uri and client_uri are the values the organisation's admin registered
+    for the client, never anything from the request, and are absent when not
+    set.
+  summary: Login context
+  tags:
+    - OIDC
+  parameters:
+    - in: query
+      name: client_id
+      required: true
+      schema:
+        type: string
+  security: []
+  responses:
+    '200':
+      description: Hosted-login context (client name, logo, home page, branding)
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+            properties:
+              client_name:
+                type: string
+              tenant_id:
+                type: string
+                format: uuid
+              logo_uri:
+                type: string
+                format: uri
+                description: >-
+                  The application's registered logo (https); absent when not
+                  set.
+              client_uri:
+                type: string
+                format: uri
+                description: >-
+                  The application's registered home page (https); absent when
+                  not set. The hosted page shows its host.
+              organization_name:
+                type: string
+                description: >-
+                  The name of the organisation the application belongs to, so
+                  the hosted pages can say whose rules apply. Absent when it
+                  can't be read.
+              password_policy:
+                type: object
+                description: >-
+                  The rules the organisation's new passwords must meet, so the
+                  hosted pages can show them as they are met. The server still
+                  checks them when a password is set. Absent when the policy
+                  can't be read.
+                properties:
+                  min_length:
+                    type: integer
+                  require_uppercase:
+                    type: boolean
+                  require_number:
+                    type: boolean
+                  require_symbol:
+                    type: boolean
+              magic_link_ttl_minutes:
+                type: integer
+                description: >-
+                  How long a sign-in link the organisation sends works, in
+                  minutes.
+              remember_device_days:
+                type: integer
+                description: >-
+                  How long the organisation remembers a device that skipped the
+                  second step, in days. Applies only when
+                  remember_device_enabled.
+              branding:
+                type:
+                  - object
+                  - 'null'
+                properties:
+                  logo_url:
+                    type: string
+                  primary_color:
+                    type: string
+                  secondary_color:
+                    type: string
+                  background_color:
+                    type: string
+                    description: Optional page background from tenant branding settings.
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

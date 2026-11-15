@@ -1,0 +1,29 @@
+delete:
+  operationId: deleteTokenVaultProvider
+  description: >-
+    Removes a registered Token Vault provider. Tokens already vaulted for that
+    provider become unusable.
+  summary: Delete a Token Vault provider
+  tags:
+    - Token Vault
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: provider
+      in: path
+      required: true
+      schema:
+        type: string
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '204':
+      description: No Content
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

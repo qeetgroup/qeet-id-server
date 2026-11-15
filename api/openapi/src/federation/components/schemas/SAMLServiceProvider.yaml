@@ -1,0 +1,83 @@
+type: object
+properties:
+  id:
+    type: string
+    format: uuid
+  tenant_id:
+    type: string
+    format: uuid
+  name:
+    type: string
+  entity_id:
+    type: string
+  acs_url:
+    type: string
+    format: uri
+  name_id_format:
+    type: string
+    description: >-
+      urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress,
+      urn:oasis:names:tc:SAML:2.0:nameid-format:persistent or
+      urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified
+  name_id_attribute:
+    type: string
+    description: >-
+      Where the NameID comes from — email, user_id, persistent_id or
+      metadata.<key>
+  certificate:
+    type: string
+    description: >-
+      The app's own certificate (PEM), kept for require_signed_requests,
+      encrypt_assertions or both.
+  require_signed_requests:
+    type: boolean
+    description: >-
+      The app's sign-in requests must be signed with its certificate; one that
+      isn't is refused with 403 saml.request_signature_invalid. Sign-in the IdP
+      starts has no request and is unaffected.
+  encrypt_assertions:
+    type: boolean
+    description: >-
+      Each assertion, signed as always, is encrypted to the app's certificate
+      (AES-256-GCM, its key by RSA-OAEP).
+  certificate_details:
+    type:
+      - object
+      - 'null'
+    description: What the certificate says about itself; null without one.
+    properties:
+      subject:
+        type: string
+      fingerprint_sha256:
+        type: string
+      not_before:
+        type: string
+        format: date-time
+      not_after:
+        type: string
+        format: date-time
+  status:
+    type: string
+  attributes:
+    type: array
+    description: >-
+      The attributes each assertion carries beside the NameID, in this order;
+      one the person has no value for is left out
+    items:
+      $ref: ./SAMLAttributeMapping.yaml
+  assignment_required:
+    type: boolean
+    description: >-
+      Only the people assigned to the SP, themselves or through a group, may
+      sign in to it
+  created_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time
+  last_login_at:
+    type:
+      - string
+      - 'null'
+    format: date-time

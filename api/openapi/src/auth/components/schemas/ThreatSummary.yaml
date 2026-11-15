@@ -1,0 +1,20 @@
+type: object
+required:
+  - affected_accounts
+  - high_severity_24h
+  - open
+  - resolved_24h
+properties:
+  affected_accounts:
+    type: integer
+    description: >-
+      Distinct accounts of the organisation with an open event, counting the
+      account an event names and every account a password spray targeted (a
+      password_spraying event lists them in metadata.targeted_user_ids, only the
+      organisation's own).
+  high_severity_24h:
+    type: integer
+  open:
+    type: integer
+  resolved_24h:
+    type: integer

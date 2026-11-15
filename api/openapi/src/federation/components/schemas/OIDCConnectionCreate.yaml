@@ -1,0 +1,39 @@
+type: object
+required:
+  - name
+  - issuer
+  - client_id
+  - client_secret
+properties:
+  name:
+    type: string
+  issuer:
+    type: string
+    format: uri
+  discovery_url:
+    type: string
+  client_id:
+    type: string
+  client_secret:
+    type: string
+    writeOnly: true
+  scopes:
+    type: array
+    maxItems: 20
+    items:
+      type: string
+  allowed_idp_tenant_ids:
+    type: array
+    maxItems: 50
+    items:
+      type: string
+      format: uuid
+  claim_mapping:
+    $ref: ./OIDCClaimMapping.yaml
+  status:
+    type: string
+    enum:
+      - draft
+      - active
+      - disabled
+    default: draft

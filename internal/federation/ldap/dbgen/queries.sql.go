@@ -171,6 +171,7 @@ SELECT id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
        base_dn, user_filter, email_attribute, name_attribute, status,
        created_at, updated_at, last_login_at
 FROM tenant.ldap_connections WHERE tenant_id = $1 ORDER BY created_at DESC
+LIMIT 1001
 `
 
 type ListLdapConnectionsRow struct {
@@ -194,6 +195,7 @@ type ListLdapConnectionsRow struct {
 // Queries for the ldap domain.
 // All queries below are STATIC and compiled by sqlc into ./dbgen.
 // getFull (conditional WHERE tenant_id) stays hand-written in ldap.go.
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListLdapConnections(ctx context.Context, tenantID uuid.UUID) ([]ListLdapConnectionsRow, error) {
 	rows, err := q.db.Query(ctx, listLdapConnections, tenantID)
 	if err != nil {

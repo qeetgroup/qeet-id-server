@@ -18,11 +18,12 @@ SELECT (EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = @user_id AND
 SELECT revoked_at FROM auth.credentials WHERE id = $1;
 
 -- name: ListCredentials :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT c.id, c.subject, c.type, c.issued_at, c.expires_at, c.revoked_at,
        c.user_id, u.email AS user_email, u.display_name AS user_display_name
 FROM auth.credentials c
 LEFT JOIN "user".users u ON u.id = c.user_id
-WHERE c.tenant_id = $1 ORDER BY c.issued_at DESC LIMIT 200;
+WHERE c.tenant_id = $1 ORDER BY c.issued_at DESC LIMIT 1001;
 
 -- name: RevokeCredential :execrows
 UPDATE auth.credentials SET revoked_at = NOW()

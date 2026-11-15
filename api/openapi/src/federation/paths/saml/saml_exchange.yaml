@@ -1,0 +1,39 @@
+post:
+  operationId: exchangeSamlCode
+  description: >-
+    Trades the one-time login code minted by the SAML Assertion Consumer Service
+    for a Qeet access and refresh token pair, with Qeet acting as the Service
+    Provider. The code is single-use and short-lived. Mounted at the root, not
+    under /v1, and unauthenticated; it is the second step after POST
+    /saml/acs/{id}.
+  summary: Exchange code (public)
+  tags:
+    - SAML
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - code
+          properties:
+            code:
+              type: string
+  responses:
+    '200':
+      description: Token pair
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            $ref: ../../../shared/schemas/TokenPair.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml

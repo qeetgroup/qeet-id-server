@@ -48,6 +48,7 @@ organization or product understanding; this repository does not restate them.
 - **Match the neighbouring package's shape** rather than introducing an abstraction: `queries.sql` +
   `sqlc.yaml` + generated `dbgen/` + service + handler.
 - **Never hand-edit `dbgen/`** — it is sqlc output.
+- **Never hand-edit `api/openapi/*.yaml`** — edit `api/openapi/src/` and run `make openapi`.
 - **Do not read `.env` or `.secrets/`** into anything you write. Both are gitignored and hold real
   local key material.
 

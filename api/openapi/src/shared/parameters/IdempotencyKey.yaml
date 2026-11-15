@@ -1,0 +1,10 @@
+name: Idempotency-Key
+in: header
+required: false
+description: >-
+  A key of the client's choosing, 1 to 255 printable characters, that makes
+  retrying the request safe. Kept for 24 hours.
+schema:
+  type: string
+  minLength: 1
+  maxLength: 255

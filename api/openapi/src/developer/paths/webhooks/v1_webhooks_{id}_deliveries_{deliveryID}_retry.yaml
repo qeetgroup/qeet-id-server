@@ -1,0 +1,33 @@
+post:
+  operationId: retryWebhookDelivery
+  description: >-
+    Sends one of the organisation's webhook deliveries again now. A delivery
+    that had finished, delivered or given up after its 60 attempts, starts a
+    fresh set of attempts; one still retrying keeps its count.
+  summary: Retry delivery
+  tags:
+    - Webhooks
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    - name: deliveryID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Delivery re-queued
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

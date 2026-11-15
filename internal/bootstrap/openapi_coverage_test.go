@@ -118,14 +118,9 @@ func operationHasSecurity(operation *openAPIOperation, scheme string) bool {
 
 func loadOpenAPIOperations(t *testing.T) map[string]*openAPIOperation {
 	t.Helper()
-	_, source, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate OpenAPI coverage test")
-	}
-	dir := filepath.Join(filepath.Dir(source), "..", "..", "api", "openapi")
 	documented := map[string]*openAPIOperation{}
-	for _, name := range []string{"auth.yaml", "management.yaml", "federation.yaml", "developer.yaml", "operations.yaml"} {
-		raw, err := os.ReadFile(filepath.Join(dir, name))
+	for _, name := range openAPIDocuments {
+		raw, err := os.ReadFile(filepath.Join(openAPIDir(t), name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -251,8 +246,8 @@ func TestOpenAPIMetadataReferencesLiveProductionSurface(t *testing.T) {
 			t.Fatalf("documented source path %s does not exist: %v", path, err)
 		}
 	}
-	for _, name := range []string{"auth.yaml", "management.yaml", "federation.yaml", "developer.yaml", "operations.yaml"} {
-		raw, err := os.ReadFile(filepath.Join(repoRoot, "api", "openapi", name))
+	for _, name := range openAPIDocuments {
+		raw, err := os.ReadFile(filepath.Join(openAPIDir(t), name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}

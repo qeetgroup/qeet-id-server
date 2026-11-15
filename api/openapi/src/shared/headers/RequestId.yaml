@@ -1,0 +1,5 @@
+description: >-
+  The request's ID, sent on every response. Quote it when reporting a problem;
+  an error body repeats it as error.request_id.
+schema:
+  type: string

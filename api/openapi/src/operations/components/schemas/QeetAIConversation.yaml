@@ -1,0 +1,22 @@
+type: object
+description: A named qeetai conversation thread (tenant + user scoped).
+properties:
+  id:
+    type: string
+    format: uuid
+  tenant_id:
+    type: string
+    format: uuid
+  user_id:
+    type: string
+    format: uuid
+  title:
+    type: string
+  pinned:
+    type: boolean
+  created_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time

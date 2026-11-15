@@ -1,0 +1,116 @@
+delete:
+  operationId: resetEmailTemplate
+  summary: Reset to default
+  tags:
+    - Email Templates
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: key
+      in: path
+      required: true
+      schema:
+        type: string
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Deletes the organisation's version of an email template, so the default is
+    sent again. Requires branding.write.
+  responses:
+    '200':
+      description: Built-in default after removing the override and its options
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/EmailResolvedTemplate.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+get:
+  operationId: getEmailTemplate
+  summary: Get template
+  tags:
+    - Email Templates
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: key
+      in: path
+      required: true
+      schema:
+        type: string
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Returns an email template as the organisation sends it: its own version, or
+    the default. Requires branding.write.
+  responses:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/EmailResolvedTemplate.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+put:
+  operationId: setEmailTemplate
+  summary: Override template
+  tags:
+    - Email Templates
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: key
+      in: path
+      required: true
+      schema:
+        type: string
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/EmailEditorInput.yaml
+    description: >-
+      Subject, plain-text alternative, and optional rich HTML, preheader, design
+      and language variants. HTML is sanitized. Only catalogue variables are
+      accepted.
+  description: >-
+    Saves the template and options atomically with its audit event. Tenant
+    invitations and magic links use saved overrides; platform-account recovery,
+    verification and MFA remain platform-managed.
+  responses:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/EmailResolvedTemplate.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml
