@@ -2,7 +2,7 @@
 
 **Level:** L2 — repository · **Last verified:** 2026-11-15
 **Verification scope:** ownership, inputs, outputs and security boundaries were checked against the
-repository at `a552dc34`; the L1 repository map supplies the cross-repository ownership. Boundary
+repository at `c2454fec`; the L1 repository map supplies the cross-repository ownership. Boundary
 rules R1/R2 were checked against `depguard` in `.golangci.yml`.
 
 What this repository owns, what it must not touch, and which changes leave it.
@@ -19,7 +19,7 @@ What this repository owns, what it must not touch, and which changes leave it.
 | Token issuance, JWKS, key rotation | `internal/platform/crypto/tokens/` |
 | The database schema and every migration | `internal/platform/database/migrations/` |
 | Federation protocol implementations | `internal/federation/` |
-| Background workers and the outbox | `internal/platform/{jobs,events}/` |
+| Background workers and the outbox | `internal/platform/{worker,events}/` + `internal/bootstrap/maintenance.go` |
 | **The API contract** | `api/openapi/` |
 | The container image | `Dockerfile` |
 
@@ -30,12 +30,12 @@ Do not implement these here, and do not edit these repositories from a task scop
 | Not owned | Owner |
 |---|---|
 | Operator console | `qeet-id-console` |
-| Hosted login UI | `qeet-id-login` |
+| Hosted login UI | `qeet-id-hosted` |
 | Marketing site | `qeet-id-website` |
 | Qeet ID on the phone | `qeet-id-ios`, `qeet-id-android` |
-| Go / Node / React SDKs | `qeet-id-{go,node,react}` |
+| First-party SDKs and framework integrations | `qeet-id-{go,node,react,nextjs,tanstack,java,python}` |
 | Product documentation | `qeet-id-docs` |
-| **Terraform, Caddy, production rollout** | `qeet-id-deploy` |
+| **Terraform, Caddy, host configuration and rollout scripts** | `qeet-id-deploy` |
 | PRD, TAD, product ADRs, research | `qeet-id-files` |
 | Design system | `qeetrix-ui` |
 | Organization standards | `qeet-context` (L0) |
@@ -159,8 +159,8 @@ qeet-context (L0)  →  qeet-id-context (L1)  →  qeet-id-server (this reposito
                                                       │  publishes the API contract
         ┌──────────────┬──────────────┬───────────────┼──────────────┬──────────────┐
         ▼              ▼              ▼               ▼              ▼              ▼
-  qeet-id-console  qeet-id-login  ios/android    go/node/react   qeet-id-docs   external
-   (BFF, bearer)   (cookie+CSRF)  (device token)     SDKs          (manual)     consumers
+  qeet-id-console  qeet-id-hosted  ios/android      SDKs          qeet-id-docs   external
+   (BFF, bearer)    (cookie+CSRF)  (device token)  (server/browser)  (manual)    consumers
 
   qeet-id-deploy  ──provisions──►  this repository
   qeet-id-files   ──specifies───►  this repository   (intent, not implementation)
@@ -177,7 +177,7 @@ unbootstrappable cycle.
 3. **Never hand-edit `dbgen/`.** Change `queries.sql` and regenerate.
 4. **Never wire dependencies outside `internal/bootstrap`.**
 5. **Never make `internal/platform` import a bounded context.** CI fails.
-6. **Never add a route without updating `api/openapi/`.** CI fails.
+6. **Never add a route without updating `api/openapi/`.** The local test gate fails.
 7. **Never weaken a security control to make a test pass.**
 8. **Never commit a real secret** — `.env.example` holds placeholders only.
 9. **Never flatten the chi route tree** — the tenant guard fails open silently.

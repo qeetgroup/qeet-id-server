@@ -3,7 +3,7 @@
 **Level:** L2 — repository (lightweight L3 navigation + L4 pointers)
 **Status:** active · **Evidence state:** verified
 **Last verified:** 2026-11-15
-**Verification scope:** every filename below was confirmed against `a552dc34`. Purpose lines come
+**Verification scope:** every filename below was confirmed against `c2454fec`. Purpose lines come
 from package comments where present; dependency lines were checked against the import graph and test
 mappings against the current colocated and integration-tagged tests.
 
@@ -25,8 +25,9 @@ this repository** — this file points at them and stops.
 handlers usually live in one file named after the package. Additional files split by **feature**,
 not by layer.
 
-Only four packages use `service.go` / `repository.go` naming, and sixteen have a dedicated
-`http.go`. **Do not assume a `service.go` or `repository.go` exists** — check the L4 pointers below.
+Only four packages use `service.go` / `repository.go` naming, and 17 domain packages have a
+dedicated `http.go` (the platform database-test helper is the eighteenth). **Do not assume a
+`service.go` or `repository.go` exists** — check the L4 pointers below.
 
 Every leaf package additionally carries `queries.sql` + `sqlc.yaml` + a generated `dbgen/`
 (`db.go`, `models.go`, `queries.sql.go`). **`dbgen/` is sqlc output and is never hand-edited.**
@@ -45,7 +46,9 @@ developer    9.3k  ████
 bootstrap    5.4k  ██
 ```
 
-Roughly 30–35% of each bounded context's raw line count is generated code.
+The figures include colocated tests and exclude generated `dbgen/`; they are navigation weights,
+not complexity or coverage measurements. Generated `dbgen/` is about 15% of the repository's Go
+line count on this revision.
 
 ---
 

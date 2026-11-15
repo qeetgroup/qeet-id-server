@@ -2,7 +2,7 @@
 
 **Level:** L2 — repository · **Last verified:** 2026-11-15
 **Verification scope:** every command below was checked against the `Makefile` and
-`.github/workflows/ci.yml`. Every path was confirmed to exist.
+`.github/workflows/ci.yml` at `c2454fec`. Every path was confirmed to exist.
 
 Step-by-step for the changes made most often here. For *where* things are, see
 [architecture-map.md](architecture-map.md). For *what must not change*, see
@@ -14,10 +14,10 @@ Step-by-step for the changes made most often here. For *where* things are, see
 
 ```bash
 make install          # go mod download
-cp .env.example .env  # placeholders work for local development
+cp .env.example .env  # then set DB_URL's password to `password` for docker-compose.yml
 make db-up            # postgres :5001 · nats :4222 · mailpit :8025
 make dev-secrets      # local JWT + SAML keys into .secrets/
-make migrate-up       # apply migrations (repeat, or let `make dev` embed-apply them)
+make migrate-up       # apply all pending migrations, or let `make dev` apply them on startup
 make seed             # demo tenants and users
 make dev              # API on :4001
 ```
@@ -37,13 +37,13 @@ staging or production.
 5  wire it                         internal/bootstrap/dependencies.go
 6  mount it                        internal/bootstrap/router.go
 7  permission                      internal/bootstrap/permissions.go
-8  OpenAPI                         api/openapi/<context>.yaml     ← CI FAILS WITHOUT THIS
+8  OpenAPI                         api/openapi/<context>.yaml     ← LOCAL TEST GATE FAILS WITHOUT THIS
 9  tests                           unit
 10 verify                          make test
 ```
 
 > **Step 2 matters.** The convention is `<domain>.go`, not a layered `handler/service/repository`
-> split. Only four packages have a `repository.go` and sixteen have an `http.go` — creating one
+> split. Only four packages have a `repository.go` and 17 domain packages have an `http.go` — creating one
 > where the package does not already use that shape breaks the local pattern. Check
 > [subsystems.md](subsystems.md) before adding a file.
 
@@ -56,8 +56,9 @@ genuinely unauthenticated endpoints, and say why in the code.
 **If the route is tenant-scoped:** take the tenant from `httpx.RequireTenant(r)`, never from the
 path or body, and carry `WHERE tenant_id = $1` into every query.
 
-**The coverage gate will fail CI** if the route is not in an OpenAPI document —
-`internal/bootstrap/openapi_coverage_test.go`.
+**The coverage test will fail** if the route is not in an OpenAPI document —
+`internal/bootstrap/openapi_coverage_test.go`. It runs in the local `make ci` gate; hosted Verify
+does not run the Go test suites.
 
 A new authenticated route **refuses access tokens issued to applications** (they carry `client_id`)
 by default: they are for the application's own use, not account or organisation management. Only routes

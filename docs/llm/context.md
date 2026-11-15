@@ -4,7 +4,7 @@
 **Last verified:** 2026-11-15
 **Verification scope:** package structure, dependency rules, router and route-policy wiring,
 authentication and authorization enforcement, tenant row security, migrations, configuration,
-workers, OpenAPI coverage and test layout were checked against `a552dc34`. Focused bootstrap,
+workers, OpenAPI coverage and test layout were checked against `c2454fec`. Focused bootstrap,
 HTTP-security, token and authorization tests passed. Live providers, deployed infrastructure and
 production state were not checked. Claims about the *product* are inherited from L1.
 
@@ -13,7 +13,8 @@ production state were not checked. Claims about the *product* are inherited from
 ## Repository identity
 
 `qeet-id-server` is the **Go backend of Qeet ID**. It is a modular monolith: one Go module, one
-PostgreSQL database, one deployable binary, five bounded contexts as enforced package boundaries.
+PostgreSQL database and five bounded contexts. The API is the primary deployable; worker and
+scheduler entry points can run its asynchronous work independently.
 
 | | |
 |---|---|
@@ -74,10 +75,10 @@ Owned elsewhere. Do not implement these here:
 | Not owned | Owner |
 |---|---|
 | Operator console UI | `qeet-id-console` |
-| Hosted login UI | `qeet-id-login` |
+| Hosted login UI | `qeet-id-hosted` |
 | Marketing site | `qeet-id-website` |
 | Qeet ID on the phone | `qeet-id-ios`, `qeet-id-android` |
-| Client SDKs | `qeet-id-{go,node,react}` |
+| Client SDKs | `qeet-id-{go,node,react,nextjs,tanstack,java,python}` |
 | Product documentation | `qeet-id-docs` |
 | **Deployment manifests, Terraform, rollout** | `qeet-id-deploy` |
 | Requirements, PRD, TAD, product ADRs | `qeet-id-files` |
@@ -162,15 +163,16 @@ internal/platform      shared kernel — pure infrastructure
 | `internal/federation` | OIDC provider, SAML (SP + IdP), SCIM, LDAP, social, admin portal |
 | `internal/developer` | API keys, service principals, agents, auth hooks, webhooks, secrets vault, token vault, VCs |
 | `internal/operations` | Audit, analytics, billing, GDPR, retention, SIEM, notifications, entitlements, search, AI assistant |
-| `internal/platform` | HTTP, database, crypto, cache, config, events, jobs, messaging, observability |
+| `internal/platform` | HTTP, database, crypto, cache, config, events, workers, messaging, observability |
 | `internal/bootstrap` | Composition root: dependencies, router, permission map, lifecycle, server |
 
-107 packages contain hand-written Go files, 159 with the sqlc-generated `dbgen` ones.
+110 packages under `internal/` and `cmd/` contain hand-written Go files, 163 with the
+sqlc-generated `dbgen` packages.
 
 **File-naming convention — `<domain>.go`, not layered file names.** Domain logic, persistence and
 HTTP handlers usually live in **one file named after the package**; additional files split by
-**feature**, not by layer. Only four packages use `service.go`/`repository.go` naming and sixteen
-have a dedicated `http.go`.
+**feature**, not by layer. Only four packages use `service.go`/`repository.go` naming and 17 domain
+packages have a dedicated `http.go` (the platform database-test helper is the eighteenth).
 
 ```text
 access/passkeys/     passkey.go                          ← everything in one file
@@ -194,7 +196,7 @@ Every leaf package additionally carries `queries.sql` + `sqlc.yaml` + a generate
 cmd/*  →  internal/bootstrap  →  internal/<context>  →  internal/platform
 ```
 
-**Two rules are enforced by a build-time test and fail CI:**
+**Two rules are enforced by `depguard` in lint; hosted Verify and local `make ci` both run lint:**
 
 - **R1** — `internal/platform/*` imports **no** bounded context, **no** `cmd/*`, and **not**
   `internal/bootstrap`. Platform stays pure infrastructure.
@@ -440,7 +442,8 @@ OAuth scope. ABAC denies are evaluated by the composed checker and override a ro
 
 > There is no signing-key mutation API. `JWT_SIGNING_KEY` stages encrypted key
 > material in PostgreSQL; `JWT_ACTIVATE_SIGNING_KEY=true` performs the explicit
-> activation step. See `docs/JWT-KEY-ROTATION.md`.
+> activation step. The executable wiring is in `internal/bootstrap/keys.go`; registry and retirement
+> behavior live in `internal/platform/crypto/tokens/registry.go`.
 
 ## Federation
 
@@ -579,15 +582,20 @@ same lint as CI.
 
 ## Deployment
 
-**This repository builds a container. It does not own its deployment.**
+**This repository owns the release-triggered image promotion workflow, but not the infrastructure it
+targets.**
 
 - `Dockerfile` — build on `golang:1.27.4-alpine` (same Go as go.mod's toolchain), ship on `gcr.io/distroless/static-debian13:nonroot`,
   non-root user, `EXPOSE 4001`.
 - `docker-compose.yml` — **local dependencies only**: postgres :5001, nats :4222, mailpit :8025.
-- Terraform, Caddy, compose for production and the rollout live in **`qeet-id-deploy`**.
+- Terraform, Caddy, production host configuration and rollout scripts live in **`qeet-id-deploy`**.
 - `.github/workflows/candidate.yml` builds the image testers run, on push to `release/YEAR.MONTH.0`
   or `hotfix/YEAR.MONTH.N`; `.github/workflows/deploy.yml` promotes that same image to AWS when the
   branch merges into `main`.
+
+The workflow files encode triggers and credentials, not the human authority to cut or approve a
+release. Read the current Jira release issue, environment protection and repository settings for
+that approval; this repository alone cannot establish who authorized production.
 
 Migrations apply on startup, so a deploy is also a migration.
 
@@ -661,15 +669,17 @@ What review a change needs. Cross-repository impact is expanded in
 - **First-party session access tokens are checked against live session state on each request.** OAuth
   application tokens follow their grant/introspection rules; relying parties must still consume
   revocation/logout signals according to their integration.
-- **Single PostgreSQL instance**, no read replica. It is the single point of failure.
-- **No staging environment exists** — `api.id.staging.qeet.in` does not resolve.
+- **One PostgreSQL connection target per process.** Replication, failover and backup topology belong
+  to deployment infrastructure and cannot be inferred from this repository.
+- **Environment availability is external state.** Use `qeet-id-kit` and `qeet-id-deploy` as the
+  authority for current DEV/TEST/STAGING and production availability.
 - **Rate limiting fails open** when its store errors, and **auth hooks default to fail-open**. Both
   are deliberate, with ADRs. Do not reverse either without reversing the ADR.
 - **Cross-context imports are unenforced.**
 
 ## Known technical debt
 
-Repository-local documentation was reconciled with `a552dc34` on 15 Nov 2026. New product-level
+Repository-local documentation was reconciled with `c2454fec` on 15 Nov 2026. New product-level
 divergences belong in `qeet-id-context` and its `CONTEXT-CHANGELOG.md`; repository implementation
 claims belong here. Keep counts and status claims tied to a verification scope rather than treating
 an old audit as current state.

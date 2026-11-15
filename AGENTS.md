@@ -11,8 +11,8 @@ source of truth; they add nothing architectural.
 
 `qeet-id-server` is the **Go backend of Qeet ID** — a passkeys-first identity and access platform.
 It owns the API, all business logic, and **all enforcement**. Module
-`github.com/qeetgroup/qeet-id-server`. Single deployable binary, modular monolith, one PostgreSQL
-database.
+`github.com/qeetgroup/qeet-id-server`. It is a modular monolith over one PostgreSQL database: the API
+is the primary deployable, with optional standalone worker and scheduler entry points.
 
 **It is the only place in Qeet ID where a security decision is made.** Consoles and UIs present;
 this repository decides.
@@ -62,7 +62,7 @@ and `internal/access/threat/risk` are different things.
 Reuse the established pattern before introducing an abstraction. Every domain package follows the
 same shape: `queries.sql` + `sqlc.yaml` + generated `dbgen/`, plus Go files named after the
 **domain** — `passkey.go`, `agent.go`, `oidc.go`. **The convention is `<domain>.go`, not
-`service.go`/`repository.go`**: only four packages use layered names and sixteen have an
+`service.go`/`repository.go`**: only four packages use layered names and 17 domain packages have an
 `http.go`. Check [docs/llm/subsystems.md](docs/llm/subsystems.md) for the real filenames before
 looking for one.
 
@@ -84,8 +84,9 @@ workers are wired **there**, not in the package that defines them.
 ### 5. Preserve API contracts
 
 `api/openapi/` is the contract, split into five bounded-context documents. **A route added without
-documenting it fails CI** — `internal/bootstrap/openapi_coverage_test.go` asserts every mounted route
-appears in a specification, and `openapi_valid_test.go` that every document is valid OpenAPI 3.1.
+documenting it fails the test gate** — `internal/bootstrap/openapi_coverage_test.go` asserts every
+mounted route appears in a specification, and `openapi_valid_test.go` that every document is valid
+OpenAPI 3.1. These tests run locally in `make ci`; the hosted Verify workflow does not run tests.
 Update the spec in the same change as the route.
 
 **URLs.** The organisation always comes from the caller's token (`httpx.RequireTenant`). A new

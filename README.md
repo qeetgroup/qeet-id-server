@@ -140,6 +140,8 @@ cd qeet-id-server
 make install
 
 cp .env.example .env
+# Edit DB_URL in .env to use the local Compose password:
+# postgres://postgres:password@localhost:5001/qeet_id?sslmode=disable
 
 make db-up    # postgres :5001 · nats :4222 · mailpit :8025
 make dev      # generates .secrets/, applies migrations, serves http://localhost:4001
@@ -159,8 +161,8 @@ That is the whole setup. Everything else on this page is reference.
 
 - **`make install`** is `go mod download`. Nothing more.
 - **`.env`** carries your local configuration. The `<password>` placeholder must become `password`
-  to match the Postgres container in [docker-compose.yml](./docker-compose.yml); the `perl` line
-  above does it, or edit `DB_URL` by hand. Every other development default works as shipped.
+  to match the Postgres container in [docker-compose.yml](./docker-compose.yml); edit `DB_URL` as
+  shown in the quick-start comment above. Every other development default works as shipped.
 - **`make db-up`** starts PostgreSQL 16 on `:5001`, NATS on `:4222` and Mailpit on `:8025`. The
   application itself runs on your host, not in Compose.
 - **`make dev`** first runs `make dev-secrets`, generating a persistent ES256 JWT signing key and a
@@ -237,16 +239,18 @@ Before opening a pull request:
 go build ./... && go test -race ./... && make lint
 ```
 
-CI also runs the database tests, checks that generated SQL is up to date, and runs `govulncheck`
-and a `gosec` scan.
+Before a push, `make ci` runs the unit and database tests, checks generated SQL, and runs
+`govulncheck` and `gosec`. The hosted Verify workflow runs build, vet, lint, vulnerability and secret
+scans; it does not run the Go test suites or sqlc/gosec gates.
 
 ## 📚 API & Documentation
 
 - [api/openapi/](./api/openapi/) holds five self-contained, bounded-context OpenAPI 3.1 documents —
   `auth.yaml` (access), `management.yaml` (identity), `federation.yaml`, `developer.yaml` and
   `operations.yaml`. There is no monolithic `openapi.yaml`.
-- **A route added without a matching specification entry fails CI** — `internal/bootstrap/openapi_coverage_test.go`
-  asserts every mounted route is documented. Update the spec in the same change as the route.
+- **A route added without a matching specification entry fails the local test gate** —
+  `internal/bootstrap/openapi_coverage_test.go` asserts every mounted route is documented. Update the
+  spec in the same change as the route and run `make ci` before pushing.
 - [api/postman/](./api/postman/) provides an importable collection and environment.
 - [Documentation](https://docs.qeet.in) covers product concepts and integration guidance.
 

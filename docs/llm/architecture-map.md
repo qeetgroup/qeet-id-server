@@ -2,7 +2,7 @@
 
 **Level:** L2 — repository · **Last verified:** 2026-11-15
 **Verification scope:** every path and named entry point below was checked against the repository at
-`a552dc34`. The file is authoritative; this page is a navigation aid.
+`c2454fec`. The file is authoritative; this page is a navigation aid.
 
 A navigation index. "Where is X?" answered in one hop. For *how* things work, read
 [context.md](context.md).
@@ -164,11 +164,11 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 |---|---|
 | Postgres pool | `internal/platform/database/postgres/` |
 | pgx error mapping | `internal/platform/database/postgres/pgxerr/` |
-| **Migrations (0001–0232; 0082 absent)** | `internal/platform/database/migrations/` |
+| **Migrations (0001–0233; 0082 absent)** | `internal/platform/database/migrations/` |
 | Migration runner (`//go:embed`) | `internal/platform/database/migrations/runner.go` |
-| Per-domain queries | `internal/<context>/<domain>/queries.sql` (48) |
-| sqlc config | `internal/<context>/<domain>/sqlc.yaml` (48) |
-| Generated accessors | `internal/<context>/<domain>/dbgen/` (47) — **never hand-edit** |
+| Per-domain queries | `internal/<context>/<domain>/queries.sql` (53) |
+| sqlc config | `internal/<context>/<domain>/sqlc.yaml` (53) |
+| Generated accessors | `internal/<context>/<domain>/dbgen/` (53) — **never hand-edit** |
 
 ## Events & background work
 
@@ -219,7 +219,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Linter config | `.golangci.yml` |
 | Container | `Dockerfile` |
 | Local dependencies | `docker-compose.yml` — postgres :5001, nats :4222, mailpit :8025 |
-| CI | `.github/workflows/ci.yml` — Verify: build · vet · lint · sqlc diff · vuln |
+| Hosted Verify | `.github/workflows/ci.yml` — build · vet · lint · vulnerability scan · secret scan; no Go tests or sqlc/gosec gate |
 | Candidate image (on `release/**`, `hotfix/**`) | `.github/workflows/candidate.yml` |
 | Deploy (merged release or hotfix into `main`) | `.github/workflows/deploy.yml` |
 | Release version from a branch name | `scripts/release/version.sh` |
