@@ -3030,6 +3030,7 @@ paths:
   /v1/tenants/{tenantID}/users/{id}/sessions/{sessionID}:
     delete:
       operationId: delete_v1_tenants_ByTenantID_users_ById_sessions_BySessionID
+      tags: [Users]
       summary: End one of a user's sessions
       description: >-
         Ends one of the user's live sessions, as GET /v1/users/{id}/sessions
@@ -3077,6 +3078,7 @@ paths:
   /v1/tenants/{tenantID}/users/{id}/passkeys:
     get:
       operationId: get_v1_tenants_ByTenantID_users_ById_passkeys
+      tags: [Users]
       summary: List a user's passkeys
       description: >-
         The passkeys on a member's account, oldest first: each one's name, when
@@ -3122,6 +3124,7 @@ paths:
   /v1/tenants/{tenantID}/users/{id}/passkeys/{passkeyID}:
     delete:
       operationId: delete_v1_tenants_ByTenantID_users_ById_passkeys_ByPasskeyID
+      tags: [Users]
       summary: Remove a user's passkey
       description: >-
         Removes a passkey from a user's account, for example a lost device's,
