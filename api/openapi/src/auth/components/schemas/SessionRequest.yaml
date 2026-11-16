@@ -1,0 +1,16 @@
+type: object
+required:
+  - email
+  - password
+properties:
+  email:
+    type: string
+    format: email
+  password:
+    type: string
+  client_id:
+    type: string
+    maxLength: 255
+    description: >-
+      The OAuth client the hosted login is serving. Its tenant's sign-in lockout
+      settings apply; omitted or unknown = the platform defaults.

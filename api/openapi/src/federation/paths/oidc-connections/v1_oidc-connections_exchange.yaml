@@ -1,0 +1,46 @@
+post:
+  operationId: exchangeOidcConnectionCode
+  description: >-
+    Trades the one-time login code an OpenID Connect sign-in handed the console
+    for a Qeet access and refresh token pair in the connection's organisation,
+    while the connection is still active. The code is single-use (401
+    oidc_connection.login_code_used) and lasts five minutes (401
+    oidc_connection.login_code_expired); an unknown one answers 401
+    oidc_connection.login_code_invalid and none 400
+    oidc_connection.login_code_required. The organisation's login hook and
+    address rules apply. Unauthenticated; sent with Cache-Control: no-store.
+  summary: Exchange OIDC sign-in code (public)
+  tags:
+    - OIDC Connections
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - code
+          properties:
+            code:
+              type: string
+  responses:
+    '200':
+      description: Token pair
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            $ref: ../../../shared/schemas/TokenPair.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

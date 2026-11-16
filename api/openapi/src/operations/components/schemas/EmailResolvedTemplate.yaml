@@ -1,0 +1,21 @@
+allOf:
+  - $ref: ./EmailEditorInput.yaml
+  - type: object
+    properties:
+      key:
+        type: string
+      name:
+        type: string
+      description:
+        type: string
+      variables:
+        type: array
+        items:
+          type: string
+      custom:
+        type: boolean
+      delivery_scope:
+        type: string
+        enum:
+          - tenant
+          - platform

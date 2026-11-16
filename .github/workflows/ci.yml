@@ -51,6 +51,17 @@ jobs:
       - name: Dependency audit
         run: govulncheck ./cmd/... ./internal/...
 
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.3
+
+      - name: API contract
+        # Lint the OpenAPI sources and fail on a stale generated document, then
+        # match the documents against the production routes. No database needed.
+        run: |
+          make openapi-check
+          go test ./internal/bootstrap -run 'OpenAPI|RouteContract'
+
       # The free gitleaks CLI (the gitleaks Action needs a paid licence for an organisation), pinned and
       # checksum-verified, over this pull request's commits.
       - name: Secret scan

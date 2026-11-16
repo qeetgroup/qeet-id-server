@@ -40,6 +40,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/returnto"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
@@ -1177,7 +1178,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	for i := range out {
 		items[i] = h.view(r, &out[i])
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(items))
 }
 
 // connectionView is a connection with the addresses its IdP is given.

@@ -1,0 +1,39 @@
+post:
+  operationId: acceptMyInvite
+  summary: Accept an invitation from my inbox (by id)
+  tags:
+    - Invites
+  security:
+    - bearerAuth: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  description: >-
+    Same as accepting by token, but selects the invite by id (from GET
+    /v1/me/invites). Returns a tenant-scoped token pair, under the same
+    second-factor rule. Answers 403 invite.email_not_verified until the
+    account's address is verified.
+  responses:
+    '200':
+      description: OK
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            $ref: ../../../shared/schemas/TokenPair.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

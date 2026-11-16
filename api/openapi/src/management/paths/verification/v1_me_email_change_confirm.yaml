@@ -1,0 +1,46 @@
+post:
+  operationId: confirmMyEmailChange
+  summary: Confirm my email change
+  description: >-
+    Verifies the code sent to the new address and swaps it onto the account
+    (marking it verified). Returns the new email. Only a code from the
+    start-email-change call counts. The previous address is sent a notice of the
+    change, and the reset and magic links already sent to it stop working.
+  tags:
+    - Verification
+  security:
+    - bearerAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          properties:
+            code:
+              type: string
+          required:
+            - code
+  responses:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - email
+              - message
+            properties:
+              email:
+                type: string
+              message:
+                type: string
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '409':
+      $ref: ../../../shared/responses/Conflict.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

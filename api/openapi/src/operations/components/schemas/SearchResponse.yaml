@@ -1,0 +1,14 @@
+type: object
+description: Paginated search result envelope.
+required:
+  - results
+properties:
+  results:
+    type: array
+    items:
+      $ref: ./SearchResult.yaml
+  next_cursor:
+    type: string
+    description: >-
+      Opaque cursor for the next page. Present only when more results exist;
+      omitted (not null) when this is the last page.

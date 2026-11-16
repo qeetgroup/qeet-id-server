@@ -1,0 +1,43 @@
+type: object
+required:
+  - schemas
+properties:
+  schemas:
+    type: array
+    items:
+      type: string
+    example:
+      - urn:ietf:params:scim:schemas:core:2.0:User
+  id:
+    type: string
+  externalId:
+    type: string
+  userName:
+    type: string
+  displayName:
+    type: string
+  active:
+    type: boolean
+  name:
+    type: object
+    properties:
+      formatted:
+        type: string
+      givenName:
+        type: string
+      familyName:
+        type: string
+  emails:
+    type: array
+    items:
+      type: object
+      properties:
+        value:
+          type: string
+        primary:
+          type: boolean
+        type:
+          type: string
+  meta:
+    type: object
+    additionalProperties: true

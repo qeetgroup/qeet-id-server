@@ -1,0 +1,60 @@
+post:
+  operationId: importUsers
+  summary: Import users from an IdP export (Auth0 / Cognito / Azure AD B2C)
+  description: >
+    Migration tooling for teams leaving another identity provider: the request
+    body is that vendor's own raw user-export file, converted to the same shape
+    POST /v1/users/bulk accepts and run through the identical per-row
+    partial-success pipeline. No vendor exports a portable password hash, so
+    every imported row lands with no password credential — passkey, magic link,
+    OTP, or an admin-triggered reset are how an imported user first signs in.
+  tags:
+    - Users
+  parameters:
+    - name: source
+      in: query
+      required: true
+      schema:
+        type: string
+        enum:
+          - auth0
+          - cognito
+          - azure_b2c
+      description: >-
+        auth0 expects NDJSON (one JSON object per line, from an Auth0
+        user-export job); cognito expects the User Import Job CSV template;
+        azure_b2c expects a Microsoft Graph /users list response ({"value":
+        [...]}).
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/x-ndjson:
+        schema:
+          type: string
+      text/csv:
+        schema:
+          type: string
+      application/json:
+        schema:
+          type: string
+    description: >-
+      The raw export file content, in the format documented for the chosen
+      source.
+  responses:
+    '200':
+      description: Per-row import summary
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/UserBulkImportResult.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

@@ -1,0 +1,9 @@
+type: object
+required:
+  - method
+  - users
+properties:
+  method:
+    type: string
+  users:
+    type: integer

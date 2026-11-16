@@ -2,9 +2,11 @@
 -- All queries are static; no dynamic SQL in this domain.
 
 -- name: ListHooks :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, trigger, url, enabled, fail_open, created_at,
        last_called_at, last_outcome, last_status_code, call_count, skip_count, deny_count
-FROM tenant.auth_hooks WHERE tenant_id = $1 ORDER BY created_at DESC;
+FROM tenant.auth_hooks WHERE tenant_id = $1 ORDER BY created_at DESC
+LIMIT 1001;
 
 -- RecordHookCall counts one sign-in's call to a hook: its outcome (allowed,
 -- denied or skipped), and the status the hook answered when it answered.

@@ -1,0 +1,23 @@
+type: object
+required:
+  - capabilities
+  - expires_at
+  - tenant_name
+properties:
+  branding:
+    $ref: ./PortalBranding.yaml
+  capabilities:
+    type: array
+    items:
+      type: string
+  expires_at:
+    type: string
+    format: date-time
+  scim_base_url:
+    type: string
+    format: uri
+    description: >-
+      The SCIM 2.0 base URL the IT admin enters at their IdP. Present only when
+      the link's capabilities include scim.
+  tenant_name:
+    type: string

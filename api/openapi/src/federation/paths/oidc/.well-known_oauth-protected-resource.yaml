@@ -1,0 +1,42 @@
+get:
+  operationId: getProtectedResourceMetadata
+  summary: Protected resource metadata
+  description: >-
+    Protected-resource metadata (RFC 9728) for MCP authorization-server
+    compliance. Advertises the resource identifier, its authorization server(s),
+    the scopes it accepts (scopes_supported), and the supported bearer methods
+    and token-signing algorithms. Each authorization server named resolves to
+    its RFC 8414 metadata at /.well-known/oauth-authorization-server.
+  tags:
+    - OIDC
+  security: []
+  responses:
+    '200':
+      description: Protected-resource metadata
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              resource:
+                type: string
+              authorization_servers:
+                type: array
+                items:
+                  type: string
+              bearer_methods_supported:
+                type: array
+                items:
+                  type: string
+              resource_signing_alg_values_supported:
+                type: array
+                items:
+                  type: string
+              scopes_supported:
+                type: array
+                items:
+                  type: string
+              resource_documentation:
+                type: string
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

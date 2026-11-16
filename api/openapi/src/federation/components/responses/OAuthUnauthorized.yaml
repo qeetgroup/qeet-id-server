@@ -1,0 +1,12 @@
+description: The client failed to authenticate (invalid_client).
+headers:
+  X-Request-Id:
+    $ref: ../../../shared/headers/RequestId.yaml
+  WWW-Authenticate:
+    description: Basic realm="qeet", sent when the client used HTTP Basic.
+    schema:
+      type: string
+content:
+  application/json:
+    schema:
+      $ref: ../schemas/OAuthError.yaml

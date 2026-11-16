@@ -7,7 +7,7 @@ import (
 )
 
 func TestSuspensionFiltersAreBoundedAndEnumerated(test *testing.T) {
-	for _, query := range []string{"limit=0", "limit=101", "offset=-1", "risk=admin", "reason=custom", "source=invalid", "review=automatic"} {
+	for _, query := range []string{"limit=0", "limit=101", "cursor=not-a-cursor", "risk=admin", "reason=custom", "source=invalid", "review=automatic"} {
 		if _, err := parseSuspensionFilters(httptest.NewRequest(http.MethodGet, "/?"+query, nil)); err == nil {
 			test.Fatalf("accepted invalid filter %s", query)
 		}

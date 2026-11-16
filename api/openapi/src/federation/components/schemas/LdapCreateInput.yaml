@@ -1,0 +1,36 @@
+type: object
+required:
+  - base_dn
+  - bind_dn
+  - bind_password
+  - email_attribute
+  - name
+  - name_attribute
+  - server_url
+  - skip_tls_verify
+  - start_tls
+  - status
+  - user_filter
+properties:
+  base_dn:
+    type: string
+  bind_dn:
+    type: string
+  bind_password:
+    type: string
+  email_attribute:
+    type: string
+  name:
+    type: string
+  name_attribute:
+    type: string
+  server_url:
+    type: string
+  skip_tls_verify:
+    type: boolean
+  start_tls:
+    type: boolean
+  status:
+    type: string
+  user_filter:
+    type: string

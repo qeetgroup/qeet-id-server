@@ -1,0 +1,75 @@
+get:
+  operationId: listAbacPolicyVersions
+  summary: List ABAC policy versions
+  description: >-
+    Returns the policy's saves, newest first (the last 1,000; truncated when
+    there are more): each whole, as it
+    left the policy, with who made it (saved_by, null for a machine caller) and
+    when. A policy from before versions were kept starts with its state then as
+    version 1. Restore one with the restore call. Requires policy.read.
+  tags:
+    - ABAC
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: The policy's versions
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    version:
+                      type: integer
+                    name:
+                      type: string
+                    description:
+                      type: string
+                    effect:
+                      type: string
+                      enum:
+                        - allow
+                        - deny
+                    resource_type:
+                      type: string
+                    action:
+                      type: string
+                    condition:
+                      type: object
+                      additionalProperties: true
+                    priority:
+                      type: integer
+                    enabled:
+                      type: boolean
+                    saved_by:
+                      type:
+                        - string
+                        - 'null'
+                      format: uuid
+                    saved_at:
+                      type: string
+                      format: date-time
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

@@ -1,0 +1,24 @@
+type: object
+description: >-
+  Subject and preheader limits count Unicode characters. Text and HTML limits
+  count UTF-8 bytes. Action URL variables must remain in both text and HTML when
+  provided. Variables in URLs are allowed only as standalone action-link href
+  values, never in image sources or within external URLs.
+required:
+  - subject
+  - body
+properties:
+  subject:
+    type: string
+    minLength: 1
+    maxLength: 200
+  body:
+    type: string
+    minLength: 1
+    maxLength: 150000
+  preheader:
+    type: string
+    maxLength: 200
+  body_html:
+    type: string
+    maxLength: 200000

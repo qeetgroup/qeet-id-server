@@ -1,0 +1,24 @@
+type: object
+description: RFC 8628 §3.2 device authorization response.
+required:
+  - device_code
+  - user_code
+  - verification_uri
+  - expires_in
+properties:
+  device_code:
+    type: string
+  user_code:
+    type: string
+    description: Human-friendly code (XXXX-XXXX) from an unambiguous alphabet.
+  verification_uri:
+    type: string
+    format: uri
+  verification_uri_complete:
+    type: string
+    format: uri
+  expires_in:
+    type: integer
+  interval:
+    type: integer
+    description: Minimum seconds the device must wait between token polls.

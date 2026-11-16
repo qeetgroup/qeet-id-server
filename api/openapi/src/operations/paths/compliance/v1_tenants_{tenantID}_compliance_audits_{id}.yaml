@@ -1,0 +1,28 @@
+delete:
+  operationId: deleteExternalAudit
+  summary: Delete an external audit
+  description: >-
+    Removes a recorded external audit or certificate of the organisation.
+    Audited as compliance.audit_deleted. Requires audit.write.
+  tags:
+    - Compliance
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '204':
+      description: Deleted
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

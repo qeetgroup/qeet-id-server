@@ -1,0 +1,75 @@
+get:
+  operationId: listDomains
+  description: >-
+    Lists the domains claimed by the tenant together with the DNS record each
+    requires and its current verification status. Use this to track which
+    domains are pending, verified, or failing checks. New domains are added with
+    the claim-domain call and confirmed with the verify-domain call.
+  summary: List domains
+  tags:
+    - Domains
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Domains with their DNS verification records
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../../shared/schemas/Domain.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+post:
+  operationId: claimDomain
+  description: >-
+    Registers a domain for the tenant and returns the DNS TXT record that must
+    be published to prove ownership. The record lives under a dedicated
+    verification subdomain so it does not disturb existing apex TXT records such
+    as SPF. Publish the returned record in DNS, then call the verify-domain
+    endpoint to complete the claim.
+  summary: Claim domain
+  tags:
+    - Domains
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - domain
+          properties:
+            domain:
+              type: string
+  responses:
+    '201':
+      description: Domain claimed; publish the returned TXT record then verify
+      content:
+        application/json:
+          schema:
+            $ref: ../../../shared/schemas/Domain.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '409':
+      $ref: ../../../shared/responses/Conflict.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

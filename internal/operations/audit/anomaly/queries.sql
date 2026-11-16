@@ -93,7 +93,9 @@ FROM audit.anomalies a
 JOIN audit.events e ON e.id = a.event_id
 LEFT JOIN "user".users u ON u.id = a.actor_user_id
 WHERE a.tenant_id = @tenant_id
-ORDER BY a.created_at DESC
+  AND (sqlc.narg('before_ts')::timestamptz IS NULL OR a.created_at < sqlc.narg('before_ts')
+       OR (a.created_at = sqlc.narg('before_ts') AND a.id < sqlc.narg('before_id')::uuid))
+ORDER BY a.created_at DESC, a.id DESC
 LIMIT @row_limit;
 
 -- name: ListAnomaliesFiltered :many
@@ -106,5 +108,7 @@ FROM audit.anomalies a
 JOIN audit.events e ON e.id = a.event_id
 LEFT JOIN "user".users u ON u.id = a.actor_user_id
 WHERE a.tenant_id = @tenant_id AND a.status = @status
-ORDER BY a.created_at DESC
+  AND (sqlc.narg('before_ts')::timestamptz IS NULL OR a.created_at < sqlc.narg('before_ts')
+       OR (a.created_at = sqlc.narg('before_ts') AND a.id < sqlc.narg('before_id')::uuid))
+ORDER BY a.created_at DESC, a.id DESC
 LIMIT @row_limit;

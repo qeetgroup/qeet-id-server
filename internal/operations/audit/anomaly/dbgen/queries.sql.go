@@ -133,12 +133,16 @@ FROM audit.anomalies a
 JOIN audit.events e ON e.id = a.event_id
 LEFT JOIN "user".users u ON u.id = a.actor_user_id
 WHERE a.tenant_id = $1
-ORDER BY a.created_at DESC
-LIMIT $2
+  AND ($2::timestamptz IS NULL OR a.created_at < $2
+       OR (a.created_at = $2 AND a.id < $3::uuid))
+ORDER BY a.created_at DESC, a.id DESC
+LIMIT $4
 `
 
 type ListAnomaliesParams struct {
 	TenantID uuid.UUID
+	BeforeTs pgtype.Timestamptz
+	BeforeID pgtype.UUID
 	RowLimit int32
 }
 
@@ -162,7 +166,12 @@ type ListAnomaliesRow struct {
 
 // List all anomalies (open and resolved) for a tenant, most recent first.
 func (q *Queries) ListAnomalies(ctx context.Context, arg ListAnomaliesParams) ([]ListAnomaliesRow, error) {
-	rows, err := q.db.Query(ctx, listAnomalies, arg.TenantID, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listAnomalies,
+		arg.TenantID,
+		arg.BeforeTs,
+		arg.BeforeID,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -206,13 +215,17 @@ FROM audit.anomalies a
 JOIN audit.events e ON e.id = a.event_id
 LEFT JOIN "user".users u ON u.id = a.actor_user_id
 WHERE a.tenant_id = $1 AND a.status = $2
-ORDER BY a.created_at DESC
-LIMIT $3
+  AND ($3::timestamptz IS NULL OR a.created_at < $3
+       OR (a.created_at = $3 AND a.id < $4::uuid))
+ORDER BY a.created_at DESC, a.id DESC
+LIMIT $5
 `
 
 type ListAnomaliesFilteredParams struct {
 	TenantID uuid.UUID
 	Status   string
+	BeforeTs pgtype.Timestamptz
+	BeforeID pgtype.UUID
 	RowLimit int32
 }
 
@@ -236,7 +249,13 @@ type ListAnomaliesFilteredRow struct {
 
 // List anomalies for a tenant filtered by status, most recent first.
 func (q *Queries) ListAnomaliesFiltered(ctx context.Context, arg ListAnomaliesFilteredParams) ([]ListAnomaliesFilteredRow, error) {
-	rows, err := q.db.Query(ctx, listAnomaliesFiltered, arg.TenantID, arg.Status, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listAnomaliesFiltered,
+		arg.TenantID,
+		arg.Status,
+		arg.BeforeTs,
+		arg.BeforeID,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

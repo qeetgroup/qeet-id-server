@@ -1,0 +1,18 @@
+type: object
+properties:
+  id:
+    type: string
+    format: uuid
+  address:
+    type: string
+    description: The address masked (first character and domain).
+  reason:
+    type: string
+    enum:
+      - bounce
+      - complaint
+  detail:
+    type: string
+  created_at:
+    type: string
+    format: date-time

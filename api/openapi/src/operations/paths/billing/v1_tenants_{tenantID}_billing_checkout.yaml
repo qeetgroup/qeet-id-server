@@ -1,0 +1,79 @@
+post:
+  operationId: startCheckout
+  summary: Start checkout
+  description: >-
+    Returns a hosted-payment URL to redirect the admin to, or {status:"active"}
+    when the plan is free or no card provider serves the request (direct
+    activation). The provider is chosen by billing country (config-driven; an
+    omitted country falls back to currency-based routing: INR → Razorpay, else
+    the default provider). The provider's webhook later activates the
+    subscription. When invoice tax is configured, it is worked out from the
+    billing profile (or, when the profile names no country, from country) before
+    the payment opens, and the provider charges the total, tax included; the
+    paid invoice shows that charge. A plan activated directly by invoice-only
+    billing gets an open invoice; a free plan a paid zero one. Send an
+    Idempotency-Key header to retry it safely: a retry with the same key and
+    body within 24 hours gets the first answer, marked Idempotent-Replayed:
+    true; the same key with another body answers 422 idempotency.key_reused, one
+    still being processed 409 idempotency.in_progress, and one whose first
+    request stopped before answering 409 idempotency.outcome_unknown: check
+    whether it took effect, then retry with a new key.
+  tags:
+    - Billing
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - $ref: ../../../shared/parameters/IdempotencyKey.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - plan_code
+            - currency
+            - success_url
+            - cancel_url
+          properties:
+            plan_code:
+              type: string
+            currency:
+              type: string
+            country:
+              type: string
+              description: >-
+                ISO-3166-1 alpha-2 billing country; selects the payment
+                provider. Omitted → currency-based routing.
+            success_url:
+              type: string
+              format: uri
+            cancel_url:
+              type: string
+              format: uri
+  responses:
+    '200':
+      description: Either a checkout URL ({status:"checkout"}) or {status:"active"}
+      headers:
+        Idempotent-Replayed:
+          $ref: ../../../shared/headers/IdempotentReplayed.yaml
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/CheckoutResult.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '409':
+      description: >-
+        A request with this Idempotency-Key is still being processed
+        (idempotency.in_progress); retry shortly. Or the first request stopped
+        before answering and may have taken effect
+        (idempotency.outcome_unknown): check, then retry with a new key.
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

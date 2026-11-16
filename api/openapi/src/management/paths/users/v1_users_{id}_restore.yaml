@@ -1,0 +1,43 @@
+post:
+  operationId: restoreUser
+  description: >-
+    Brings a soft-deleted user back from the tenant recycle bin, reversing an
+    earlier delete call and returning the reactivated account. Requires
+    user.delete. Only accounts that are still soft-deleted (not yet purged) can
+    be restored. It is the counterpart to the purge call. An address another
+    account has taken since the deletion is refused with 409 auth.email_exists.
+    Audited as user.restored, in the same transaction as the restore. The person
+    must not outrank the caller: only an owner changes an owner (403
+    rbac.target_is_owner), and the caller must hold every permission the person
+    holds here (403 rbac.target_outranks_caller naming one); acting on yourself
+    is allowed.
+  summary: Restore user
+  tags:
+    - Users
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Restored
+      content:
+        application/json:
+          schema:
+            $ref: ../../../shared/schemas/User.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '409':
+      $ref: ../../../shared/responses/Conflict.yaml

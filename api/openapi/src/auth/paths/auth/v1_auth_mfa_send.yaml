@@ -1,0 +1,50 @@
+post:
+  operationId: sendSignInMfaCode
+  summary: Send a sign-in code
+  description: >-
+    Sends a code to one of the challenged person's email or SMS factors
+    (factor_id, from the challenge's factors), to complete the challenge with.
+    At most five per challenge (429). Used by both sign-in flows. For a risky
+    sign-in by someone with no second factor, the challenge's one factor is
+    their verified email address, named by the challenge's own id: send its code
+    here with factor_id set to the mfa_token, then submit it to complete the
+    challenge. A code to one factor can be sent at most every 30 seconds, ten an
+    hour to one person and five an hour to one address or number over every
+    account; past that the call answers 429 mfa.code_send_limited with
+    retry_after (seconds). A new code makes the factor's earlier unused code
+    stop working. A code sent here only completes a sign-in, never a step-up. An
+    SMS code needs an organisation whose plan includes SMS (403
+    upgrade_required). Each code sent is audited as mfa.otp_sent.
+  tags:
+    - Auth
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - mfa_token
+          properties:
+            mfa_token:
+              type: string
+            factor_id:
+              type: string
+              format: uuid
+  responses:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              sent:
+                type: boolean
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

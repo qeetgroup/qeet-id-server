@@ -1,0 +1,20 @@
+get:
+  operationId: getSandboxCheckout
+  description: >-
+    Renders a mock hosted-checkout page that stands in for a real payment
+    provider flow during local development. Returns 404 when the sandbox
+    provider is not enabled, so it is inert in production. The success and
+    cancel return URLs are validated to prevent an open redirect.
+  summary: Render the development-only sandbox checkout page
+  tags:
+    - Billing
+  security: []
+  responses:
+    '200':
+      description: Sandbox checkout HTML
+      content:
+        text/html:
+          schema:
+            type: string
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

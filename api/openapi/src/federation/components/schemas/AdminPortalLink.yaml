@@ -1,0 +1,37 @@
+type: object
+properties:
+  id:
+    type: string
+    format: uuid
+  tenant_id:
+    type: string
+    format: uuid
+  capabilities:
+    type: array
+    items:
+      type: string
+      enum:
+        - saml
+        - scim
+        - domain_verification
+  created_by:
+    type:
+      - string
+      - 'null'
+    format: uuid
+  expires_at:
+    type: string
+    format: date-time
+  revoked_at:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  last_used_at:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  created_at:
+    type: string
+    format: date-time

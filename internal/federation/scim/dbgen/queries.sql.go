@@ -368,6 +368,7 @@ SELECT id, name, token_prefix, created_at, expires_at, last_used_at, revoked_at,
 FROM tenant.scim_tokens
 WHERE tenant_id = $1
 ORDER BY created_at DESC, id DESC
+LIMIT 1001
 `
 
 type ListScimTokensRow struct {
@@ -392,6 +393,7 @@ type ListScimTokensRow struct {
 // Token management
 // ==========================================================================
 // ListScimTokens is every token of the organisation, newest first.
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListScimTokens(ctx context.Context, tenantID uuid.UUID) ([]ListScimTokensRow, error) {
 	rows, err := q.db.Query(ctx, listScimTokens, tenantID)
 	if err != nil {

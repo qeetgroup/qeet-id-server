@@ -785,7 +785,7 @@ SELECT id, framework, kind, body, scope, reference, issued_on, expires_on, creat
 FROM tenant.compliance_audits
 WHERE tenant_id = $1 AND ($2::text IS NULL OR framework = $2)
 ORDER BY issued_on DESC, created_at DESC
-LIMIT 200
+LIMIT 1001
 `
 
 type ListComplianceAuditsParams struct {
@@ -806,6 +806,7 @@ type ListComplianceAuditsRow struct {
 	CreatedAt time.Time
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListComplianceAudits(ctx context.Context, arg ListComplianceAuditsParams) ([]ListComplianceAuditsRow, error) {
 	rows, err := q.db.Query(ctx, listComplianceAudits, arg.TenantID, arg.Framework)
 	if err != nil {
@@ -843,6 +844,7 @@ FROM tenant.compliance_control_owners o
 LEFT JOIN "user".users u ON u.id = o.user_id
 WHERE o.tenant_id = $1
 ORDER BY o.control_id
+LIMIT 1001
 `
 
 type ListControlOwnersRow struct {
@@ -853,6 +855,7 @@ type ListControlOwnersRow struct {
 	UpdatedAt   time.Time
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListControlOwners(ctx context.Context, tenantID uuid.UUID) ([]ListControlOwnersRow, error) {
 	rows, err := q.db.Query(ctx, listControlOwners, tenantID)
 	if err != nil {
@@ -885,7 +888,7 @@ SELECT id, tenant_id, framework, generated_at, generated_by,
 FROM tenant.compliance_evidence_runs
 WHERE tenant_id = $1 AND framework = $2
 ORDER BY generated_at DESC
-LIMIT 100
+LIMIT 1001
 `
 
 type ListEvidenceRunsParams struct {
@@ -906,6 +909,7 @@ type ListEvidenceRunsRow struct {
 
 // List previous runs for a tenant+framework, most recent first.
 // Controls are excluded from the list response (use GetEvidenceRun for full report).
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListEvidenceRuns(ctx context.Context, arg ListEvidenceRunsParams) ([]ListEvidenceRunsRow, error) {
 	rows, err := q.db.Query(ctx, listEvidenceRuns, arg.TenantID, arg.Framework)
 	if err != nil {
@@ -940,7 +944,7 @@ SELECT id, tenant_id, subject_id, requested_by, status, error, completed_at, cre
 FROM "user".export_requests
 WHERE tenant_id = $1
 ORDER BY created_at DESC
-LIMIT 200
+LIMIT 1001
 `
 
 type ListExportRequestsRow struct {
@@ -954,6 +958,7 @@ type ListExportRequestsRow struct {
 	CreatedAt   time.Time
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListExportRequests(ctx context.Context, tenantID uuid.UUID) ([]ListExportRequestsRow, error) {
 	rows, err := q.db.Query(ctx, listExportRequests, tenantID)
 	if err != nil {
@@ -989,7 +994,7 @@ SELECT id, tenant_id, subject_id, requested_by, reason, status,
 FROM "user".purge_requests
 WHERE tenant_id = $1
 ORDER BY created_at DESC
-LIMIT 200
+LIMIT 1001
 `
 
 type ListPurgeRequestsRow struct {
@@ -1007,6 +1012,7 @@ type ListPurgeRequestsRow struct {
 }
 
 // List all purge requests for a tenant, most recent first.
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListPurgeRequests(ctx context.Context, tenantID uuid.UUID) ([]ListPurgeRequestsRow, error) {
 	rows, err := q.db.Query(ctx, listPurgeRequests, tenantID)
 	if err != nil {

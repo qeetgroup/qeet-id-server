@@ -1,0 +1,56 @@
+type: object
+description: Outcome of a single compliance control check against live system state.
+properties:
+  id:
+    type: string
+    description: Unique control identifier within the framework (e.g. CC6.1-MFA).
+  name:
+    type: string
+  category:
+    type: string
+  criteria:
+    type: string
+    description: >-
+      Framework reference code (e.g. CC6.1, or A.8.5 in ISO/IEC 27001:2022 Annex
+      A).
+  criteria_2013:
+    type: string
+    description: >-
+      An ISO control's ISO/IEC 27001:2013 Annex A reference (e.g. A.9.4), for
+      audits still on that revision; absent for SOC 2.
+  status:
+    type: string
+    enum:
+      - pass
+      - fail
+      - na
+    description: >-
+      pass — condition positively confirmed; fail — condition not met; na — data
+      not determinable (never a fabricated pass).
+  detail:
+    type: string
+    description: >-
+      Human-readable explanation of what was found, in English; always
+      populated.
+  detail_code:
+    type: string
+    description: >-
+      What was found as a code, such as password_length.too_short, for a console
+      to word itself with params.
+  params:
+    type: object
+    additionalProperties: true
+    description: The values the finding is about, such as {min_length, required}.
+  remedy:
+    type: string
+    description: >-
+      On a failing control, what would make it pass, as a code, such as
+      raise_password_min_length.
+  failing_since:
+    type: string
+    format: date-time
+    description: >-
+      On a failing control, when it started failing, carried from run to run
+      while it keeps failing.
+  owner:
+    $ref: ./ControlOwner.yaml

@@ -1,0 +1,26 @@
+description: >-
+  Authenticated but not permitted. auth.application_token: the access token was
+  issued to an application (it carries client_id) and this route accepts only
+  the user's own tokens; applications may call GET /v1/oauth/userinfo.
+  auth.insufficient_scope: an application's token reached a route open to
+  applications without the scope the route needs (named in the WWW-Authenticate
+  challenge).
+headers:
+  WWW-Authenticate:
+    description: >-
+      With auth.insufficient_scope: `Bearer realm="qeet",
+      error="insufficient_scope", scope="<the scope the route needs>"`.
+    schema:
+      type: string
+  X-Request-Id:
+    $ref: ../headers/RequestId.yaml
+content:
+  application/json:
+    example:
+      error:
+        code: forbidden
+        message: You don't have permission to do that.
+        translation_key: forbidden
+        request_id: api-1/Kx9fQ2mW7a-000131
+    schema:
+      $ref: ../schemas/Error.yaml

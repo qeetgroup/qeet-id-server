@@ -1,0 +1,55 @@
+type: object
+required:
+  - base_dn
+  - bind_dn
+  - created_at
+  - email_attribute
+  - id
+  - last_login_at
+  - name
+  - name_attribute
+  - server_url
+  - skip_tls_verify
+  - start_tls
+  - status
+  - tenant_id
+  - updated_at
+  - user_filter
+properties:
+  base_dn:
+    type: string
+  bind_dn:
+    type: string
+  created_at:
+    type: string
+    format: date-time
+  email_attribute:
+    type: string
+  id:
+    type: string
+    format: uuid
+  last_login_at:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  name:
+    type: string
+  name_attribute:
+    type: string
+  server_url:
+    type: string
+  skip_tls_verify:
+    type: boolean
+  start_tls:
+    type: boolean
+  status:
+    type: string
+  tenant_id:
+    type: string
+    format: uuid
+  updated_at:
+    type: string
+    format: date-time
+  user_filter:
+    type: string

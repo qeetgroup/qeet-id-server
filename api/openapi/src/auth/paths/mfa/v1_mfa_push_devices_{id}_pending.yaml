@@ -1,0 +1,59 @@
+post:
+  operationId: listPendingPushRequests
+  summary: List the sign-in requests waiting on this phone
+  description: >-
+    Called by the mobile app when it comes to the foreground, so a request whose
+    push was late, lost or never sent (its push service has no credentials on
+    this server) can still be answered. Lists the account's pending, unexpired
+    requests, newest first, at most ten. The app proves it is that device with
+    the device_token it was given when linked, which must not have expired; it
+    is sent in the body, never in the URL (the app holds no signed-in session).
+    Each request is answered with the respond call, carrying the number shown
+    where it was asked for. 401 mfa.push_unauthorized when the device or
+    credential does not match or has expired.
+  tags:
+    - MFA
+  security: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - user_id
+            - device_token
+          properties:
+            user_id:
+              type: string
+              format: uuid
+            device_token:
+              type: string
+  responses:
+    '200':
+      description: The requests waiting for an answer, newest first
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - challenges
+            properties:
+              challenges:
+                type: array
+                maxItems: 10
+                items:
+                  $ref: ../../components/schemas/PushChallenge.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

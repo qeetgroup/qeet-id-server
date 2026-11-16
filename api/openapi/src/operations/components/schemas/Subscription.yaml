@@ -1,0 +1,54 @@
+type: object
+required:
+  - amount_minor
+  - cancel_at_period_end
+  - currency
+  - current_period_end
+  - current_period_start
+  - interval
+  - plan_code
+  - plan_name
+  - status
+  - trial_end
+properties:
+  amount_minor:
+    type: integer
+  cancel_at_period_end:
+    type: boolean
+  currency:
+    type: string
+  current_period_end:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  current_period_start:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  interval:
+    type: string
+  plan_code:
+    type: string
+  plan_name:
+    type: string
+  status:
+    type: string
+    enum:
+      - none
+      - trialing
+      - active
+      - past_due
+      - canceled
+  trial_end:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  ended_at:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: When a canceled subscription ended.

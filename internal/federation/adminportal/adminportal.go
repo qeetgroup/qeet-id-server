@@ -791,7 +791,7 @@ func (h *Handler) samlList(w http.ResponseWriter, r *http.Request) {
 	for i := range conns {
 		out[i] = h.withAddresses(r, &conns[i])
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }
 
 func (h *Handler) samlCreate(w http.ResponseWriter, r *http.Request) {
@@ -1125,7 +1125,7 @@ func (h *Handler) domainList(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }
 
 // domainAdd claims a domain for the tenant and answers with the DNS record to

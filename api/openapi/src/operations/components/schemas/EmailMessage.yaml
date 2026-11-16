@@ -1,0 +1,28 @@
+type: object
+properties:
+  id:
+    type: string
+    format: uuid
+  template:
+    type: string
+    description: The template the message was sent from (invite, magic_link …).
+  status:
+    type: string
+    enum:
+      - sent
+      - delivered
+      - bounced
+      - complained
+      - suppressed
+      - failed
+  reason:
+    type: string
+    description: >-
+      The provider's reason for a bounce, complaint or failure (for example
+      Permanent/General: 550 no such user).
+  sent_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time

@@ -1,0 +1,35 @@
+type: object
+required:
+  - id
+  - user_id
+  - created_at
+properties:
+  id:
+    type: string
+    format: uuid
+  user_id:
+    type: string
+    format: uuid
+  name:
+    type:
+      - string
+      - 'null'
+    maxLength: 64
+    description: >-
+      User-supplied text: show it as text, never as markup. Null for a passkey
+      enrolled before passkeys were named by default.
+  transports:
+    type:
+      - array
+      - 'null'
+    items:
+      type: string
+  last_used_at:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  created_at:
+    type: string
+    format: date-time
+description: An active session (id, ip, user agent, timestamps).

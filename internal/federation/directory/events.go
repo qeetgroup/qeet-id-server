@@ -18,6 +18,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // Event is one recorded provisioning operation.
@@ -69,12 +70,12 @@ type VolumePoint struct {
 
 // EventPage is one page of events with their summary.
 type EventPage struct {
-	Items   []Event       `json:"items"`
-	Total   int           `json:"total"`
-	Summary EventSummary  `json:"summary"`
-	Volume  []VolumePoint `json:"volume"`
-	Offset  int           `json:"offset"`
-	Limit   int           `json:"limit"`
+	Items      []Event       `json:"items"`
+	Total      int           `json:"total"`
+	Summary    EventSummary  `json:"summary"`
+	Volume     []VolumePoint `json:"volume"`
+	Limit      int           `json:"limit"`
+	NextCursor string        `json:"next_cursor,omitempty"`
 }
 
 type eventFilter struct {
@@ -83,8 +84,11 @@ type eventFilter struct {
 	Status       string
 	Search       string
 	Limit        int
-	Offset       int
+	After        paging.Cursor
 }
+
+// eventKey is an event's place in the newest-first order its pages follow.
+func eventKey(event Event) (time.Time, uuid.UUID) { return event.StartedAt, event.ID }
 
 // SetEventStore sets the pool that events are recorded to and read from.
 func (service *Service) SetEventStore(pool *pgxpool.Pool) {
@@ -280,15 +284,18 @@ func parseEventFilter(request *http.Request) (eventFilter, error) {
 		}
 		filter.Since = time.Now().UTC().AddDate(0, 0, -days)
 	}
-	for key, destination := range map[string]*int{"limit": &filter.Limit, "offset": &filter.Offset} {
-		if value := query.Get(key); value != "" {
-			parsed, err := strconv.Atoi(value)
-			if err != nil || parsed < 0 || (key == "limit" && (parsed < 1 || parsed > 100)) || parsed > 100000 {
-				return filter, errs.ErrBadRequest
-			}
-			*destination = parsed
+	if value := query.Get("limit"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 100 {
+			return filter, errs.ErrBadRequest
 		}
+		filter.Limit = parsed
 	}
+	after, err := paging.ParseCursor(query)
+	if err != nil {
+		return filter, err
+	}
+	filter.After = after
 	filter.ConnectionID = query.Get("connection_id")
 	filter.Status = query.Get("status")
 	filter.Search = strings.TrimSpace(query.Get("q"))
@@ -317,7 +324,7 @@ func scanEvent(row pgx.Row) (Event, error) {
 
 // Events returns one page of the tenant's provisioning events.
 func (service *Service) Events(ctx context.Context, tenantID uuid.UUID, filter eventFilter) (EventPage, error) {
-	page := EventPage{Items: []Event{}, Volume: []VolumePoint{}, Limit: filter.Limit, Offset: filter.Offset}
+	page := EventPage{Items: []Event{}, Volume: []VolumePoint{}, Limit: filter.Limit}
 	if tenantID == uuid.Nil || service.pool == nil {
 		return page, errs.ErrUnauthorized
 	}
@@ -327,7 +334,7 @@ func (service *Service) Events(ctx context.Context, tenantID uuid.UUID, filter e
 		return page, err
 	}
 	page.Total = page.Summary.Total
-	rows, err := service.pool.Query(ctx, `SELECT `+eventColumns+` FROM tenant.directory_events WHERE `+eventWhere+` ORDER BY started_at DESC,id DESC LIMIT $6 OFFSET $7`, append(arguments, filter.Limit, filter.Offset)...)
+	rows, err := service.pool.Query(ctx, `SELECT `+eventColumns+` FROM tenant.directory_events WHERE `+eventWhere+` AND (NOT $7::boolean OR (started_at,id) < ($8::timestamptz,$9::uuid)) ORDER BY started_at DESC,id DESC LIMIT $6`, append(arguments, filter.Limit+1, filter.After.Set, filter.After.Time, filter.After.ID)...)
 	if err != nil {
 		return page, err
 	}
@@ -343,6 +350,7 @@ func (service *Service) Events(ctx context.Context, tenantID uuid.UUID, filter e
 		return page, err
 	}
 	rows.Close()
+	page.Items, page.NextCursor = paging.Next(page.Items, filter.Limit, eventKey)
 	volume, err := service.pool.Query(ctx, `SELECT to_char(started_at AT TIME ZONE 'UTC','YYYY-MM-DD'),sum(users_synced),sum(groups_synced) FROM tenant.directory_events WHERE `+eventWhere+` GROUP BY 1 ORDER BY 1`, arguments...)
 	if err != nil {
 		return page, err
@@ -435,7 +443,7 @@ func (handler *Handler) listAlerts(response http.ResponseWriter, request *http.R
 		httpx.WriteError(response, request, err)
 		return
 	}
-	rows, err := handler.Service.pool.Query(request.Context(), `SELECT `+alertColumns+` FROM tenant.directory_alerts WHERE tenant_id=$1 ORDER BY created_at DESC, id`, tenantID)
+	rows, err := handler.Service.pool.Query(request.Context(), `SELECT `+alertColumns+` FROM tenant.directory_alerts WHERE tenant_id=$1 ORDER BY created_at DESC, id LIMIT 1001`, tenantID)
 	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
@@ -454,7 +462,7 @@ func (handler *Handler) listAlerts(response http.ResponseWriter, request *http.R
 		httpx.WriteError(response, request, err)
 		return
 	}
-	httpx.WriteJSON(response, http.StatusOK, map[string]any{"items": items})
+	httpx.WriteJSON(response, http.StatusOK, paging.List(items))
 }
 
 // updateAlert serves PATCH /tenants/{tenantID}/directory/alerts/{alertID}.

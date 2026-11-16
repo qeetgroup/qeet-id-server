@@ -87,7 +87,7 @@ SELECT c.id, c.subject, c.type, c.issued_at, c.expires_at, c.revoked_at,
        c.user_id, u.email AS user_email, u.display_name AS user_display_name
 FROM auth.credentials c
 LEFT JOIN "user".users u ON u.id = c.user_id
-WHERE c.tenant_id = $1 ORDER BY c.issued_at DESC LIMIT 200
+WHERE c.tenant_id = $1 ORDER BY c.issued_at DESC LIMIT 1001
 `
 
 type ListCredentialsRow struct {
@@ -102,6 +102,7 @@ type ListCredentialsRow struct {
 	UserDisplayName *string
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListCredentials(ctx context.Context, tenantID uuid.UUID) ([]ListCredentialsRow, error) {
 	rows, err := q.db.Query(ctx, listCredentials, tenantID)
 	if err != nil {

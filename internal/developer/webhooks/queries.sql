@@ -7,6 +7,7 @@
 -- deliveries are pending (none tried yet; held while it is disabled),
 -- retrying and given up.
 -- name: ListWebhookSubscriptions :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT s.id, s.tenant_id, s.url, s.events, s.disabled_at, s.disabled_reason, s.failing_since, s.previous_secret_expires_at, s.created_at,
        (SELECT d.delivered_at FROM tenant.webhook_deliveries d WHERE d.subscription_id = s.id AND d.delivered_at IS NOT NULL
         ORDER BY d.delivered_at DESC LIMIT 1) AS last_delivered_at,
@@ -19,7 +20,8 @@ SELECT s.id, s.tenant_id, s.url, s.events, s.disabled_at, s.disabled_reason, s.f
        (SELECT count(*) FROM tenant.webhook_deliveries d WHERE d.subscription_id = s.id AND d.dead_at IS NOT NULL)::int AS gave_up,
        s.disabled_by
 FROM tenant.webhook_subscriptions s
-WHERE s.tenant_id = @tenant_id ORDER BY s.created_at DESC;
+WHERE s.tenant_id = @tenant_id ORDER BY s.created_at DESC
+LIMIT 1001;
 
 -- name: GetWebhookSubscription :one
 SELECT s.id, s.tenant_id, s.url, s.events, s.disabled_at, s.disabled_reason, s.failing_since, s.previous_secret_expires_at, s.created_at,
@@ -125,13 +127,14 @@ VALUES (@tenant_id, @delivery_id, sqlc.narg('status_code'), @duration_ms, sqlc.n
 
 -- name: ListDeliveryAttempts :many
 -- One of the tenant's deliveries' attempts, oldest first.
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT a.attempted_at, a.status_code, a.duration_ms, a.error
 FROM tenant.webhook_delivery_attempts a
 JOIN tenant.webhook_deliveries d ON d.id = a.delivery_id
 JOIN tenant.webhook_subscriptions sub ON sub.id = d.subscription_id
 WHERE a.delivery_id = @delivery_id AND d.subscription_id = @subscription_id AND a.tenant_id = @tenant_id AND sub.tenant_id = @tenant_id
 ORDER BY a.attempted_at
-LIMIT 200;
+LIMIT 1001;
 
 -- name: RetryWebhookDelivery :execrows
 UPDATE tenant.webhook_deliveries d

@@ -1,0 +1,21 @@
+type: object
+required:
+  - created_at
+  - provider
+  - updated_at
+properties:
+  created_at:
+    type: string
+    format: date-time
+  expires_at:
+    type: string
+    format: date-time
+  external_account_id:
+    type: string
+  provider:
+    type: string
+  scope:
+    type: string
+  updated_at:
+    type: string
+    format: date-time

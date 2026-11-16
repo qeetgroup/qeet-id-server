@@ -1,0 +1,25 @@
+type: object
+properties:
+  access_token:
+    type: string
+  id_token:
+    type: string
+  refresh_token:
+    type: string
+  token_type:
+    type: string
+    example: Bearer
+  expires_in:
+    type: integer
+    description: The access token's lifetime in seconds.
+  expires_at:
+    type: string
+    format: date-time
+    description: When the access token expires; client_credentials tokens only.
+  scope:
+    type: string
+  issued_token_type:
+    type: string
+    description: >-
+      RFC 8693 token-exchange answers only; the type of the issued token,
+      urn:ietf:params:oauth:token-type:access_token.

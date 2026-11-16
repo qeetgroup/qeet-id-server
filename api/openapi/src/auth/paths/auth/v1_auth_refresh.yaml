@@ -1,0 +1,65 @@
+post:
+  operationId: refreshTokens
+  description: >-
+    Exchanges a valid refresh token for a new access and refresh token pair. The
+    presented refresh token is rotated and invalidated, so each token may be
+    redeemed only once; persist the returned refresh token for the next
+    rotation. A revoked token is rejected and forces a fresh sign-in. A token
+    presented again within the reuse grace of its rotation
+    (REFRESH_TOKEN_REUSE_GRACE, 30 seconds by default, at most one minute),
+    while the token that replaced it is still unused, gets the very pair its
+    rotation returned, so two instances of a client renewing at once, or a
+    client that lost the answer, keep the session; each such retry is audited as
+    auth.refresh_token_retried. Any other reuse of a rotated token is treated as
+    theft: the session ends (401 auth.session_revoked), audited as
+    auth.token_reuse_detected. A session ends by itself at its maximum age
+    however active it is, and once it goes longer than its idle timeout without
+    a renewal; each renewal restarts the idle timeout, and the response says
+    when the session ends either way (session_expires_at, idle_expires_at). A
+    renewal after either is refused with 401 auth.session_timed_out and the
+    session ends, recorded as an expiry and announced to session.revoked
+    subscribers with the reason expired. A renewal from an address the
+    organisation's address rules refuse answers 403 auth.address_not_allowed;
+    the session stays, and renews again from an allowed address. A session in a
+    tenant that has since been suspended or deleted is refused (403
+    auth.tenant_inactive).
+  summary: Refresh
+  tags:
+    - Auth
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        example:
+          refresh_token: Jk3vQm9xT2pL0sWc8hYbR4nZaE6uFi1oPq7dGt5yHw0
+        schema:
+          $ref: ../../components/schemas/RefreshRequest.yaml
+  responses:
+    '200':
+      description: Rotated token pair
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          example:
+            access_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.eyJzdWIiOiIwMThmMmE3MCIsIm4iOjJ9.FAKE-signature
+            token_type: Bearer
+            expires_at: '2026-09-24T10:44:00Z'
+            refresh_token: Pq7dGt5yHw0Jk3vQm9xT2pL0sWc8hYbR4nZaE6uFi1o
+            session_expires_at: '2026-10-24T10:15:00Z'
+            idle_expires_at: '2026-10-01T10:29:00Z'
+            session_id: '018f2a70-5b6c-7d8e-9f01-2a3b4c5d6e7f'
+            user_id: '018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f'
+            tenant_id: '018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00'
+          schema:
+            $ref: ../../../shared/schemas/TokenPair.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

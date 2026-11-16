@@ -1,0 +1,37 @@
+delete:
+  operationId: purgeUser
+  description: >-
+    Permanently deletes a soft-deleted user, removing it from the recycle bin.
+    Requires user.delete. This is irreversible and cannot be undone by the
+    restore call. Use it only after the account has been soft-deleted. The
+    account's personal API keys and role memberships go with it; agents it
+    sponsored and applications it reviewed are kept without it; an erasure
+    request for it is kept and still names it. Audited as user.purged, in the
+    same transaction as the purge. The person must not outrank the caller: only
+    an owner changes an owner (403 rbac.target_is_owner), and the caller must
+    hold every permission the person holds here (403 rbac.target_outranks_caller
+    naming one); acting on yourself is allowed.
+  summary: Purge user
+  tags:
+    - Users
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '204':
+      description: Permanently purged
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

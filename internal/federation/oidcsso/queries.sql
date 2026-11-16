@@ -19,10 +19,12 @@ RETURNING id, tenant_id, name, issuer, discovery_url, client_id, scopes, allowed
           created_at, updated_at, last_login_at;
 
 -- name: ListOidcConnections :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, tenant_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,
        email_claim, name_claim, given_name_claim, family_name_claim, groups_claim, status,
        created_at, updated_at, last_login_at
-FROM tenant.oidc_connections WHERE tenant_id = @tenant_id ORDER BY created_at DESC;
+FROM tenant.oidc_connections WHERE tenant_id = @tenant_id ORDER BY created_at DESC
+LIMIT 1001;
 
 -- name: GetOidcConnection :one
 SELECT id, tenant_id, name, issuer, discovery_url, client_id, scopes, allowed_idp_tenant_ids,

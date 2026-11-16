@@ -1,0 +1,11 @@
+type: object
+required:
+  - displayName
+  - id
+  - name
+properties:
+  displayName:
+    type: string
+  id: {}
+  name:
+    type: string

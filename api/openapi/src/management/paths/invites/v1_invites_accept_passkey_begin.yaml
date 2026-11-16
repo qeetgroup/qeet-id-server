@@ -1,0 +1,56 @@
+post:
+  operationId: beginPasskeyInviteAcceptance
+  summary: Accept an invitation with a passkey — begin (public)
+  description: >-
+    Starts accepting an invitation by founding the new account on a passkey
+    instead of a password, returning the WebAuthn credential-creation options.
+    The account's email and organisation come from the invitation, never from
+    the request. Refused like POST /v1/invites/accept (invite.link_invalid,
+    invite.invalid, invite.expired, invite.account_exists — the invitee signs in
+    and accepts as themselves, user.domain_managed_elsewhere), and with
+    passkey.disabled when the organisation has passkeys switched off. Starting
+    again replaces an unfinished ceremony for the same invitation; the
+    invitation stays pending until one finishes.
+  tags:
+    - Invites
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - token
+          properties:
+            token:
+              type: string
+            display_name:
+              type: string
+              maxLength: 200
+  responses:
+    '200':
+      description: session_id and the publicKey creation options
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - publicKey
+              - session_id
+            properties:
+              publicKey:
+                $ref: ../../../shared/schemas/PublicKeyCredentialCreationOptions.yaml
+              session_id:
+                type: string
+                format: uuid
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '409':
+      $ref: ../../../shared/responses/Conflict.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

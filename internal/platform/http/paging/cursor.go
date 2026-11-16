@@ -5,6 +5,7 @@ package paging
 import (
 	"encoding/base64"
 	"errors"
+	"net/url"
 	"strings"
 	"time"
 
@@ -44,4 +45,47 @@ func DecodeTimeUUID(cursor string) (time.Time, uuid.UUID, error) {
 		return time.Time{}, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid cursor")
 	}
 	return t, id, nil
+}
+
+// Cursor is where a keyset page starts: after the item at (Time, ID), or at
+// the beginning when Set is false.
+type Cursor struct {
+	Set  bool
+	Time time.Time
+	ID   uuid.UUID
+}
+
+// ParseCursor reads the cursor query parameter: absent is the first page, and
+// a malformed one is errs.ErrBadRequest.
+func ParseCursor(q url.Values) (Cursor, error) {
+	raw := q.Get("cursor")
+	if raw == "" {
+		return Cursor{}, nil
+	}
+	t, id, err := DecodeTimeUUID(raw)
+	if err != nil {
+		return Cursor{}, err
+	}
+	return Cursor{Set: true, Time: t, ID: id}, nil
+}
+
+// Next cuts items, read with limit+1, to limit and returns the next page's
+// cursor from the last item's key: empty when there is no next page.
+func Next[T any](items []T, limit int, key func(T) (time.Time, uuid.UUID)) ([]T, string) {
+	if len(items) <= limit {
+		return items, ""
+	}
+	items = items[:limit]
+	t, id := key(items[limit-1])
+	return items, EncodeTimeUUID(t, id)
+}
+
+// Page is the body of a keyset page: its items, and next_cursor only when
+// there is another page.
+func Page[T any](items []T, next string) map[string]any {
+	body := map[string]any{"items": items}
+	if next != "" {
+		body["next_cursor"] = next
+	}
+	return body
 }

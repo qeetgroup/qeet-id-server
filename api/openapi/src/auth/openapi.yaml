@@ -1,0 +1,353 @@
+openapi: 3.1.0
+info:
+  title: Qeet ID — Authentication & Access API
+  version: 0.2.0
+  description: >-
+    Human authentication, passkeys, MFA, and authorization for Qeet ID.
+
+
+    ## Start here
+
+
+    1. Authenticate a user — password login, or passwordless **passkey** login.
+    Passkeys are first-class: a user can exist with no password at all.
+
+    2. Satisfy **MFA** if tenant policy or adaptive risk requires it. A
+    registered passkey satisfies MFA on its own.
+
+    3. Use the returned `Bearer` access token for authenticated calls.
+
+    4. **Signup creates a tenant-less user.** Create a tenant via the Identity
+    Management API before any tenant-scoped call — the creator becomes the
+    tenant owner.
+
+    5. Configure authorization: RBAC is the baseline; layer in ABAC, ReBAC, or
+    AuthZEN as needed.
+
+
+    ## Authentication
+
+
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization:
+    ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token),
+    `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session).
+    CSRF protection applies only to cookie sessions (`ssoCookie`): requests
+    authorised by `bearerAuth` or `apiKeyAuth` bypass it, as do the
+    client-credentials token exchange (POST /v1/oauth/token) and the directory
+    sign-in (POST /ldap/{id}/authenticate), which carry their credentials in the
+    request. Basic credentials do not bypass it. A request that fails the check
+    is refused with 403 `csrf_failed`.
+
+
+    The responses of the sign-up, sign-in (password, MFA, magic link, passkey),
+    refresh, tenant-switch, sign-out (hosted session, everywhere) and
+    forgot-password operations, and of those returning a new authenticator
+    secret, recovery codes, pairing code or device credential, are sent with
+    `Cache-Control: no-store` and `Pragma: no-cache`.
+
+
+    Every response carries an `X-Request-Id` header naming the request; quote it
+    when reporting a problem. An error body repeats it as `error.request_id`.
+
+
+    ## Related APIs
+
+
+    - **Identity Management API** — tenants, users, groups, invitations
+
+    - **Federation API** — OIDC/OAuth provider, SAML, SCIM, LDAP, social
+
+    - **Developer API** — API keys, agents, webhooks, vaults
+
+    - **Operations API** — audit, analytics, billing
+
+
+    ## Contract maintenance
+
+
+    This document covers routes mounted by internal/bootstrap/router.go.
+    internal/bootstrap/openapi_coverage_test.go walks the production mount
+    helpers and fails when a mounted operation is undocumented, a documented
+    operation is stale, or API-auth security declarations disagree with runtime
+    classification.
+servers:
+  - url: https://api.id.qeet.in
+    description: Production
+  - url: http://localhost:4001
+    description: Local (make dev)
+tags:
+  - name: Auth
+    description: Login, signup, refresh, sessions, hosted-login SSO cookie.
+    externalDocs:
+      description: Authentication guide
+      url: https://docs.qeet.in/id/authentication
+  - name: Passkeys
+    description: >-
+      WebAuthn passkey registration and passwordless login. A registered passkey
+      also satisfies MFA on its own.
+  - name: MFA
+    description: TOTP and OTP (email/SMS) second factors plus recovery codes.
+    externalDocs:
+      description: MFA guide
+      url: https://docs.qeet.in/id/mfa
+  - name: RBAC
+    description: Roles, permissions, assignments, and authorization checks.
+  - name: ABAC
+    description: >-
+      Attribute-based access control — policy store (CRUD) and the PDP evaluate
+      endpoint.
+  - name: ReBAC
+    description: >-
+      Relationship-based access control — relationship tuples and graph-based
+      permission checks.
+  - name: AuthZEN
+    description: >-
+      OpenID AuthZEN core evaluation API — a spec-shaped facade over RBAC/ReBAC
+      for external policy-enforcement points.
+  - name: Auth Policy
+    description: Per-tenant password rules and allowed login methods.
+  - name: Policy
+    description: Per-tenant security policy.
+  - name: IP Rules
+    description: Per-tenant IP allow/deny CIDR rules.
+  - name: Threats
+    description: >-
+      Adaptive threat detection — bot telemetry, risk and bot settings, and
+      login-anomaly review and resolution.
+paths:
+  /v1/auth/forgot-password:
+    $ref: paths/auth/v1_auth_forgot-password.yaml
+  /v1/auth/login:
+    $ref: paths/auth/v1_auth_login.yaml
+  /v1/auth/mfa:
+    $ref: paths/auth/v1_auth_mfa.yaml
+  /v1/auth/mfa/send:
+    $ref: paths/auth/v1_auth_mfa_send.yaml
+  /v1/auth/mfa/passkey/begin:
+    $ref: paths/auth/v1_auth_mfa_passkey_begin.yaml
+  /v1/auth/mfa/push:
+    $ref: paths/auth/v1_auth_mfa_push.yaml
+  /v1/auth/mfa/enroll:
+    $ref: paths/auth/v1_auth_mfa_enroll.yaml
+  /v1/auth/logout:
+    $ref: paths/auth/v1_auth_logout.yaml
+  /v1/auth/magic-link/consume:
+    $ref: paths/auth/v1_auth_magic-link_consume.yaml
+  /v1/auth/magic-link/start:
+    $ref: paths/auth/v1_auth_magic-link_start.yaml
+  /v1/auth/magic-link/session:
+    $ref: paths/auth/v1_auth_magic-link_session.yaml
+  /v1/auth/magic-link/resend:
+    $ref: paths/auth/v1_auth_magic-link_resend.yaml
+  /v1/auth/me:
+    $ref: paths/auth/v1_auth_me.yaml
+  /v1/auth/refresh:
+    $ref: paths/auth/v1_auth_refresh.yaml
+  /v1/auth/reset-password:
+    $ref: paths/auth/v1_auth_reset-password.yaml
+  /v1/auth/session:
+    $ref: paths/auth/v1_auth_session.yaml
+  /v1/auth/session/mfa:
+    $ref: paths/auth/v1_auth_session_mfa.yaml
+  /v1/auth/register:
+    $ref: paths/auth/v1_auth_register.yaml
+  /v1/auth/sign-in-methods:
+    $ref: paths/auth/v1_auth_sign-in-methods.yaml
+  /v1/auth/password:
+    $ref: paths/auth/v1_auth_password.yaml
+  /v1/auth/trusted-devices:
+    $ref: paths/auth/v1_auth_trusted-devices.yaml
+  /v1/auth/trusted-devices/{id}:
+    $ref: paths/auth/v1_auth_trusted-devices_{id}.yaml
+  /v1/auth/trusted-devices/count:
+    $ref: paths/auth/v1_auth_trusted-devices_count.yaml
+  /v1/auth/sessions:
+    $ref: paths/auth/v1_auth_sessions.yaml
+  /v1/auth/sessions/revoke-others:
+    $ref: paths/auth/v1_auth_sessions_revoke-others.yaml
+  /v1/auth/sessions/revoke-all:
+    $ref: paths/auth/v1_auth_sessions_revoke-all.yaml
+  /v1/auth/sessions/{id}:
+    $ref: paths/auth/v1_auth_sessions_{id}.yaml
+  /v1/auth/signup:
+    $ref: paths/auth/v1_auth_signup.yaml
+  /v1/auth/switch-tenant:
+    $ref: paths/auth/v1_auth_switch-tenant.yaml
+  /v1/passkeys:
+    $ref: paths/passkeys/v1_passkeys.yaml
+  /v1/passkeys/login/begin:
+    $ref: paths/passkeys/v1_passkeys_login_begin.yaml
+  /v1/passkeys/login/finish:
+    $ref: paths/passkeys/v1_passkeys_login_finish.yaml
+  /v1/passkeys/login/session:
+    $ref: paths/passkeys/v1_passkeys_login_session.yaml
+  /v1/passkeys/register/begin:
+    $ref: paths/passkeys/v1_passkeys_register_begin.yaml
+  /v1/passkeys/register/finish:
+    $ref: paths/passkeys/v1_passkeys_register_finish.yaml
+  /v1/signup/passkey/begin:
+    $ref: paths/passkeys/v1_signup_passkey_begin.yaml
+  /v1/signup/passkey/finish:
+    $ref: paths/passkeys/v1_signup_passkey_finish.yaml
+  /v1/register/passkey/begin:
+    $ref: paths/passkeys/v1_register_passkey_begin.yaml
+  /v1/register/passkey/finish:
+    $ref: paths/passkeys/v1_register_passkey_finish.yaml
+  /v1/passkeys/{id}:
+    $ref: paths/passkeys/v1_passkeys_{id}.yaml
+  /v1/mfa/otp/factors:
+    $ref: paths/mfa/v1_mfa_otp_factors.yaml
+  /v1/mfa/otp/factors/{id}:
+    $ref: paths/mfa/v1_mfa_otp_factors_{id}.yaml
+  /v1/mfa/otp/factors/{id}/challenge:
+    $ref: paths/mfa/v1_mfa_otp_factors_{id}_challenge.yaml
+  /v1/mfa/otp/factors/{id}/confirm:
+    $ref: paths/mfa/v1_mfa_otp_factors_{id}_confirm.yaml
+  /v1/mfa/otp/verify:
+    $ref: paths/mfa/v1_mfa_otp_verify.yaml
+  /v1/mfa/recovery-codes:
+    $ref: paths/mfa/v1_mfa_recovery-codes.yaml
+  /v1/mfa/recovery-codes/regenerate:
+    $ref: paths/mfa/v1_mfa_recovery-codes_regenerate.yaml
+  /v1/mfa/step-up/status:
+    $ref: paths/mfa/v1_mfa_step-up_status.yaml
+  /v1/mfa/push/step-up:
+    $ref: paths/mfa/v1_mfa_push_step-up.yaml
+  /v1/mfa/push/step-up/{id}/complete:
+    $ref: paths/mfa/v1_mfa_push_step-up_{id}_complete.yaml
+  /v1/mfa/totp:
+    $ref: paths/mfa/v1_mfa_totp.yaml
+  /v1/mfa/totp/enroll/confirm:
+    $ref: paths/mfa/v1_mfa_totp_enroll_confirm.yaml
+  /v1/mfa/totp/enroll/start:
+    $ref: paths/mfa/v1_mfa_totp_enroll_start.yaml
+  /v1/mfa/totp/verify:
+    $ref: paths/mfa/v1_mfa_totp_verify.yaml
+  /v1/mfa/webauthn/challenge:
+    $ref: paths/mfa/v1_mfa_webauthn_challenge.yaml
+  /v1/mfa/webauthn/verify:
+    $ref: paths/mfa/v1_mfa_webauthn_verify.yaml
+  /v1/mfa/push/devices:
+    $ref: paths/mfa/v1_mfa_push_devices.yaml
+  /v1/mfa/push/devices/{id}:
+    $ref: paths/mfa/v1_mfa_push_devices_{id}.yaml
+  /v1/mfa/push/devices/{id}/unlink:
+    $ref: paths/mfa/v1_mfa_push_devices_{id}_unlink.yaml
+  /v1/mfa/push/devices/{id}/push-token:
+    $ref: paths/mfa/v1_mfa_push_devices_{id}_push-token.yaml
+  /v1/mfa/push/devices/{id}/pending:
+    $ref: paths/mfa/v1_mfa_push_devices_{id}_pending.yaml
+  /v1/mfa/push/pairing:
+    $ref: paths/mfa/v1_mfa_push_pairing.yaml
+  /v1/mfa/push/pairing/{id}:
+    $ref: paths/mfa/v1_mfa_push_pairing_{id}.yaml
+  /v1/mfa/push/pairing/claim:
+    $ref: paths/mfa/v1_mfa_push_pairing_claim.yaml
+  /v1/mfa/push/challenges/{id}:
+    $ref: paths/mfa/v1_mfa_push_challenges_{id}.yaml
+  /v1/mfa/push/challenges/{id}/respond:
+    $ref: paths/mfa/v1_mfa_push_challenges_{id}_respond.yaml
+  /v1/check:
+    $ref: paths/rbac/v1_check.yaml
+  /v1/permissions:
+    $ref: paths/rbac/v1_permissions.yaml
+  /v1/roles/{roleID}/permissions:
+    $ref: paths/rbac/v1_roles_{roleID}_permissions.yaml
+  /v1/roles/{roleID}/permissions/{permID}:
+    $ref: paths/rbac/v1_roles_{roleID}_permissions_{permID}.yaml
+  /v1/tenants/{tenantID}/groups/{groupID}/roles:
+    $ref: paths/rbac/v1_tenants_{tenantID}_groups_{groupID}_roles.yaml
+  /v1/tenants/{tenantID}/groups/{groupID}/roles/{roleID}:
+    $ref: paths/rbac/v1_tenants_{tenantID}_groups_{groupID}_roles_{roleID}.yaml
+  /v1/tenants/{tenantID}/roles/{roleID}:
+    $ref: paths/rbac/v1_tenants_{tenantID}_roles_{roleID}.yaml
+  /v1/tenants/{tenantID}/roles/{roleID}/permissions:
+    $ref: paths/rbac/v1_tenants_{tenantID}_roles_{roleID}_permissions.yaml
+  /v1/tenants/{tenantID}/roles/{roleID}/holders:
+    $ref: paths/rbac/v1_tenants_{tenantID}_roles_{roleID}_holders.yaml
+  /v1/tenants/{tenantID}/roles:
+    $ref: paths/rbac/v1_tenants_{tenantID}_roles.yaml
+  /v1/users/{userID}/tenants/{tenantID}/permissions:
+    $ref: paths/rbac/v1_users_{userID}_tenants_{tenantID}_permissions.yaml
+  /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}:
+    $ref: paths/rbac/v1_users_{userID}_tenants_{tenantID}_roles_{roleID}.yaml
+  /v1/tenants/{tenantID}/abac/policies:
+    $ref: paths/abac/v1_tenants_{tenantID}_abac_policies.yaml
+  /v1/tenants/{tenantID}/abac/policies/{id}:
+    $ref: paths/abac/v1_tenants_{tenantID}_abac_policies_{id}.yaml
+  /v1/tenants/{tenantID}/abac/policies/{id}/versions:
+    $ref: paths/abac/v1_tenants_{tenantID}_abac_policies_{id}_versions.yaml
+  /v1/tenants/{tenantID}/abac/policies/{id}/versions/{version}/restore:
+    $ref: paths/abac/v1_tenants_{tenantID}_abac_policies_{id}_versions_{version}_restore.yaml
+  /v1/tenants/{tenantID}/abac/evaluate:
+    $ref: paths/abac/v1_tenants_{tenantID}_abac_evaluate.yaml
+  /v1/tenants/{tenantID}/relation-tuples:
+    $ref: paths/rebac/v1_tenants_{tenantID}_relation-tuples.yaml
+  /v1/tenants/{tenantID}/relation-tuples/{id}:
+    $ref: paths/rebac/v1_tenants_{tenantID}_relation-tuples_{id}.yaml
+  /v1/tenants/{tenantID}/relation-tuples/check:
+    $ref: paths/rebac/v1_tenants_{tenantID}_relation-tuples_check.yaml
+  /v1/tenants/{tenantID}/relation-tuples/types:
+    $ref: paths/rebac/v1_tenants_{tenantID}_relation-tuples_types.yaml
+  /v1/tenants/{tenantID}/relation-tuples/objects:
+    $ref: paths/rebac/v1_tenants_{tenantID}_relation-tuples_objects.yaml
+  /v1/tenants/{tenantID}/relation-tuples/graph:
+    $ref: paths/rebac/v1_tenants_{tenantID}_relation-tuples_graph.yaml
+  /v1/tenants/{tenantID}/authorization/decisions:
+    $ref: paths/authzen/v1_tenants_{tenantID}_authorization_decisions.yaml
+  /v1/tenants/{tenantID}/access/v1/evaluation:
+    $ref: paths/authzen/v1_tenants_{tenantID}_access_v1_evaluation.yaml
+  /v1/tenants/{tenantID}/access/v1/evaluations:
+    $ref: paths/authzen/v1_tenants_{tenantID}_access_v1_evaluations.yaml
+  /v1/tenants/{tenantID}/auth-policy/usage:
+    $ref: paths/auth-policy/v1_tenants_{tenantID}_auth-policy_usage.yaml
+  /v1/tenants/{tenantID}/auth-policy:
+    $ref: paths/auth-policy/v1_tenants_{tenantID}_auth-policy.yaml
+  /v1/tenants/{tenantID}/policy:
+    $ref: paths/policy/v1_tenants_{tenantID}_policy.yaml
+  /v1/tenants/{tenantID}/ip-rules:
+    $ref: paths/ip-rules/v1_tenants_{tenantID}_ip-rules.yaml
+  /v1/tenants/{tenantID}/ip-rules/check:
+    $ref: paths/ip-rules/v1_tenants_{tenantID}_ip-rules_check.yaml
+  /v1/tenants/{tenantID}/ip-rules/config:
+    $ref: paths/ip-rules/v1_tenants_{tenantID}_ip-rules_config.yaml
+  /v1/tenants/{tenantID}/ip-rules/{ruleID}:
+    $ref: paths/ip-rules/v1_tenants_{tenantID}_ip-rules_{ruleID}.yaml
+  /v1/tenants/{tenantID}/security/bots:
+    $ref: paths/threats/v1_tenants_{tenantID}_security_bots.yaml
+  /v1/tenants/{tenantID}/security/risk-settings:
+    $ref: paths/threats/v1_tenants_{tenantID}_security_risk-settings.yaml
+  /v1/tenants/{tenantID}/security/bots/settings:
+    $ref: paths/threats/v1_tenants_{tenantID}_security_bots_settings.yaml
+  /v1/tenants/{tenantID}/security/anomalies:
+    $ref: paths/threats/v1_tenants_{tenantID}_security_anomalies.yaml
+  /v1/tenants/{tenantID}/security/anomalies/summary:
+    $ref: paths/threats/v1_tenants_{tenantID}_security_anomalies_summary.yaml
+  /v1/tenants/{tenantID}/security/anomalies/{id}/resolve:
+    $ref: paths/threats/v1_tenants_{tenantID}_security_anomalies_{id}_resolve.yaml
+  /v1/me/access-requests:
+    $ref: paths/rbac/v1_me_access-requests.yaml
+  /v1/me/access-requests/roles:
+    $ref: paths/rbac/v1_me_access-requests_roles.yaml
+  /v1/me/access-requests/{id}/cancel:
+    $ref: paths/rbac/v1_me_access-requests_{id}_cancel.yaml
+  /v1/tenants/{tenantID}/access-requests:
+    $ref: paths/rbac/v1_tenants_{tenantID}_access-requests.yaml
+  /v1/tenants/{tenantID}/access-requests/{id}:
+    $ref: paths/rbac/v1_tenants_{tenantID}_access-requests_{id}.yaml
+  /v1/tenants/{tenantID}/access-requests/{id}/approve:
+    $ref: paths/rbac/v1_tenants_{tenantID}_access-requests_{id}_approve.yaml
+  /v1/tenants/{tenantID}/access-requests/{id}/deny:
+    $ref: paths/rbac/v1_tenants_{tenantID}_access-requests_{id}_deny.yaml
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: ../shared/securitySchemes/bearerAuth.yaml
+    apiKeyAuth:
+      $ref: ../shared/securitySchemes/apiKeyAuth.yaml
+    scimBearer:
+      $ref: ../shared/securitySchemes/scimBearer.yaml
+    clientCredentials:
+      $ref: ../shared/securitySchemes/clientCredentials.yaml
+    ssoCookie:
+      $ref: ../shared/securitySchemes/ssoCookie.yaml

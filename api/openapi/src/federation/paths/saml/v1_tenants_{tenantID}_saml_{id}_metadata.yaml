@@ -1,0 +1,55 @@
+post:
+  operationId: applySamlIdpMetadata
+  summary: Apply IdP metadata
+  description: >-
+    Gives the connection its IdP's SSO URL and signing certificates from the
+    IdP's metadata, as on import: from metadata_url, which the connection then
+    refreshes from; from metadata_xml, which stops any refreshing; or, with an
+    empty object, from the URL the connection already refreshes from. The
+    metadata must describe the connection's own IdP (its idp_entity_id), so it
+    can't repoint the connection at another; otherwise 422
+    saml.metadata_invalid. With no source and no stored URL, 422
+    saml.metadata_required. Audited; another organisation's connection answers
+    404.
+  tags:
+    - SAML
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          properties:
+            metadata_url:
+              type: string
+              format: uri
+            metadata_xml:
+              type: string
+  responses:
+    '200':
+      description: Connection updated
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/SAMLConnection.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

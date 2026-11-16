@@ -40,6 +40,7 @@ database, chi router, port 4001.
 4. **Never edit an applied migration.** Add an `NNNN_*.{up,down}.sql` pair.
 5. **Never weaken a security control**, including to make a test pass. Report the gap instead.
 6. **Never hand-edit `dbgen/`** — it is sqlc output.
+7. **Never hand-edit `api/openapi/*.yaml`** — edit `api/openapi/src/` and run `make openapi`.
 
 ## Commands
 

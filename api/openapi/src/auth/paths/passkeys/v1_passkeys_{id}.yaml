@@ -1,0 +1,97 @@
+patch:
+  operationId: renameMyPasskey
+  summary: Rename passkey
+  description: >-
+    Renames one of the signed-in user's own passkeys. The name is cleaned first:
+    control characters count as spaces, bidirectional control characters are
+    removed, runs of spaces collapse into one and the ends are trimmed. Markup
+    is stored as typed and must be shown as text. Another user's passkey, like
+    an unknown id, is not found and is left unchanged. Also accepts the
+    hosted-login session cookie (qe_ls), with the CSRF token, in place of a
+    bearer token, as Delete passkey does. Audited as passkey.renamed, with the
+    new and previous name, in the audit trail of the organization the session is
+    in.
+  tags:
+    - Passkeys
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - ssoCookie: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - name
+          additionalProperties: false
+          properties:
+            name:
+              type: string
+              description: >-
+                1 to 64 characters after cleaning; empty or whitespace-only is
+                refused.
+              maxLength: 64
+  responses:
+    '200':
+      description: The renamed passkey
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/Passkey.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+delete:
+  operationId: deleteMyPasskey
+  summary: Delete passkey
+  tags:
+    - Passkeys
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - ssoCookie: []
+  description: >-
+    Deletes one of the caller's passkeys. Needs a recent step-up; with the
+    hosted-login session cookie (qe_ls, and the CSRF token) in place of a bearer
+    token, a sign-in within the organisation's step-up window stands in for one,
+    else 403 step_up_required. Audited as passkey.deleted (its id and name) in
+    the audit trail of the organization the session is in, and the account
+    holder is emailed that a passkey was removed. Removing the account's only
+    way to sign in is refused with 409 auth.last_sign_in_method and recorded
+    there as auth.sign_in_method_removal_refused.
+  responses:
+    '204':
+      description: No Content
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

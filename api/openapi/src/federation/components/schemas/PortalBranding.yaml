@@ -1,0 +1,10 @@
+type: object
+properties:
+  background_color:
+    type: string
+  logo_url:
+    type: string
+  primary_color:
+    type: string
+  secondary_color:
+    type: string

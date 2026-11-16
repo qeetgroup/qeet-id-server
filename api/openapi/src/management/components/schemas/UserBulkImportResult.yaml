@@ -1,0 +1,77 @@
+type: object
+required:
+  - succeeded
+  - failed
+  - created
+properties:
+  succeeded:
+    type: integer
+  failed:
+    type: integer
+  created:
+    type: array
+    description: The users the import made, by their row.
+    items:
+      type: object
+      required:
+        - line
+        - email
+        - id
+      properties:
+        line:
+          type: integer
+          description: The row's place in the request, or its line in a vendor export.
+        email:
+          type: string
+        id:
+          type: string
+          format: uuid
+  errors:
+    type: array
+    items:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        line:
+          type: integer
+          description: >-
+            POST /v1/users/bulk: the 1-based index in the users array. POST
+            /v1/users/bulk/import: the line of the export file (azure_b2c: the
+            1-based position in value). Absent when the whole file failed.
+        email:
+          type: string
+        code:
+          type: string
+          description: >-
+            Stable reason the row failed; word the error from this. Password,
+            duplicate and domain refusals reuse the API error codes.
+          enum:
+            - user.import_field_missing
+            - user.import_field_invalid
+            - user.import_field_too_long
+            - user.import_row_malformed
+            - user.import_source_invalid
+            - auth.email_exists
+            - user.domain_managed_elsewhere
+            - authpolicy.password_too_short
+            - authpolicy.password_no_uppercase
+            - authpolicy.password_no_number
+            - authpolicy.password_no_symbol
+            - authpolicy.password_breached
+            - auth.password_weak
+            - internal
+        field:
+          type: string
+          description: The row's field the error concerns; absent when none.
+          enum:
+            - email
+            - password
+            - display_name
+            - phone
+        message:
+          type: string
+          description: >-
+            English text kept for compatibility; it may change. Show wording
+            keyed on code.

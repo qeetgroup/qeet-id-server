@@ -1,0 +1,13 @@
+type: object
+readOnly: true
+description: >-
+  The platform defaults for the lockout settings (LOGIN_LOCKOUT_THRESHOLD /
+  _WINDOW / _DURATION, built-in 5 / 15 / 15) and the inclusive bounds a tenant
+  may choose within (LOGIN_LOCKOUT_*_MIN / _MAX). Ignored on update.
+properties:
+  defaults:
+    $ref: ./LockoutSettings.yaml
+  min:
+    $ref: ./LockoutSettings.yaml
+  max:
+    $ref: ./LockoutSettings.yaml

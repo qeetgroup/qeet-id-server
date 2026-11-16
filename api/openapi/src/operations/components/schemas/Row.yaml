@@ -1,0 +1,59 @@
+type: object
+required:
+  - action
+  - actor_type
+  - actor_user_id
+  - created_at
+  - id
+  - ip
+  - request_id
+  - resource_id
+  - resource_type
+  - tenant_id
+  - user_agent
+properties:
+  action:
+    type: string
+  actor_type:
+    type: string
+  actor_user_id:
+    type:
+      - string
+      - 'null'
+    format: uuid
+  created_at:
+    type: string
+    format: date-time
+  id:
+    type: string
+    format: uuid
+  ip:
+    type:
+      - string
+      - 'null'
+  request_id:
+    type:
+      - string
+      - 'null'
+  resource_id:
+    type:
+      - string
+      - 'null'
+    format: uuid
+  resource_type:
+    type: string
+  tenant_id:
+    type:
+      - string
+      - 'null'
+    format: uuid
+  user_agent:
+    type:
+      - string
+      - 'null'
+  metadata:
+    type: object
+    additionalProperties: true
+    description: >-
+      What the event recorded beside its fields; geo is where the request came
+      from.

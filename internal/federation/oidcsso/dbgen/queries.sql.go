@@ -475,6 +475,7 @@ SELECT id, tenant_id, name, issuer, discovery_url, client_id, scopes, allowed_id
        email_claim, name_claim, given_name_claim, family_name_claim, groups_claim, status,
        created_at, updated_at, last_login_at
 FROM tenant.oidc_connections WHERE tenant_id = $1 ORDER BY created_at DESC
+LIMIT 1001
 `
 
 type ListOidcConnectionsRow struct {
@@ -497,6 +498,7 @@ type ListOidcConnectionsRow struct {
 	LastLoginAt         pgtype.Timestamptz
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListOidcConnections(ctx context.Context, tenantID uuid.UUID) ([]ListOidcConnectionsRow, error) {
 	rows, err := q.db.Query(ctx, listOidcConnections, tenantID)
 	if err != nil {

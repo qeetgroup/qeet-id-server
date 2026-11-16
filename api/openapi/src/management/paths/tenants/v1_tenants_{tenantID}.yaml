@@ -1,0 +1,126 @@
+delete:
+  operationId: deleteTenant
+  description: >-
+    Schedules the tenant's deletion seven days from now (202 with
+    deletion_due_at), audited as tenant.deletion_scheduled. Requires
+    tenant.delete, and only a person who owns the tenant may (403
+    tenant.owner_only otherwise), and 409 tenant.deletion_scheduled answers one
+    already scheduled. Until it is due the tenant keeps working and shows
+    deletion_due_at, and an owner can call it off (POST
+    /v1/tenants/{tenantID}/deletion/cancel). Once due, a background job
+    soft-deletes it: members lose access and tenant-scoped calls stop resolving.
+    Users who belonged only to this tenant are left without one and must create
+    or join another. In the same transaction every session in the tenant ends
+    (session.revoked with reason tenant_deleted) and the deletion is audited
+    (tenant.deleted, by the system) and queued as an event; refresh and every
+    sign-in refuse the tenant from then on (403 auth.tenant_inactive). The
+    sessions' access tokens stop working on this API at once; a service that
+    verifies tokens offline accepts one until it expires. Thirty days after that
+    its data is purged for good: every row of it, its audit trail included, and
+    the accounts whose home it was (one still a member of another organisation
+    is kept, with no home organisation). A record of the purge (when, and how
+    many rows of each table) outlives it, with a platform audit event
+    tenant.purged.
+  summary: Delete tenant
+  tags:
+    - Tenants
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '202':
+      description: Deletion scheduled
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              tenant_id:
+                type: string
+                format: uuid
+              deletion_due_at:
+                type: string
+                format: date-time
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '409':
+      $ref: ../../../shared/responses/Conflict.yaml
+get:
+  operationId: getTenant
+  description: >-
+    Returns a single tenant by id. The caller must be a member of the tenant;
+    requests for a tenant the principal does not belong to are rejected rather
+    than disclosed.
+  summary: Get tenant
+  tags:
+    - Tenants
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Tenant
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/Tenant.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+patch:
+  operationId: updateTenant
+  description: >-
+    Updates mutable tenant attributes such as name and slug. Requires an
+    administrative role within the tenant. Only the fields supplied in the
+    request body are changed. Changing status is an owner's (403
+    tenant.owner_only otherwise), and a tenant can't suspend itself (403
+    tenant.self_suspend): that would lock out every member, its owners too, with
+    nobody left to reactivate it; delete it instead. A tenant suspended another
+    way that is reactivated is audited as tenant.reactivated and queued as an
+    event. The region can't be changed (422 tenant.region_read_only; the current
+    value is accepted). A change to the name, logo or metadata is audited, in
+    the same transaction, as tenant.updated naming every field that changed
+    (changed), with the old and new name (changes); the logo and metadata are
+    named but not copied. An update that changes nothing records nothing.
+  summary: Update tenant
+  tags:
+    - Tenants
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/TenantUpdate.yaml
+  responses:
+    '200':
+      description: Updated
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/Tenant.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

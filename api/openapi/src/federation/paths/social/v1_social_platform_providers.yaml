@@ -1,0 +1,28 @@
+get:
+  operationId: listPlatformSocialProviders
+  description: >-
+    Lists the platform-level social login providers enabled in the deployment
+    configuration, as opposed to a tenant's own configured providers, with Qeet
+    acting as the OAuth client. Served without authentication so the hosted
+    login can render the available sign-in options. Begin a sign-in with GET
+    /v1/social/{provider}/start.
+  summary: List enabled platform social providers
+  tags:
+    - Social
+  security: []
+  responses:
+    '200':
+      description: Enabled provider names
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - providers
+            properties:
+              providers:
+                type: array
+                items:
+                  type: string
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

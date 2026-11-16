@@ -1,0 +1,35 @@
+post:
+  operationId: bulkCreateUsers
+  summary: Bulk-create users
+  description: >-
+    Create many users in one call. Each row is attempted independently — a bad
+    or duplicate row, one on a domain another organization has verified, or one
+    whose password the tenant's password rules refuse, is reported in the
+    response with its reason rather than failing the whole batch (partial
+    success).
+  tags:
+    - Users
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/UserBulkImport.yaml
+  responses:
+    '200':
+      description: Per-row import summary
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/UserBulkImportResult.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

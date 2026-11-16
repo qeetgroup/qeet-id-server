@@ -17,6 +17,7 @@ import (
 	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/notifications/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // Service stores and reads in-app notifications.
@@ -61,9 +62,9 @@ func (s *Service) Notify(ctx context.Context, tenantID, userID uuid.UUID, kind, 
 }
 
 // List returns up to limit of the user's newest notifications (50 if limit is
-// not in 1..100) and the user's unread count.
+// not in 1..paging.MaxListItems+1) and the user's unread count.
 func (s *Service) List(ctx context.Context, userID uuid.UUID, limit int) ([]Notification, int, error) {
-	if limit <= 0 || limit > 100 {
+	if limit <= 0 || limit > paging.MaxListItems+1 {
 		limit = 50
 	}
 	genRows, err := s.q.ListNotifications(ctx, dbgen.ListNotificationsParams{
@@ -115,12 +116,12 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
 	}
-	items, unread, err := h.Service.List(r.Context(), *p.UserID, 50)
+	items, unread, err := h.Service.List(r.Context(), *p.UserID, paging.MaxListItems+1)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "unread_count": unread})
+	httpx.WriteJSON(w, http.StatusOK, paging.ListWith(items, map[string]any{"unread_count": unread}))
 }
 
 func (h *Handler) markAllRead(w http.ResponseWriter, r *http.Request) {

@@ -636,13 +636,17 @@ const listDeletedUsers = `-- name: ListDeletedUsers :many
 SELECT id, email, display_name, deleted_at, created_at, deleted_by
 FROM "user".users
 WHERE tenant_id = $1 AND deleted_at IS NOT NULL
-ORDER BY deleted_at DESC
-LIMIT $2
+  AND ($2::timestamptz IS NULL OR deleted_at < $2
+       OR (deleted_at = $2 AND id < $3::uuid))
+ORDER BY deleted_at DESC, id DESC
+LIMIT $4
 `
 
 type ListDeletedUsersParams struct {
 	TenantID pgtype.UUID
-	Limit    int32
+	BeforeTs pgtype.Timestamptz
+	BeforeID pgtype.UUID
+	RowLimit int32
 }
 
 type ListDeletedUsersRow struct {
@@ -654,8 +658,15 @@ type ListDeletedUsersRow struct {
 	DeletedBy   pgtype.UUID
 }
 
+// The tenant's deleted users, newest deletion first, after the cursor's
+// (deleted_at, id) when before_ts is set.
 func (q *Queries) ListDeletedUsers(ctx context.Context, arg ListDeletedUsersParams) ([]ListDeletedUsersRow, error) {
-	rows, err := q.db.Query(ctx, listDeletedUsers, arg.TenantID, arg.Limit)
+	rows, err := q.db.Query(ctx, listDeletedUsers,
+		arg.TenantID,
+		arg.BeforeTs,
+		arg.BeforeID,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -690,7 +701,7 @@ WHERE s.user_id = $1 AND s.revoked_at IS NULL
   AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
   AND (s.tenant_id = $2::uuid OR (s.tenant_id IS NULL AND u.tenant_id = $2::uuid))
 ORDER BY s.last_seen_at DESC
-LIMIT 100
+LIMIT 1001
 `
 
 type ListUserActiveSessionsParams struct {
@@ -712,6 +723,7 @@ type ListUserActiveSessionsRow struct {
 // recently seen first): not revoked and not past their maximum age or idle
 // timeout. Sessions in no tenant belong to the account, so only its home tenant
 // sees them. ip goes through host() and COALESCE to scan as a plain string.
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListUserActiveSessions(ctx context.Context, arg ListUserActiveSessionsParams) ([]ListUserActiveSessionsRow, error) {
 	rows, err := q.db.Query(ctx, listUserActiveSessions, arg.UserID, arg.TenantID)
 	if err != nil {

@@ -8,8 +8,10 @@ VALUES (@tenant_id, @name, @description, @secret_hash, @scopes)
 RETURNING id, tenant_id, name, scopes, disabled_at, created_at, description;
 
 -- name: ListServicePrincipals :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, tenant_id, name, scopes, disabled_at, created_at, description, last_used_at, previous_secret_expires_at
-FROM auth.service_principals WHERE tenant_id = $1 ORDER BY created_at DESC;
+FROM auth.service_principals WHERE tenant_id = $1 ORDER BY created_at DESC
+LIMIT 1001;
 
 -- DisableServicePrincipal marks the principal disabled. RETURNING tenant_id
 -- and name so the caller can write the audit row without a second query.

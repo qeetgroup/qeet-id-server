@@ -1,0 +1,24 @@
+type: object
+required:
+  - alg
+  - crv
+  - kid
+  - kty
+  - use
+  - x
+  - 'y'
+properties:
+  alg:
+    type: string
+  crv:
+    type: string
+  kid:
+    type: string
+  kty:
+    type: string
+  use:
+    type: string
+  x:
+    type: string
+  'y':
+    type: string

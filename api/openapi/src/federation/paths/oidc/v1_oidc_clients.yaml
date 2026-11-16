@@ -1,0 +1,48 @@
+post:
+  operationId: registerOidcClient
+  description: >-
+    Registers an OIDC relying-party client in the caller's tenant, derived from
+    the authenticating principal, so it can drive the authorization-code and
+    related flows. A confidential client's secret is returned exactly once in
+    the response and cannot be retrieved later; roll it afterward with the
+    rotate-secret endpoint. Registration is audited. A public client can't hold
+    token exchange or CIBA (400 oidc.unsupported_flow).
+  summary: Register OIDC client
+  tags:
+    - OIDC
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/OIDCClientCreate.yaml
+  responses:
+    '201':
+      description: Client created (secret shown once)
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              client:
+                $ref: ../../components/schemas/OIDCClient.yaml
+              client_secret:
+                type: string
+              warning:
+                type: string
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

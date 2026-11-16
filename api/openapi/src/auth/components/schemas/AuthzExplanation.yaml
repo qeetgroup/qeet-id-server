@@ -1,0 +1,15 @@
+type: object
+description: >-
+  The structured "why?" for a single permission check: the decision plus every
+  distinct grant (direct and group-derived) that confers it. Returned from GET
+  /check when explain=true.
+properties:
+  allowed:
+    type: boolean
+  paths:
+    type: array
+    items:
+      $ref: ./AuthzGrantStep.yaml
+  reason:
+    type: string
+    description: Set only on a denial.

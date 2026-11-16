@@ -1,0 +1,60 @@
+post:
+  operationId: beginPasskeySignUpInOrganization
+  description: >-
+    Starts the passwordless counterpart to hosted tenant signup, returning the
+    WebAuthn credential-creation options for a passkey scoped to the supplied
+    tenant. It is gated by the tenant's self-registration policy and is refused
+    when self-registration is disabled. Finish the ceremony by returning the
+    signed attestation to the tenant-scoped passkey-register finish call. Where
+    the organisation has passkeys switched off, it is refused with 403
+    passkey.disabled before a ceremony starts. An address already taken is
+    refused, here or at the finish call, with the neutral 422 unprocessable of
+    POST /v1/auth/signup, which does not name the reason; every attempt here
+    takes at least the same minimum time. On a domain whose organisation
+    requires single sign-on, the ceremony is refused with 403 auth.sso_required
+    and nothing is created (see the SSORequired response).
+  summary: Passkey-first signup begin (tenant-scoped hosted signup)
+  tags:
+    - Passkeys
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - tenant_id
+            - email
+          properties:
+            tenant_id:
+              type: string
+            email:
+              type: string
+            display_name:
+              type: string
+    description: >-
+      Starts a passwordless counterpart to POST /auth/register — gated by the
+      tenant's self_registration_enabled policy.
+  responses:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - publicKey
+              - session_id
+            properties:
+              publicKey:
+                $ref: ../../../shared/schemas/PublicKeyCredentialCreationOptions.yaml
+              session_id:
+                type: string
+                format: uuid
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

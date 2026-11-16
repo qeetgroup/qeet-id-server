@@ -1,0 +1,115 @@
+get:
+  operationId: getOidcConnection
+  description: >-
+    Returns one of the organisation's OpenID Connect connections, without its
+    client secret. Another organisation's connection answers 404. Requires
+    connection.read.
+  summary: Get OIDC connection
+  tags:
+    - OIDC Connections
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Connection
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/OIDCConnection.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+patch:
+  operationId: updateOidcConnection
+  description: >-
+    Changes the given fields of one of the organisation's OpenID Connect
+    connections, checked as on create; an absent field is kept, as is the client
+    secret when client_secret is absent or empty. Only an active connection
+    signs anyone in. A change that would leave a Microsoft issuer serving every
+    organisation without allowed_idp_tenant_ids is refused (422
+    oidc_connection.idp_tenant_ids_required). Audited as oidc_connection.updated
+    with the fields changed. Another organisation's connection answers 404.
+    Requires connection.write. Needs a recent step-up.
+  summary: Update OIDC connection
+  tags:
+    - OIDC Connections
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/OIDCConnectionUpdate.yaml
+  responses:
+    '200':
+      description: Updated
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/OIDCConnection.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+delete:
+  operationId: deleteOidcConnection
+  description: >-
+    Deletes one of the organisation's OpenID Connect connections, with the
+    sign-ins and login codes it has in flight. Its people no longer sign in
+    through it. Audited as oidc_connection.deleted. Another organisation's
+    connection answers 404. Requires connection.write. Needs a recent step-up.
+  summary: Delete OIDC connection
+  tags:
+    - OIDC Connections
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '204':
+      description: Deleted
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

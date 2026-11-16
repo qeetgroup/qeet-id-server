@@ -1,0 +1,17 @@
+type: object
+description: The group's organisation is the caller's; it is never taken from the body.
+required:
+  - name
+properties:
+  description:
+    type: string
+  name:
+    type: string
+  parent_id:
+    type:
+      - string
+      - 'null'
+    format: uuid
+    description: >-
+      One of the organisation's groups to nest it under; omit or null for a
+      top-level group.

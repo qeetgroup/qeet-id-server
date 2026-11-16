@@ -1,0 +1,83 @@
+get:
+  operationId: listSamlConnections
+  description: >-
+    Lists the tenant's inbound SAML connections, where Qeet acts as the Service
+    Provider consuming an external Identity Provider, scoped to the tenant in
+    the path. Create a connection with POST, then validate it with the
+    connection test endpoint before relying on it for sign-in.
+  summary: List connections
+  tags:
+    - SAML
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Connections
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/SAMLConnection.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+post:
+  operationId: createSamlConnection
+  description: >-
+    Creates an inbound SAML connection in the tenant with the external IdP's
+    entity id, SSO URL and signing certificate so Qeet can act as the Service
+    Provider for that IdP. A name alone creates a draft before the IdP's details
+    are known, since the IdP needs the connection's addresses first: the answer
+    carries them (sp_entity_id, acs_url, sp_metadata_url), and the IdP's details
+    are added later by PATCH, its metadata or its certificates. Any one of the
+    IdP's details brings the rest with it (422 saml.connection_fields_required),
+    and a connection without them is a draft only (422
+    saml.connection_incomplete). Validate the configuration with the connection
+    test endpoint, then drive sign-in via GET /saml/login/{id}. Scoped to the
+    tenant in the path. A status, when given, must be draft, active or disabled
+    (422 saml.status_invalid). The organisation's plan must include enterprise
+    SSO (402 billing.upgrade_required, metadata.feature sso), and every sign-in
+    through the connection checks it again.
+  summary: Create connection
+  tags:
+    - SAML
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/SAMLConnectionCreate.yaml
+  responses:
+    '201':
+      description: Connection created
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/SAMLConnection.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '402':
+      description: >-
+        The organisation's plan does not include enterprise SSO
+        (billing.upgrade_required).
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

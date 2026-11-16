@@ -1,0 +1,85 @@
+type: object
+description: One ABAC policy row.
+properties:
+  id:
+    type: string
+    format: uuid
+  tenant_id:
+    type: string
+    format: uuid
+  name:
+    type: string
+  description:
+    type: string
+  effect:
+    type: string
+    enum:
+      - allow
+      - deny
+  resource_type:
+    type: string
+    description: Resource type matched by this policy; '*' matches any.
+  action:
+    type: string
+    description: Action matched by this policy; '*' matches any.
+  condition:
+    type: object
+    description: >-
+      Recursive JSON condition tree. An empty object {} means unconditional.
+      Logical nodes: {"all":[...]}, {"any":[...]}, {"not": node}. Comparison
+      leaf: {"attr":"subject.dept","op":"eq","value":"eng"}. A leaf's value may
+      instead reference another attribute,
+      {"attr":"subject.region","op":"eq","value":{"attr":"resource.region"}},
+      for eq, ne, gt, gte, lt, lte, in, nin and contains (not regex, prefix,
+      suffix or exists). The reference is exactly
+      {"attr":"<subject|resource|action|context>.<path>"}, names an attribute
+      other than the leaf's own, and is the whole value, never an array element.
+      A string value is always a literal, even "resource.region". A comparison
+      with a missing attribute (absent or null), on either side and with any
+      operator, ne and nin included, is unknown; not of unknown is unknown, all
+      is unknown unless a child is false, and any unknown unless a child is
+      true. A condition left unknown fails closed: a deny policy applies (reason
+      authz.attribute_absent) and an allow policy grants nothing. exists alone
+      tests presence and is never unknown, so a deny meant only for requests
+      that carry an attribute guards it with exists in an all (otherwise a deny
+      for "*" on an attribute the platform's own route check doesn't supply
+      refuses every request there). prefix and suffix need a non-empty string
+      value and match only string attributes; any other value is refused with
+      422 abac.condition_invalid, as is contains or regex with an empty value.
+      Two more leaves combine roles and relationships with attributes:
+      {"role":"<name>"} holds when the subject has the role, by name, in the
+      organisation (directly or through a group), as the platform supplies
+      subject.roles when it decides for a person itself; it is unknown when no
+      roles are supplied. {"relation":{"relation":"viewer",
+      "object":"document:1"}} holds when the subject (subject.id, a user) has
+      the relationship on the object in the organisation's ReBAC tuples, the
+      object given as type:id or as an attribute reference
+      {"attr":"resource.object"}; it is unknown with no subject id or no object.
+      Like a missing attribute, an unknown role or relation applies a deny and
+      grants nothing.
+    additionalProperties: true
+  priority:
+    type: integer
+    description: Higher priority is evaluated first; deny wins at any priority.
+  enabled:
+    type: boolean
+  created_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time
+  version:
+    type: integer
+    minimum: 1
+    description: >-
+      The policy's saves counted from 1; each create, change or restore adds
+      one.
+  updated_by:
+    type:
+      - string
+      - 'null'
+    format: uuid
+    description: >-
+      The person who made the last save; null for a machine caller, or one from
+      before it was kept.

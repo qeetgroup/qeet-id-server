@@ -40,12 +40,13 @@ LIMIT 1001;
 -- ListRelationObjectTypes counts, for each type of object the tenant's tuples
 -- name, its objects and tuples.
 -- name: ListRelationObjectTypes :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT object_type, count(DISTINCT object_id)::int AS objects, count(*)::int AS tuples
 FROM auth.relation_tuples
 WHERE tenant_id = @tenant_id
 GROUP BY object_type
 ORDER BY object_type
-LIMIT 500;
+LIMIT 1001;
 
 -- ListRelationObjects returns a page of the objects of one type the tenant's
 -- tuples name, by id, after the cursor, with how many tuples each has.

@@ -1,0 +1,33 @@
+type: object
+required:
+  - created_at
+  - description
+  - group_count
+  - id
+  - name
+  - nodes
+  - tenant_id
+  - updated_at
+properties:
+  created_at:
+    type: string
+    format: date-time
+  description:
+    type: string
+  group_count:
+    type: integer
+  id:
+    type: string
+    format: uuid
+  name:
+    type: string
+  nodes:
+    type: array
+    items:
+      $ref: ./TemplateNode.yaml
+  tenant_id:
+    type: string
+    format: uuid
+  updated_at:
+    type: string
+    format: date-time

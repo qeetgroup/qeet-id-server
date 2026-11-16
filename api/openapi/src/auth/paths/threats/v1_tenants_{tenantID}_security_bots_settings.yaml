@@ -1,0 +1,62 @@
+get:
+  operationId: getBotSettings
+  description: >-
+    Returns the tenant's bot-detection configuration, such as whether detection
+    is enforced and the action taken on a bot verdict. Use it to populate the
+    settings surface before editing. Apply changes with the update-bot-settings
+    call and review observed activity with the bot-telemetry call.
+  summary: Get bot settings
+  tags:
+    - Threats
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Bot-detection settings
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/BotSettings.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+put:
+  operationId: setBotSettings
+  description: >-
+    Updates the tenant's bot-detection configuration and applies it to
+    subsequent authentication traffic. Retrieve the current configuration first
+    with the get-bot-settings call, since this call replaces the stored settings
+    with the submitted state. Review the effect afterward through the
+    bot-telemetry call. Audited as bot.settings_updated, naming the caller, with
+    each setting it changed (its old and new value) and the settings saved.
+  summary: Update bot settings
+  tags:
+    - Threats
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/BotSettings.yaml
+  responses:
+    '200':
+      description: Updated settings
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/BotSettings.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

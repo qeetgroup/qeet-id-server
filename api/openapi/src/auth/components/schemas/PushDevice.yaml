@@ -1,0 +1,21 @@
+type: object
+required:
+  - created_at
+  - id
+  - last_seen_at
+  - name
+  - platform
+properties:
+  created_at:
+    type: string
+    format: date-time
+  id:
+    type: string
+    format: uuid
+  last_seen_at:
+    type: string
+    format: date-time
+  name:
+    type: string
+  platform:
+    type: string

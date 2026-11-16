@@ -18,6 +18,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 const (
@@ -436,7 +437,7 @@ func (h *Handler) listTokens(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": tokens})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(tokens))
 }
 
 func (h *Handler) createToken(w http.ResponseWriter, r *http.Request) {

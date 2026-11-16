@@ -1,0 +1,58 @@
+type: object
+required:
+  - base_dn
+  - bind_dn
+  - bind_password
+  - email_attribute
+  - name
+  - name_attribute
+  - server_url
+  - skip_tls_verify
+  - start_tls
+  - status
+  - user_filter
+properties:
+  base_dn:
+    type:
+      - string
+      - 'null'
+  bind_dn:
+    type:
+      - string
+      - 'null'
+  bind_password:
+    type:
+      - string
+      - 'null'
+  email_attribute:
+    type:
+      - string
+      - 'null'
+  name:
+    type:
+      - string
+      - 'null'
+  name_attribute:
+    type:
+      - string
+      - 'null'
+  server_url:
+    type:
+      - string
+      - 'null'
+  skip_tls_verify:
+    type:
+      - boolean
+      - 'null'
+  start_tls:
+    type:
+      - boolean
+      - 'null'
+  status:
+    type:
+      - string
+      - 'null'
+  user_filter:
+    type:
+      - string
+      - 'null'

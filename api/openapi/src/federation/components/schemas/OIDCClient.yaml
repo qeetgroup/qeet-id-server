@@ -1,0 +1,81 @@
+type: object
+properties:
+  id:
+    type: string
+    format: uuid
+  tenant_id:
+    type: string
+    format: uuid
+  client_id:
+    type: string
+  type:
+    type: string
+    enum:
+      - public
+      - confidential
+  name:
+    type: string
+  redirect_uris:
+    type: array
+    items:
+      type: string
+      format: uri
+  post_logout_uris:
+    type: array
+    items:
+      type: string
+      format: uri
+  grant_types:
+    type: array
+    items:
+      type: string
+  scopes:
+    type: array
+    items:
+      type: string
+  created_at:
+    type: string
+    format: date-time
+  pkce_exempt_until:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: >-
+      When this confidential application's exemption from sending a PKCE
+      code_challenge ends; null for none.
+  backchannel_logout_uri:
+    type: string
+    format: uri
+    description: >-
+      Receives a signed logout token (OpenID Connect Back-Channel Logout, with
+      sid) when someone the application signed in signs out; "" for none.
+  frontchannel_logout_uri:
+    type: string
+    format: uri
+    description: >-
+      Loaded by the hosted signed-out page (with iss and sid) when someone the
+      application signed in signs out; "" for none.
+  logo_uri:
+    type: string
+    format: uri
+    maxLength: 2048
+    description: >-
+      The application's logo, an https URL, shown on the hosted sign-in page; ""
+      for none (set "" to clear).
+  client_uri:
+    type: string
+    format: uri
+    maxLength: 2048
+    description: >-
+      The application's home page, an https URL; the hosted sign-in page shows
+      its host. "" for none (set "" to clear).
+  web_origins:
+    type: array
+    items:
+      type: string
+    description: >-
+      The origins a browser application calls the token, userinfo, revocation
+      and introspection endpoints from, which CORS then allows (without
+      credentials): those the application set, else the origins of its http(s)
+      redirect URIs.

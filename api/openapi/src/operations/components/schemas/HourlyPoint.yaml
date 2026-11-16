@@ -1,0 +1,9 @@
+type: object
+required:
+  - attempts
+  - hour
+properties:
+  attempts:
+    type: integer
+  hour:
+    type: string

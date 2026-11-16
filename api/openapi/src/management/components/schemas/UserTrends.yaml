@@ -1,0 +1,12 @@
+type: object
+properties:
+  total:
+    type: array
+    items:
+      type: integer
+    description: 30-day daily cumulative member count (oldest first).
+  mfa_enabled:
+    type: array
+    items:
+      type: integer
+    description: 30-day daily cumulative MFA-enrolled count (oldest first).

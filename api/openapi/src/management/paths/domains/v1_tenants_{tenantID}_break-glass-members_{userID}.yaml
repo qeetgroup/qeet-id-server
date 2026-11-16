@@ -1,0 +1,67 @@
+put:
+  operationId: addBreakGlassMember
+  summary: Make a member break-glass
+  tags:
+    - Domains
+  description: >-
+    Lets a member keep their own sign-in methods on a domain where the
+    organisation requires single sign-on. The member must belong to the
+    organisation (it is their home, or they hold one of its roles), else 404
+    domainverify.not_member. Only an owner, in person, may (403 rbac.owner_only
+    for anyone else, including an API key or other credential), with a recent
+    step-up (403 step_up_required). Recorded in the audit trail as
+    domain.break_glass_added in the same transaction; making a break-glass
+    member break-glass again changes and records nothing.
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: userID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '204':
+      description: The member is break-glass
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+delete:
+  operationId: removeBreakGlassMember
+  summary: Remove a break-glass member
+  tags:
+    - Domains
+  description: >-
+    Makes a break-glass member an ordinary one again: on a domain where the
+    organisation requires single sign-on they sign in only through it.
+    Owner-only with a recent step-up, as for adding one. Recorded in the audit
+    trail as domain.break_glass_removed in the same transaction; removing
+    someone who isn't break-glass changes and records nothing.
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: userID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '204':
+      description: The person is no longer break-glass
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml

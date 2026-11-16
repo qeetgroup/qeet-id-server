@@ -1,0 +1,114 @@
+get:
+  operationId: getUserInfo
+  description: >-
+    Returns the OpenID Connect UserInfo claims for the signed-in user of the
+    presented bearer access token, with Qeet acting as the OpenID provider: sub
+    and tenant_id, plus the standard claims the token's scopes grant: email
+    gives email and email_verified; profile gives name, picture, locale (where
+    known) and updated_at; phone gives phone_number and phone_number_verified.
+    No claim is returned without its scope. A token without the openid scope is
+    refused with 403 oidc.insufficient_scope and WWW-Authenticate: Bearer
+    error="insufficient_scope"; a missing, invalid or expired token, or one
+    whose account has been suspended or deleted, gets 401 with
+    error="invalid_token". GET and POST answer alike (OIDC Core 5.3.1).
+    Advertised as userinfo_endpoint in discovery, with the claims in
+    claims_supported. Accepts an access token issued to an application (one
+    carrying client_id), the one authenticated endpoint that does. A browser may
+    call it from an origin one of the applications allows (web_origins), without
+    credentials.
+  summary: UserInfo
+  tags:
+    - OIDC
+  security:
+    - bearerAuth: []
+  responses:
+    '200':
+      description: UserInfo claims
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              sub:
+                type: string
+                format: uuid
+              tenant_id:
+                type: string
+                format: uuid
+              email:
+                type: string
+              email_verified:
+                type: boolean
+              name:
+                type: string
+              picture:
+                type: string
+              locale:
+                type: string
+              updated_at:
+                type: integer
+              phone_number:
+                type: string
+              phone_number_verified:
+                type: boolean
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+post:
+  operationId: getUserInfoWithPost
+  description: >-
+    Returns the OpenID Connect UserInfo claims for the signed-in user of the
+    presented bearer access token, with Qeet acting as the OpenID provider: sub
+    and tenant_id, plus the standard claims the token's scopes grant: email
+    gives email and email_verified; profile gives name, picture, locale (where
+    known) and updated_at; phone gives phone_number and phone_number_verified.
+    No claim is returned without its scope. A token without the openid scope is
+    refused with 403 oidc.insufficient_scope and WWW-Authenticate: Bearer
+    error="insufficient_scope"; a missing, invalid or expired token, or one
+    whose account has been suspended or deleted, gets 401 with
+    error="invalid_token". GET and POST answer alike (OIDC Core 5.3.1).
+    Advertised as userinfo_endpoint in discovery, with the claims in
+    claims_supported. Accepts an access token issued to an application (one
+    carrying client_id), the one authenticated endpoint that does. A browser may
+    call it from an origin one of the applications allows (web_origins), without
+    credentials.
+  summary: UserInfo (POST)
+  tags:
+    - OIDC
+  security:
+    - bearerAuth: []
+  responses:
+    '200':
+      description: UserInfo claims
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              sub:
+                type: string
+                format: uuid
+              tenant_id:
+                type: string
+                format: uuid
+              email:
+                type: string
+              email_verified:
+                type: boolean
+              name:
+                type: string
+              picture:
+                type: string
+              locale:
+                type: string
+              updated_at:
+                type: integer
+              phone_number:
+                type: string
+              phone_number_verified:
+                type: boolean
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml

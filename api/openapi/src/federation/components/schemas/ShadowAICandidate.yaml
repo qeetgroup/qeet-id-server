@@ -1,0 +1,25 @@
+type: object
+required:
+  - client_id
+  - created_at
+  - grant_types
+  - id
+  - live_grants
+  - name
+properties:
+  client_id:
+    type: string
+  created_at:
+    type: string
+    format: date-time
+  grant_types:
+    type: array
+    items:
+      type: string
+  id:
+    type: string
+    format: uuid
+  live_grants:
+    type: integer
+  name:
+    type: string

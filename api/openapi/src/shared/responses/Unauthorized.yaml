@@ -1,0 +1,21 @@
+description: Missing or invalid credentials
+headers:
+  WWW-Authenticate:
+    description: >-
+      Sent when a route that needs a bearer token got none (`Bearer
+      realm="qeet"`), or one that is invalid or expired (`Bearer realm="qeet",
+      error="invalid_token"`).
+    schema:
+      type: string
+  X-Request-Id:
+    $ref: ../headers/RequestId.yaml
+content:
+  application/json:
+    example:
+      error:
+        code: unauthorized
+        message: Please sign in to continue.
+        translation_key: unauthorized
+        request_id: api-1/Kx9fQ2mW7a-000131
+    schema:
+      $ref: ../schemas/Error.yaml

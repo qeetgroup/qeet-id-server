@@ -1,0 +1,38 @@
+post:
+  operationId: verifyOtp
+  summary: Verify OTP
+  tags:
+    - MFA
+  security:
+    - bearerAuth: []
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/verifyInput.yaml
+  description: >-
+    Verifies a code sent to one of the caller's SMS or email factors, stepping
+    up the session.
+  responses:
+    '201':
+      description: Created
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - verified
+            properties:
+              verified:
+                type: boolean
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

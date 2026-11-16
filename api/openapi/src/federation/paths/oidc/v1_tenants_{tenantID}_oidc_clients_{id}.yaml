@@ -1,0 +1,114 @@
+get:
+  operationId: getOidcClient
+  description: >-
+    Returns a single OIDC client's configuration in the tenant, including
+    redirect URIs, grant types, scopes and client type, scoped to the tenant in
+    the path. The client secret is never returned. Update the record with PATCH
+    or roll its credential with the rotate-secret endpoint.
+  summary: Get OIDC client
+  tags:
+    - OIDC
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: OIDC client
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/OIDCClient.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+patch:
+  operationId: updateOidcClient
+  description: >-
+    Applies a partial update to an OIDC client in the tenant; omitted fields are
+    left unchanged. Changes are confined to the tenant in the path and are
+    audited. Use the rotate-secret endpoint to change the client secret, which
+    this endpoint does not accept or return. The edited client is held to the
+    same rules as registration: supported grant types, valid redirect URIs, and
+    no token exchange or CIBA for a public client. pkce_exempt_until sets (a
+    date-time) or clears (null) a confidential application's exemption from
+    sending a PKCE code_challenge; it must end in the future and within 90 days,
+    else 422 oidc.pkce_exemption_invalid, and a public application can't have
+    one.
+  summary: Update OIDC client
+  tags:
+    - OIDC
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/OIDCClientUpdate.yaml
+  responses:
+    '200':
+      description: Updated OIDC client
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/OIDCClient.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+delete:
+  operationId: deleteOidcClient
+  description: >-
+    Deletes an OIDC client scoped to the tenant in the path; the deletion is
+    audited. Tokens and grants held by the client stop being honoured. The by-id
+    variant DELETE /v1/oidc/clients/{id} performs the same deletion using the
+    caller's JWT tenant.
+  summary: Delete OIDC client
+  tags:
+    - OIDC
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '204':
+      description: Client deleted
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

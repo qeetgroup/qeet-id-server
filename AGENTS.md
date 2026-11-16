@@ -83,11 +83,18 @@ workers are wired **there**, not in the package that defines them.
 
 ### 5. Preserve API contracts
 
-`api/openapi/` is the contract, split into five bounded-context documents. **A route added without
+`api/openapi/` is the contract, split into five bounded-context documents. They are **generated**:
+edit the sources in `api/openapi/src/` (one file per path) and run `make openapi`; `make openapi-check`
+fails if a committed document differs from what its sources build, after linting them with the rules
+in `api/openapi/src/redocly.yaml`. **A route added without
 documenting it fails the test gate** — `internal/bootstrap/openapi_coverage_test.go` asserts every
-mounted route appears in a specification, and `openapi_valid_test.go` that every document is valid
-OpenAPI 3.1. These tests run locally in `make ci`; the hosted Verify workflow does not run tests.
-Update the spec in the same change as the route.
+mounted route appears in a specification, `openapi_valid_test.go` that every document is valid
+OpenAPI 3.1, and `openapi_consistency_test.go` that the documents agree with each other (one
+definition per component name, unique operationIds, every operation tagged, tags in their declared
+order, the no-store and idempotency headers documented on exactly the routes that send them, every
+list paged by cursor or capped with `truncated`). These tests run locally in `make ci`; the hosted Verify workflow runs them and `make openapi-check`
+too, but no other tests.
+Update the spec in the same change as the route. How the sources are laid out: `api/openapi/README.md`.
 
 **URLs.** The organisation always comes from the caller's token (`httpx.RequireTenant`). A new
 organisation-administration route also names it in the path, `/v1/tenants/{tenantID}/…`
@@ -235,7 +242,7 @@ git diff                   # no secrets, no unrelated changes, no generated junk
 ```
 
 Before a push to `develop`, a release or a hotfix branch, run the full local gate, `make ci`: CI
-runs only Verify, so the tests are yours to run.
+runs only Verify, which runs the API contract checks but no other tests, so the rest are yours to run.
 
 ---
 

@@ -1,0 +1,39 @@
+post:
+  operationId: verifyDomain
+  description: >-
+    Performs a live DNS lookup for the previously issued TXT record and, on a
+    match, marks the domain verified by setting verified_at. Claim the domain
+    first so the expected record is known; verification is only attempted when
+    explicitly requested here, not in the background. Verifying ownership does
+    not by itself enable SSO or just-in-time provisioning for the domain.
+  summary: Verify domain
+  tags:
+    - Domains
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Verification result (verified_at set on success)
+      content:
+        application/json:
+          schema:
+            $ref: ../../../shared/schemas/Domain.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '409':
+      $ref: ../../../shared/responses/Conflict.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

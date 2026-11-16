@@ -1382,6 +1382,7 @@ const listOIDCClients = `-- name: ListOIDCClients :many
 SELECT id, tenant_id, client_id, type, name, redirect_uris,
        post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri, logo_uri, client_uri
 FROM auth.oidc_clients WHERE tenant_id = $1 ORDER BY created_at DESC
+LIMIT 1001
 `
 
 type ListOIDCClientsRow struct {
@@ -1402,6 +1403,7 @@ type ListOIDCClientsRow struct {
 	ClientUri             *string
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListOIDCClients(ctx context.Context, tenantID uuid.UUID) ([]ListOIDCClientsRow, error) {
 	rows, err := q.db.Query(ctx, listOIDCClients, tenantID)
 	if err != nil {
@@ -1527,6 +1529,7 @@ WHERE c.tenant_id = $1
   AND c.reviewed_at IS NULL
   AND c.grant_types && $2::text[]
 ORDER BY live_grants DESC, c.created_at DESC
+LIMIT 1001
 `
 
 type ListShadowAICandidatesParams struct {
@@ -1543,6 +1546,7 @@ type ListShadowAICandidatesRow struct {
 	LiveGrants int64
 }
 
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListShadowAICandidates(ctx context.Context, arg ListShadowAICandidatesParams) ([]ListShadowAICandidatesRow, error) {
 	rows, err := q.db.Query(ctx, listShadowAICandidates, arg.TenantID, arg.MachineGrantTypes)
 	if err != nil {

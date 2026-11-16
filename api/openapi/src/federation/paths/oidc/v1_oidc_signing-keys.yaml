@@ -1,0 +1,30 @@
+get:
+  operationId: listSigningKeys
+  description: >-
+    Returns non-secret metadata for the issuer's OIDC signing keys, including
+    the candidate, active and not-yet-expired retired keys, with key id,
+    algorithm and status. No private key material is exposed. The signing key is
+    issuer-global rather than tenant-scoped; the corresponding public keys are
+    published at the JWKS endpoint.
+  summary: Signing keys metadata
+  tags:
+    - OIDC
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Signing keys (candidate, active, and unexpired retired keys)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              keys:
+                type: array
+                items:
+                  $ref: ../../components/schemas/SigningKey.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml

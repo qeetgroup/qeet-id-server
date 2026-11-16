@@ -1,0 +1,58 @@
+post:
+  operationId: testAiProviderConfig
+  description: >-
+    Validates candidate AI provider credentials with a live call and reports
+    whether they work, without persisting them. Use this before saving a new key
+    to confirm the provider accepts it. A failed test answers 400 naming the
+    reason: qeetai_provider_unreachable, qeetai_provider_key_invalid,
+    qeetai_provider_model_invalid or qeetai_provider_error.
+  summary: Test tenant AI provider credentials
+  tags:
+    - Qeet AI
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - provider
+            - model
+            - api_key
+          properties:
+            provider:
+              type: string
+              enum:
+                - anthropic
+                - openai
+                - azure
+            model:
+              type: string
+            api_key:
+              type: string
+              writeOnly: true
+            base_url:
+              type: string
+              description: Required for azure; must be an allowed outbound destination.
+            max_tokens:
+              type: integer
+              description: Defaults to 4096; at most 200000.
+  responses:
+    '200':
+      description: The provider accepted the credentials.
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - ok
+            properties:
+              ok:
+                type: boolean
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml

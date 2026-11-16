@@ -1,0 +1,34 @@
+get:
+  operationId: listMyInvites
+  summary: List invitations addressed to me
+  tags:
+    - Invites
+  security:
+    - bearerAuth: []
+  description: >-
+    Pending, unexpired invitations addressed to the signed-in user's email, each
+    with the inviting organization's name — the in-app inbox for a user who may
+    not belong to any org yet. Answers 403 invite.email_not_verified until the
+    account's address is verified: anyone can sign up with any address.
+  responses:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/ReceivedInvite.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -1,0 +1,13 @@
+type: object
+required:
+  - name
+  - values
+properties:
+  name:
+    type: string
+  friendly_name:
+    type: string
+  values:
+    type: array
+    items:
+      type: string

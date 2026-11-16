@@ -1,0 +1,51 @@
+type: object
+description: >-
+  A sign-in stopped before its session: the account holds a second factor, or
+  must have one — its organisation requires MFA (of everyone, or of
+  administrators) or it is marked as requiring it. Complete it at POST
+  /v1/auth/mfa (token sign-in) or /v1/auth/session/mfa (hosted login). Each
+  challenge is audited as auth.mfa_challenged with its reason (enrolled,
+  tenant_required, admin_required or user_required) and how the first factor was
+  proven (password, magic_link, social or ldap); meeting it as
+  auth.mfa_verified.
+properties:
+  mfa_required:
+    type: boolean
+  mfa_token:
+    type: string
+  methods:
+    type: array
+    description: >-
+      The distinct factor types of factors (["totp"] for an enrolment
+      challenge).
+    items:
+      type: string
+      enum:
+        - totp
+        - recovery_code
+        - email
+        - sms
+        - passkey
+        - push
+  factors:
+    type: array
+    description: >-
+      Exactly the second factors this person can complete the challenge with —
+      an authenticator app, recovery codes, each confirmed email or SMS factor
+      (with its id and masked destination, for POST /v1/auth/mfa/send), passkeys
+      while the organisation allows them, and push devices. Empty for an
+      enrolment challenge.
+    items:
+      $ref: ./LoginFactor.yaml
+  enrollment_required:
+    type: boolean
+    description: >-
+      The account must have a second factor and holds none: set up an
+      authenticator app (POST /v1/auth/mfa/enroll) and complete the challenge
+      with a code from it.
+  enrollment_due_at:
+    type: string
+    format: date-time
+    description: >-
+      On an enrolment challenge in the organisation's grace period: when it
+      ends. Until then the setup may be put off (skip: true).

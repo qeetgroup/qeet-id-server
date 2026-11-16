@@ -225,6 +225,7 @@ Every target in the [Makefile](./Makefile) — there are no others.
 | `make test-db` | Run the database tests against PostgreSQL; Docker required |
 | `make lint` | Run `go vet` and `golangci-lint` as CI does |
 | `make sqlc` / `sqlc-check` | Regenerate `dbgen/` from `queries.sql`, or check it is up to date |
+| `make openapi` / `openapi-check` | Build the five API documents from `api/openapi/src/`, or check they are up to date; Bun required |
 | `make db-up` / `db-down` | Start or stop PostgreSQL, NATS and Mailpit |
 | `make db-reset` | Recreate the local database volume |
 | `make migrate-up` / `migrate-down` | Apply or roll back one migration; needs the `migrate` CLI |
@@ -241,13 +242,15 @@ go build ./... && go test -race ./... && make lint
 
 Before a push, `make ci` runs the unit and database tests, checks generated SQL, and runs
 `govulncheck` and `gosec`. The hosted Verify workflow runs build, vet, lint, vulnerability and secret
-scans; it does not run the Go test suites or sqlc/gosec gates.
+scans, and the API contract checks (`make openapi-check` and the OpenAPI tests); it does not run the
+other Go test suites or sqlc/gosec gates.
 
 ## 📚 API & Documentation
 
 - [api/openapi/](./api/openapi/) holds five self-contained, bounded-context OpenAPI 3.1 documents —
   `auth.yaml` (access), `management.yaml` (identity), `federation.yaml`, `developer.yaml` and
-  `operations.yaml`. There is no monolithic `openapi.yaml`.
+  `operations.yaml`. There is no monolithic `openapi.yaml`. They are generated from the sources in
+  `api/openapi/src/` (one file per path) by `make openapi`; edit the sources, not the documents.
 - **A route added without a matching specification entry fails the local test gate** —
   `internal/bootstrap/openapi_coverage_test.go` asserts every mounted route is documented. Update the
   spec in the same change as the route and run `make ci` before pushing.

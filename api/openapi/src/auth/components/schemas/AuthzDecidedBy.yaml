@@ -1,0 +1,44 @@
+type: object
+description: >-
+  What decided a composed authorization decision. The ABAC policy (rule,
+  policy_id) is named only to a caller holding policy.read; anyone else sees
+  rule "an attribute policy".
+properties:
+  model:
+    type: string
+    enum:
+      - tenant
+      - abac
+      - rbac
+      - rebac
+      - none
+  rule:
+    type: string
+    description: What decided it, in English. Show reason_code's meaning instead.
+  reason_code:
+    type: string
+    enum:
+      - authz.no_tenant
+      - authz.engine_error
+      - authz.role_grant
+      - authz.relation_grant
+      - authz.nothing_allows
+      - authz.allowed_by_policy
+      - authz.denied_by_policy
+      - authz.attribute_absent
+      - authz.condition_error
+    description: >-
+      What decided it: no organisation, an engine failure (refused), a role or a
+      relationship tuple granting it, nothing allowing it, or an ABAC policy
+      (allowing, denying, denying as an attribute it compares is absent, or
+      refusing as its condition failed to evaluate).
+  reason_params:
+    type: object
+    additionalProperties: true
+    description: >-
+      What reason_code names: permission for authz.role_grant; relation and
+      object for authz.relation_grant; policy_id, policy_name and priority for
+      an ABAC policy, shown only to a caller holding policy.read.
+  policy_id:
+    type: string
+    format: uuid

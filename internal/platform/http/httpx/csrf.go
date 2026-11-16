@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 const (
@@ -99,19 +101,13 @@ func CSRF(cfg CSRFConfig) func(http.Handler) http.Handler {
 			// either a server-to-server call (handled above by the
 			// bearer skip) or an old browser we don't trust.
 			if err := checkOrigin(r, allowed); err != nil {
-				WriteJSON(w, http.StatusForbidden, map[string]string{
-					"error":   "csrf_failed",
-					"message": err.Error(),
-				})
+				WriteError(w, r, errs.ErrCSRFFailed.WithDetail(err.Error()))
 				return
 			}
 
 			// Double-submit token check.
 			if err := checkToken(r); err != nil {
-				WriteJSON(w, http.StatusForbidden, map[string]string{
-					"error":   "csrf_failed",
-					"message": err.Error(),
-				})
+				WriteError(w, r, errs.ErrCSRFFailed.WithDetail(err.Error()))
 				return
 			}
 

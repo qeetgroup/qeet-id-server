@@ -18,6 +18,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/dbutil"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // parseUserMetadata decodes the JSONB metadata column. JSONB is guaranteed
@@ -442,17 +443,21 @@ func (r *Repository) SoftDeleteByTx(ctx context.Context, tx pgx.Tx, id uuid.UUID
 	return d, nil
 }
 
-// ListDeleted returns a tenant's soft-deleted users (most recent first).
-func (r *Repository) ListDeleted(ctx context.Context, tenantID uuid.UUID, limit int) ([]DeletedUser, error) {
+// ListDeleted returns a page of a tenant's soft-deleted users, most recent
+// first, after the cursor when one is set (100 if limit is not in 1..200), and
+// the next page's cursor: empty on the last page.
+func (r *Repository) ListDeleted(ctx context.Context, tenantID uuid.UUID, limit int, after paging.Cursor) ([]DeletedUser, string, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	rows, err := r.q.ListDeletedUsers(ctx, dbgen.ListDeletedUsersParams{
-		TenantID: uuidToPgtype(tenantID),
-		Limit:    int32(limit),
-	})
+	params := dbgen.ListDeletedUsersParams{TenantID: uuidToPgtype(tenantID), RowLimit: int32(limit + 1)}
+	if after.Set {
+		params.BeforeTs = pgtype.Timestamptz{Time: after.Time, Valid: true}
+		params.BeforeID = pgtype.UUID{Bytes: after.ID, Valid: true}
+	}
+	rows, err := r.q.ListDeletedUsers(ctx, params)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	out := []DeletedUser{}
 	for _, row := range rows {
@@ -469,7 +474,8 @@ func (r *Repository) ListDeleted(ctx context.Context, tenantID uuid.UUID, limit 
 		}
 		out = append(out, d)
 	}
-	return out, nil
+	out, next := paging.Next(out, limit, func(d DeletedUser) (time.Time, uuid.UUID) { return d.DeletedAt, d.ID })
+	return out, next, nil
 }
 
 // RestoreTx reverses a soft delete in tx. Returns ErrNotFound if the user

@@ -1,0 +1,13 @@
+type: object
+required:
+  - description
+  - name
+properties:
+  children:
+    type: array
+    items:
+      $ref: ./TemplateNode.yaml
+  description:
+    type: string
+  name:
+    type: string

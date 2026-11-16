@@ -1,0 +1,27 @@
+get:
+  operationId: listPermissions
+  description: >-
+    Returns the catalog of permissions defined in the system that can be granted
+    to roles under RBAC. Use it to populate role-editing surfaces and to
+    discover the permission keys accepted by the permission-check call. The list
+    is a reference catalog and reflects no particular user's grants.
+  summary: List permissions
+  tags:
+    - RBAC
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Permissions
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/Permission.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml

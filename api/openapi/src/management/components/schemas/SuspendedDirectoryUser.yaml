@@ -1,0 +1,47 @@
+type: object
+properties:
+  id:
+    type: string
+    format: uuid
+  email:
+    type: string
+    format: email
+  display_name:
+    type:
+      - string
+      - 'null'
+  avatar_url:
+    type:
+      - string
+      - 'null'
+  team:
+    type: string
+  reason:
+    type: string
+  source:
+    type: string
+  risk:
+    type: string
+    enum:
+      - unknown
+      - low
+      - medium
+      - high
+  review:
+    type: string
+    enum:
+      - pending
+      - reviewed
+      - external
+  suspended_at:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  last_sign_in:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  can_manage:
+    type: boolean

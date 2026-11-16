@@ -1,0 +1,30 @@
+type: object
+required:
+  - schemas
+  - displayName
+properties:
+  schemas:
+    type: array
+    items:
+      type: string
+    example:
+      - urn:ietf:params:scim:schemas:core:2.0:Group
+  id:
+    type: string
+  externalId:
+    type: string
+  displayName:
+    type: string
+  members:
+    type: array
+    items:
+      type: object
+      properties:
+        value:
+          type: string
+          description: User id
+        display:
+          type: string
+  meta:
+    type: object
+    additionalProperties: true

@@ -1,0 +1,86 @@
+# Redocly CLI configuration for the API sources (see ../README.md).
+# make openapi-check lints the five documents with exactly the rules below;
+# every one fails the build. Exceptions, each one a reviewed operation, are in
+# .redocly.lint-ignore.yaml.
+telemetry: 'off'
+
+apis:
+  auth: {root: auth/openapi.yaml}
+  management: {root: management/openapi.yaml}
+  federation: {root: federation/openapi.yaml}
+  developer: {root: developer/openapi.yaml}
+  operations: {root: operations/openapi.yaml}
+
+# No preset: these are all the rules there are.
+extends: []
+
+# Not used, on purpose:
+# - no-unused-components: the bundle already leaves out any unreferenced file,
+#   so it would only flag the security schemes every document declares.
+# - no-ambiguous-paths: it flags pairs like /v1/groups/templates/{id} and
+#   /v1/groups/{id}/members. The router prefers the literal segment and the IDs
+#   are UUIDs, so they never collide; no-identical-paths catches real clashes.
+# - operation-2xx-response: replaced by rule/success-response, because the
+#   OAuth, SAML and social sign-in steps answer with a redirect.
+# - Style rules (tags-alphabetical, paths-kebab-case, …): the tag order is the
+#   portal's reading order, and paths are contract.
+rules:
+  # The document is well formed and every reference resolves.
+  struct: error
+  no-unresolved-refs: error
+  spec-strict-refs: error
+  spec-components-invalid-map-name: error
+  component-name-unique: error
+
+  # Paths and parameters.
+  path-parameters-defined: error
+  path-declaration-must-exist: error
+  path-not-include-query: error
+  no-path-trailing-slash: error
+  no-identical-paths: error
+  operation-parameters-unique: error
+
+  # Every operation is named, described, tagged, secured and answers.
+  operation-operationId: error
+  operation-operationId-unique: error
+  operation-operationId-url-safe: error
+  rule/operation-id-casing:
+    subject:
+      type: Operation
+      property: operationId
+    assertions:
+      casing: camelCase
+    message: An operationId is lowerCamelCase, verb first (listWebhooks); see ../README.md.
+    severity: error
+  operation-summary: error
+  operation-description: error
+  operation-tag-defined: error
+  tag-description: error
+  no-duplicated-tag-names: error
+  security-defined: error
+  operation-4xx-response: error
+  rule/success-response:
+    subject:
+      type: Responses
+    assertions:
+      requireAny: ['200', '201', '202', '203', '204', '205', '206', '2XX',
+                   '300', '301', '302', '303', '304', '307', '308', '3XX']
+    message: Every operation needs a success (2XX) or redirect (3XX) response.
+    severity: error
+
+  # Schemas say what they mean, and examples match them.
+  no-enum-type-mismatch: error
+  no-duplicated-enum-values: error
+  no-required-schema-properties-undefined: error
+  no-schema-type-mismatch: error
+  no-illogical-composition-keywords: error
+  no-mixed-number-range-constraints: error
+  no-invalid-media-type-examples: error
+  no-invalid-parameter-examples: error
+  no-invalid-schema-examples: error
+  no-example-value-and-externalValue: error
+
+  # Servers.
+  no-empty-servers: error
+  no-server-trailing-slash: error
+  no-undefined-server-variable: error

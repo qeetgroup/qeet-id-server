@@ -1,0 +1,14 @@
+description: Malformed request
+headers:
+  X-Request-Id:
+    $ref: ../headers/RequestId.yaml
+content:
+  application/json:
+    example:
+      error:
+        code: bad_request
+        message: The request was invalid.
+        translation_key: bad_request
+        request_id: api-1/Kx9fQ2mW7a-000131
+    schema:
+      $ref: ../schemas/Error.yaml

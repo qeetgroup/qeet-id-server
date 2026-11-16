@@ -1,0 +1,24 @@
+type: object
+required:
+  - provider
+  - type
+  - last_used_at
+properties:
+  provider:
+    type: string
+    description: stripe, razorpay or sandbox.
+  type:
+    type: string
+    description: card, upi, netbanking, wallet, or the provider's own word.
+  brand:
+    type: string
+    description: The card network, bank or wallet.
+  last4:
+    type: string
+  exp_month:
+    type: integer
+  exp_year:
+    type: integer
+  last_used_at:
+    type: string
+    format: date-time

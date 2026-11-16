@@ -1,0 +1,17 @@
+type: object
+required:
+  - created
+  - failed
+  - rows
+  - skipped
+properties:
+  created:
+    type: integer
+  failed:
+    type: integer
+  rows:
+    type: array
+    items:
+      $ref: ./ImportRowResult.yaml
+  skipped:
+    type: integer

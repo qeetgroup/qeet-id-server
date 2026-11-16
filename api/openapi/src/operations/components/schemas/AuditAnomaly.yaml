@@ -1,0 +1,60 @@
+type: object
+properties:
+  id:
+    type: string
+    format: uuid
+  tenant_id:
+    type: string
+    format: uuid
+  event_id:
+    type: string
+    format: uuid
+  actor_user_id:
+    type:
+      - string
+      - 'null'
+    format: uuid
+  actor_email:
+    type:
+      - string
+      - 'null'
+  score:
+    type: number
+    description: 0..1 weighted-novelty anomaly score.
+  reasons:
+    type: array
+    items:
+      type: string
+      enum:
+        - new_action_type
+        - unusual_hour
+        - new_ip
+  status:
+    type: string
+    enum:
+      - open
+      - resolved
+  resolved_at:
+    type:
+      - string
+      - 'null'
+    format: date-time
+  resolved_by:
+    type:
+      - string
+      - 'null'
+    format: uuid
+  created_at:
+    type: string
+    format: date-time
+  action:
+    type: string
+  resource_type:
+    type: string
+  ip:
+    type:
+      - string
+      - 'null'
+  event_at:
+    type: string
+    format: date-time

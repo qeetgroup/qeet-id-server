@@ -15,6 +15,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // MemberPasskey is one of a member's passkeys as an administrator sees it.
@@ -50,7 +51,7 @@ func (h *Handler) listPasskeys(w http.ResponseWriter, r *http.Request) {
 			items[i].LastUsedAt = &t
 		}
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(items))
 }
 
 // removePasskey handles DELETE /v1/tenants/{tenantID}/users/{id}/passkeys/

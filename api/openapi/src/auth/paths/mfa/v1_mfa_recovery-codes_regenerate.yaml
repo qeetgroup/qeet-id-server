@@ -1,0 +1,45 @@
+post:
+  operationId: regenerateRecoveryCodes
+  summary: Regenerate recovery codes (step-up)
+  tags:
+    - MFA
+  security:
+    - bearerAuth: []
+  description: >-
+    Replaces the caller's recovery codes; the new ones are shown only in this
+    answer and the old ones stop working. Needs a recent step-up. The account
+    holder is emailed that it happened, with what to do if it wasn't them.
+  responses:
+    '201':
+      description: Created
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - recovery_codes
+              - warning
+            properties:
+              recovery_codes:
+                type: array
+                items:
+                  type: string
+              warning:
+                type: string
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+    '503':
+      $ref: ../../../shared/responses/Overloaded.yaml

@@ -17,6 +17,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 // Domain capture: an organisation that manages a domain (ManagingDomain), has
@@ -175,7 +176,7 @@ func (h *Handler) listBreakGlass(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }
 
 func (h *Handler) addBreakGlass(w http.ResponseWriter, r *http.Request) { h.setBreakGlass(w, r, true) }

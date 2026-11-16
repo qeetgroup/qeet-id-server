@@ -1,10 +1,13 @@
 package httpx
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // noopHandler returns 200 so test cases can distinguish "passed
@@ -51,6 +54,28 @@ func TestCSRF_POSTWithoutCookieRejected(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("POST without cookie must be 403, got %d", rec.Code)
+	}
+}
+
+// TestCSRF_RejectionUsesErrorEnvelope checks that both refusals, origin and
+// token, answer the canonical {error: {code, ...}} body clients branch on.
+func TestCSRF_RejectionUsesErrorEnvelope(t *testing.T) {
+	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://app.id.qeet.in"}})
+	for name, origin := range map[string]string{"origin": "https://evil.example.com", "token": "https://app.id.qeet.in"} {
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		req.Header.Set("Origin", origin)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		var body struct {
+			Error struct {
+				Code   string `json:"code"`
+				Detail string `json:"detail"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusForbidden ||
+			body.Error.Code != errs.CodeCSRFFailed || body.Error.Detail == "" {
+			t.Errorf("%s refusal: status %d body %s, want 403 with error.code csrf_failed and a detail", name, rec.Code, rec.Body)
+		}
 	}
 }
 

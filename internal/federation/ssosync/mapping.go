@@ -18,6 +18,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
 
 const maxMappings = 1000 // group mappings one connection holds
@@ -212,7 +213,7 @@ func (h *Handler) list(kind string) http.HandlerFunc {
 			httpx.WriteError(w, r, err)
 			return
 		}
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+		httpx.WriteJSON(w, http.StatusOK, paging.List(items))
 	}
 }
 

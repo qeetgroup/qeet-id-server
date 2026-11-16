@@ -1,0 +1,11 @@
+description: >-
+  RFC 7644 error with scimType uniqueness: the externalId is taken, or a group
+  without an externalId takes a displayName, ignoring case, that another group
+  without one uses (including when the change clears the externalId).
+headers:
+  X-Request-Id:
+    $ref: ../../../shared/headers/RequestId.yaml
+content:
+  application/scim+json:
+    schema:
+      $ref: ../schemas/SCIMError.yaml

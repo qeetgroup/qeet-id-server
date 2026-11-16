@@ -1,0 +1,93 @@
+get:
+  operationId: listOtpFactors
+  summary: List OTP factors
+  tags:
+    - MFA
+  security:
+    - bearerAuth: []
+  description: Lists the caller's SMS and email factors.
+  responses:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - items
+            properties:
+              truncated:
+                $ref: ../../../shared/schemas/Truncated.yaml
+              items:
+                type: array
+                items:
+                  $ref: ../../components/schemas/OTPFactor.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml
+post:
+  operationId: addOtpFactor
+  summary: Add OTP factor
+  tags:
+    - MFA
+  security:
+    - bearerAuth: []
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          type: object
+          properties:
+            channel:
+              type: string
+              enum:
+                - email
+                - sms
+            destination:
+              type: string
+              description: The email address or phone number the codes go to.
+  description: >-
+    Adds an email or SMS factor (or returns the one already held for that
+    address, untouched) and sends a code to confirm it at
+    /v1/mfa/otp/factors/{id}/confirm. A person may hold five email and SMS
+    factors (409 mfa.factor_limit). A code to one factor can be sent at most
+    every 30 seconds, ten an hour to one person and five an hour to one address
+    or number over every account; past that the call answers 429
+    mfa.code_send_limited with retry_after (seconds). A new code makes the
+    factor's earlier unused code stop working. A code sent here only confirms
+    the new factor. An SMS code needs an organisation whose plan includes SMS
+    (403 upgrade_required). Each code sent is audited as mfa.otp_sent.
+  responses:
+    '201':
+      description: Created
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - factor_id
+              - message
+            properties:
+              factor_id:
+                type: string
+                format: uuid
+              message:
+                type: string
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

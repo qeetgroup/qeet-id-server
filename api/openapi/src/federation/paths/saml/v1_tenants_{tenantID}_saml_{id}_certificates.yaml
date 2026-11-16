@@ -1,0 +1,57 @@
+post:
+  operationId: addSamlCertificate
+  summary: Add IdP certificate
+  description: >-
+    Makes the connection also trust another of the IdP's signing certificates,
+    such as the next one it has published ahead of a certificate rollover. An
+    assertion signed with any certificate the connection trusts is accepted, so
+    add the new certificate before the IdP switches and remove the old one
+    after. The connection's certificates, with their validity periods, are in
+    its certificates field. A certificate that doesn't parse answers 422
+    saml.certificate_invalid, one already trusted 409 saml.certificate_exists,
+    and a ninth 422 saml.certificate_limit. Audited; another organisation's
+    connection answers 404.
+  tags:
+    - SAML
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - certificate
+          properties:
+            certificate:
+              type: string
+              description: PEM or base64 DER X.509 signing certificate
+  responses:
+    '201':
+      description: Certificate added
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/SAMLCertificate.yaml
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '409':
+      $ref: ../../../shared/responses/Conflict.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml

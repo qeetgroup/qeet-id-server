@@ -1,0 +1,21 @@
+get:
+  operationId: getOauthAuthorizationServerMetadata
+  description: >-
+    Returns the OAuth 2.0 authorization server metadata (RFC 8414) for clients
+    that speak only OAuth, and for model-context-protocol clients following the
+    protected-resource document to the authorization server it names. It is the
+    same document as the OpenID configuration, so the endpoints and capabilities
+    in the two always agree. Served unauthenticated at the root, not under /v1.
+  summary: OAuth authorization server metadata
+  tags:
+    - OIDC
+  security: []
+  responses:
+    '200':
+      description: Authorization server metadata
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/OIDCDiscovery.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

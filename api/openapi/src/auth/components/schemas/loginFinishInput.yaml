@@ -1,0 +1,9 @@
+type: object
+required:
+  - credential
+  - session_id
+properties:
+  credential: {}
+  session_id:
+    type: string
+    format: uuid

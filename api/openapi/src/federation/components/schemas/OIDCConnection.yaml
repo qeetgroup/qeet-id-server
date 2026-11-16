@@ -1,0 +1,54 @@
+type: object
+properties:
+  id:
+    type: string
+    format: uuid
+  tenant_id:
+    type: string
+    format: uuid
+  name:
+    type: string
+  issuer:
+    type: string
+    description: The iss an ID token must carry.
+  discovery_url:
+    type: string
+    description: >-
+      Where the discovery document is read; empty for the issuer's
+      /.well-known/openid-configuration.
+  client_id:
+    type: string
+  scopes:
+    type: array
+    items:
+      type: string
+  allowed_idp_tenant_ids:
+    type: array
+    items:
+      type: string
+    description: >-
+      The provider's own tenant IDs (tid) accepted; empty accepts the issuer
+      alone.
+  claim_mapping:
+    $ref: ./OIDCClaimMapping.yaml
+  status:
+    type: string
+    enum:
+      - draft
+      - active
+      - disabled
+  redirect_uri:
+    type: string
+    format: uri
+    description: The redirect URI to register with the provider.
+  created_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time
+  last_login_at:
+    type:
+      - string
+      - 'null'
+    format: date-time

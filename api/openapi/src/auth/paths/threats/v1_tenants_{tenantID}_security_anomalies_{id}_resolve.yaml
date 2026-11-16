@@ -1,0 +1,33 @@
+post:
+  operationId: resolveSecurityAnomaly
+  description: >-
+    Marks a login anomaly as resolved, recording that an operator has reviewed
+    it and removing it from the open queue. Resolving is a review action; it
+    does not itself block a user or revoke a session, so take any remediation
+    separately. The updated totals are reflected by the anomaly-summary call.
+    Audited as anomaly.resolved, naming the caller and the anomaly's type,
+    severity and account; another organisation's anomaly, or one already
+    resolved, is 404.
+  summary: Resolve anomaly
+  tags:
+    - Threats
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Anomaly resolved
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

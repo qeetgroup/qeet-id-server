@@ -1,0 +1,30 @@
+post:
+  operationId: cancelTenantDeletion
+  description: >-
+    Calls off the tenant's scheduled deletion and returns the tenant, audited as
+    tenant.deletion_cancelled. Requires tenant.delete, and only a person who
+    owns the tenant may (403 tenant.owner_only otherwise); 409
+    tenant.deletion_not_scheduled when none is.
+  summary: Cancel tenant deletion
+  tags:
+    - Tenants
+  parameters:
+    - $ref: ../../../shared/parameters/TenantID.yaml
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: Deletion cancelled
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/Tenant.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '409':
+      $ref: ../../../shared/responses/Conflict.yaml

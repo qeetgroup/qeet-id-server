@@ -10,10 +10,12 @@
 
 -- ListScimTokens is every token of the organisation, newest first.
 -- name: ListScimTokens :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, name, token_prefix, created_at, expires_at, last_used_at, revoked_at, replaced_by
 FROM tenant.scim_tokens
 WHERE tenant_id = @tenant_id
-ORDER BY created_at DESC, id DESC;
+ORDER BY created_at DESC, id DESC
+LIMIT 1001;
 
 -- name: CountProvisionedUsers :one
 SELECT count(*) FROM "user".users

@@ -1,0 +1,9 @@
+allOf:
+  - $ref: ./AccessRequestRole.yaml
+  - type: object
+    required:
+      - held
+    properties:
+      held:
+        type: boolean
+        description: The person already holds it directly.

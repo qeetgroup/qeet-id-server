@@ -1,0 +1,43 @@
+post:
+  operationId: submitBackchannelDecision
+  summary: Approve or deny a pending CIBA request
+  description: >-
+    Records the authenticated user's decision on one of their own pending
+    requests (the id from GET .../pending, not the raw auth_req_id).
+  tags:
+    - OIDC
+  security:
+    - bearerAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - id
+            - approve
+          properties:
+            id:
+              type: string
+              format: uuid
+            approve:
+              type: boolean
+  responses:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status:
+                type: string
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '409':
+      $ref: ../../../shared/responses/Conflict.yaml

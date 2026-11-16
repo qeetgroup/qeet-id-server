@@ -1,0 +1,6 @@
+type: apiKey
+in: cookie
+name: qeet_admin_portal_session
+description: >-
+  Short-lived HttpOnly, SameSite=Strict admin-portal session cookie.
+  Mutations also require the global CSRF double-submit token.

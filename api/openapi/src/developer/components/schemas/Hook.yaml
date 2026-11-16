@@ -1,0 +1,50 @@
+type: object
+required:
+  - created_at
+  - enabled
+  - fail_open
+  - id
+  - trigger
+  - url
+properties:
+  created_at:
+    type: string
+    format: date-time
+  enabled:
+    type: boolean
+  fail_open:
+    type: boolean
+  id:
+    type: string
+    format: uuid
+  trigger:
+    type: string
+  url:
+    type: string
+  last_called_at:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: Its last call by a sign-in.
+  last_outcome:
+    type:
+      - string
+      - 'null'
+    enum:
+      - allowed
+      - denied
+      - skipped
+      - null
+    description: How that call ended; skipped when the hook gave no answer.
+  last_status_code:
+    type:
+      - integer
+      - 'null'
+  calls:
+    type: integer
+    description: Sign-in calls since this release; test calls aren't counted.
+  skips:
+    type: integer
+  denies:
+    type: integer

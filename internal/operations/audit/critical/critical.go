@@ -93,7 +93,8 @@ func NewService(a AuditLister, an AnomalyLister) *Service {
 }
 
 // List returns tenantID's open anomalies and critical audit events of the last
-// hours (1 to 168), newest first, at most 100.
+// hours (1 to 168), newest first, at most maxEvents+1 so the caller can tell
+// when there are more than maxEvents.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID, hours int) ([]Event, error) {
 	if hours < 1 || hours > maxHours {
 		return nil, errs.ErrBadRequest.WithDetail("hours must be 1 to 168")
@@ -104,7 +105,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, hours int) ([]Ev
 		actions = append(actions, a)
 	}
 	sort.Strings(actions)
-	rows, _, _, err := s.Audit.List(ctx, tenantID, maxEvents, "", audit.ListFilter{Actions: actions, From: &since})
+	rows, _, _, err := s.Audit.List(ctx, tenantID, maxEvents+1, "", audit.ListFilter{Actions: actions, From: &since})
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +117,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, hours int) ([]Ev
 			IP: r.IP, Metadata: r.Metadata, OccurredAt: r.CreatedAt,
 		})
 	}
-	open, err := s.Anomalies.List(ctx, tenantID, "open", maxEvents)
+	open, err := s.Anomalies.List(ctx, tenantID, "open", maxEvents+1)
 	if err != nil {
 		return nil, err
 	}
@@ -136,8 +137,8 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, hours int) ([]Ev
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].OccurredAt.After(out[j].OccurredAt) })
-	if len(out) > maxEvents {
-		out = out[:maxEvents]
+	if len(out) > maxEvents+1 {
+		out = out[:maxEvents+1]
 	}
 	return out, nil
 }
@@ -170,11 +171,17 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	body := map[string]any{"hours": hours}
+	if len(out) > maxEvents {
+		out = out[:maxEvents]
+		body["truncated"] = true
+	}
 	high := 0
 	for _, e := range out {
 		if e.Level == High {
 			high++
 		}
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"events": out, "high": high, "hours": hours})
+	body["events"], body["high"] = out, high
+	httpx.WriteJSON(w, http.StatusOK, body)
 }

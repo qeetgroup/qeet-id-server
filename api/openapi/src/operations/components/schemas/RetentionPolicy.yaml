@@ -1,0 +1,19 @@
+type: object
+required:
+  - deleted_users_days
+  - deleted_users_enabled
+properties:
+  deleted_users_days:
+    type: integer
+  deleted_users_enabled:
+    type: boolean
+  updated_at:
+    type: string
+    format: date-time
+    description: When the policy was last changed; absent until it is set.
+  updated_by:
+    type: string
+    format: uuid
+    description: Who last changed it.
+  updated_by_email:
+    type: string

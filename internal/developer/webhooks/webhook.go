@@ -526,12 +526,13 @@ func (s *Service) Attempts(ctx context.Context, subscriptionID, deliveryID, tena
 	return out, nil
 }
 
-// RetryDelivery re-queues one of the tenant's deliveries for immediate
-// redelivery, clearing delivered_at, dead_at and error. A delivery that had
-// finished, delivered or given up, starts a fresh budget of attempts; one still
-// retrying keeps its count. It fails with ErrWebhookDeliveryNotFound when the
-// delivery isn't the tenant's or a dispatcher currently holds its lease.
-func (s *Service) RetryDelivery(ctx context.Context, deliveryID, tenantID uuid.UUID) error {
+// RetryDelivery re-queues one of a tenant's subscription's deliveries for
+// immediate redelivery, clearing delivered_at, dead_at and error. A delivery
+// that had finished, delivered or given up, starts a fresh budget of attempts;
+// one still retrying keeps its count. It fails with ErrWebhookDeliveryNotFound
+// when the delivery isn't that subscription's, the subscription isn't the
+// tenant's, or a dispatcher currently holds its lease.
+func (s *Service) RetryDelivery(ctx context.Context, subscriptionID, deliveryID, tenantID uuid.UUID) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE tenant.webhook_deliveries AS delivery
 		SET delivered_at = NULL, dead_at = NULL, error = NULL, next_attempt_at = NOW(),
@@ -540,9 +541,9 @@ func (s *Service) RetryDelivery(ctx context.Context, deliveryID, tenantID uuid.U
 		                   THEN 0 ELSE delivery.attempt END
 		FROM tenant.webhook_subscriptions AS subscription
 		WHERE delivery.id = $1 AND delivery.subscription_id = subscription.id
-		  AND subscription.tenant_id = $2
+		  AND subscription.id = $3 AND subscription.tenant_id = $2
 		  AND (delivery.lease_until IS NULL OR delivery.lease_until <= NOW())
-	`, deliveryID, tenantID)
+	`, deliveryID, tenantID, subscriptionID)
 	if err != nil {
 		return err
 	}
@@ -981,6 +982,11 @@ func (h *Handler) listDeliveries(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) retryDelivery(w http.ResponseWriter, r *http.Request) {
+	subscriptionID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrWebhookInvalidID)
+		return
+	}
 	deliveryID, err := uuid.Parse(chi.URLParam(r, "deliveryID"))
 	if err != nil {
 		httpx.WriteError(w, r, errs.ErrWebhookInvalidID)
@@ -991,7 +997,7 @@ func (h *Handler) retryDelivery(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.RetryDelivery(r.Context(), deliveryID, tenantID); err != nil {
+	if err := h.Service.RetryDelivery(r.Context(), subscriptionID, deliveryID, tenantID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1071,7 +1077,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, paging.List(out))
 }
 
 func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {

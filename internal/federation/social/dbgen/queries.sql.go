@@ -446,6 +446,7 @@ const listSocialProviders = `-- name: ListSocialProviders :many
 
 SELECT id, tenant_id, provider, client_id, discovery_url, enabled, created_at, apple_team_id, apple_key_id
 FROM tenant.social_providers WHERE tenant_id = $1 ORDER BY provider
+LIMIT 1001
 `
 
 type ListSocialProvidersRow struct {
@@ -462,6 +463,7 @@ type ListSocialProvidersRow struct {
 
 // Queries for the social domain.
 // All queries are STATIC and compiled by sqlc into ./dbgen.
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListSocialProviders(ctx context.Context, tenantID uuid.UUID) ([]ListSocialProvidersRow, error) {
 	rows, err := q.db.Query(ctx, listSocialProviders, tenantID)
 	if err != nil {

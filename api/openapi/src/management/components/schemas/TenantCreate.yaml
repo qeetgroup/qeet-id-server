@@ -1,0 +1,29 @@
+type: object
+required:
+  - slug
+  - name
+properties:
+  slug:
+    type: string
+    minLength: 2
+    maxLength: 64
+  name:
+    type: string
+    minLength: 1
+    maxLength: 200
+  plan:
+    type: string
+    enum:
+      - free
+      - pro
+      - enterprise
+  region:
+    type: string
+    description: >-
+      Optional. Only the region this service is hosted in is accepted (422
+      tenant.region_unavailable, with metadata.available, otherwise); the
+      organisation is created there either way.
+    maxLength: 64
+  metadata:
+    type: object
+    additionalProperties: true

@@ -2,8 +2,10 @@
 -- All queries are STATIC and compiled by sqlc into ./dbgen.
 
 -- name: ListSocialProviders :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, tenant_id, provider, client_id, discovery_url, enabled, created_at, apple_team_id, apple_key_id
-FROM tenant.social_providers WHERE tenant_id = @tenant_id ORDER BY provider;
+FROM tenant.social_providers WHERE tenant_id = @tenant_id ORDER BY provider
+LIMIT 1001;
 
 -- name: ListExternalIdentities :many
 SELECT ei.id, ei.user_id, ei.tenant_id, ei.provider, ei.subject, ei.email, ei.linked_at

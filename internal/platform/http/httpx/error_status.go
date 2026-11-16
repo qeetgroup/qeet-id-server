@@ -26,6 +26,7 @@ var statusByCode = map[string]int{
 	errs.CodeInternal:            http.StatusInternalServerError,
 	errs.CodeNotImplemented:      http.StatusNotImplemented,
 	errs.CodeServerOverloaded:    http.StatusServiceUnavailable,
+	errs.CodeCSRFFailed:          http.StatusForbidden,
 
 	// MFA.
 	errs.CodeMFATOTPCodeInvalid:     http.StatusBadRequest,

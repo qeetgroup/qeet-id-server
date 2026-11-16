@@ -1,0 +1,52 @@
+delete:
+  operationId: removeUserMembership
+  summary: Remove a member from this organization
+  description: >-
+    Removes a member whose account belongs to another organization (or to none)
+    from the caller's organization (requires user.delete), in one transaction:
+    their roles and groups here, their sessions here, and the application grants
+    and API keys they hold here. Their account and their other organizations are
+    left alone. Audited as user.removed_from_organization, with an event. The
+    organization's own accounts are suspended or deleted instead (409
+    user.managed_here); someone who doesn't belong here is 404. Removing an
+    owner is refused with 409 tenant.last_owner, and nothing changes, when it
+    would leave the organization with no active owner. The person must not
+    outrank the caller: only an owner changes an owner (403
+    rbac.target_is_owner), and the caller must hold every permission the person
+    holds here (403 rbac.target_outranks_caller naming one); acting on yourself
+    is allowed.
+  tags:
+    - Users
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  responses:
+    '200':
+      description: The member was removed
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              roles_removed:
+                type: integer
+              sessions_ended:
+                type: integer
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '409':
+      $ref: ../../../shared/responses/Conflict.yaml

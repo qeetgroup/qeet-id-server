@@ -233,7 +233,7 @@ JOIN tenant.webhook_deliveries d ON d.id = a.delivery_id
 JOIN tenant.webhook_subscriptions sub ON sub.id = d.subscription_id
 WHERE a.delivery_id = $1 AND d.subscription_id = $2 AND a.tenant_id = $3 AND sub.tenant_id = $3
 ORDER BY a.attempted_at
-LIMIT 200
+LIMIT 1001
 `
 
 type ListDeliveryAttemptsParams struct {
@@ -250,6 +250,7 @@ type ListDeliveryAttemptsRow struct {
 }
 
 // One of the tenant's deliveries' attempts, oldest first.
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListDeliveryAttempts(ctx context.Context, arg ListDeliveryAttemptsParams) ([]ListDeliveryAttemptsRow, error) {
 	rows, err := q.db.Query(ctx, listDeliveryAttempts, arg.DeliveryID, arg.SubscriptionID, arg.TenantID)
 	if err != nil {
@@ -411,6 +412,7 @@ SELECT s.id, s.tenant_id, s.url, s.events, s.disabled_at, s.disabled_reason, s.f
        s.disabled_by
 FROM tenant.webhook_subscriptions s
 WHERE s.tenant_id = $1 ORDER BY s.created_at DESC
+LIMIT 1001
 `
 
 type ListWebhookSubscriptionsRow struct {
@@ -438,6 +440,7 @@ type ListWebhookSubscriptionsRow struct {
 // Each subscription comes with its last delivery, and how many of its
 // deliveries are pending (none tried yet; held while it is disabled),
 // retrying and given up.
+// At most paging.MaxListItems+1 rows: the API truncates the rest.
 func (q *Queries) ListWebhookSubscriptions(ctx context.Context, tenantID uuid.UUID) ([]ListWebhookSubscriptionsRow, error) {
 	rows, err := q.db.Query(ctx, listWebhookSubscriptions, tenantID)
 	if err != nil {

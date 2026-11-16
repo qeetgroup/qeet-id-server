@@ -1,0 +1,45 @@
+get:
+  operationId: getConnectedAccountToken
+  summary: Get a live access token for a connected account
+  tags:
+    - Token Vault
+  parameters:
+    - name: provider
+      in: path
+      required: true
+      schema:
+        type: string
+  security:
+    - bearerAuth: []
+    - apiKeyAuth: []
+  description: >-
+    Hands a connected account's short-lived access token (never the refresh
+    token) to the person who connected it, signed in to their own session,
+    refreshing it first if it has expired. Requires a vault:<provider> or
+    vault:read scope. API keys, service principals, agents and tokens issued to
+    applications are refused with 403 tokenvault.people_only: they carry a user
+    id they were given, not one they proved. Every access, and every refused
+    attempt, is audited under the caller's own credential.
+  responses:
+    '200':
+      description: OK
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              access_token:
+                type: string
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

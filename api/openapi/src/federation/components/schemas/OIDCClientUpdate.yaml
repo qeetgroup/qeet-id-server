@@ -1,0 +1,83 @@
+type: object
+description: Partial (COALESCE-style) update; omitted fields are left unchanged.
+properties:
+  name:
+    type: string
+  redirect_uris:
+    type: array
+    items:
+      type: string
+      format: uri
+  post_logout_uris:
+    type: array
+    items:
+      type: string
+      format: uri
+  grant_types:
+    type: array
+    description: >-
+      Any of authorization_code, refresh_token,
+      urn:ietf:params:oauth:grant-type:device_code, token exchange
+      (token_exchange or urn:ietf:params:oauth:grant-type:token-exchange;
+      confidential only) and urn:openid:params:grant-type:ciba (confidential
+      only). client_credentials is refused with oidc.grant_type_unsupported: a
+      machine caller is a service principal, which gets its tokens from POST
+      /v1/oauth/token.
+    items:
+      type: string
+  scopes:
+    type: array
+    description: >-
+      The scopes the application may request. offline_access needs no entry: an
+      application registered for refresh_token may always request it. Listing
+      offline_access opts the application in to OpenID Connect Core §11: it then
+      gets a refresh token only for a request granted offline_access, where
+      otherwise every grant to an application registered for refresh_token comes
+      with one.
+    items:
+      type: string
+  pkce_exempt_until:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: >-
+      Sets (a date-time, within 90 days) or clears (null) a confidential
+      application's PKCE exemption; omitted, unchanged.
+  backchannel_logout_uri:
+    type: string
+    format: uri
+    description: >-
+      Receives a signed logout token (OpenID Connect Back-Channel Logout, with
+      sid) when someone the application signed in signs out; "" for none.
+  frontchannel_logout_uri:
+    type: string
+    format: uri
+    description: >-
+      Loaded by the hosted signed-out page (with iss and sid) when someone the
+      application signed in signs out; "" for none.
+  logo_uri:
+    type: string
+    format: uri
+    maxLength: 2048
+    description: >-
+      The application's logo, an https URL, shown on the hosted sign-in page; ""
+      for none (set "" to clear).
+  client_uri:
+    type: string
+    format: uri
+    maxLength: 2048
+    description: >-
+      The application's home page, an https URL; the hosted sign-in page shows
+      its host. "" for none (set "" to clear).
+  web_origins:
+    type:
+      - array
+      - 'null'
+    maxItems: 50
+    items:
+      type: string
+    description: >-
+      Sets the origins a browser application calls the OAuth endpoints from;
+      null goes back to its redirect URIs' origins; left out, unchanged. An
+      entry that isn't an origin is refused with 422 oidc.web_origin_invalid.

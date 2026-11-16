@@ -1,0 +1,55 @@
+type: object
+properties:
+  total:
+    type: integer
+  active:
+    type: integer
+  suspended:
+    type: integer
+  invited:
+    type: integer
+  mfa_enabled:
+    type: integer
+  mfa_missing:
+    type: integer
+  new_last_30d:
+    type: integer
+  last_seen:
+    type: object
+    properties:
+      today:
+        type: integer
+      week:
+        type: integer
+      month:
+        type: integer
+      older:
+        type: integer
+      never:
+        type: integer
+  admins_without_mfa:
+    type: integer
+    description: >-
+      Members holding the built-in owner or admin role with no confirmed second
+      factor.
+  email_unverified:
+    type: integer
+  by_role:
+    type: array
+    items:
+      type: object
+      properties:
+        role:
+          type: string
+        count:
+          type: integer
+  by_department:
+    type: array
+    description: Up to 200 departments, largest first.
+    items:
+      type: object
+      properties:
+        department:
+          type: string
+        count:
+          type: integer

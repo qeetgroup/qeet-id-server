@@ -14,9 +14,11 @@ RETURNING id, tenant_id, name, idp_entity_id, idp_sso_url, idp_certificate,
           email_attribute, name_attribute, status, created_at, updated_at, last_login_at;
 
 -- name: ListSamlConnections :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, tenant_id, name, idp_entity_id, idp_sso_url, idp_certificate,
        email_attribute, name_attribute, status, created_at, updated_at, last_login_at
-FROM tenant.saml_connections WHERE tenant_id = @tenant_id ORDER BY created_at DESC;
+FROM tenant.saml_connections WHERE tenant_id = @tenant_id ORDER BY created_at DESC
+LIMIT 1001;
 
 -- name: GetSamlConnection :one
 SELECT id, tenant_id, name, idp_entity_id, idp_sso_url, idp_certificate,
@@ -208,10 +210,12 @@ RETURNING id, tenant_id, name, entity_id, acs_url, name_id_format,
           attributes, assignment_required, require_signed_requests, encrypt_assertions;
 
 -- name: ListSamlSPs :many
+-- At most paging.MaxListItems+1 rows: the API truncates the rest.
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,
        name_id_attribute, certificate, status, created_at, updated_at, last_login_at,
        attributes, assignment_required, require_signed_requests, encrypt_assertions
-FROM tenant.saml_service_providers WHERE tenant_id = @tenant_id ORDER BY created_at DESC;
+FROM tenant.saml_service_providers WHERE tenant_id = @tenant_id ORDER BY created_at DESC
+LIMIT 1001;
 
 -- name: GetSamlSP :one
 SELECT id, tenant_id, name, entity_id, acs_url, name_id_format,

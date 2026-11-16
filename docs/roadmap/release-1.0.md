@@ -61,13 +61,14 @@ that a release image exists.
 
 **What Qeet ID has today:**
 
-- CI runs one Verify job (build, vet, lint, generated SQL, vulnerability scan); the tests and the security scan run locally before each push (make ci). candidate.yml builds the image for testing on each release branch.
+- CI runs one Verify job (build, vet, lint, generated SQL, vulnerability scan, API contract checks); the other tests and the security scan run locally before each push (make ci). candidate.yml builds the image for testing on each release branch.
 - The last local full make ci passed the tests, lint, the sqlc check and the vulnerability scan; four security-scan warnings were then annotated and that scan re-run on its own.
 - Production deploys the image CI builds (ghcr.io/qeetgroup/qeet-id-server:sha-<commit>); it is never rebuilt by hand.
 
 **Steps:**
 
 - Fix GitHub Actions billing or the spending limit for the qeetgroup organisation (Settings, Billing & plans).
+- Set `info.version` to `1.0.0` in the five `api/openapi/src/*/openapi.yaml` files and in qeet-repo.yml, then run `make openapi` (see Versioning in `api/openapi/README.md`).
 - Run CI on the exact current release-candidate commit.
 - Fix anything that fails on a branch from develop and merge it the normal way.
 - Record the release-candidate commit, the image digest and the configuration it is meant to run with (supported features and environment variables).

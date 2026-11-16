@@ -23,3 +23,12 @@ func List[T any](items []T) map[string]any {
 	}
 	return body
 }
+
+// ListWith is List with the body's other fields beside its items.
+func ListWith[T any](items []T, fields map[string]any) map[string]any {
+	body := List(items)
+	for k, v := range fields {
+		body[k] = v
+	}
+	return body
+}

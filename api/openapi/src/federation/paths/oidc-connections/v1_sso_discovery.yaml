@@ -1,0 +1,94 @@
+post:
+  operationId: discoverSso
+  summary: Discover where an address signs in (public)
+  description: >-
+    Home-realm discovery: says whether an email address signs in through its
+    organisation's identity provider, and through which connections. It is
+    judged by the address's domain alone, so every address on a domain gets the
+    same answer whether or not it has an account. sso is true when the
+    organisation that verified the domain (or the closest verified domain above
+    it) has switched sso_enabled on for it and has an active SAML, LDAP or
+    OpenID Connect connection; those addresses' own sign-in methods are then
+    refused with 403 auth.sso_required, except for the organisation's
+    break-glass members. Each connection gives login_path, below the API's
+    address: a browser goes to it for SAML and OpenID Connect (method redirect),
+    and the directory login name and password are posted to it for LDAP (method
+    credentials). The hosted login adds return_to to a redirect, and posts a
+    credentials connection's sign-in to session_path, which answers with the
+    hosted-login session. An address that is not routed answers sso false with
+    no connections. Unauthenticated; rate-limited like sign-in.
+  tags:
+    - OIDC Connections
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - email
+          properties:
+            email:
+              type: string
+              format: email
+  responses:
+    '200':
+      description: Where the address signs in
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - sso
+              - connections
+            properties:
+              sso:
+                type: boolean
+              organization_name:
+                type: string
+                description: >-
+                  When sso is true, the name of the organisation that manages
+                  the domain, for the sign-in page to say whose sign-in it is.
+                  Like the connections' names, it is the same for every address
+                  on the domain.
+              connections:
+                type: array
+                items:
+                  type: object
+                  required:
+                    - id
+                    - protocol
+                    - name
+                    - method
+                    - login_path
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    protocol:
+                      type: string
+                      enum:
+                        - saml
+                        - oidc
+                        - ldap
+                    name:
+                      type: string
+                    method:
+                      type: string
+                      enum:
+                        - redirect
+                        - credentials
+                    login_path:
+                      type: string
+                    session_path:
+                      type: string
+                      description: >-
+                        For a credentials connection, where the hosted login
+                        posts the same user name and password for its session.
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

@@ -1,0 +1,104 @@
+get:
+  operationId: getPortalSamlConnection
+  description: >-
+    Returns a single SAML connection for the external IT admin in the
+    cookie-authenticated admin portal; the link's capabilities must include
+    saml. The connection belongs to the tenant bound to the portal session.
+    Mirrors the tenant-admin get-connection endpoint without requiring a Qeet ID
+    account.
+  summary: Get connection (portal)
+  tags:
+    - Admin Portal
+  security:
+    - adminPortalCookie: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    '200':
+      description: Connection, with the service-provider addresses to enter at the IdP
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/AdminPortalSAMLConnection.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+patch:
+  operationId: updatePortalSamlConnection
+  description: >-
+    Updates a SAML connection from the cookie-authenticated admin portal; the
+    link's capabilities must include saml, and the change is confined to the
+    tenant bound to the portal session and is audited. It lets an external IT
+    admin adjust IdP details without a Qeet ID account; validate the result with
+    the portal test endpoint. A new IdP SSO URL or certificate is checked as on
+    create (422 saml.sso_url_invalid, saml.certificate_invalid).
+  summary: Update connection (portal)
+  tags:
+    - Admin Portal
+  security:
+    - adminPortalCookie: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/SAMLConnectionCreate.yaml
+  responses:
+    '200':
+      description: Updated, with the service-provider addresses to enter at the IdP
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/AdminPortalSAMLConnection.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+delete:
+  operationId: deletePortalSamlConnection
+  description: >-
+    Deletes a SAML connection from the cookie-authenticated admin portal; the
+    link's capabilities must include saml, and the deletion is confined to the
+    tenant bound to the portal session and is audited. It mirrors the
+    tenant-admin delete-connection endpoint for an account-less external IT
+    admin.
+  summary: Delete connection (portal)
+  tags:
+    - Admin Portal
+  security:
+    - adminPortalCookie: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    '204':
+      description: Deleted
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml

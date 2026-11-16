@@ -1,0 +1,25 @@
+type: object
+required:
+  - client_name
+  - created_at
+  - expires_at
+  - id
+  - scopes
+properties:
+  binding_message:
+    type: string
+  client_name:
+    type: string
+  created_at:
+    type: string
+    format: date-time
+  expires_at:
+    type: string
+    format: date-time
+  id:
+    type: string
+    format: uuid
+  scopes:
+    type: array
+    items:
+      type: string

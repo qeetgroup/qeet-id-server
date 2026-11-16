@@ -1,0 +1,39 @@
+post:
+  operationId: completePushStepUp
+  summary: Complete a phone step-up
+  tags:
+    - MFA
+  security:
+    - bearerAuth: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  description: >-
+    Records the calling session's step-up (method push) once its request has
+    been approved on a linked phone, and spends the request. 409
+    mfa.push_pending while it awaits an answer (retry); 409
+    mfa.push_challenge_invalid for a denied or spent request, or one raised for
+    another session; 410 mfa.push_challenge_expired for one left unanswered past
+    its expiry.
+  responses:
+    '200':
+      description: Stepped up
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status:
+                type: string
+                enum:
+                  - approved
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '409':
+      $ref: ../../../shared/responses/Conflict.yaml
+    '410':
+      description: The request expired unanswered (mfa.push_challenge_expired)

@@ -177,7 +177,8 @@ unbootstrappable cycle.
 3. **Never hand-edit `dbgen/`.** Change `queries.sql` and regenerate.
 4. **Never wire dependencies outside `internal/bootstrap`.**
 5. **Never make `internal/platform` import a bounded context.** CI fails.
-6. **Never add a route without updating `api/openapi/`.** The local test gate fails.
+6. **Never add a route without updating `api/openapi/`.** The local test gate fails. Edit
+   `api/openapi/src/` and run `make openapi`; the five documents themselves are generated.
 7. **Never weaken a security control to make a test pass.**
 8. **Never commit a real secret** — `.env.example` holds placeholders only.
 9. **Never flatten the chi route tree** — the tenant guard fails open silently.

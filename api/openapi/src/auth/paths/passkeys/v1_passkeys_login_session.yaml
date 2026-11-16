@@ -1,0 +1,68 @@
+post:
+  operationId: createPasskeySession
+  summary: Login finish (hosted)
+  description: >-
+    The hosted form of passkey sign-in: completes the ceremony with the
+    assertion and sets the hosted-login SSO cookie (qe_ls), so the browser
+    continues into the OAuth authorize flow, answering with the user id only: no
+    token reaches the page's script. Only the browser that began the ceremony,
+    holding the binding cookie from POST /v1/passkeys/login/begin, finishes it
+    here; any other is refused with 403 passkey.browser_mismatch and the
+    ceremony is left untouched. It is protected against cross-site requests as
+    POST /v1/auth/session is, and a body not sent as JSON is refused (415
+    unsupported_media_type). When the account's organisation has switched
+    passkeys off, the sign-in is refused with 403 passkey.disabled before the
+    assertion is verified. A refused ceremony or assertion is recorded in the
+    organisation's audit trail as auth.sign_in_failed (method passkey, reason
+    the error code), naming the account when it was identified. A passkey of an
+    account on a domain whose organisation requires single sign-on is refused
+    with 403 auth.sso_required, and no cookie is set (see the SSORequired
+    response).
+  tags:
+    - Passkeys
+  security: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - session_id
+            - credential
+          properties:
+            session_id:
+              type: string
+              format: uuid
+            credential:
+              type: object
+              additionalProperties: true
+              description: The WebAuthn assertion (PublicKeyCredential JSON).
+  responses:
+    '200':
+      description: Signed in to the hosted login (the cookie is set)
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              user_id:
+                type: string
+                format: uuid
+            required:
+              - user_id
+    '400':
+      $ref: ../../../shared/responses/BadRequest.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
+    '415':
+      $ref: ../../components/responses/UnsupportedMediaType.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

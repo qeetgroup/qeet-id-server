@@ -1,0 +1,40 @@
+post:
+  operationId: exchangeSocialCode
+  summary: Exchange social code
+  tags:
+    - Social
+  security: []
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/exchangeInput.yaml
+  description: >-
+    Trades the one-time code a social sign-in callback handed back (the
+    console's own, or an organisation's) for the sign-in's result. Social
+    sign-in takes the same second-factor decision as a password sign-in: the
+    response is a token pair, or, when the account holds a second factor, the
+    organisation requires one, or the sign-in is risky, the challenge instead
+    (mfa_required, mfa_token, methods, factors, and enrollment_required for an
+    account that must set one up), completed at POST /v1/auth/mfa.
+  responses:
+    '200':
+      description: A token pair, or the second-factor challenge to complete first.
+      headers:
+        Cache-Control:
+          $ref: ../../../shared/headers/NoStoreCacheControl.yaml
+        Pragma:
+          $ref: ../../../shared/headers/NoStorePragma.yaml
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: ../../../shared/schemas/TokenPair.yaml
+              - $ref: ../../../shared/schemas/MFAChallenge.yaml
+    '404':
+      $ref: ../../../shared/responses/NotFound.yaml
+    '422':
+      $ref: ../../../shared/responses/Unprocessable.yaml
+    '429':
+      $ref: ../../../shared/responses/TooManyRequests.yaml

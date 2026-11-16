@@ -1,0 +1,16 @@
+description: >-
+  Conflicts with the resource's current state, such as a duplicate or an invalid
+  lifecycle transition
+headers:
+  X-Request-Id:
+    $ref: ../headers/RequestId.yaml
+content:
+  application/json:
+    example:
+      error:
+        code: conflict
+        message: That conflicts with something that already exists.
+        translation_key: conflict
+        request_id: api-1/Kx9fQ2mW7a-000131
+    schema:
+      $ref: ../schemas/Error.yaml

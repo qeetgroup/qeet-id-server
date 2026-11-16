@@ -16,12 +16,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
@@ -191,32 +193,48 @@ type MessageView struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// MessagesTo lists the organisation's most recent messages to address.
-func (s *Store) MessagesTo(ctx context.Context, tenantID uuid.UUID, address string, limit int32) ([]MessageView, error) {
-	rows, err := s.q.ListMessagesTo(ctx, dbgen.ListMessagesToParams{
-		TenantID: uuid.NullUUID{UUID: tenantID, Valid: true}, ToHash: HashAddress(address), Lim: limit,
-	})
+// MessagesTo lists a page of the organisation's messages to address, newest
+// first, after the cursor when one is set, with the next page's cursor: empty
+// on the last page.
+func (s *Store) MessagesTo(ctx context.Context, tenantID uuid.UUID, address string, limit int32, after paging.Cursor) ([]MessageView, string, error) {
+	params := dbgen.ListMessagesToParams{TenantID: uuid.NullUUID{UUID: tenantID, Valid: true}, ToHash: HashAddress(address), Lim: limit + 1}
+	params.BeforeTs, params.BeforeID = before(after)
+	rows, err := s.q.ListMessagesTo(ctx, params)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	out := make([]MessageView, len(rows))
 	for i, r := range rows {
 		out[i] = MessageView{ID: r.ID, Template: r.Template, Status: r.Status, Reason: r.StatusReason, SentAt: r.SentAt, UpdatedAt: r.UpdatedAt}
 	}
-	return out, nil
+	out, next := paging.Next(out, int(limit), func(m MessageView) (time.Time, uuid.UUID) { return m.SentAt, m.ID })
+	return out, next, nil
 }
 
-// Suppressions lists the active suppressions the organisation's mail caused.
-func (s *Store) Suppressions(ctx context.Context, tenantID uuid.UUID, limit int32) ([]Suppression, error) {
-	rows, err := s.q.ListSuppressions(ctx, dbgen.ListSuppressionsParams{TenantID: uuid.NullUUID{UUID: tenantID, Valid: true}, Lim: limit})
+// before is a cursor as the list queries' optional before_ts and before_id.
+func before(after paging.Cursor) (pgtype.Timestamptz, uuid.NullUUID) {
+	if !after.Set {
+		return pgtype.Timestamptz{}, uuid.NullUUID{}
+	}
+	return pgtype.Timestamptz{Time: after.Time, Valid: true}, uuid.NullUUID{UUID: after.ID, Valid: true}
+}
+
+// Suppressions lists a page of the active suppressions the organisation's mail
+// caused, newest first, after the cursor when one is set, with the next page's
+// cursor: empty on the last page.
+func (s *Store) Suppressions(ctx context.Context, tenantID uuid.UUID, limit int32, after paging.Cursor) ([]Suppression, string, error) {
+	params := dbgen.ListSuppressionsParams{TenantID: uuid.NullUUID{UUID: tenantID, Valid: true}, Lim: limit + 1}
+	params.BeforeTs, params.BeforeID = before(after)
+	rows, err := s.q.ListSuppressions(ctx, params)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	out := make([]Suppression, len(rows))
 	for i, r := range rows {
 		out[i] = Suppression{ID: r.ID, AddressHint: r.AddressHint, Reason: r.Reason, Detail: r.Detail, CreatedAt: r.CreatedAt}
 	}
-	return out, nil
+	out, next := paging.Next(out, int(limit), func(s Suppression) (time.Time, uuid.UUID) { return s.CreatedAt, s.ID })
+	return out, next, nil
 }
 
 // ClearSuppression lifts suppression id in tx, if the organisation's mail
