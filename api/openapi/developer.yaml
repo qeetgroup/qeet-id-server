@@ -1551,7 +1551,7 @@ paths:
   /v1/webhooks/{id}/deliveries/{deliveryID}/retry:
     post:
       operationId: retryWebhookDelivery
-      description: Sends one of the organisation's webhook deliveries again now. A delivery that had finished, delivered or given up after its 60 attempts, starts a fresh set of attempts; one still retrying keeps its count.
+      description: 'Sends one of the organisation''s webhook deliveries again now. A delivery that had finished, delivered or given up after its 60 attempts, starts a fresh set of attempts; one still retrying keeps its count. The delivery must be one of the webhook''s in the path: any other, like one that doesn''t exist or is being sent at this moment, is refused with 404 webhook.delivery_not_found and left as it was. An ID that isn''t a UUID is refused with 400 webhook.invalid_id.'
       summary: Retry delivery
       tags:
         - Webhooks
@@ -1561,6 +1561,7 @@ paths:
           required: true
           schema:
             type: string
+            format: uuid
         - name: deliveryID
           in: path
           required: true
@@ -1573,6 +1574,8 @@ paths:
       responses:
         '200':
           description: Delivery re-queued
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

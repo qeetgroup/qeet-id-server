@@ -20,6 +20,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
@@ -269,13 +270,21 @@ func TestOutboxEventsReachWebhooksOnce(t *testing.T) {
 	}
 
 	// A delivery that used up its attempts gets a fresh budget when retried.
-	var gaveUp uuid.UUID
+	var gaveUp, owner uuid.UUID
 	if err := dbtest.Pool(t).QueryRow(ctx, `
-		UPDATE tenant.webhook_deliveries SET attempt = $2 WHERE event_id = $1 RETURNING id
-	`, refused.ID, maxDeliveryAttempts).Scan(&gaveUp); err != nil {
+		UPDATE tenant.webhook_deliveries SET attempt = $2 WHERE event_id = $1 RETURNING id, subscription_id
+	`, refused.ID, maxDeliveryAttempts).Scan(&gaveUp, &owner); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.RetryDelivery(ctx, gaveUp, tenant); err != nil {
+	// Named under another of the tenant's webhooks, it isn't found and is left as it was.
+	sibling := subscribe(t, svc, tenant, ep.URL, "user.created")
+	if err := svc.RetryDelivery(ctx, sibling.ID, gaveUp, tenant); !errors.Is(err, errs.ErrWebhookDeliveryNotFound) {
+		t.Fatalf("retry under another webhook: %v, want ErrWebhookDeliveryNotFound", err)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.webhook_deliveries WHERE id = $1 AND dead_at IS NOT NULL`, gaveUp); n != 1 {
+		t.Fatal("a retry under another webhook re-queued the delivery")
+	}
+	if err := svc.RetryDelivery(ctx, owner, gaveUp, tenant); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
 	ep.answer(http.StatusServiceUnavailable)
@@ -449,15 +458,15 @@ func TestLapsedPlanStopsDeliveries(t *testing.T) {
 	if _, n := ep.last("group.created"); n != 0 {
 		t.Fatalf("endpoint received %d deliveries after the plan lapsed, want none", n)
 	}
-	var id uuid.UUID
+	var id, owner uuid.UUID
 	if err := dbtest.Pool(t).QueryRow(ctx, `
-		SELECT id FROM tenant.webhook_deliveries WHERE event_id = $1 AND dead_at IS NOT NULL AND attempt = 0 AND error = $2
-	`, event.ID, errNotInPlan).Scan(&id); err != nil {
+		SELECT id, subscription_id FROM tenant.webhook_deliveries WHERE event_id = $1 AND dead_at IS NOT NULL AND attempt = 0 AND error = $2
+	`, event.ID, errNotInPlan).Scan(&id, &owner); err != nil {
 		t.Fatalf("the delivery was not dead-lettered unsent: %v", err)
 	}
 
 	plans[tenant] = true // paid again
-	if err := svc.RetryDelivery(ctx, id, tenant); err != nil {
+	if err := svc.RetryDelivery(ctx, owner, id, tenant); err != nil {
 		t.Fatal(err)
 	}
 	dispatch(t, svc)
