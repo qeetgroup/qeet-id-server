@@ -33,14 +33,16 @@ import (
 // seedPassword is every seeded account's password.
 const seedPassword = "Password123!"
 
-// kept are the tables a reset leaves alone: the schema version, the signing
-// keys sealed with this machine's vault key, and the built-in catalogues.
+// kept are the tables a reset leaves alone: the schema version and the files
+// that built it, the signing keys sealed with this machine's vault key, and
+// the built-in catalogues.
 var kept = map[string]bool{
-	"public.schema_migrations":     true,
-	"platform.jwt_signing_keys":    true,
-	"platform.billing_plans":       true,
-	"platform.billing_plan_prices": true,
-	"rbac.permissions":             true,
+	"public.schema_migrations":          true,
+	"public.schema_migration_checksums": true,
+	"platform.jwt_signing_keys":         true,
+	"platform.billing_plans":            true,
+	"platform.billing_plan_prices":      true,
+	"rbac.permissions":                  true,
 }
 
 func main() {

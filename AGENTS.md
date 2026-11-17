@@ -152,7 +152,8 @@ its store errors, and auth hooks default to **fail-open**. Do not "fix" either.
 
 ### 8. Migrations are immutable once applied
 
-Never edit an existing migration. Add a new pair:
+Never edit an existing migration. Add a new pair. (Until the first release ships, the owner may decide
+to change a baseline file in place; every database is then recreated. Ask first. After that, never.)
 
 ```text
 internal/platform/database/migrations/NNNN_description.up.sql
@@ -163,11 +164,17 @@ Numbering continues from the highest present (currently `0012`). `0001`–`0012`
 baseline: one file per schema with every table in its final shape, written in November 2026 in
 place of 243 incremental migrations, before any database held real data. A database the earlier
 migrations built is refused at start as newer than this build: recreate it (`make db-reset`).
-Migrations are embedded with `//go:embed` and applied on startup. Additive first —
+Migrations are embedded with `//go:embed` and applied on startup, by the server and the seed only:
+the runner records the checksum of each file it applies (`public.schema_migration_checksums`) and
+refuses a database whose applied migrations aren't recorded as the files this build carries: one built
+before a baseline file was edited, one migrated with the `migrate` tool, or one migrated by a build
+from before the records. To change your own unmerged migration after it ran: `make migrate-down`, then
+`make dev`. Additive first —
 expand, migrate, contract across releases. An index on a table that already exists is built with
 `CREATE INDEX CONCURRENTLY`, alone in its file (a plain one blocks writes while it builds;
 `TestNewIndexesDontLockTheirTable` enforces it). A migration waits at most 10s for a busy table,
-then fails and runs again at the next start. A table with an `organization_id` gets an index leading on it
+then fails and runs again at the next start; a concurrent index build that gives up is left
+half-applied for the manual recovery. A table with an `organization_id` gets an index leading on it
 and a foreign key to `organization.organizations`, or a note beside it saying why it has none (an append-only
 log, a record that outlives its organization).
 
@@ -201,7 +208,7 @@ make lint             # go vet + golangci-lint, as CI runs it
 make sqlc             # regenerate dbgen/ from queries.sql
 make sqlc-check       # fail if dbgen/ is stale
 make db-up/db-down/db-reset      # docker compose: postgres :5001, nats :4222, mailpit :8025
-make migrate-up/migrate-down     # one migration at a time
+make migrate-down                # roll one migration back; the server applies them at start
 make seed/seed-reset             # demo data (development only)
 make kill                        # free a stuck :4001
 ```

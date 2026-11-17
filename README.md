@@ -210,6 +210,7 @@ which makes the app **log** emails instead of sending them. To capture them in M
 | `address already in use` on `:4001` | `make kill` frees the port |
 | A passkey ceremony fails with `passkey.attestation_invalid` | The browser origin is missing from `WEBAUTHN_RP_ORIGINS`. CORS being correct is not enough |
 | You want a clean slate | `make db-reset` (drops the volume), then `make dev`, then `make seed` |
+| `database schema … isn't recorded as built from the migration files this build carries` at startup | The database was migrated by an earlier build, from an earlier copy of the migrations, or by the `migrate` CLI. `make db-reset`, then `make dev`. For a migration of your own that isn't merged yet: `make migrate-down`, then `make dev` |
 
 ## 🛠️ Development
 
@@ -228,7 +229,7 @@ Every target in the [Makefile](./Makefile) — there are no others.
 | `make openapi` / `openapi-check` | Build the five API documents from `api/openapi/src/`, or check they are up to date; Bun required |
 | `make db-up` / `db-down` | Start or stop PostgreSQL, NATS and Mailpit |
 | `make db-reset` | Recreate the local database volume |
-| `make migrate-up` / `migrate-down` | Apply or roll back one migration; needs the `migrate` CLI |
+| `make migrate-down` | Roll one migration back, to try its down file; needs the `migrate` CLI. The server applies migrations at start |
 | `make seed` / `seed-reset` | Load, or destructively reload, development demo data |
 | `make kill` | Free a stuck `:4001` |
 

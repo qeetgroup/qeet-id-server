@@ -119,9 +119,10 @@ func Run() {
 		slog.Info("tracing disabled (no-op): set OTEL_EXPORTER_OTLP_ENDPOINT to enable")
 	}
 
-	// Run migrations before opening the runtime pool. A database a later
-	// release migrated past this build is refused, unchanged, with the
-	// recovery step (migrations.SchemaError).
+	// Run migrations before opening the runtime pool. A database this build
+	// can't run on (a later release's, or one built from other migration
+	// files) is refused, unchanged, with the recovery step
+	// (migrations.SchemaError).
 	slog.Info("running database migrations")
 	if err := migrations.Run(cfg.DBURL); err != nil {
 		slog.Error("migrations failed", "err", err)

@@ -25,7 +25,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | API server | `cmd/api/main.go` → `bootstrap.Run()` |
 | Background workers | `cmd/worker/main.go` |
 | Scheduled maintenance | `internal/bootstrap/maintenance.go` (jobs) · `internal/platform/worker/scheduled.go` (runner) |
-| Migration runner | `cmd/migrate/main.go` |
+| Roll back or repair a migration with the golang-migrate CLI (does not apply them) | `cmd/migrate/main.go` |
 | Demo data (a workstation and the kit's DEV only) | `cmd/seed/` — `main.go` runs the steps in `internal/` (census, accounts, connections, integrations, security, activity) |
 
 ## Composition root — where everything is wired

@@ -17,8 +17,7 @@ make install          # go mod download
 cp .env.example .env  # then set DB_URL's password to `password` for docker-compose.yml
 make db-up            # postgres :5001 · nats :4222 · mailpit :8025
 make dev-secrets      # local JWT + SAML keys into .secrets/
-make migrate-up       # apply all pending migrations, or let `make dev` apply them on startup
-make seed             # demo organizations and users
+make seed             # demo organizations and users (applies the migrations first, as `make dev` does)
 make dev              # API on :4001
 ```
 
@@ -81,7 +80,8 @@ user's own account); a route without one fails `TestEveryRouteNamesAnApplication
 5  regenerate                      sqlc → dbgen/
 6  service + handler
 7  tests                           including organization-scoping coverage
-8  verify down migration           make migrate-down, then make migrate-up
+8  verify down migration           make migrate-down, then make dev (it applies the migration again)
+9  changed it after it ran?        the same: make migrate-down, then make dev (only while it is unmerged)
 ```
 
 **Never edit an applied migration.** Fix forward with a new pair.
@@ -91,8 +91,9 @@ release after** the code that stopped using it, or a rollback breaks.
 
 **A build refuses a database newer than itself.** Start (`migrations.Run`), the scheduler, the worker
 and `qeet-id-server schema-check` (run by the host before it switches versions) refuse a database a
-later release has migrated past the build's newest migration, and a half-applied one, with the
-recovery step (`migrations.SchemaError`). So rolling back to a release from before a migration means a
+later release has migrated past the build's newest migration, a half-applied one, and one whose applied
+migrations aren't recorded as the files the build carries, with the recovery step
+(`migrations.SchemaError`). So rolling back to a release from before a migration means a
 restore or a roll forward, never an automatic down-migration.
 
 **New organization-scoped table?** It needs an `organization_id` column, every query needs the predicate, and its

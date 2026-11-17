@@ -253,7 +253,7 @@ violated the pattern and will usually break R1 or R2.
 | `cmd/api` | HTTP API server | Body is `bootstrap.Run()`. Workers run embedded by default |
 | `cmd/worker` | Background workers standalone | Run to scale workers independently of API replicas |
 | `cmd/scheduler` | Scheduled maintenance, standalone (the API also runs it embedded) | Each job claimed in `platform.scheduled_job_runs` — once per interval across instances |
-| `cmd/migrate` | golang-migrate wrapper | Structured exit codes for init containers |
+| `cmd/migrate` | golang-migrate wrapper | Reads a version, rolls a migration back or repairs a half-applied one; it does not apply migrations for the server |
 | `cmd/seed` | Demo data | **A workstation and the kit's DEV only** (`SERVICE_ENV=dev`, or `local` with profile `dev`). Drives real services, so hashes and audit chains are real |
 
 ---
@@ -310,6 +310,13 @@ application role, `0002` functions, `0003`–`0009` the schemas, `0010` foreign 
 NNNN_description.up.sql
 NNNN_description.down.sql
 ```
+
+The runner records the checksum of each file it applies in `public.schema_migration_checksums`. At
+start it refuses a database that is dirty, newer than the build, or whose applied migrations aren't
+the files the build carries (`migrations.SchemaError` says which and what to do); the scheduler, the
+worker and `qeet-id-server schema-check` make the same check without migrating. So only the server and
+the seed apply migrations: a database built before a baseline file was edited, migrated with the
+`migrate` tool, or migrated by a build from before the records is recreated (`make db-reset`).
 
 **Never edit an applied migration.** Add a new pair. Expand → migrate → contract across releases; a
 migration that drops or renames ships at least one release after the code that stopped using it.
@@ -610,7 +617,6 @@ Migrations apply on startup, so a deploy is also a migration.
 make install          # go mod download
 make db-up            # postgres :5001, nats :4222, mailpit :8025
 make dev-secrets      # local JWT + SAML keys into .secrets/
-make migrate-up       # one migration
 make seed             # demo data
 make dev              # API on :4001
 ```

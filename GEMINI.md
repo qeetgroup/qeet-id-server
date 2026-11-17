@@ -45,7 +45,7 @@ database, chi router, port 4001.
 ## Commands
 
 `make install · dev-secrets · dev · build · test · test-db · lint · sqlc · sqlc-check · db-up ·
-db-down · db-reset · migrate-up · migrate-down · seed · seed-reset · kill`
+db-down · db-reset · migrate-down · seed · seed-reset · kill`
 
 That list is complete. **Do not invent targets.** `make lint` runs the same lint as CI.
 

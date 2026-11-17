@@ -43,6 +43,14 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
 
 ### Changed
 
+- The server records the checksum of each migration file it applies (`public.schema_migration_checksums`)
+  and refuses to start on a database whose applied migrations aren't recorded as the files it carries: one
+  built before a baseline file was edited, one migrated with the `migrate` tool, and, once, every database
+  migrated by a build from before the records. The refusal names the file and the way out
+  (`make db-reset`); the scheduler and the worker refuse too, and `qeet-id-server schema-check` answers not
+  compatible. Before, such a database had the same migration number, so the server started on it and
+  failed query by query. `make migrate-up` is gone, and `cmd/migrate` no longer applies migrations by
+  default: the server and the seed apply them.
 - The database schema is one baseline of 12 migrations (`0001`–`0012`: one file per schema, every table in its
   final shape) in place of 243 incremental ones. A database the earlier migrations built is refused at start
   as newer than this build and has to be recreated (`make db-reset`); no release has shipped, so nothing is
@@ -67,6 +75,10 @@ The first release, 1.0.0, is in preparation. No version has been published yet.
 
 ### Fixed
 
+- A migration that gave up waiting for a busy table left the database marked half-applied, so nothing
+  started on it until someone put the version back by hand. It changed nothing, so the database now stays
+  at the migration before it and the next start runs it again. A concurrent index build that gives up is
+  still left for the manual recovery.
 - A request whose client hung up or gave up waiting is answered 499 and noted at info level, not logged as an
   unhandled error and counted as a 500.
 - Registering a Token Vault provider without a name, client ID or client secret is refused with the fields named

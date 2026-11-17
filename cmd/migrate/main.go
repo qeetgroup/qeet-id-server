@@ -1,6 +1,7 @@
 // Command migrate wraps the golang-migrate CLI (which must be on PATH), reading
-// DB_URL from the environment and forwarding structured exit codes for use in
-// Kubernetes init containers and Docker Compose one-shots.
+// DB_URL from the environment and forwarding its exit code, to read a
+// database's version (the default), roll a migration back or repair a
+// half-applied one. The server applies migrations and refuses one applied here.
 package main
 
 import (
@@ -28,7 +29,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	subcmd := "up"
+	subcmd := "version"
 	var extraArgs []string
 	if len(os.Args) > 1 {
 		subcmd = os.Args[1]

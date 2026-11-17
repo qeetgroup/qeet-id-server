@@ -1,4 +1,4 @@
-.PHONY: install dev dev-secrets build test test-db lint sqlc sqlc-check openapi openapi-check vuln sast ci migrate-up migrate-down db-up db-down db-reset seed seed-reset kill
+.PHONY: install dev dev-secrets build test test-db lint sqlc sqlc-check openapi openapi-check vuln sast ci migrate-down db-up db-down db-reset seed seed-reset kill
 
 # Tool versions; keep in step with .github/workflows/ci.yml.
 GOLANGCI_VERSION    = v2.15.0
@@ -155,9 +155,8 @@ db-reset:
 	docker compose down -v
 	docker compose up -d
 
-migrate-up:
-	migrate -path $(MIGRATIONS_DIR) -database "$(DB_URL)" up
-
+# Rolls one migration back, to try its down file. The server applies migrations
+# at start and records the files; one applied by the migrate tool is refused.
 migrate-down:
 	migrate -path $(MIGRATIONS_DIR) -database "$(DB_URL)" down 1
 

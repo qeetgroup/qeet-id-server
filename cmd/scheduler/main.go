@@ -44,7 +44,8 @@ func main() {
 	defer stop()
 
 	// The API migrates; this only refuses a database a later release has
-	// migrated past this build, or a half-applied migration.
+	// migrated past this build, a half-applied migration, or a database built
+	// from other migration files.
 	if _, err := migrations.CheckCompatible(cfg.DBURL); err != nil {
 		slog.Error("refusing to start: " + err.Error())
 		os.Exit(1)
