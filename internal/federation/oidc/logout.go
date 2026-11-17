@@ -274,12 +274,25 @@ type logoutHint struct {
 	ClientID, Subject, SessionID string
 }
 
-// checkLogoutHint verifies an id_token_hint (one of our ID tokens, expired or
-// not) and that it names this session and person, and the application asking.
-func (s *Service) checkLogoutHint(raw, clientID string, sessionID, userID uuid.UUID) (*logoutHint, error) {
+// notIDTokenClaims mark the other tokens this server signs: its own tickets
+// (typ), credentials (vc), logout tokens (events), access tokens (user_id) and
+// service and agent tokens (actor_type). An ID token carries none of them.
+var notIDTokenClaims = []string{"typ", "vc", "events", "user_id", "actor_type"}
+
+// checkLogoutHint verifies an id_token_hint: one of our ID tokens, expired or
+// not, for a person and one registered application, the one asking if it
+// says. With a session it must be that session's person, and its session when
+// it names one. Any other token this server signs is refused.
+func (s *Service) checkLogoutHint(ctx context.Context, raw, clientID string, sessionID, userID uuid.UUID) (*logoutHint, error) {
+	notIDToken := oauthErr("invalid_request", "id_token_hint is not an ID token this server issued")
 	claims, err := s.issuer.VerifySignedAnyTime(raw)
 	if err != nil {
-		return nil, oauthErr("invalid_request", "id_token_hint is not an ID token this server issued")
+		return nil, notIDToken
+	}
+	for _, k := range notIDTokenClaims {
+		if _, ok := claims[k]; ok {
+			return nil, notIDToken
+		}
 	}
 	h := &logoutHint{}
 	h.Subject, _ = claims["sub"].(string)
@@ -288,15 +301,21 @@ func (s *Service) checkLogoutHint(raw, clientID string, sessionID, userID uuid.U
 	case string:
 		h.ClientID = aud
 	case []any:
-		if len(aud) > 0 {
+		if len(aud) == 1 {
 			h.ClientID, _ = aud[0].(string)
 		}
+	}
+	if h.Subject == "" || h.ClientID == "" {
+		return nil, notIDToken
 	}
 	if clientID != "" && h.ClientID != clientID {
 		return nil, oauthErr("invalid_request", "id_token_hint was issued to another application")
 	}
+	if !s.RegisteredClient(ctx, h.ClientID) {
+		return nil, notIDToken
+	}
 	if sessionID != uuid.Nil {
-		if (h.SessionID != "" && h.SessionID != sessionID.String()) || (h.Subject != "" && h.Subject != userID.String()) {
+		if h.Subject != userID.String() || (h.SessionID != "" && h.SessionID != sessionID.String()) {
 			return nil, oauthErr("invalid_request", "id_token_hint names another sign-in")
 		}
 	}
@@ -321,7 +340,7 @@ func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case hint != "":
 		// The hint names whose sign-in this is: it must be this one.
-		lh, err := h.Service.checkLogoutHint(hint, clientID, sessionID, userID)
+		lh, err := h.Service.checkLogoutHint(r.Context(), hint, clientID, sessionID, userID)
 		if err != nil {
 			var oe *oauthError
 			if errors.As(err, &oe) {

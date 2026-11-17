@@ -11,6 +11,10 @@ post:
     saml.certificate_invalid, one already trusted 409 saml.certificate_exists,
     and a ninth 422 saml.certificate_limit. Audited; another organisation's
     connection answers 404.
+    Changing what the connection trusts (another certificate) is acting on every
+    account linked to it, as the changed connection could sign in as any of
+    them: while an administrator is linked, it needs a caller who outranks each
+    one (403 rbac.trust_change_outranks_caller otherwise).
   tags:
     - SAML
   parameters:

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -154,6 +155,13 @@ func (o *Orchestrator) Run(ctx context.Context, tc turnContext, sse *sseWriter) 
 		return
 	}
 	if len(toolBlocks) > 0 {
+		var note string
+		if toolBlocks, note = o.refuseToolsNotOffered(ctx, tc, toolBlocks, toolDefs); note != "" {
+			sse.send(EventTypeToken, tokenData{Text: note})
+			text += note
+		}
+	}
+	if len(toolBlocks) > 0 {
 		o.handleToolUse(ctx, tc, sse, text, toolBlocks)
 	} else {
 		o.handleEndTurn(ctx, tc, sse, text)
@@ -272,6 +280,23 @@ func collect(events <-chan ai.Event, errC <-chan error, cancel context.CancelFun
 	return textBuilder.String(), tools, true
 }
 
+// refuseToolsNotOffered drops the calls to tools the model was not offered, so
+// a change tool never reaches the browser however the model was steered. Each
+// is audited as qeetai.tool.refused, and note, added to the reply, tells the
+// person and, on the next turn, the model that the tool is unavailable.
+func (o *Orchestrator) refuseToolsNotOffered(ctx context.Context, tc turnContext, tools []*toolUseAccum, offered []ai.ToolDef) (kept []*toolUseAccum, note string) {
+	for _, tb := range tools {
+		if slices.ContainsFunc(offered, func(d ai.ToolDef) bool { return d.Name == tb.Name }) {
+			kept = append(kept, tb)
+			continue
+		}
+		slog.Warn("qeetai: model called a tool it was not offered", "tool", tb.Name)
+		o.recordToolAudit(ctx, tc, "qeetai.tool.refused", tb.Name, "qeetai_conversation", tc.conversationID)
+		note += fmt.Sprintf("\n\n(%s isn't one of the tools available to Qeet AI, so it was not run.)", tb.Name)
+	}
+	return kept, note
+}
+
 // handleEndTurn persists the assistant text reply and emits done{end_turn}.
 func (o *Orchestrator) handleEndTurn(ctx context.Context, tc turnContext, sse *sseWriter, text string) {
 	contentBlocks := []map[string]any{{"type": "text", "text": text}}
@@ -340,15 +365,16 @@ func (o *Orchestrator) handleToolUse(ctx context.Context, tc turnContext, sse *s
 			Input: inputRaw,
 		})
 		// Audit the tool request (input REDACTED — may contain PII or identifiers).
-		o.recordToolAudit(ctx, tc, tb.Name, m.ID)
+		o.recordToolAudit(ctx, tc, "qeetai.tool.requested", tb.Name, "qeetai_message", m.ID)
 	}
 
 	sse.send(EventTypeDone, doneData{Reason: "tool_use", MessageID: m.ID.String()})
 }
 
-// recordToolAudit writes a qeetai.tool.requested audit row. Tool input is
-// intentionally REDACTED; only the tool name and message id are audited.
-func (o *Orchestrator) recordToolAudit(ctx context.Context, tc turnContext, toolName string, msgID uuid.UUID) {
+// recordToolAudit writes an audit row of action about one tool call on the
+// resource named. Tool input is intentionally REDACTED; only the tool name and
+// the resource are audited.
+func (o *Orchestrator) recordToolAudit(ctx context.Context, tc turnContext, action, toolName, resourceType string, resourceID uuid.UUID) {
 	tx, err := o.service.pool.Begin(ctx)
 	if err != nil {
 		slog.Warn("qeetai: audit tx begin", "err", err)
@@ -357,14 +383,13 @@ func (o *Orchestrator) recordToolAudit(ctx context.Context, tc turnContext, tool
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	tid := tc.tenantID
-	mid := msgID
 	err = audit.Record(ctx, tx, audit.Event{
 		TenantID:     &tid,
 		ActorUserID:  tc.actor.UserID,
 		ActorType:    tc.actor.Type,
-		Action:       "qeetai.tool.requested",
-		ResourceType: "qeetai_message",
-		ResourceID:   &mid,
+		Action:       action,
+		ResourceType: resourceType,
+		ResourceID:   &resourceID,
 		IP:           tc.actor.IP,
 		UserAgent:    tc.actor.UserAgent,
 		RequestID:    tc.actor.RequestID,
@@ -375,11 +400,11 @@ func (o *Orchestrator) recordToolAudit(ctx context.Context, tc turnContext, tool
 		},
 	})
 	if err != nil {
-		slog.Warn("qeetai: audit tool.requested", "err", err)
+		slog.Warn("qeetai: audit tool call", "action", action, "err", err)
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {
-		slog.Warn("qeetai: audit tool.requested commit", "err", err)
+		slog.Warn("qeetai: audit tool call commit", "action", action, "err", err)
 	}
 }
 

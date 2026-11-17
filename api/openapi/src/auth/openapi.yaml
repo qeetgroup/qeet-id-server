@@ -48,6 +48,8 @@ info:
 
     Every response carries an `X-Request-Id` header naming the request; quote it
     when reporting a problem. An error body repeats it as `error.request_id`.
+    A path with an encoded slash or backslash (`%2F`, `%5C`) is refused with
+    400 `bad_request`.
 
 
     ## Related APIs

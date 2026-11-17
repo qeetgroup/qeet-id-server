@@ -9,7 +9,10 @@ post:
 
     On `stop_reason=tool_use` the stream ends with `done{reason:"tool_use"}`;
     the browser executes the tool under its own bearer token and posts
-    `tool_results` to this same endpoint to continue generation.
+    `tool_results` to this same endpoint to continue generation. Only the
+    tools the model is offered (read-only in this version) are sent as
+    `tool_call` frames: a call to any other tool is dropped, recorded as
+    `qeetai.tool.refused` and noted in the reply's text.
 
 
     Requires `QEETAI_PROVIDER` configured server-side; returns `409

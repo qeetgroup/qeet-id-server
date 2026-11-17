@@ -3,8 +3,8 @@
 -- transaction; the sqlc queries are called via q.WithTx(tx).
 
 -- name: CreateServicePrincipal :one
-INSERT INTO auth.service_principals (tenant_id, name, description, secret_hash, scopes)
-VALUES (@tenant_id, @name, @description, @secret_hash, @scopes)
+INSERT INTO auth.service_principals (tenant_id, name, description, secret_hash, scopes, created_by)
+VALUES (@tenant_id, @name, @description, @secret_hash, @scopes, NULLIF(@created_by::uuid, '00000000-0000-0000-0000-000000000000'))
 RETURNING id, tenant_id, name, scopes, disabled_at, created_at, description;
 
 -- name: ListServicePrincipals :many
@@ -25,12 +25,20 @@ RETURNING tenant_id, name;
 -- for argon2/bcrypt verification — never returned to the API caller.
 -- PrincipalLive reports whether a service principal exists and isn't
 -- disabled. No row: it doesn't exist.
+-- PrincipalLive is whether a principal is enabled, in an active
+-- organisation: no row for one of a suspended or deleted organisation.
 -- name: PrincipalLive :one
-SELECT (disabled_at IS NULL)::bool AS live FROM auth.service_principals WHERE id = $1;
+SELECT (p.disabled_at IS NULL)::bool AS live FROM auth.service_principals p
+JOIN tenant.tenants t ON t.id = p.tenant_id AND t.status = 'active' AND t.deleted_at IS NULL
+WHERE p.id = $1;
 
+-- GetServicePrincipalForAuth finds no principal of a suspended or deleted
+-- organisation.
 -- name: GetServicePrincipalForAuth :one
-SELECT id, tenant_id, secret_hash, scopes, disabled_at, previous_secret_hash, previous_secret_expires_at
-FROM auth.service_principals WHERE id = $1;
+SELECT p.id, p.tenant_id, p.secret_hash, p.scopes, p.disabled_at, p.previous_secret_hash, p.previous_secret_expires_at
+FROM auth.service_principals p
+JOIN tenant.tenants t ON t.id = p.tenant_id AND t.status = 'active' AND t.deleted_at IS NULL
+WHERE p.id = $1;
 
 -- TouchServicePrincipal notes a token issued to the principal, at most once
 -- a minute.
@@ -56,3 +64,7 @@ RETURNING name;
 -- name: UpgradeServicePrincipalSecretHash :exec
 UPDATE auth.service_principals SET secret_hash = @new_hash
 WHERE id = @id AND tenant_id = @tenant_id AND secret_hash = @old_hash;
+
+-- ServicePrincipalScopes returns the scopes of one of the tenant's service principals.
+-- name: ServicePrincipalScopes :one
+SELECT scopes FROM auth.service_principals WHERE id = @id AND tenant_id = @tenant_id;

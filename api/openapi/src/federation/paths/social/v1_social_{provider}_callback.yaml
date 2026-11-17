@@ -16,13 +16,19 @@ get:
     organisation does not allow it, nothing is created, the attempt is audited
     (social.signup_refused, naming the provider and the address), and the
     browser is sent to the hosted login with error=registration_closed and the
-    original return_to. An address the organisation's address rules refuse is
+    original return_to. Nor is an account created on a domain another
+    organisation has verified, or on one whose organisation requires single
+    sign-on (error=social). The console's own sign-up (intent=signup) creates
+    no account on a domain an organisation has verified either (error=social).
+    An address the organisation's address rules refuse is
     sent there with error=address_not_allowed and the return_to, and no
     hosted-login session is opened. An existing account whose address has never
     been verified, unless the organisation's directory provisioned it (SCIM), is
     not adopted by the provider's word (error=account_unverified; the console
     flow gets social_error=account_unverified): it must verify the address, or
-    reset its password from the emailed link, first. A suspended or deleted
+    reset its password from the emailed link, first. An OpenID Connect
+    provider's word counts as verified only for an address on a domain the
+    organisation has verified (see POST /v1/social/providers). A suspended or deleted
     account gets error=account_inactive (the console flow gets
     social_error=account_inactive). When the sign-in must meet a second factor
     first (the account holds one, the organisation requires one, or the sign-in
@@ -34,7 +40,14 @@ get:
     enrollment_required / enrollment_due_at for one to set up), to complete at
     POST /v1/auth/session/mfa. Other failures send it there with error=social.
     An organisation's own provider signs in only an account whose home is that
-    organisation, whether linked before or adopted by email.
+    organisation, whether linked before or adopted by email. Neither it nor the
+    console's own sign-in signs in, adopts or links an account on a domain
+    whose organisation requires single sign-on, except its break-glass members
+    (error=social; the console flow gets the same): only that organisation's
+    identity provider signs its people in. Nor does any
+    provider adopt by email an account that owns or administers the
+    organisation (social.account_administers; the browser gets error=social):
+    it keeps its own credentials and connects the provider from its account.
   summary: Social login callback
   tags:
     - Social

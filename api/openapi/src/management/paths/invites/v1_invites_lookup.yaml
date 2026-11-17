@@ -8,7 +8,7 @@ post:
     passkey where it allows passkeys. account_exists means an account already
     holds the address, so the invitee signs in and accepts as themselves.
     Refused like acceptance: invite.link_invalid, invite.invalid (no longer
-    pending), invite.expired. Read-only. The token travels in the body so it
+    pending, or its sender may no longer give it), invite.expired. Read-only. The token travels in the body so it
     stays out of logs.
   tags:
     - Invites

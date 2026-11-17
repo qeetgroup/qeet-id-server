@@ -13,6 +13,9 @@ get:
     suitable for graph visualization (e.g. a security-posture or privilege-path
     view) or as input to further investigation queries.
 
+    A graph that would read more than 5,000 object and relation pairs is
+    refused with 422 rebac.check_too_complex: narrow the root or the depth.
+
     This is the ReBAC analogue of a privilege-path graph: it is explicit about
     the boundaries of what Qeet ID's own relation-tuple store covers (only
     tuples modeled here, not external RBAC or cloud IAM), and never

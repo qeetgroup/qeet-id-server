@@ -1,6 +1,12 @@
 package rebac
 
-import "testing"
+import (
+	"errors"
+	"strconv"
+	"testing"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+)
 
 // memStore is an in-memory tuple set keyed by "objType:objID#relation".
 type memStore map[string][]tuple
@@ -179,5 +185,32 @@ func TestExpand_CountsTheShortestPath(t *testing.T) {
 	}
 	if _, ok := nodes["user:x"]; !ok {
 		t.Error("user:x is two userset hops away through group:b and must appear with limit 2")
+	}
+}
+
+// TestResolveStopsAtItsBudget checks that a check expanding more distinct
+// object#relation pairs than its budget stops with ErrReBACCheckTooComplex,
+// having read no more than the budget, while one within it is answered.
+func TestResolveStopsAtItsBudget(t *testing.T) {
+	m := memStore{}
+	for i := range 2 * maxExpansions {
+		group := "g" + strconv.Itoa(i)
+		m["document:wide#viewer"] = append(m["document:wide#viewer"], tuple{subjectType: "group", subjectID: group, subjectRelation: "member"})
+		m["group:"+group+"#member"] = []tuple{{subjectType: "user", subjectID: "someone-" + group}}
+	}
+	reads := 0
+	counted := func(objType, objID, relation string) ([]tuple, error) {
+		reads++
+		return m.fetch(objType, objID, relation)
+	}
+	ok, _, err := resolve(counted, "document", "wide", "viewer", "nobody", map[string]int{}, 0)
+	if !errors.Is(err, errs.ErrReBACCheckTooComplex) || ok {
+		t.Errorf("a check expanding %d pairs: %v, %v; want %v", 2*maxExpansions+1, ok, err, errs.ErrReBACCheckTooComplex)
+	}
+	if reads > maxExpansions {
+		t.Errorf("%d reads, want at most %d", reads, maxExpansions)
+	}
+	if !check(m, "document", "wide", "viewer", "someone-g7") {
+		t.Error("a member found within the budget is refused")
 	}
 }

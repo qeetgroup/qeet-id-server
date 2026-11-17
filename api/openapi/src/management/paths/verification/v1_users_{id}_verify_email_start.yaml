@@ -4,7 +4,10 @@ post:
   description: >-
     Sends a 6-digit code to the caller's address on file. It never verifies an
     address given in the request; moving to another address is the email-change
-    flow (/v1/me/email/change/start).
+    flow (/v1/me/email/change/start). A new code replaces the caller's earlier
+    ones, and one the mail provider refuses is withdrawn. At most ten codes an
+    hour go to one person, and five to one address over every account (429
+    verification.code_send_limited with retry_after, in seconds).
   tags:
     - Verification
   parameters:

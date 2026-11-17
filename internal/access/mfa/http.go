@@ -33,6 +33,9 @@ type Handler struct {
 	Service         *Service
 	WebAuthn        WebAuthnVerifier
 	PairingThrottle func(http.Handler) http.Handler
+	// ActOnCheck refuses an administrator changing the sign-in methods of a
+	// member who outranks them (rbac CheckActOn); nil refuses every change.
+	ActOnCheck func(ctx context.Context, caller *httpx.Principal, tenantID, targetID uuid.UUID) error
 }
 
 // PlanGate reports whether a plan-gated boolean feature is included in the

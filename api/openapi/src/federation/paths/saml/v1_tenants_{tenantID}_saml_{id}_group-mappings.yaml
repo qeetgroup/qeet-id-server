@@ -10,9 +10,9 @@ get:
     the groups the connection's sign-ins put them in that they no longer reach;
     the groups are read from the connection's groups_attribute. A membership an
     administrator or SCIM made is never changed, and a group whose roles carry
-    the owner role or an administrative permission (user.write, user.delete,
-    user.suspend, user.credentials, session.revoke, member.invite, role.write,
-    group.write, connection.write, policy.write, tenant.write or tenant.delete)
+    the owner role or an administrative permission (any but the reads
+    tenant.read, user.read, role.read, group.read, connection.read, apikey.read,
+    webhook.read, billing.read, policy.read, audit.read and analytics.read)
     is never joined: sign-in takes out anyone it put there. Requires
     connection.read; an unknown connection, or another organisation's, answers
     404.

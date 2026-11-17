@@ -87,20 +87,25 @@ func checkCertificateUse(certPEM string, requireSigned, encrypt bool) error {
 
 // verifiedAuthnRequest checks that the sign-in request raw, as r carried it,
 // is signed with certPEM, and returns it as signed. A Redirect-binding request
-// is signed over its query parameters; one posted, or posted and carried back
-// from the hosted login, by an enveloped XML signature, and only the element
-// it covers is read.
+// is signed over its query parameters, and the SAMLRequest read is the one the
+// signature covers; one posted, or posted and carried back from the hosted
+// login, by an enveloped XML signature, and only the element it covers is read.
 func verifiedAuthnRequest(r *http.Request, raw []byte, certPEM string) (*authnRequest, error) {
 	cert, err := parseCertificate(certPEM)
 	if err != nil {
 		return nil, errs.ErrSAMLRequestSignatureInvalid
 	}
 	if r.Method == http.MethodGet && r.URL.Query().Get("Signature") != "" {
-		if err := verifyRedirectSignature(r.URL.RawQuery, cert); err != nil {
+		samlRequest, err := verifyRedirectSignature(r.URL.RawQuery, cert)
+		if err != nil {
 			return nil, errs.ErrSAMLRequestSignatureInvalid
 		}
+		signed, err := authnRequestXML(samlRequest, http.MethodGet)
+		if err != nil {
+			return nil, errs.ErrSAMLAuthnRequestInvalid
+		}
 		var ar authnRequest
-		if err := xml.Unmarshal(raw, &ar); err != nil { // #nosec G709 -- decodes into a typed struct
+		if err := xml.Unmarshal(signed, &ar); err != nil { // #nosec G709 -- decodes into a typed struct
 			return nil, errs.ErrSAMLAuthnRequestInvalid
 		}
 		return &ar, nil
@@ -130,35 +135,49 @@ func verifiedAuthnRequest(r *http.Request, raw []byte, certPEM string) (*authnRe
 
 // verifyRedirectSignature checks a Redirect-binding query's Signature: over
 // SAMLRequest, RelayState when present, and SigAlg, as their URL-encoded values
-// arrived (SAML bindings §3.4.4.1). SHA-1 is refused.
-func verifyRedirectSignature(rawQuery string, cert *x509.Certificate) error {
+// arrived (SAML bindings §3.4.4.1), and returns the SAMLRequest it covers. Any
+// of the four given twice, or under a percent-encoded name, is refused, so the
+// values a form parser reads are the signed ones. SHA-1 is refused.
+func verifyRedirectSignature(rawQuery string, cert *x509.Certificate) (string, error) {
 	values := map[string]string{}
 	for _, part := range strings.Split(rawQuery, "&") {
 		k, v, _ := strings.Cut(part, "=")
-		if _, seen := values[k]; !seen {
-			values[k] = v
+		name, err := url.QueryUnescape(k)
+		if err != nil {
+			return "", errs.ErrSAMLRequestSignatureInvalid
+		}
+		switch name {
+		case "SAMLRequest", "RelayState", "SigAlg", "Signature":
+			if _, seen := values[name]; seen || name != k {
+				return "", errs.ErrSAMLRequestSignatureInvalid
+			}
+			values[name] = v
 		}
 	}
 	samlRequest, ok := values["SAMLRequest"]
 	if !ok {
-		return errs.ErrSAMLRequestSignatureInvalid
+		return "", errs.ErrSAMLRequestSignatureInvalid
 	}
 	signed := "SAMLRequest=" + samlRequest
 	if relay, ok := values["RelayState"]; ok {
 		signed += "&RelayState=" + relay
 	}
 	signed += "&SigAlg=" + values["SigAlg"]
+	request, err := url.QueryUnescape(samlRequest)
+	if err != nil {
+		return "", err
+	}
 	alg, err := url.QueryUnescape(values["SigAlg"])
 	if err != nil {
-		return err
+		return "", err
 	}
 	sigText, err := url.QueryUnescape(values["Signature"])
 	if err != nil {
-		return err
+		return "", err
 	}
 	sig, err := base64.StdEncoding.DecodeString(sigText)
 	if err != nil {
-		return err
+		return "", err
 	}
 	var hash crypto.Hash
 	var sum []byte
@@ -170,21 +189,24 @@ func verifyRedirectSignature(rawQuery string, cert *x509.Certificate) error {
 		d := sha512.Sum512([]byte(signed))
 		hash, sum = crypto.SHA512, d[:]
 	default:
-		return errs.ErrSAMLRequestSignatureInvalid
+		return "", errs.ErrSAMLRequestSignatureInvalid
 	}
 	switch pub := cert.PublicKey.(type) {
 	case *rsa.PublicKey:
-		return rsa.VerifyPKCS1v15(pub, hash, sum, sig)
+		if err := rsa.VerifyPKCS1v15(pub, hash, sum, sig); err != nil {
+			return "", err
+		}
+		return request, nil
 	case *ecdsa.PublicKey:
 		// XML signatures carry ECDSA as r and s side by side (XML-DSig 1.1 §6.4.3).
 		half := len(sig) / 2
 		if len(sig) == 0 || len(sig)%2 != 0 ||
 			!ecdsa.Verify(pub, sum, new(big.Int).SetBytes(sig[:half]), new(big.Int).SetBytes(sig[half:])) {
-			return errs.ErrSAMLRequestSignatureInvalid
+			return "", errs.ErrSAMLRequestSignatureInvalid
 		}
-		return nil
+		return request, nil
 	}
-	return errs.ErrSAMLRequestSignatureInvalid
+	return "", errs.ErrSAMLRequestSignatureInvalid
 }
 
 // sealAssertion encrypts the signed assertion to cert's RSA key as an

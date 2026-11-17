@@ -46,7 +46,10 @@ properties:
   access_ends_at:
     type: string
     format: date-time
-    description: For an approved, time-limited request, when the role is taken back.
+    description: >-
+      For an approved, time-limited request, when the role is taken back;
+      cleared once the role is given to the requester for good (assigned
+      directly, by a group or the directory), so it isn't taken back then.
   ended_at:
     type: string
     format: date-time

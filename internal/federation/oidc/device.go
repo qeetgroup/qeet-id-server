@@ -420,7 +420,7 @@ func (s *Service) DeviceToken(ctx context.Context, clientID, clientSecret, rawDe
 		return nil, err
 	}
 	access, _, err := s.issuer.IssueClientAccess(tokens.ClientAccess{
-		UserID: *userID, TenantID: tenantID, SessionID: uuid.New(), Scopes: strings.Join(scopes, " "), ClientID: clientID,
+		UserID: *userID, TenantID: tenantID, Scopes: strings.Join(scopes, " "), ClientID: clientID,
 	})
 	if err != nil {
 		return nil, err

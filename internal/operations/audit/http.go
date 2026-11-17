@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -93,10 +94,10 @@ func (filter ListFilter) where(tenantID uuid.UUID) (string, []any) {
 		q += ` AND created_at <= ` + arg(*filter.To)
 	}
 	if filter.Search != "" {
-		search := arg(filter.Search)
+		search, like := arg(filter.Search), arg(postgres.EscapeLike(filter.Search))
 		q += ` AND (search_vector @@ audit.search_query(` + search + `) OR actor_user_id IN (
 			SELECT su.id FROM "user".users su
-			WHERE (su.email ILIKE audit.like_escape(` + search + `) || '%' OR su.display_name ILIKE '%' || audit.like_escape(` + search + `) || '%')
+			WHERE (su.email ILIKE ` + like + ` || '%' OR su.display_name ILIKE '%' || ` + like + ` || '%')
 			  AND (su.tenant_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $1))))`
 	}
 	return q, args
@@ -195,9 +196,9 @@ type publicVerifyResult struct {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	tid, err := httpx.PathTenantOr(r, errs.ErrAuditTenantInvalid, errs.ErrAuditTenantMismatch)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrAuditTenantInvalid)
+		httpx.WriteError(w, r, err)
 		return
 	}
 	query := r.URL.Query()
@@ -266,9 +267,9 @@ func splitList(raw string) []string {
 }
 
 func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
-	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	tid, err := httpx.PathTenantOr(r, errs.ErrAuditTenantInvalid, errs.ErrAuditTenantMismatch)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrAuditTenantInvalid)
+		httpx.WriteError(w, r, err)
 		return
 	}
 	res, err := h.Verifier.Verify(r.Context(), &tid)

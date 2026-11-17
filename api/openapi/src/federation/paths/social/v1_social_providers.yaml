@@ -50,9 +50,18 @@ post:
     sign one is refused with 422. X signs in with PKCE. An address from GitHub,
     X (confirmed_email) or Discord (verified) counts as verified; one from
     Facebook doesn't, so it can make a new account but never sign in to an
-    existing one by its address. Audited as social_provider.created or
+    existing one by its address. An OpenID Connect provider's endpoints are the
+    organisation's choice, so its word verifies an address only on a domain the
+    organisation has verified: elsewhere it too can make a new account, its
+    address unverified, but never sign in to an existing one by its address.
+    Audited as social_provider.created or
     social_provider.updated (the fields saved and whether the secret was
     replaced, never its value).
+    Changing what the connection trusts (an OpenID Connect provider's
+    discovery_url, including setting one up again under a name it had before) is
+    acting on every account linked to it, as the changed connection could sign
+    in as any of them: while an administrator is linked, it needs a caller who
+    outranks each one (403 rbac.trust_change_outranks_caller otherwise).
   responses:
     '201':
       description: Created

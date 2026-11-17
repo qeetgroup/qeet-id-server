@@ -8,8 +8,9 @@ post:
     authenticate and satisfy MFA with the passkey alone. As with password
     signup, create a tenant through the Identity Management API before any
     tenant-scoped call, and the creator becomes the tenant owner. An address
-    already taken is refused with the neutral 422 unprocessable of POST
-    /v1/auth/signup, which does not name the reason, and nothing is created.
+    already taken, or on a domain an organisation has verified, is refused with
+    the neutral 422 unprocessable of POST /v1/auth/signup, which does not name
+    the reason, and nothing is created.
   summary: Passkey-first signup finish (tenant-less)
   tags:
     - Passkeys

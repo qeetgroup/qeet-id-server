@@ -3,6 +3,7 @@
 package audit
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/audit/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 )
 
@@ -31,7 +34,7 @@ func brokenAt(t *testing.T, run VerificationRun, tenant uuid.UUID) *uuid.UUID {
 // fails t if it couldn't run.
 func verifyAllOf(t *testing.T, fromStart bool) VerificationRun {
 	t.Helper()
-	run, err := NewVerifier(dbtest.Pool(t)).verifyAll(dbtest.Context(t), fromStart)
+	run, err := NewVerifier(dbtest.Pool(t), nil).verifyAll(dbtest.Context(t), fromStart)
 	if err != nil && !errors.Is(err, ErrChainBroken) {
 		t.Fatalf("verify all: %v", err)
 	}
@@ -129,6 +132,106 @@ func TestVerifyAllChecksTheCheckpointRowAgain(t *testing.T) {
 	}
 }
 
+// rewriteChain changes the action of tenant's event id and recomputes the hash
+// of it and every later event, and its checkpoint's, as someone who can write
+// the tables but doesn't hold the server's key could.
+func rewriteChain(t *testing.T, tenant, id uuid.UUID) {
+	t.Helper()
+	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
+	if _, err := pool.Exec(ctx, `UPDATE audit.events SET action = 'user.restored' WHERE id = $1 AND tenant_id = $2`, id, tenant); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := dbgen.New(pool).ListAuditEventsForVerify(ctx, dbgen.ListAuditEventsForVerifyParams{
+		TenantID: pgUUIDNullable(&tenant), PageSize: 1000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := chainSeed
+	for _, row := range rows {
+		row.PrevHash = &prev
+		hash, err := rowHash(row)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `UPDATE audit.events SET prev_hash = $3, row_hash = $4 WHERE id = $1 AND tenant_id = $2`,
+			row.ID, tenant, prev, hash); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `UPDATE platform.audit_chain_checkpoints SET row_hash = $3 WHERE event_id = $1 AND tenant_id = $2`,
+			row.ID, tenant, hash); err != nil {
+			t.Fatal(err)
+		}
+		prev = hash
+	}
+}
+
+// TestVerifyAllFindsAChainRewrittenWithItsCheckpoint checks that rewriting an
+// old event, every later hash and the chain's checkpoint is found, as only the
+// server's key signs a checkpoint, from the checkpoint and from the start, by
+// an on-demand verification too; that a forged purge checkpoint is found; and
+// that once the key rotates a run signs again, so the old key can be retired.
+func TestVerifyAllFindsAChainRewrittenWithItsCheckpoint(t *testing.T) {
+	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
+	keyed := func(current []byte, previous ...[]byte) *Verifier {
+		t.Helper()
+		c, err := envelope.New(current, previous...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return NewVerifier(pool, c)
+	}
+	oldKey, newKey := bytes.Repeat([]byte{7}, 32), bytes.Repeat([]byte{8}, 32)
+	walk := func(v *Verifier, fromStart bool, tenant uuid.UUID) *uuid.UUID {
+		t.Helper()
+		run, err := v.verifyAll(ctx, fromStart)
+		if err != nil && !errors.Is(err, ErrChainBroken) {
+			t.Fatalf("verify all: %v", err)
+		}
+		return brokenAt(t, run, tenant)
+	}
+
+	tenant := dbtest.Tenant(t)
+	first := record(t, tenant, "user.created")
+	record(t, tenant, "user.updated")
+	if at := walk(keyed(oldKey), false, tenant); at != nil {
+		t.Fatalf("a new chain broken at %s", at)
+	}
+	if at := walk(keyed(newKey, oldKey), false, tenant); at != nil {
+		t.Fatalf("with the key rotated: broken at %s", at)
+	}
+	retired := keyed(newKey)
+	if at := walk(retired, false, tenant); at != nil {
+		t.Fatalf("with the old key retired after a run: broken at %s", at)
+	}
+
+	rewriteChain(t, tenant, first)
+	for _, fromStart := range []bool{false, true} {
+		if at := walk(retired, fromStart, tenant); at == nil {
+			t.Errorf("from the start %v: a chain rewritten with its checkpoint was found intact", fromStart)
+		}
+	}
+	if res, err := retired.Verify(ctx, &tenant); err != nil || res.OK {
+		t.Errorf("verify on demand: %+v, %v; want broken", res, err)
+	}
+
+	// A purge checkpoint that skips the oldest events must be the server's.
+	purged := dbtest.Tenant(t)
+	skipped := record(t, purged, "user.created")
+	record(t, purged, "user.updated")
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO platform.audit_purge_checkpoints (tenant_id, event_id, event_created_at, row_hash)
+		SELECT tenant_id, id, created_at, row_hash FROM audit.events WHERE id = $1 AND tenant_id = $2`, skipped, purged); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM audit.events WHERE id = $1 AND tenant_id = $2`, skipped, purged); err != nil {
+		t.Fatal(err)
+	}
+	if at := walk(retired, true, purged); at == nil || *at != skipped {
+		t.Errorf("a chain starting at a forged purge checkpoint: broken at %v, want %s", at, skipped)
+	}
+}
+
 // TestVerifyAllWalksFromTheStartWeekly checks that VerifyAll walks every chain
 // from the start when no run has within FullVerifyInterval, and from the
 // checkpoints otherwise, and stores which it did.
@@ -141,7 +244,7 @@ func TestVerifyAllWalksFromTheStartWeekly(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"all", "incremental"} {
-		run, err := NewVerifier(pool).VerifyAll(ctx)
+		run, err := NewVerifier(pool, nil).VerifyAll(ctx)
 		if err != nil && !errors.Is(err, ErrChainBroken) {
 			t.Fatal(err)
 		}
@@ -163,7 +266,7 @@ func TestLastVerificationIsRead(t *testing.T) {
 	pool := dbtest.Pool(t)
 	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
 	admin := dbtest.User(t, tenant, tenant)
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Verifier: NewVerifier(pool)}).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Verifier: NewVerifier(pool, nil)}).Mount)
 	path := "/tenants/" + tenant.String() + "/audit/verification"
 	var got ChainVerification
 	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, path, nil), &got)

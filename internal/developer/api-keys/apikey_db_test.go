@@ -6,8 +6,11 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
@@ -65,6 +68,24 @@ func TestAPIKeysStayInTheirTenant(t *testing.T) {
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM auth.api_keys WHERE user_id = $1 AND tenant_id = $2`, adminA.ID, tenantB); n != 0 {
 		t.Errorf("tenant B holds %d keys acting for tenant A's user", n)
+	}
+}
+
+// TestAPIKeyNameIsAtMost200Characters checks that a key named with more than
+// 200 characters is refused, and one of exactly 200 is created.
+func TestAPIKeyNameIsAtMost200Characters(t *testing.T) {
+	tenant := dbtest.Tenant(t)
+	h := dbtest.Serve(dbtest.Principal(dbtest.User(t, tenant, tenant).ID, tenant),
+		(&Handler{Service: NewService(dbtest.Pool(t)), GrantCheck: rbac.NewRepository(dbtest.Pool(t)).CheckGrantScopes}).Mount)
+	if rec := dbtest.Do(t, h, http.MethodPost, "/api-keys", map[string]any{"name": strings.Repeat("é", 201)}); rec.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(rec.Body.String(), errs.CodeValidation) || !strings.Contains(rec.Body.String(), `"field":"name"`) {
+		t.Errorf("a 201-character name: %d %s, want 422 %s on name", rec.Code, rec.Body.String(), errs.CodeValidation)
+	}
+	if rec := dbtest.Do(t, h, http.MethodPost, "/api-keys", map[string]any{"name": strings.Repeat("é", 200)}); rec.Code != http.StatusCreated {
+		t.Errorf("a 200-character name: %d %s, want 201", rec.Code, rec.Body.String())
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.api_keys WHERE tenant_id = $1`, tenant); n != 1 {
+		t.Errorf("%d keys created, want the one with a 200-character name", n)
 	}
 }
 
@@ -162,5 +183,49 @@ func TestRotateReplacesAKeyWithAnOverlap(t *testing.T) {
 	}
 	if _, _, err := svc.Rotate(ctx, dbtest.Tenant(t), old.ID, time.Hour, asA); !errors.Is(err, errs.ErrAPIKeyNotFound) {
 		t.Errorf("rotate from another tenant: %v, want %v", err, errs.ErrAPIKeyNotFound)
+	}
+}
+
+// TestKeyOfDeletedOrganisationIsRefused checks that an organisation's keys,
+// personal or not, authenticate only while it is active: not while suspended,
+// again once reactivated, and never once deleted, and that Live agrees.
+func TestKeyOfDeletedOrganisationIsRefused(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := NewService(pool)
+	tenant := dbtest.Tenant(t)
+	a := dbtest.User(t, tenant, tenant)
+	actor := audit.Actor{UserID: &a.ID, Type: "user"}
+	keys := map[string]string{}
+	var ids []uuid.UUID
+	for name, owner := range map[string]*uuid.UUID{"personal": &a.ID, "shared": nil} {
+		k, raw, err := svc.Create(ctx, CreateInput{TenantID: tenant, Name: name, UserID: owner, Actor: actor})
+		if err != nil {
+			t.Fatalf("create a %s key: %v", name, err)
+		}
+		keys[name] = raw
+		ids = append(ids, k.ID)
+	}
+	for _, step := range []struct {
+		name, change string
+		works        bool
+	}{
+		{"suspended", `UPDATE tenant.tenants SET status = 'suspended' WHERE id = $1`, false},
+		{"reactivated", `UPDATE tenant.tenants SET status = 'active' WHERE id = $1`, true},
+		{"deleted", `UPDATE tenant.tenants SET deleted_at = NOW() WHERE id = $1`, false},
+	} {
+		if _, err := pool.Exec(ctx, step.change, tenant); err != nil {
+			t.Fatal(err)
+		}
+		for name, raw := range keys {
+			if _, err := svc.Verify(ctx, raw); (err == nil) != step.works {
+				t.Errorf("a %s key of a %s organisation: %v, want works=%v", name, step.name, err, step.works)
+			}
+		}
+		for _, id := range ids {
+			if live, err := svc.Live(ctx, tenant, id); err != nil || live != step.works {
+				t.Errorf("a key of a %s organisation: live %v, %v; want %v", step.name, live, err, step.works)
+			}
+		}
 	}
 }

@@ -1,8 +1,9 @@
 delete:
   operationId: deleteTokenVaultProvider
   description: >-
-    Removes a registered Token Vault provider. Tokens already vaulted for that
-    provider become unusable.
+    Removes a registered Token Vault provider and disconnects everyone
+    connected through it: their vaulted tokens are deleted, so a provider
+    registered again under the same name starts with no connected accounts.
   summary: Delete a Token Vault provider
   tags:
     - Token Vault

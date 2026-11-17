@@ -157,6 +157,11 @@ func TestEnforce_MachineActorRequiresMatchingScope(t *testing.T) {
 			deny := &fakeChecker{allow: false}
 			uid, tid := uuid.New(), uuid.New()
 			principal := &httpx.Principal{UserID: &uid, TenantID: &tid, ActorType: actorType, Scopes: []string{"user.read"}}
+			if actorType == "api_key" {
+				// A key acting for no one; a personal key is held to its
+				// person's permissions too (enforce_db_test.go).
+				principal.UserID = nil
+			}
 			if got := do(buildRouter(deny, principal), "POST", "/v1/users"); got != http.StatusForbidden {
 				t.Fatalf("read-scoped %s POST /v1/users = %d, want 403", actorType, got)
 			}

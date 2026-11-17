@@ -447,8 +447,9 @@ WHERE id = @session_id AND revoked_at IS NULL
 -- MFARequirement reads what decides whether an account must use a second
 -- factor to sign in to an organisation: the account's own flag, the
 -- organisation's requirement and grace period, and whether the account is an
--- administrator there — holds a role, directly or through a group, granting
--- any write permission.
+-- administrator there — holds the owner role or a role granting a permission
+-- outside member_permissions, directly or through a group (with none listed,
+-- any permission does).
 -- name: MFARequirement :one
 -- joined_at is when the account joined the organisation, which the grace
 -- period is judged by: its creation for its own organisation, its first role
@@ -464,16 +465,22 @@ SELECT u.mfa_required,
        EXISTS (
            SELECT 1
            FROM rbac.user_roles ur
-           JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
-           JOIN rbac.permissions p ON p.id = rp.permission_id
-           WHERE ur.user_id = u.id AND ur.tenant_id = @tenant_id AND p.key LIKE '%.write'
+           JOIN rbac.roles ro ON ro.id = ur.role_id AND ro.tenant_id = ur.tenant_id
+           LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
+           LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
+           WHERE ur.user_id = u.id AND ur.tenant_id = @tenant_id
+             AND ((ro.is_system AND ro.name = 'owner')
+                  OR (p.key IS NOT NULL AND NOT (p.key = ANY(COALESCE(@member_permissions::text[], '{}')))))
            UNION ALL
            SELECT 1
            FROM tenant.group_members gm
            JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
-           JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
-           JOIN rbac.permissions p ON p.id = rp.permission_id
-           WHERE gm.user_id = u.id AND gm.tenant_id = @tenant_id AND p.key LIKE '%.write'
+           JOIN rbac.roles ro ON ro.id = gr.role_id AND ro.tenant_id = gr.tenant_id
+           LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
+           LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
+           WHERE gm.user_id = u.id AND gm.tenant_id = @tenant_id
+             AND ((ro.is_system AND ro.name = 'owner')
+                  OR (p.key IS NOT NULL AND NOT (p.key = ANY(COALESCE(@member_permissions::text[], '{}')))))
        ) AS is_admin
 FROM "user".users u
 LEFT JOIN tenant.security_policies sp ON sp.tenant_id = @tenant_id

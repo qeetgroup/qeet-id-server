@@ -31,7 +31,8 @@ func (q *Queries) DeleteHook(ctx context.Context, arg DeleteHookParams) (int64, 
 }
 
 const getHookForCall = `-- name: GetHookForCall :one
-SELECT id, url, secret, secret_ct, secret_nonce, fail_open
+SELECT id, url, secret, secret_ct, secret_nonce, fail_open,
+       previous_secret_ct, previous_secret_nonce, previous_secret_expires_at
 FROM tenant.auth_hooks WHERE id = $1 AND tenant_id = $2
 `
 
@@ -41,15 +42,18 @@ type GetHookForCallParams struct {
 }
 
 type GetHookForCallRow struct {
-	ID          uuid.UUID
-	Url         string
-	Secret      string
-	SecretCt    []byte
-	SecretNonce []byte
-	FailOpen    bool
+	ID                      uuid.UUID
+	Url                     string
+	Secret                  string
+	SecretCt                []byte
+	SecretNonce             []byte
+	FailOpen                bool
+	PreviousSecretCt        []byte
+	PreviousSecretNonce     []byte
+	PreviousSecretExpiresAt pgtype.Timestamptz
 }
 
-// A hook's URL and secret, to call it outside a sign-in.
+// A hook's URL and secrets, to call it outside a sign-in.
 func (q *Queries) GetHookForCall(ctx context.Context, arg GetHookForCallParams) (GetHookForCallRow, error) {
 	row := q.db.QueryRow(ctx, getHookForCall, arg.ID, arg.TenantID)
 	var i GetHookForCallRow
@@ -60,24 +64,31 @@ func (q *Queries) GetHookForCall(ctx context.Context, arg GetHookForCallParams) 
 		&i.SecretCt,
 		&i.SecretNonce,
 		&i.FailOpen,
+		&i.PreviousSecretCt,
+		&i.PreviousSecretNonce,
+		&i.PreviousSecretExpiresAt,
 	)
 	return i, err
 }
 
 const listEnabledSignInHooks = `-- name: ListEnabledSignInHooks :many
-SELECT id, url, secret, secret_ct, secret_nonce, fail_open
+SELECT id, url, secret, secret_ct, secret_nonce, fail_open,
+       previous_secret_ct, previous_secret_nonce, previous_secret_expires_at
 FROM tenant.auth_hooks
 WHERE tenant_id = $1 AND enabled AND trigger = 'post_login'
 ORDER BY created_at, id
 `
 
 type ListEnabledSignInHooksRow struct {
-	ID          uuid.UUID
-	Url         string
-	Secret      string
-	SecretCt    []byte
-	SecretNonce []byte
-	FailOpen    bool
+	ID                      uuid.UUID
+	Url                     string
+	Secret                  string
+	SecretCt                []byte
+	SecretNonce             []byte
+	FailOpen                bool
+	PreviousSecretCt        []byte
+	PreviousSecretNonce     []byte
+	PreviousSecretExpiresAt pgtype.Timestamptz
 }
 
 // ListEnabledSignInHooks returns the tenant's enabled sign-in hooks with their
@@ -98,6 +109,9 @@ func (q *Queries) ListEnabledSignInHooks(ctx context.Context, tenantID uuid.UUID
 			&i.SecretCt,
 			&i.SecretNonce,
 			&i.FailOpen,
+			&i.PreviousSecretCt,
+			&i.PreviousSecretNonce,
+			&i.PreviousSecretExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -112,24 +126,25 @@ func (q *Queries) ListEnabledSignInHooks(ctx context.Context, tenantID uuid.UUID
 const listHooks = `-- name: ListHooks :many
 
 SELECT id, trigger, url, enabled, fail_open, created_at,
-       last_called_at, last_outcome, last_status_code, call_count, skip_count, deny_count
+       last_called_at, last_outcome, last_status_code, call_count, skip_count, deny_count, previous_secret_expires_at
 FROM tenant.auth_hooks WHERE tenant_id = $1 ORDER BY created_at DESC
 LIMIT 1001
 `
 
 type ListHooksRow struct {
-	ID             uuid.UUID
-	Trigger        string
-	Url            string
-	Enabled        bool
-	FailOpen       bool
-	CreatedAt      time.Time
-	LastCalledAt   pgtype.Timestamptz
-	LastOutcome    *string
-	LastStatusCode *int32
-	CallCount      int64
-	SkipCount      int64
-	DenyCount      int64
+	ID                      uuid.UUID
+	Trigger                 string
+	Url                     string
+	Enabled                 bool
+	FailOpen                bool
+	CreatedAt               time.Time
+	LastCalledAt            pgtype.Timestamptz
+	LastOutcome             *string
+	LastStatusCode          *int32
+	CallCount               int64
+	SkipCount               int64
+	DenyCount               int64
+	PreviousSecretExpiresAt pgtype.Timestamptz
 }
 
 // Queries for the auth-hooks domain.
@@ -157,6 +172,7 @@ func (q *Queries) ListHooks(ctx context.Context, tenantID uuid.UUID) ([]ListHook
 			&i.CallCount,
 			&i.SkipCount,
 			&i.DenyCount,
+			&i.PreviousSecretExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -166,6 +182,31 @@ func (q *Queries) ListHooks(ctx context.Context, tenantID uuid.UUID) ([]ListHook
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockHookSecret = `-- name: LockHookSecret :one
+SELECT secret, secret_ct, secret_nonce FROM tenant.auth_hooks
+WHERE id = $1 AND tenant_id = $2 FOR UPDATE
+`
+
+type LockHookSecretParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+type LockHookSecretRow struct {
+	Secret      string
+	SecretCt    []byte
+	SecretNonce []byte
+}
+
+// LockHookSecret holds one of the tenant's hooks while its secret is replaced,
+// returning the secret it has now.
+func (q *Queries) LockHookSecret(ctx context.Context, arg LockHookSecretParams) (LockHookSecretRow, error) {
+	row := q.db.QueryRow(ctx, lockHookSecret, arg.ID, arg.TenantID)
+	var i LockHookSecretRow
+	err := row.Scan(&i.Secret, &i.SecretCt, &i.SecretNonce)
+	return i, err
 }
 
 const recordHookCall = `-- name: RecordHookCall :exec
@@ -226,24 +267,36 @@ SET url = COALESCE($1, url),
     secret = CASE WHEN $2::bytea IS NULL THEN secret ELSE '' END,
     secret_ct = COALESCE($2::bytea, secret_ct),
     secret_nonce = COALESCE($3::bytea, secret_nonce),
-    encryption_version = CASE WHEN $2::bytea IS NULL THEN encryption_version ELSE 1 END
-WHERE id = $4 AND tenant_id = $5
+    encryption_version = CASE WHEN $2::bytea IS NULL THEN encryption_version ELSE 1 END,
+    previous_secret_ct = CASE WHEN $2::bytea IS NULL THEN previous_secret_ct ELSE $4::bytea END,
+    previous_secret_nonce = CASE WHEN $2::bytea IS NULL THEN previous_secret_nonce ELSE $5::bytea END,
+    previous_secret_expires_at = CASE WHEN $2::bytea IS NULL THEN previous_secret_expires_at
+                                      ELSE $6::timestamptz END
+WHERE id = $7 AND tenant_id = $8
 `
 
 type SetHookEndpointParams struct {
-	Url         *string
-	SecretCt    []byte
-	SecretNonce []byte
-	ID          uuid.UUID
-	TenantID    uuid.UUID
+	Url               *string
+	SecretCt          []byte
+	SecretNonce       []byte
+	PreviousCt        []byte
+	PreviousNonce     []byte
+	PreviousExpiresAt pgtype.Timestamptz
+	ID                uuid.UUID
+	TenantID          uuid.UUID
 }
 
-// A new URL, a new secret, or both, for one of the tenant's hooks.
+// A new URL, a new secret, or both, for one of the tenant's hooks. A new
+// secret keeps the one it replaces, previous_ct, signing until
+// previous_expires_at.
 func (q *Queries) SetHookEndpoint(ctx context.Context, arg SetHookEndpointParams) (int64, error) {
 	result, err := q.db.Exec(ctx, setHookEndpoint,
 		arg.Url,
 		arg.SecretCt,
 		arg.SecretNonce,
+		arg.PreviousCt,
+		arg.PreviousNonce,
+		arg.PreviousExpiresAt,
 		arg.ID,
 		arg.TenantID,
 	)

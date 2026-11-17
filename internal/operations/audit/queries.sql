@@ -127,22 +127,31 @@ SELECT chains.tenant_id::uuid AS tenant_id FROM chains WHERE chains.tenant_id IS
 
 -- name: ListAuditChainCheckpoints :many
 -- Every chain's checkpoint: the last row a scheduled verification found intact,
--- and whether the chain has since been found broken.
-SELECT tenant_id, chain_shard, event_id, event_created_at, row_hash, (broken_at IS NOT NULL)::bool AS broken
+-- its signature, and whether the chain has since been found broken.
+SELECT tenant_id, chain_shard, event_id, event_created_at, row_hash, key_id, mac, (broken_at IS NOT NULL)::bool AS broken
 FROM platform.audit_chain_checkpoints;
+
+-- name: GetAuditChainCheckpoint :one
+-- One chain's checkpoint, as ListAuditChainCheckpoints reads it: an
+-- organisation's chain, or platform chain chain_shard when tenant_id is NULL.
+SELECT event_id, event_created_at, row_hash, key_id, mac FROM platform.audit_chain_checkpoints
+WHERE chain_shard = @chain_shard
+  AND (tenant_id = sqlc.narg(tenant_id)::uuid OR (sqlc.narg(tenant_id)::uuid IS NULL AND tenant_id IS NULL));
 
 -- name: InsertAuditChainCheckpoint :exec
 -- A chain's first checkpoint. A run that began when it had none leaves one
 -- another run wrote since.
-INSERT INTO platform.audit_chain_checkpoints (tenant_id, chain_shard, event_id, event_created_at, row_hash)
-VALUES (@tenant_id, @chain_shard, @event_id, @event_created_at, @row_hash)
+INSERT INTO platform.audit_chain_checkpoints (tenant_id, chain_shard, event_id, event_created_at, row_hash, key_id, mac)
+VALUES (@tenant_id, @chain_shard, @event_id, @event_created_at, @row_hash, sqlc.narg(key_id), sqlc.narg(mac))
 ON CONFLICT (tenant_id, chain_shard) DO NOTHING;
 
 -- name: AdvanceAuditChainCheckpoint :exec
--- Move a chain's checkpoint on from the one the run began at, unless another
--- run has moved it or found the chain broken since.
+-- Move a chain's checkpoint on from the one the run began at, or sign it again
+-- with the current key, unless another run has moved it or found the chain
+-- broken since.
 UPDATE platform.audit_chain_checkpoints
-SET event_id = @event_id, event_created_at = @event_created_at, row_hash = @row_hash, verified_at = NOW()
+SET event_id = @event_id, event_created_at = @event_created_at, row_hash = @row_hash,
+    key_id = sqlc.narg(key_id), mac = sqlc.narg(mac), verified_at = NOW()
 WHERE event_id = @from_event_id AND broken_at IS NULL AND chain_shard = @chain_shard
   AND (tenant_id = @tenant_id OR (@tenant_id::uuid IS NULL AND tenant_id IS NULL));
 
@@ -185,3 +194,59 @@ WHERE tenant_id = @tenant_id::uuid;
 
 -- name: GetLatestVerificationRun :one
 SELECT finished_at, scope FROM platform.audit_verification_runs ORDER BY started_at DESC LIMIT 1;
+
+-- ==========================================================================
+-- Retention
+-- ==========================================================================
+
+-- name: ListRetentionTenants :many
+-- Every organisation, for the audit retention job to ask how long its plan
+-- keeps events.
+SELECT id FROM tenant.tenants ORDER BY id;
+
+-- name: AuditChainBroken :one
+-- Whether the scheduled verification found an organisation's chain broken.
+SELECT EXISTS (
+    SELECT 1 FROM platform.audit_chain_checkpoints
+    WHERE tenant_id = @tenant_id::uuid AND broken_at IS NOT NULL
+)::bool;
+
+-- name: ListAuditEventsToPurge :many
+-- The oldest of an organisation's chained events sent before cutoff, never its
+-- newest (the tip the next event links to), in chain order.
+SELECT o.id, o.created_at, o.row_hash
+FROM audit.events o
+WHERE o.tenant_id = @tenant_id::uuid AND o.row_hash IS NOT NULL AND o.created_at < @cutoff
+  AND EXISTS (
+      SELECT 1 FROM audit.events n
+      WHERE n.tenant_id = o.tenant_id AND (n.created_at, n.id) > (o.created_at, o.id)
+  )
+ORDER BY o.created_at ASC, o.id ASC
+LIMIT @batch;
+
+-- name: SetAuditPurgeCheckpoint :exec
+-- Where an organisation's chain starts once its events up to and including
+-- event_id are deleted.
+INSERT INTO platform.audit_purge_checkpoints (tenant_id, event_id, event_created_at, row_hash, events_purged, key_id, mac)
+VALUES (@tenant_id, @event_id, @event_created_at, @row_hash, @purged, sqlc.narg(key_id), sqlc.narg(mac))
+ON CONFLICT (tenant_id) DO UPDATE SET
+    event_id = EXCLUDED.event_id, event_created_at = EXCLUDED.event_created_at, row_hash = EXCLUDED.row_hash,
+    key_id = EXCLUDED.key_id, mac = EXCLUDED.mac,
+    events_purged = audit_purge_checkpoints.events_purged + EXCLUDED.events_purged, purged_at = NOW();
+
+-- name: DeleteAuditEventsThrough :execrows
+-- Deletes an organisation's events up to and including (created_at, id) in
+-- chain order.
+DELETE FROM audit.events
+WHERE tenant_id = @tenant_id::uuid AND (created_at, id) <= (@created_at::timestamptz, @id::uuid);
+
+-- name: GetAuditPurgeCheckpoint :one
+-- Where an organisation's chain starts since its oldest events were deleted.
+SELECT event_id, event_created_at, row_hash, key_id, mac FROM platform.audit_purge_checkpoints
+WHERE tenant_id = @tenant_id::uuid;
+
+-- name: SignAuditPurgeCheckpoint :exec
+-- Sign an organisation's purge checkpoint again, with the current key, unless
+-- a purge has moved it since.
+UPDATE platform.audit_purge_checkpoints SET key_id = @key_id, mac = @mac
+WHERE tenant_id = @tenant_id AND event_id = @event_id;

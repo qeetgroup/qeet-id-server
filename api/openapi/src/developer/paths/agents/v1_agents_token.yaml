@@ -4,7 +4,9 @@ post:
   description: >-
     An AI agent authenticates with its agent_id + secret (JSON body or HTTP
     Basic) and receives an ephemeral access token marked actor_type="agent" (+
-    agent_id claim), verifiable on the standard JWKS path. No user session.
+    agent_id claim), verifiable on the standard JWKS path. No user session. An
+    agent of a suspended or deleted organisation gets no token, and the tokens
+    it already holds stop working, as for a suspended agent.
   tags:
     - Agents
   security: []

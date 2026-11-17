@@ -21,6 +21,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
@@ -71,7 +72,8 @@ type CreateInput struct {
 
 // Service manages invitations. Until SetPasswordRules is called Accept refuses
 // with 501 rather than set an unchecked password; without SetPlanLimiter there
-// is no seat limit.
+// is no seat limit; without SetGrantCheck an invitation a person sent with a
+// role is refused at acceptance.
 type Service struct {
 	pool       *pgxpool.Pool
 	q          *dbgen.Queries
@@ -81,6 +83,7 @@ type Service struct {
 	rules      PasswordRules
 	limits     PlanLimiter
 	methods    AcceptMethods
+	grants     func(ctx context.Context, caller *httpx.Principal, tenantID, roleID uuid.UUID) error
 }
 
 // NewService returns the invitation service.
@@ -110,6 +113,62 @@ type PlanLimiter interface {
 
 // SetPlanLimiter sets the seat-limit checker (nil disables the limit).
 func (s *Service) SetPlanLimiter(l PlanLimiter) { s.limits = l }
+
+// SetGrantCheck sets the check that whoever sent an invitation may still give
+// its role when it is accepted (rbac.Repository.CheckGrantRole).
+func (s *Service) SetGrantCheck(check func(ctx context.Context, caller *httpx.Principal, tenantID, roleID uuid.UUID) error) {
+	s.grants = check
+}
+
+// sentInvite is who sent an invitation and what it gives, read before an
+// acceptance's transaction: the grant check reads the pool.
+type sentInvite dbgen.InviteSenderByTokenRow
+
+// checkSender refuses, with ErrInviteInvalid, accepting the invitation sent
+// (read with err) when the person who sent it may no longer give it: their
+// account isn't active, they no longer belong to its organisation, or they
+// couldn't give its role now. One no person sent, or not pending, is left to
+// the acceptance itself, which refuses what it must.
+func (s *Service) checkSender(ctx context.Context, sent sentInvite, err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !sent.InvitedBy.Valid || sent.Status != "pending" || time.Now().After(sent.ExpiresAt) {
+		return nil
+	}
+	inviter := uuid.UUID(sent.InvitedBy.Bytes)
+	active, err := s.q.InviterActive(ctx, dbgen.InviterActiveParams{UserID: inviter, TenantID: sent.TenantID})
+	if err != nil {
+		return err
+	}
+	if !active {
+		return errs.ErrInviteInvalid
+	}
+	if !sent.RoleID.Valid {
+		return nil
+	}
+	if s.grants == nil {
+		return errs.ErrInviteInvalid
+	}
+	tenantID := sent.TenantID
+	caller := &httpx.Principal{UserID: &inviter, TenantID: &tenantID, ActorType: "user"}
+	switch err := s.grants(ctx, caller, tenantID, uuid.UUID(sent.RoleID.Bytes)); {
+	case errors.Is(err, errs.ErrRBACOwnerOnly), errors.Is(err, errs.ErrRBACGrantExceedsCaller):
+		return errs.ErrInviteInvalid
+	default:
+		return err
+	}
+}
+
+// CheckInvitationSender is checkSender for invitation id, for an acceptance
+// made in a transaction of its own (the passkey ceremony's), before it opens.
+func (s *Service) CheckInvitationSender(ctx context.Context, id uuid.UUID) error {
+	sent, err := s.q.InviteSenderByID(ctx, id)
+	return s.checkSender(ctx, sentInvite(sent), err)
+}
 
 // CountSeats returns the tenant's seats in use (members + pending invites) — the
 // value the plan seat limit is checked against; also surfaced as usage in billing.
@@ -349,6 +408,19 @@ func (s *Service) sendInviteEmail(ctx context.Context, tenantID, inviteID uuid.U
 		return err
 	}
 	return nil
+}
+
+// RoleOf returns the role one of the tenant's invitations grants (nil: none),
+// or ErrNotFound.
+func (s *Service) RoleOf(ctx context.Context, tenantID, id uuid.UUID) (*uuid.UUID, error) {
+	role, err := s.q.GetInviteRole(ctx, dbgen.GetInviteRoleParams{ID: id, TenantID: tenantID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return pgtypeToUUIDPtr(role), nil
 }
 
 // Resend rotates the invite token, extends the expiry, and re-sends the email,
@@ -635,6 +707,10 @@ type pendingInvite struct {
 // existing account, using the emailed token: no new user and no password. It
 // is recorded as theirs, with actor's request details.
 func (s *Service) AcceptAuthenticated(ctx context.Context, userID uuid.UUID, token string, actor audit.Actor) (*AcceptResult, error) {
+	sent, err := s.q.InviteSenderByToken(ctx, codes.Hash(token))
+	if err := s.checkSender(ctx, sentInvite(sent), err); err != nil {
+		return nil, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -654,6 +730,13 @@ func (s *Service) AcceptAuthenticated(ctx context.Context, userID uuid.UUID, tok
 // AcceptAuthenticatedByID is the in-app "accept from my inbox" counterpart: the
 // caller picks an invite by id (from ListForUser) rather than pasting a token.
 func (s *Service) AcceptAuthenticatedByID(ctx context.Context, userID, inviteID uuid.UUID, actor audit.Actor) (*AcceptResult, error) {
+	// The inbox is closed until the address is proved, whoever sent the invitation.
+	if _, err := inboxEmail(ctx, s.q, userID); err != nil {
+		return nil, err
+	}
+	if err := s.CheckInvitationSender(ctx, inviteID); err != nil {
+		return nil, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err

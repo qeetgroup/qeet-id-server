@@ -34,7 +34,7 @@ WHERE e.tenant_id = @tenant_id
   AND (sqlc.narg('to_ts')::timestamptz IS NULL OR e.created_at <= sqlc.narg('to_ts'))
   AND (sqlc.narg('q')::text IS NULL OR e.search_vector @@ audit.search_query(sqlc.narg('q'))
        OR e.actor_user_id IN (SELECT su.id FROM "user".users su
-           WHERE (su.email ILIKE audit.like_escape(sqlc.narg('q')::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape(sqlc.narg('q')::text) || '%')
+           WHERE (su.email ILIKE sqlc.narg('q_like')::text || '%' OR su.display_name ILIKE '%' || sqlc.narg('q_like')::text || '%')
              AND (su.tenant_id = @tenant_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = @tenant_id))))
   AND (sqlc.narg('resource_types')::text[] IS NULL OR e.resource_type = ANY(sqlc.narg('resource_types')))
   AND (sqlc.narg('resource_id')::uuid IS NULL OR e.resource_id = sqlc.narg('resource_id'))
@@ -61,7 +61,7 @@ SELECT count(*)::bigint FROM (
       AND (sqlc.narg('to_ts')::timestamptz IS NULL OR e.created_at <= sqlc.narg('to_ts'))
       AND (sqlc.narg('q')::text IS NULL OR e.search_vector @@ audit.search_query(sqlc.narg('q'))
        OR e.actor_user_id IN (SELECT su.id FROM "user".users su
-           WHERE (su.email ILIKE audit.like_escape(sqlc.narg('q')::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape(sqlc.narg('q')::text) || '%')
+           WHERE (su.email ILIKE sqlc.narg('q_like')::text || '%' OR su.display_name ILIKE '%' || sqlc.narg('q_like')::text || '%')
              AND (su.tenant_id = @tenant_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = @tenant_id))))
       AND (sqlc.narg('resource_types')::text[] IS NULL OR e.resource_type = ANY(sqlc.narg('resource_types')))
       AND (sqlc.narg('resource_id')::uuid IS NULL OR e.resource_id = sqlc.narg('resource_id'))
@@ -104,7 +104,7 @@ WHERE audit.events.tenant_id = @tenant_id
   AND (sqlc.narg('to_ts')::timestamptz IS NULL OR created_at <= sqlc.narg('to_ts'))
   AND (sqlc.narg('q')::text IS NULL OR search_vector @@ audit.search_query(sqlc.narg('q'))
        OR actor_user_id IN (SELECT su.id FROM "user".users su
-           WHERE (su.email ILIKE audit.like_escape(sqlc.narg('q')::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape(sqlc.narg('q')::text) || '%')
+           WHERE (su.email ILIKE sqlc.narg('q_like')::text || '%' OR su.display_name ILIKE '%' || sqlc.narg('q_like')::text || '%')
              AND (su.tenant_id = @tenant_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = @tenant_id))))
   AND (sqlc.narg('resource_types')::text[] IS NULL OR resource_type = ANY(sqlc.narg('resource_types')))
   AND (sqlc.narg('resource_id')::uuid IS NULL OR resource_id = sqlc.narg('resource_id'))
@@ -135,7 +135,7 @@ WHERE audit.events.tenant_id = @tenant_id
   AND (sqlc.narg('to_ts')::timestamptz IS NULL OR created_at <= sqlc.narg('to_ts'))
   AND (sqlc.narg('q')::text IS NULL OR search_vector @@ audit.search_query(sqlc.narg('q'))
        OR actor_user_id IN (SELECT su.id FROM "user".users su
-           WHERE (su.email ILIKE audit.like_escape(sqlc.narg('q')::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape(sqlc.narg('q')::text) || '%')
+           WHERE (su.email ILIKE sqlc.narg('q_like')::text || '%' OR su.display_name ILIKE '%' || sqlc.narg('q_like')::text || '%')
              AND (su.tenant_id = @tenant_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = @tenant_id))))
   AND (sqlc.narg('resource_types')::text[] IS NULL OR resource_type = ANY(sqlc.narg('resource_types')))
   AND (sqlc.narg('resource_id')::uuid IS NULL OR resource_id = sqlc.narg('resource_id'))
@@ -163,7 +163,7 @@ WHERE audit.events.tenant_id = @tenant_id
   AND (sqlc.narg('to_ts')::timestamptz IS NULL OR created_at <= sqlc.narg('to_ts'))
   AND (sqlc.narg('q')::text IS NULL OR search_vector @@ audit.search_query(sqlc.narg('q'))
        OR actor_user_id IN (SELECT su.id FROM "user".users su
-           WHERE (su.email ILIKE audit.like_escape(sqlc.narg('q')::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape(sqlc.narg('q')::text) || '%')
+           WHERE (su.email ILIKE sqlc.narg('q_like')::text || '%' OR su.display_name ILIKE '%' || sqlc.narg('q_like')::text || '%')
              AND (su.tenant_id = @tenant_id OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = @tenant_id))))
   AND (sqlc.narg('resource_types')::text[] IS NULL OR resource_type = ANY(sqlc.narg('resource_types')))
   AND (sqlc.narg('resource_id')::uuid IS NULL OR resource_id = sqlc.narg('resource_id'))

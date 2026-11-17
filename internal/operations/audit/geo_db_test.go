@@ -49,7 +49,7 @@ func TestEventsSayWhereTheyCameFrom(t *testing.T) {
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND metadata->>'geo' = 'given'`, tenant); n != 1 {
 		t.Errorf("an event's own geo was replaced")
 	}
-	res, err := NewVerifier(dbtest.Pool(t)).Verify(dbtest.Context(t), &tenant)
+	res, err := NewVerifier(dbtest.Pool(t), nil).Verify(dbtest.Context(t), &tenant)
 	if err != nil || !res.OK {
 		t.Errorf("the chain after placed events: %+v, %v", res, err)
 	}

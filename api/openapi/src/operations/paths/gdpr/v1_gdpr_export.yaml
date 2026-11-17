@@ -14,7 +14,9 @@ post:
           $ref: ../../components/schemas/ExportInput.yaml
   description: >-
     Queues an async export job; poll GET .../gdpr/export/{id} for status and
-    payload.
+    payload. Nobody exports someone who outranks them (403
+    rbac.target_is_owner for an owner, unless the caller is one, or 403
+    rbac.target_outranks_caller), as for deleting their account.
   responses:
     '202':
       description: Accepted

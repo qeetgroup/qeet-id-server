@@ -17,7 +17,10 @@ post:
     response is a token pair, or, when the account holds a second factor, the
     organisation requires one, or the sign-in is risky, the challenge instead
     (mfa_required, mfa_token, methods, factors, and enrollment_required for an
-    account that must set one up), completed at POST /v1/auth/mfa.
+    account that must set one up), completed at POST /v1/auth/mfa. An
+    organisation's code trades only while the provider that issued it is still
+    on: 404 social.provider_not_configured once it has been switched off, and
+    401 social.login_code_invalid once it is deleted.
   responses:
     '200':
       description: A token pair, or the second-factor challenge to complete first.
@@ -32,6 +35,8 @@ post:
             oneOf:
               - $ref: ../../../shared/schemas/TokenPair.yaml
               - $ref: ../../../shared/schemas/MFAChallenge.yaml
+    '401':
+      $ref: ../../../shared/responses/Unauthorized.yaml
     '404':
       $ref: ../../../shared/responses/NotFound.yaml
     '422':

@@ -6,8 +6,12 @@ post:
     the hosted-login session cookie, and returns where the sign-in journey
     continues (return_to, empty for none). The link works once: used, expired or
     unknown links, and console links, are refused (recovery.link_used,
-    recovery.link_expired, recovery.magic_link_invalid), and so are links of an
-    organisation that has since switched magic links off. When the account holds
+    recovery.link_expired, recovery.magic_link_invalid), and so are links to an
+    account whose organisation has since switched magic links off. A link that proves the account's address for the first time marks it
+    verified, ends every earlier session and removes everything set up on the
+    account before it, its password included (recorded as email.verified and
+    auth.credentials_removed), so whoever registered the address first keeps no
+    way in. When the account holds
     a second factor, or must have one, no cookie is set: the answer is an MFA
     challenge (with return_to) completed at POST /v1/auth/session/mfa — on the
     same terms as the hosted password sign-in, including a trusted device

@@ -39,9 +39,13 @@ post:
   summary: Register a resource
   description: >-
     Registers a resource: identifier is an absolute URI without a fragment (422
-    oidc.resource_invalid), unique on the platform (409 oidc.resource_exists)
-    and not on a domain another organization has verified (409
-    oidc.resource_domain_taken); server_client_id, optional, must be one of the
+    oidc.resource_invalid), unique on the platform (409 oidc.resource_exists),
+    not the platform's own token issuer or audience or on their host or this
+    API's public host (409 oidc.resource_reserved), not on a domain another
+    organization has verified (409 oidc.resource_domain_taken), and, when it
+    has a host, on one the organization has verified, itself or a domain above
+    it (403 oidc.resource_domain_unverified; an identifier without a host, such
+    as a URN, needs none); server_client_id, optional, must be one of the
     organisation's applications. Audited as oidc.resource_registered. Every
     organization's tokens share one issuer, so a resource server should also
     check the token's tenant_id claim is its own organization.

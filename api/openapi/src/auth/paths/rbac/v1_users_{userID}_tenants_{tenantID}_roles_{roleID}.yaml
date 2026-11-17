@@ -10,7 +10,10 @@ delete:
     Removing a role is held to the rule for giving it (403
     rbac.grant_exceeds_caller, or rbac.owner_only for the owner role), and the
     person must not outrank the caller (403 rbac.target_is_owner /
-    rbac.target_outranks_caller).
+    rbac.target_outranks_caller). Removing the last role of someone whose
+    account belongs to another organization ends their membership here, so
+    their sessions here end too (announced as session.revoked, reason
+    removed_from_organization), as removing them from the organization does.
   summary: Unassign role from user
   tags:
     - RBAC

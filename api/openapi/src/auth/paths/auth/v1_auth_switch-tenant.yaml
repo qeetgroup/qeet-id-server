@@ -11,8 +11,11 @@ post:
     The caller's session list shows the one sign-in, not one entry per switch.
     Refused, with nothing changed: a tenant the caller does not belong to (403),
     a refusal by the tenant's hook, an address the tenant's address rules refuse
-    (403 auth.address_not_allowed), or an access token whose session has already
-    ended (401). An organisation that requires a second factor of the caller
+    (403 auth.address_not_allowed), an organisation that requires single
+    sign-on on the caller's domain (403 auth.sso_required: its identity
+    provider signs its people in there directly, so no other session is
+    switched into it; break-glass members are exempt), or an access token
+    whose session has already ended (401). An organisation that requires a second factor of the caller
     (its security policy, or administrators-only for its administrators) is
     entered only by a session whose sign-in met one, or that holds a fresh
     step-up; otherwise 403 step_up_required (step up, then try again) or 403

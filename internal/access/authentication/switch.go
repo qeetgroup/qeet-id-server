@@ -69,6 +69,9 @@ func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*Toke
 	if err := s.refuseSignIn(ctx, in.UserID, in.TenantID, "tenant_switch", in.IP, in.UserAgent); err != nil {
 		return nil, err
 	}
+	if err := s.refuseSwitchIntoCapture(ctx, in.UserID, in.TenantID); err != nil {
+		return nil, err
+	}
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -205,6 +208,21 @@ func (s *Service) enterTenant(ctx context.Context, userID, tenantID, fromSession
 		return nil, err
 	}
 	return pair, nil
+}
+
+// SessionFactorShortfall reports what stops userID acting in tenantID through
+// their session sessionID (uuid.Nil: none, so no factor met), as entering it
+// would: nil, or ErrStepUpRequired / ErrMFAEnrollmentRequired while tenantID
+// requires a second factor the session's sign-in didn't meet.
+func (s *Service) SessionFactorShortfall(ctx context.Context, sessionID, userID, tenantID uuid.UUID) error {
+	carried := ""
+	if sessionID != uuid.Nil {
+		var err error
+		if carried, err = s.carriedSecondFactor(ctx, sessionID, userID); err != nil {
+			return err
+		}
+	}
+	return s.tenantFactorShortfall(ctx, userID, tenantID, carried)
 }
 
 // carriedSecondFactor is the second factor a session's sign-in met, for a

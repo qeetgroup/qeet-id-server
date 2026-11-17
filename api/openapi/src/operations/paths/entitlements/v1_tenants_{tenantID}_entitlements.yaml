@@ -11,7 +11,10 @@ get:
     only until current_period_end (a trial until trial_end): nothing renews it,
     so after that the tenant has the free plan's entitlements until it pays
     again. Readable by any authenticated member of the tenant; scoped to the
-    caller's own tenant.
+    caller's own tenant. audit_retention_days is enforced: once a day, the
+    tenant's audit events older than that are deleted (all but the newest, its
+    chain kept verifiable) and the deletion is recorded as audit.events_purged;
+    -1 keeps them all.
   parameters:
     - $ref: ../../../shared/parameters/TenantID.yaml
   security:

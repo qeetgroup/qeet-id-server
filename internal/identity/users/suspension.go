@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -147,7 +148,7 @@ func (repository *Repository) ListSuspended(ctx context.Context, tenantID uuid.U
 	if tenantID == uuid.Nil {
 		return page, errs.ErrUnauthorized
 	}
-	args := []any{tenantID, filter.Search, filter.Reason, filter.Source, filter.Team, filter.Risk, filter.Review}
+	args := []any{tenantID, postgres.EscapeLike(filter.Search), filter.Reason, filter.Source, filter.Team, filter.Risk, filter.Review}
 	err := repository.pool.QueryRow(ctx, suspendedDataset+`SELECT count(*),count(*) FILTER(WHERE risk='high'),count(*) FILTER(WHERE source='policy'),count(*) FILTER(WHERE source='manual'),count(*) FILTER(WHERE review='pending') FROM suspended WHERE `+suspendedWhere, args...).Scan(&page.Summary.Total, &page.Summary.HighRisk, &page.Summary.Policy, &page.Summary.Manual, &page.Summary.Pending)
 	if err != nil {
 		return page, err

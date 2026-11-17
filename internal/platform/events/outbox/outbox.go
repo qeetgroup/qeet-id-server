@@ -253,7 +253,7 @@ func (d *Dispatcher) tick(ctx context.Context) (leased, failed int, err error) {
 
 // recordFailure either bumps attempts + last_error, or — if we've hit
 // the cap — moves the row to platform.outbox_dead_letter in a single
-// transaction so the live queue never sees the bad event again.
+// statement so the live queue never sees the bad event again.
 func (d *Dispatcher) recordFailure(ctx context.Context, id uuid.UUID, attempts int, pubErr error) {
 	slog.Warn("outbox publish failed", "id", id, "attempts", attempts, "err", pubErr)
 	if attempts < d.maxAttempts {
@@ -268,27 +268,24 @@ func (d *Dispatcher) recordFailure(ctx context.Context, id uuid.UUID, attempts i
 		}
 		return
 	}
-	tx, err := d.pool.Begin(ctx)
-	if err != nil {
-		slog.Error("outbox dlq begin", "id", id, "err", err)
-		return
-	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `
+	// One statement moves the event, and only while this worker holds its
+	// lease: another that took the lease over owns the event now, so nothing
+	// moves and nothing is counted.
+	moved, err := d.pool.Exec(ctx, `
+		WITH taken AS (
+		    DELETE FROM platform.outbox WHERE id = $3 AND lease_owner = $4
+		    RETURNING id, aggregate_id, topic, event_type, payload, created_at
+		)
 		INSERT INTO platform.outbox_dead_letter
 		    (id, aggregate_id, topic, event_type, payload, created_at, attempts, last_error)
-		SELECT id, aggregate_id, topic, event_type, payload, created_at, $1, $2
-		FROM platform.outbox WHERE id = $3 AND lease_owner = $4
-	`, attempts, pubErr.Error(), id, d.workerID); err != nil {
-		slog.Error("outbox dlq insert", "id", id, "err", err)
+		SELECT id, aggregate_id, topic, event_type, payload, created_at, $1, $2 FROM taken
+	`, attempts, pubErr.Error(), id, d.workerID)
+	if err != nil {
+		slog.Error("outbox dead-letter move", "id", id, "err", err)
 		return
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM platform.outbox WHERE id = $1 AND lease_owner = $2`, id, d.workerID); err != nil {
-		slog.Error("outbox dlq delete-from-outbox", "id", id, "err", err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
-		slog.Error("outbox dlq commit", "id", id, "err", err)
+	if moved.RowsAffected() == 0 {
+		slog.Info("outbox event not dead-lettered: its lease was taken over", "id", id)
 		return
 	}
 	deadLettered.Inc()

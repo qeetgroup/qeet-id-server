@@ -3,11 +3,15 @@ post:
   description: >-
     Creates a long-lived API key for machine access. The plaintext key is
     returned only once at creation and is never retrievable again, so store it
-    securely. Callers present it as `Authorization: ApiKey <key>` and resolve to
+    securely. Its name is required (422 apikey.name_required) and at most 200
+    characters (422 validation_failed on name). Callers present it as `Authorization: ApiKey <key>` and resolve to
     actor_type `api_key`. A user_id, if sent, must be the caller's own: a key
     can act only for the person who creates it (403 apikey.user_not_self
     otherwise). Such a personal key works only while that person's account is
     active: it is refused while they are suspended and once they are deleted.
+    It also does only what that person may do now: a route needs both one of
+    the key's scopes and the person's permission for it (a vault read, their
+    secret.read), so a key loses what its person loses.
     Creating and revoking keys is audited. Send an Idempotency-Key header to
     retry it safely: a retry with the same key and body within 24 hours gets the
     first answer, marked Idempotent-Replayed: true; the same key with another

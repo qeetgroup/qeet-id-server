@@ -443,6 +443,35 @@ func TestSAMLIdPInitiatedSignIn(t *testing.T) {
 	}
 }
 
+// TestReplayIDOutlivesItsAssertion checks that an assertion valid for longer
+// than a day can't be replayed once a day has passed: its IDs are kept until
+// it expires, beyond the sweep of the usual ones.
+func TestReplayIDOutlivesItsAssertion(t *testing.T) {
+	ctx := dbtest.Context(t)
+	sp := newSPSide(t)
+	idp := newUpstreamIdP(t)
+	tenant := dbtest.Tenant(t)
+	conn := sp.connect(t, tenant, idp)
+	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	verify(t, member.ID)
+	if rec := dbtest.Do(t, sp.asAdmin(t, tenant), http.MethodPatch, "/tenants/"+tenant.String()+"/saml/"+conn.ID.String(), map[string]any{"allow_idp_initiated": true}); rec.Code != http.StatusOK {
+		t.Fatalf("opt in: %d %s", rec.Code, rec.Body.String())
+	}
+	longLived := idp.respond(t, conn.ID, answer{email: member.Email, signResponse: true, notOnOrAfter: time.Now().UTC().Add(72 * time.Hour)})
+	loginCode(t, sp.post(t, conn.ID, longLived))
+
+	// A day and an hour later, with the expired IDs swept.
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE auth.saml_replay_ids SET expires_at = expires_at - INTERVAL '25 hours' WHERE connection_id = $1`, conn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbtest.Pool(t).Exec(ctx, `DELETE FROM auth.saml_replay_ids WHERE connection_id = $1 AND expires_at <= NOW()`, conn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := sp.post(t, conn.ID, longLived); !strings.Contains(rec.Body.String(), errs.CodeSAMLReplayDetected) {
+		t.Errorf("the assertion posted again a day later, still valid: %d %s, want %s", rec.Code, rec.Body.String(), errs.CodeSAMLReplayDetected)
+	}
+}
+
 // TestSAMLAssertionRefused checks that the ACS issues no login code for an
 // answer that is unsigned, signed by another key, altered or wrapped after
 // signing, from another issuer, meant for another audience, recipient or
@@ -882,6 +911,39 @@ func TestSAMLDraftConnectionSignsNobodyIn(t *testing.T) {
 	}
 	if rec := sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: pending, email: member.Email})); !strings.Contains(rec.Body.String(), errs.CodeSAMLConnectionDraft) {
 		t.Errorf("an answer through a draft connection: %d %s, want %s", rec.Code, rec.Body.String(), errs.CodeSAMLConnectionDraft)
+	}
+}
+
+// TestSAMLCodeOfAConnectionTurnedOffDoesNotExchange checks that a login code
+// issued just before its connection was disabled, put back to draft or deleted
+// signs nobody in, at /saml/exchange or at the hosted /saml/session.
+func TestSAMLCodeOfAConnectionTurnedOffDoesNotExchange(t *testing.T) {
+	ctx := dbtest.Context(t)
+	sp := newSPSide(t)
+	idp := newUpstreamIdP(t)
+	tenant := dbtest.Tenant(t)
+	member := dbtest.UserAt(t, dbtest.Unique("user")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	verify(t, member.ID)
+	code := func(conn Connection) string {
+		t.Helper()
+		return loginCode(t, sp.post(t, conn.ID, idp.respond(t, conn.ID, answer{inResponseTo: sp.begin(t, conn.ID), email: member.Email})))
+	}
+	for _, tc := range []struct{ change, want string }{
+		{`UPDATE tenant.saml_connections SET status = 'disabled' WHERE id = $1`, errs.CodeSAMLConnectionDisabled},
+		{`UPDATE tenant.saml_connections SET status = 'draft' WHERE id = $1`, errs.CodeSAMLConnectionDraft},
+		{`DELETE FROM tenant.saml_connections WHERE id = $1`, errs.CodeSAMLLoginCodeInvalid},
+	} {
+		conn := sp.connect(t, tenant, idp)
+		exchange, session := code(conn), code(conn)
+		if _, err := dbtest.Pool(t).Exec(ctx, tc.change, conn.ID); err != nil {
+			t.Fatal(err)
+		}
+		if rec := sp.exchange(t, exchange); rec.Code == http.StatusOK || !strings.Contains(rec.Body.String(), tc.want) {
+			t.Errorf("%s, then exchange its code: %d %s, want %s", tc.change, rec.Code, rec.Body.String(), tc.want)
+		}
+		if rec := dbtest.Do(t, sp.public, http.MethodPost, "/saml/session", map[string]string{"code": session}); rec.Code == http.StatusOK || !strings.Contains(rec.Body.String(), tc.want) {
+			t.Errorf("%s, then trade its code for a hosted session: %d %s, want %s", tc.change, rec.Code, rec.Body.String(), tc.want)
+		}
 	}
 }
 

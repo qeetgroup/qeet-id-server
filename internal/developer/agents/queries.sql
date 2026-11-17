@@ -2,8 +2,11 @@
 -- Dynamic SQL in transition() (disabled_at = NOW() vs NULL for suspend/resume)
 -- is handled as two separate static queries below.
 
+-- GetAgentStatusByID finds no agent of a suspended or deleted organisation.
 -- name: GetAgentStatusByID :one
-SELECT status FROM auth.agents WHERE id = $1;
+SELECT a.status FROM auth.agents a
+JOIN tenant.tenants t ON t.id = a.tenant_id AND t.status = 'active' AND t.deleted_at IS NULL
+WHERE a.id = $1;
 
 -- name: GetAgentStatus :one
 SELECT status FROM auth.agents WHERE id = @id AND tenant_id = @tenant_id;
@@ -49,9 +52,12 @@ DELETE FROM auth.agents WHERE id = @id AND tenant_id = @tenant_id;
 UPDATE auth.agents SET status = 'suspended', disabled_at = NOW()
 WHERE tenant_id = $1 AND status = 'active';
 
+-- GetAgentForToken finds no agent of a suspended or deleted organisation.
 -- name: GetAgentForToken :one
-SELECT tenant_id, secret_hash, scopes, token_ttl_seconds, status, previous_secret_hash, previous_secret_expires_at
-FROM auth.agents WHERE id = $1;
+SELECT a.tenant_id, a.secret_hash, a.scopes, a.token_ttl_seconds, a.status, a.previous_secret_hash, a.previous_secret_expires_at
+FROM auth.agents a
+JOIN tenant.tenants t ON t.id = a.tenant_id AND t.status = 'active' AND t.deleted_at IS NULL
+WHERE a.id = $1;
 
 -- TouchAgent notes a token issued to the agent, at most once a minute.
 -- name: TouchAgent :exec
@@ -86,3 +92,7 @@ WHERE id = @id AND tenant_id = @tenant_id;
 -- name: UpgradeAgentSecretHash :exec
 UPDATE auth.agents SET secret_hash = @new_hash
 WHERE id = @id AND tenant_id = @tenant_id AND secret_hash = @old_hash;
+
+-- AgentScopes returns the scopes of one of the tenant's agents still in service.
+-- name: AgentScopes :one
+SELECT scopes FROM auth.agents WHERE id = @id AND tenant_id = @tenant_id AND status <> 'decommissioned';

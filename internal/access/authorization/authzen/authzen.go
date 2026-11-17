@@ -301,6 +301,8 @@ func (h *Handler) evaluations(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// The request's relationship checks share one budget, however many it makes.
+	r = r.WithContext(rebac.WithRequestBudget(r.Context()))
 	var in EvaluationsRequest
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
@@ -338,6 +340,7 @@ func (h *Handler) evaluate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	r = r.WithContext(rebac.WithRequestBudget(r.Context()))
 	var in EvaluationRequest
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)

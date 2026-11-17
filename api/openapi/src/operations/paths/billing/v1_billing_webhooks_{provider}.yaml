@@ -4,7 +4,10 @@ post:
   description: >-
     Receives provider payment events. Authenticated by the provider's webhook
     signature (no user session); on a verified successful payment the referenced
-    checkout is completed idempotently.
+    checkout is completed idempotently. A Stripe event is accepted when any v1
+    signature in its Stripe-Signature header is right (Stripe sends one per
+    secret while a webhook secret rotates) and its timestamp is within five
+    minutes of now.
   tags:
     - Billing
   security: []

@@ -19,7 +19,8 @@ post:
   description: >-
     Joins the caller's existing account to the invited tenant (no new user, no
     password) and returns a tenant-scoped token pair. The invite must be
-    addressed to the caller's own email (`invite.email_mismatch` otherwise). An
+    addressed to the caller's own email (`invite.email_mismatch` otherwise), and
+    its sender must still be able to give it (400 `invite.invalid`). An
     organisation that requires a second factor of the caller (its security
     policy, or administrators-only for its administrators) is entered (the pair
     issued) only by a session whose sign-in met one, or that holds a fresh

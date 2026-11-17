@@ -38,6 +38,9 @@ func TestApplicationAdministration(t *testing.T) {
 	if rec.Code != http.StatusCreated || created.Client.TenantID != tenant || created.Secret == "" {
 		t.Fatalf("create: %d %s, want a client of the path's organisation and its secret", rec.Code, rec.Body.String())
 	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.oidc_clients WHERE id = $1 AND tenant_id = $2 AND created_by = $3`, created.Client.ID, tenant, admin.ID); n != 1 {
+		t.Error("the application doesn't record who created it")
+	}
 	path := clients + "/" + created.Client.ID.String()
 	for _, read := range []string{path, clients} {
 		if rec := dbtest.Do(t, asAdmin, http.MethodGet, read, nil); rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), created.Secret) {
@@ -140,6 +143,7 @@ func TestResourcesAndShadowAIReview(t *testing.T) {
 	bystander, bystanderSecret := registerClient(t, svc, tenant)
 	foreign, _ := registerClient(t, svc, otherTenant)
 	resources := "/tenants/" + tenant.String() + "/oidc/resources"
+	verifyDomain(t, tenant, strings.TrimPrefix(resourceA, "https://"))
 
 	for _, tc := range []struct {
 		name string

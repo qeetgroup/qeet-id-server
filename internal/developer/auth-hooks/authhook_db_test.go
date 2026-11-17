@@ -11,11 +11,13 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/requestsig"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
@@ -24,15 +26,18 @@ import (
 func TestMain(m *testing.M) { dbtest.Main(m) }
 
 // policyServer is a fake sign-in hook: it checks each call's signature against
-// secret and answers with status and reply.
+// secret, and against old while that is set, as a receiver does (the shared
+// request signer's Verify), and answers with status and reply.
 type policyServer struct {
 	*httptest.Server
 	mu       sync.Mutex
 	secret   string
+	old      string
 	status   int
 	reply    string
 	calls    int
 	badSigns int
+	oldSigns int
 	last     map[string]any
 }
 
@@ -44,8 +49,11 @@ func newPolicyServer(t *testing.T, secret string) *policyServer {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		p.calls++
-		if r.Header.Get("X-Qeet-Signature") != "sha256="+sign(p.secret, body) {
+		if requestsig.Verify(r.Header, body, p.secret, time.Now(), requestsig.Tolerance) != nil {
 			p.badSigns++
+		}
+		if p.old != "" && requestsig.Verify(r.Header, body, p.old, time.Now(), requestsig.Tolerance) == nil {
+			p.oldSigns++
 		}
 		p.last = nil
 		_ = json.Unmarshal(body, &p.last)
@@ -108,6 +116,9 @@ func TestHookDecidesSignIn(t *testing.T) {
 	dbtest.Decode(t, rec, &hook)
 	if !hook.Enabled || !hook.FailOpen || hook.Trigger != "post_login" {
 		t.Errorf("new hook %+v; want enabled, failing open, after sign-in", hook)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.auth_hooks WHERE id = $1 AND tenant_id = $2 AND created_by = $3`, hook.ID, tenant, admin.ID); n != 1 {
+		t.Error("the hook doesn't record who created it")
 	}
 	if rec := dbtest.Do(t, h, http.MethodPost, base, map[string]string{"url": "ftp://hooks.example.com"}); rec.Code/100 != 4 {
 		t.Errorf("a hook at a non-http URL: %d, want refused", rec.Code)
@@ -319,5 +330,60 @@ func TestEveryEnabledHookRuns(t *testing.T) {
 	}
 	if f2, s2 := calls(); f2 != f+1 || s2 != s {
 		t.Errorf("a disabled hook was called, or an enabled one wasn't: %d and %d more calls", f2-f, s2-s)
+	}
+}
+
+// TestHookRequestsCarryASignedTimestamp checks that a hook call is signed as a
+// webhook delivery is, over a timestamp and the body, so a receiver refuses a
+// replayed one; that a hook given a new secret signs with the old one too for
+// a day, so its endpoint can move over, and that the hook shows until when;
+// and that once the overlap has ended only the new one signs.
+func TestHookRequestsCarryASignedTimestamp(t *testing.T) {
+	ctx := dbtest.Context(t)
+	svc := hookService(t)
+	tenant := dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	server := newPolicyServer(t, "first-secret")
+	hook, err := svc.Create(ctx, tenant, server.URL, "first-secret", true, audit.Actor{Type: "user", UserID: &admin.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Run(ctx, tenant, admin.ID, admin.Email); err != nil {
+		t.Fatal(err)
+	}
+	if server.calls != 1 || server.badSigns != 0 {
+		t.Fatalf("%d calls, %d not signed over a fresh timestamp and the body", server.calls, server.badSigns)
+	}
+
+	server.secret, server.old = "second-secret", "first-secret"
+	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
+	base := "/tenants/" + tenant.String() + "/auth-hooks"
+	if rec := dbtest.Do(t, h, http.MethodPatch, base+"/"+hook.ID.String(), map[string]any{"secret": "second-secret"}); rec.Code != http.StatusOK {
+		t.Fatalf("change the secret: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := svc.Run(ctx, tenant, admin.ID, admin.Email); err != nil {
+		t.Fatal(err)
+	}
+	if server.calls != 2 || server.badSigns != 0 || server.oldSigns != 1 {
+		t.Errorf("after the change: %d calls, %d not signed with the new secret, %d with the old; want one signed with both",
+			server.calls, server.badSigns, server.oldSigns)
+	}
+	var list struct {
+		Items []Hook `json:"items"`
+	}
+	dbtest.Decode(t, dbtest.Do(t, h, http.MethodGet, base, nil), &list)
+	if len(list.Items) != 1 || list.Items[0].PreviousSecretExpiresAt == nil || time.Until(*list.Items[0].PreviousSecretExpiresAt) < 23*time.Hour {
+		t.Errorf("hooks %+v, want the old secret signing for a day", list.Items)
+	}
+
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE tenant.auth_hooks SET previous_secret_expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1`, hook.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Run(ctx, tenant, admin.ID, admin.Email); err != nil {
+		t.Fatal(err)
+	}
+	if server.calls != 3 || server.badSigns != 0 || server.oldSigns != 1 {
+		t.Errorf("after the overlap: %d calls, %d not signed with the new secret, %d with the old; want the last signed with the new one only",
+			server.calls, server.badSigns, server.oldSigns)
 	}
 }

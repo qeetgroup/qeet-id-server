@@ -6,15 +6,17 @@ get:
     authentications, newest first, each with its time and address (no secret
     material is ever recorded). Wrong secrets count against a confidential
     application on every endpoint that takes one (code exchange, refresh, token
-    exchange, device and backchannel requests, revocation, introspection); past
-    the threshold (CLIENT_AUTH_LOCKOUT_THRESHOLD in CLIENT_AUTH_LOCKOUT_WINDOW,
-    10 in 15 minutes by default) every authentication is refused for
-    CLIENT_AUTH_LOCKOUT_DURATION (15 minutes), the right secret included, with
-    the same 401 oidc.client_auth_failed as a wrong secret or an unknown
-    application. Each failure is audited as oidc.client_auth_failed; a lockout
-    as oidc.client_locked_out, and announced as the oidc.client_locked_out
-    event. A successful authentication resets the count. locked_until is null
-    when no lockout is in force.
+    exchange, device and backchannel requests, revocation, introspection), per
+    source network (an IPv4 address or an IPv6 /64); past the threshold from
+    one network (CLIENT_AUTH_LOCKOUT_THRESHOLD in CLIENT_AUTH_LOCKOUT_WINDOW, 10
+    in 15 minutes by default) every authentication from that network is refused
+    for CLIENT_AUTH_LOCKOUT_DURATION (15 minutes), the right secret included,
+    with the same 401 oidc.client_auth_failed as a wrong secret or an unknown
+    application, while other networks are unaffected. Each failure is audited as
+    oidc.client_auth_failed; a lockout as oidc.client_locked_out, with its
+    source_network, and announced as the oidc.client_locked_out event. A
+    successful authentication resets its network's count. locked_until is when
+    the last lockout in force ends, null when none is.
   tags:
     - OIDC
   parameters:

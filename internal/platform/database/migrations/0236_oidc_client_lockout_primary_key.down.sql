@@ -1,0 +1,1 @@
+ALTER TABLE auth.oidc_client_auth_lockouts DROP CONSTRAINT oidc_client_auth_lockouts_pkey;

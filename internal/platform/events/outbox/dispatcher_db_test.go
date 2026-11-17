@@ -147,6 +147,32 @@ func TestDispatcherDeadLettersAfterADay(t *testing.T) {
 	}
 }
 
+// TestDeadLetterNeedsTheLease checks that an event whose lease another worker
+// has taken over is not dead-lettered by the worker that failed it, and that
+// the move it didn't make is not counted.
+func TestDeadLetterNeedsTheLease(t *testing.T) {
+	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
+	id := enqueue(t, 1, "test.taken")[0]
+	if _, err := pool.Exec(ctx, `UPDATE platform.outbox SET attempts = $2, lease_owner = $3, lease_until = NOW() + interval '1 minute' WHERE id = $1`,
+		id, DefaultMaxAttempts-1, uuid.New()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM platform.outbox_dead_letter WHERE event_type = 'test.taken'`)
+	})
+	before := counterValue(t, deadLettered)
+	NewDispatcher(pool, &recordingPublisher{down: true}, time.Second, 50).recordFailure(ctx, id, DefaultMaxAttempts, errors.New("publisher down"))
+	if n := dbtest.Count(t, `SELECT count(*) FROM platform.outbox WHERE id = $1`, id); n != 1 {
+		t.Errorf("an event leased to another worker left the outbox")
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM platform.outbox_dead_letter WHERE id = $1`, id); n != 0 {
+		t.Errorf("an event leased to another worker was dead-lettered")
+	}
+	if got := counterValue(t, deadLettered) - before; got != 0 {
+		t.Errorf("outbox_dead_lettered_total rose by %v for a move that didn't happen, want 0", got)
+	}
+}
+
 // counterValue is c's current value.
 func counterValue(t *testing.T, c prometheus.Counter) float64 {
 	t.Helper()

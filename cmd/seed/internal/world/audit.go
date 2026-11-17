@@ -147,7 +147,7 @@ func (w *World) VerifyChains() int {
 		chains = append(chains, t)
 	}
 	rows.Close()
-	verifier := audit.NewVerifier(w.Pool)
+	verifier := audit.NewVerifier(w.Pool, nil) // the seed checks the rows it wrote, not checkpoints
 	total := 0
 	for _, t := range chains {
 		var tid *uuid.UUID

@@ -5,6 +5,7 @@ package recovery
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/http"
 	"net/url"
 	"strings"
@@ -157,17 +158,20 @@ func TestRecoveryLinksWithOneConnection(t *testing.T) {
 	tenant := dbtest.Tenant(t)
 	a := dbtest.User(t, tenant, tenant)
 	reset, link := dbtest.Unique("reset"), dbtest.Unique("link")
-	if _, err := pool.Exec(ctx, `
-		WITH r AS (INSERT INTO auth.password_resets (user_id, token_hash, expires_at) VALUES ($1, $2, NOW() + INTERVAL '1 hour'))
-		INSERT INTO auth.magic_links (email, token_hash, expires_at, app) VALUES ($3, $4, NOW() + INTERVAL '1 hour', $5)
-	`, a.ID, codes.Hash(reset), a.Email, codes.Hash(link), MagicLinkConsole); err != nil {
-		t.Fatalf("links: %v", err)
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.magic_links (email, token_hash, expires_at, app) VALUES ($1, $2, NOW() + INTERVAL '1 hour', $3)`,
+		a.Email, codes.Hash(link), MagicLinkConsole); err != nil {
+		t.Fatalf("magic link: %v", err)
 	}
 
-	// The magic link first: a reset ends the links still outstanding.
+	// The magic link first: it proves the address, which ends the links still
+	// outstanding, so the reset link is issued after it.
 	dbtest.LeaveOneConnection(t)
 	if res, err := svc.ConsumeMagicLink(ctx, link, AuditCtx{}); err != nil || res.UserID != a.ID {
 		t.Errorf("consume magic link: %+v, %v; want %s", res, err, a.ID)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.password_resets (user_id, token_hash, expires_at) VALUES ($1, $2, NOW() + INTERVAL '1 hour')`,
+		a.ID, codes.Hash(reset)); err != nil {
+		t.Fatalf("reset link: %v", err)
 	}
 	if err := svc.ConfirmPasswordReset(ctx, reset, "Pw4!nKx7mQ2v-new", AuditCtx{}); err != nil {
 		t.Errorf("confirm reset: %v", err)
@@ -236,4 +240,113 @@ func TestRecoveryLinksGoToTheStoredAddress(t *testing.T) {
 		}
 	}
 	svc.deliveries.Wait()
+}
+
+// credentialKinds counts, per kind, what userID can sign in or act with.
+var credentialKinds = map[string]string{
+	"password":         `SELECT count(*) FROM auth.password_credentials WHERE user_id = $1`,
+	"passkeys":         `SELECT count(*) FROM auth.passkey_credentials WHERE user_id = $1`,
+	"authenticator":    `SELECT count(*) FROM auth.mfa_totp WHERE user_id = $1`,
+	"recovery codes":   `SELECT count(*) FROM auth.mfa_recovery_codes WHERE user_id = $1`,
+	"email/SMS codes":  `SELECT count(*) FROM auth.mfa_otp_factors WHERE user_id = $1`,
+	"push devices":     `SELECT count(*) FROM auth.mfa_push_devices WHERE user_id = $1`,
+	"push pairings":    `SELECT count(*) FROM auth.mfa_push_pairings WHERE user_id = $1 AND used_at IS NULL`,
+	"linked accounts":  `SELECT count(*) FROM "user".external_identities WHERE user_id = $1`,
+	"console sign-ins": `SELECT count(*) FROM auth.platform_social_identities WHERE user_id = $1`,
+	"API keys":         `SELECT count(*) FROM auth.api_keys WHERE user_id = $1 AND revoked_at IS NULL`,
+}
+
+// giveCredentials gives a one of each credential kind, as someone who
+// registered the address could have set up, in tenant.
+func giveCredentials(t *testing.T, a dbtest.Account, tenant uuid.UUID) {
+	t.Helper()
+	dbtest.SetPassword(t, a.ID, "Kx7mQ2vLp9Wz-squat")
+	for _, q := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, name) VALUES ($1, convert_to($2, 'UTF8'), '\x00', 'Laptop')`, []any{a.ID, a.ID.String()}},
+		{`INSERT INTO auth.mfa_totp (user_id, secret, confirmed_at) VALUES ($1, 'secret', NOW())`, []any{a.ID}},
+		{`INSERT INTO auth.mfa_recovery_codes (user_id, code_hash) VALUES ($1, 'hash')`, []any{a.ID}},
+		{`INSERT INTO auth.mfa_otp_factors (user_id, channel, destination) VALUES ($1, 'sms', '+15550100')`, []any{a.ID}},
+		{`INSERT INTO auth.mfa_push_devices (user_id, platform, push_token, device_token) VALUES ($1, 'ios', 'push', 'device')`, []any{a.ID}},
+		{`INSERT INTO auth.mfa_push_pairings (user_id, code_hash, expires_at) VALUES ($1, $2, NOW() + INTERVAL '1 hour')`, []any{a.ID, dbtest.Unique("pair")}},
+		{`INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email) VALUES ($1, $2, 'github', $3, $4)`, []any{a.ID, tenant, dbtest.Unique("gh"), a.Email}},
+		{`INSERT INTO auth.platform_social_identities (user_id, provider, subject, email) VALUES ($1, 'google', $2, $3)`, []any{a.ID, dbtest.Unique("g"), a.Email}},
+		{`INSERT INTO auth.api_keys (tenant_id, user_id, name, prefix, key_hash) VALUES ($1, $2, 'laptop', $3, 'hash')`, []any{tenant, a.ID, dbtest.Unique("qk")}},
+	} {
+		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), q.sql, q.args...); err != nil {
+			t.Fatalf("%s: %v", q.sql, err)
+		}
+	}
+}
+
+// heldCredentials returns the credential kinds a holds, with how many of each.
+func heldCredentials(t *testing.T, a dbtest.Account) map[string]int {
+	t.Helper()
+	held := map[string]int{}
+	for kind, q := range credentialKinds {
+		if n := dbtest.Count(t, q, a.ID); n > 0 {
+			held[kind] = n
+		}
+	}
+	return held
+}
+
+// TestResetThatProvesTheAddressEndsEarlierCredentials checks that a reset that
+// proves an account's address for the first time leaves it only the password
+// just set: whatever someone who registered the address first set up is gone,
+// and the removal is recorded.
+func TestResetThatProvesTheAddressEndsEarlierCredentials(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := NewService(pool, &dbtest.Mailbox{}, time.Hour, "https://console.example.test")
+	svc.SetPasswordRules(authpolicy.NewService(pool))
+	tenant := dbtest.Tenant(t)
+	squatted := dbtest.User(t, tenant, tenant)
+	giveCredentials(t, squatted, tenant)
+
+	raw, err := svc.StartPasswordReset(ctx, squatted.Email, ResetOrigin{})
+	svc.deliveries.Wait()
+	if err != nil || raw == "" {
+		t.Fatalf("start a reset: %q, %v", raw, err)
+	}
+	if err := svc.ConfirmPasswordReset(ctx, raw, "Pw4!nKx7mQ2v-owner", AuditCtx{}); err != nil {
+		t.Fatalf("confirm the reset: %v", err)
+	}
+	if held := heldCredentials(t, squatted); len(held) != 1 || held["password"] != 1 {
+		t.Errorf("after the reset that proved the address the account holds %v; want only the new password", held)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.credentials_removed' AND resource_id = $1
+		AND tenant_id = $2 AND metadata->>'proof' = 'password_reset'`, squatted.ID, tenant); n != 1 {
+		t.Errorf("the removal was recorded %d times, want once", n)
+	}
+}
+
+// TestResetOfAVerifiedAccountKeepsItsPasskeys checks that a reset of an account
+// whose address was already proved changes only its password.
+func TestResetOfAVerifiedAccountKeepsItsPasskeys(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := NewService(pool, &dbtest.Mailbox{}, time.Hour, "https://console.example.test")
+	svc.SetPasswordRules(authpolicy.NewService(pool))
+	tenant := dbtest.Tenant(t)
+	owner := dbtest.User(t, tenant, tenant)
+	giveCredentials(t, owner, tenant)
+	if _, err := pool.Exec(ctx, `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, owner.ID); err != nil {
+		t.Fatal(err)
+	}
+	before := heldCredentials(t, owner)
+
+	raw, err := svc.StartPasswordReset(ctx, owner.Email, ResetOrigin{})
+	svc.deliveries.Wait()
+	if err != nil || raw == "" {
+		t.Fatalf("start a reset: %q, %v", raw, err)
+	}
+	if err := svc.ConfirmPasswordReset(ctx, raw, "Pw4!nKx7mQ2v-owner", AuditCtx{}); err != nil {
+		t.Fatalf("confirm the reset: %v", err)
+	}
+	if after := heldCredentials(t, owner); !maps.Equal(after, before) {
+		t.Errorf("a verified account's reset left %v, want %v", after, before)
+	}
 }

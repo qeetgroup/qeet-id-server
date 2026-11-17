@@ -3,7 +3,9 @@ get:
   summary: Verify audit chain
   description: >-
     Walks the tenant's hash chain from the seed and recomputes each row's hash,
-    returning the first broken link (if any). No side effects.
+    returning the first broken link (if any). No side effects. Once events older
+    than the plan keeps them (audit_retention_days) have been deleted, the walk
+    starts from the last one deleted, whose hash the first one kept links to.
   tags:
     - Audit
   parameters:

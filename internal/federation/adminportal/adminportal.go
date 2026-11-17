@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/adminportal/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
@@ -881,6 +882,19 @@ func (h *Handler) samlUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	// A portal session is no person who could outrank anyone, so it changes
+	// what a connection trusts only while no administrator is linked to it.
+	current, err := h.SAML.Get(ctx, id, l.TenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if in.ChangesTrust(current) {
+		if err := identitylink.CheckTrustChange(ctx, h.SAML.Pool(), nil, nil, l.TenantID, id, ""); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+	}
 	tx, err := h.SAML.Pool().Begin(ctx)
 	if err != nil {
 		httpx.WriteError(w, r, err)

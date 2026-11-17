@@ -44,6 +44,11 @@ patch:
     oidc_connection.idp_tenant_ids_required). Audited as oidc_connection.updated
     with the fields changed. Another organisation's connection answers 404.
     Requires connection.write. Needs a recent step-up.
+    Changing what the connection trusts (its issuer, discovery_url, client_id or
+    allowed_idp_tenant_ids) is acting on every account linked to it, as the
+    changed connection could sign in as any of them: while an administrator is
+    linked, it needs a caller who outranks each one (403
+    rbac.trust_change_outranks_caller otherwise).
   summary: Update OIDC connection
   tags:
     - OIDC Connections

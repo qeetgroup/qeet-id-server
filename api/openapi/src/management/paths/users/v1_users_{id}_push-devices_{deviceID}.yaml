@@ -4,7 +4,10 @@ delete:
   description: >-
     Disconnects a member's linked phone, for example a lost one, so it receives
     no approval requests and cannot answer one. Requires the user.credentials
-    permission; audited as mfa.push_device_revoked.
+    permission; audited as mfa.push_device_revoked. Refused with 403
+    rbac.target_is_owner when the member is an owner and the caller isn't, and
+    403 rbac.target_outranks_caller when they hold a permission the caller
+    doesn't.
   tags:
     - Users
   parameters:

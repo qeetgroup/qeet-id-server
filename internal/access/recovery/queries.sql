@@ -34,10 +34,10 @@ ON CONFLICT (user_id) DO UPDATE SET password_hash = EXCLUDED.password_hash, upda
 -- name: MarkPasswordResetUsed :exec
 UPDATE auth.password_resets SET used_at = NOW() WHERE id = $1;
 
--- name: VerifyEmailByReset :one
--- A used reset link was sent to the account's address and to nobody else, so
--- it proves the person owns the address: verify it if it wasn't. No row when
--- it already was.
+-- name: VerifyEmailByLink :one
+-- A used reset or sign-in link was sent to the account's address and to nobody
+-- else, so it proves the person owns the address: verify it if it wasn't. No
+-- row when it already was.
 UPDATE "user".users SET email_verified_at = NOW(), updated_at = NOW()
 WHERE id = @user_id AND email_verified_at IS NULL AND deleted_at IS NULL
 RETURNING email;
@@ -73,3 +73,12 @@ WHERE LOWER(email) = LOWER(@email) AND deleted_at IS NULL AND status <> 'suspend
 
 -- name: MarkMagicLinkUsed :exec
 UPDATE auth.magic_links SET used_at = NOW() WHERE id = $1;
+
+-- AccountBelongsTo reports whether the account belongs to the organisation: it
+-- is the account's home, or the account holds a role there.
+-- name: AccountBelongsTo :one
+SELECT EXISTS (
+    SELECT 1 FROM "user".users WHERE id = @user_id AND tenant_id = @tenant_id::uuid
+    UNION ALL
+    SELECT 1 FROM rbac.user_roles WHERE user_id = @user_id AND tenant_id = @tenant_id::uuid
+)::bool AS belongs;

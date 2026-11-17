@@ -49,7 +49,13 @@ post:
     envelope, not the standard Qeet error shape. A userName belonging to an
     account already at home in the tenant (invited, or signed in with single
     sign-on) adopts that account: it is tagged as provisioned with the
-    externalId and updated, and answered 201. A userName taken elsewhere, or on
+    externalId and updated, and answered 201. When nothing vouched for that
+    account's address yet (its holder never proved it, and the directory didn't
+    provision it), adoption also removes every credential and sign-in set up
+    on it (recorded as auth.credentials_removed), so whoever registered the
+    address first keeps no way in; the person signs in through the
+    organisation's identity provider, or resets the password. The response is
+    unchanged. A userName taken elsewhere, or on
     a domain another organisation has verified, is refused with 409.
   summary: '[scim] Create user'
   tags:

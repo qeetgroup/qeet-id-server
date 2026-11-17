@@ -147,3 +147,37 @@ func TestAgentSecretsRotateAndAgentsResumeTogether(t *testing.T) {
 		}
 	}
 }
+
+// TestAgentOfDeletedOrganisationIsRefused checks that an agent of a suspended
+// or deleted organisation gets no token, its right secret included, and that
+// the tokens it was already issued stop: its status is no longer active.
+// Reactivating the organisation restores both.
+func TestAgentOfDeletedOrganisationIsRefused(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := NewService(pool, dbtest.Issuer(t))
+	tenant := dbtest.Tenant(t)
+	sponsor := dbtest.User(t, tenant, tenant)
+	a, err := svc.Create(ctx, tenant, "batch-bot", nil, 0, sponsor.ID, audit.Actor{Type: "system"})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	for _, step := range []struct {
+		name, change string
+		works        bool
+	}{
+		{"suspended", `UPDATE tenant.tenants SET status = 'suspended' WHERE id = $1`, false},
+		{"reactivated", `UPDATE tenant.tenants SET status = 'active' WHERE id = $1`, true},
+		{"deleted", `UPDATE tenant.tenants SET deleted_at = NOW() WHERE id = $1`, false},
+	} {
+		if _, err := pool.Exec(ctx, step.change, tenant); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.IssueToken(ctx, a.ID.String(), a.Secret); (err == nil) != step.works {
+			t.Errorf("a token for an agent of a %s organisation: %v, want works=%v", step.name, err, step.works)
+		}
+		if status, _ := svc.AgentStatus(ctx, a.ID); (status == "active") != step.works {
+			t.Errorf("an issued token of a %s organisation's agent: status %q, want active=%v", step.name, status, step.works)
+		}
+	}
+}

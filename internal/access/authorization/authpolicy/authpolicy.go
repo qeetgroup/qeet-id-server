@@ -77,13 +77,13 @@ type LockoutLimits struct {
 }
 
 // DefaultLockoutLimits are the built-in limits: five failures within fifteen
-// minutes lock for fifteen minutes; a tenant may choose a threshold of 3 to
-// 20, and a window and a duration of 1 minute to 24 hours.
+// minutes lock for fifteen minutes. A tenant may only be stricter: a threshold
+// of 3 to 5, and a window and a duration of 15 minutes to 24 hours.
 func DefaultLockoutLimits() LockoutLimits {
 	return LockoutLimits{
 		Defaults: Lockout{Threshold: 5, Window: 15 * time.Minute, Duration: 15 * time.Minute},
-		Min:      Lockout{Threshold: 3, Window: time.Minute, Duration: time.Minute},
-		Max:      Lockout{Threshold: 20, Window: 24 * time.Hour, Duration: 24 * time.Hour},
+		Min:      Lockout{Threshold: 3, Window: 15 * time.Minute, Duration: 15 * time.Minute},
+		Max:      Lockout{Threshold: 5, Window: 24 * time.Hour, Duration: 24 * time.Hour},
 	}
 }
 

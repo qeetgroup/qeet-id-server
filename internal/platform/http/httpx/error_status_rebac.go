@@ -16,5 +16,6 @@ func init() {
 		errs.CodeReBACObjectOrSubjectRequired: http.StatusBadRequest,
 		errs.CodeReBACUserIDRelationRequired:  http.StatusUnprocessableEntity,
 		errs.CodeReBACObjectRelationRequired:  http.StatusBadRequest,
+		errs.CodeReBACCheckTooComplex:         http.StatusUnprocessableEntity,
 	})
 }

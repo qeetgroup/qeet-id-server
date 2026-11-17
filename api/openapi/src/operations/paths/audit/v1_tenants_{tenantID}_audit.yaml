@@ -4,9 +4,10 @@ get:
     Returns the tenant's audit events in reverse chronological order with
     cursor-based pagination and optional filters for action, resource type,
     actor, and a free-text query. The audit log is append-only and hash-chained,
-    so results reflect an immutable record of activity. Pass the returned cursor
-    to page through history; access is restricted to the tenant named in the
-    path.
+    so results reflect an immutable record of activity. Events are kept for the
+    plan's audit_retention_days (7, 30, 90 days, or for good), then deleted.
+    Pass the returned cursor to page through history; access is restricted to
+    the tenant named in the path.
   summary: List audit events
   tags:
     - Audit

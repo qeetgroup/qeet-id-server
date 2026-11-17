@@ -8,7 +8,10 @@ post:
     an ABAC allow policy permits. A role grant counts without a tuple. An engine
     error refuses. The response names the deciding model and rule in decided_by;
     pass explain=true to also receive the chain of tuples that granted access
-    and the decision's trace. This is a read-only decision; author the
+    and the decision's trace. A check expands at most 1,000 distinct
+    object#relation pairs, and the check with its explanation reads at most
+    5,000 relationship sets; past either it is refused with 422
+    rebac.check_too_complex. This is a read-only decision; author the
     underlying tuples with the write-tuple call.
   summary: Check relation
   tags:

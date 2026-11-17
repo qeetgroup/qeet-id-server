@@ -2,7 +2,16 @@ post:
   operationId: registerTokenVaultProvider
   description: >-
     Registers a third-party OAuth provider so the Token Vault can store and
-    transparently refresh users' access tokens for it.
+    transparently refresh users' access tokens for it. provider, client_id and
+    client_secret are required (422 validation_failed, naming each field);
+    authorize_url and token_url must be public http or https URLs (422
+    tokenvault.provider_authorize_url_invalid and
+    tokenvault.provider_token_url_invalid). Registering an existing provider
+    again updates it, but while anyone is connected through it its
+    authorize_url, token_url and client_id can't change (409
+    tokenvault.provider_in_use), so their refresh tokens only ever go to the
+    endpoint that issued them; the secret and scopes can. Delete the provider
+    to disconnect everyone first.
   summary: Register a Token Vault OAuth2 provider
   tags:
     - Token Vault
@@ -55,6 +64,8 @@ post:
       $ref: ../../../shared/responses/Unauthorized.yaml
     '403':
       $ref: ../../../shared/responses/Forbidden.yaml
+    '409':
+      $ref: ../../../shared/responses/Conflict.yaml
     '422':
       $ref: ../../../shared/responses/Unprocessable.yaml
     '429':

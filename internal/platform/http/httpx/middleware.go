@@ -11,6 +11,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // InFlight counts the HTTP requests being served, so graceful shutdown can
@@ -137,6 +139,21 @@ const permissionsPolicy = "accelerometer=(), autoplay=(), camera=(), " +
 	"magnetometer=(), microphone=(), midi=(), payment=(), " +
 	"picture-in-picture=(), screen-wake-lock=(), sync-xhr=(), usb=(), " +
 	"web-share=(), xr-spatial-tracking=()"
+
+// RefuseEncodedSeparators answers 400 to a request whose path carries an
+// encoded slash or backslash (%2F, %5C). The router splits the raw path and
+// the permission, step-up, row-level scoping, CSRF and idempotency checks the
+// decoded one, so such a path could name one route to the router and another
+// to a check.
+func RefuseEncodedSeparators(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p := strings.ToUpper(r.URL.EscapedPath()); strings.Contains(p, "%2F") || strings.Contains(p, "%5C") {
+			WriteError(w, r, errs.ErrBadRequest.WithDetail("the path has an encoded slash or backslash"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 // SecurityHeaders returns a middleware that applies standard hardening
 // headers to every response. enableHSTS controls whether

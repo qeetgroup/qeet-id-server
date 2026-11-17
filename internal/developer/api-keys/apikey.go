@@ -9,10 +9,12 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -143,6 +145,9 @@ func rowToKey(id uuid.UUID, tenantID uuid.UUID, userID pgtype.UUID, name, prefix
 	}
 }
 
+// maxNameLength is the most characters a key's name may have.
+const maxNameLength = 200
+
 // CreateInput is what Create takes.
 type CreateInput struct {
 	TenantID  uuid.UUID  `json:"tenant_id" validate:"required"`
@@ -158,6 +163,11 @@ type CreateInput struct {
 // Create issues an API key and returns it with its plaintext secret, shown
 // only now.
 func (s *Service) Create(ctx context.Context, in CreateInput) (*Key, string, error) {
+	if utf8.RuneCountInString(in.Name) > maxNameLength {
+		return nil, "", errs.ErrValidationFailed.WithFields([]errs.FieldError{{
+			Field: "name", Code: "too_long", Message: fmt.Sprintf("Must be at most %d characters.", maxNameLength),
+		}})
+	}
 	// A key presents itself as its user on every call, so it may act only for
 	// the person creating it. Naming anyone else, a colleague or someone in
 	// another organization, would let the creator act as them.
@@ -280,7 +290,10 @@ func (s *Service) Verify(ctx context.Context, raw string) (*Key, error) {
 	if err != nil {
 		return nil, err
 	}
-	ok, rehash := password.VerifySecret(row.KeyHash, secret)
+	ok, rehash, err := password.VerifySecret(ctx, row.KeyHash, secret)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, errs.ErrAPIKeyInvalid
 	}

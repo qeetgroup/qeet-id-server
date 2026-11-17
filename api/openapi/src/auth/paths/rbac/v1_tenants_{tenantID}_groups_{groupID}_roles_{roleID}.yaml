@@ -51,7 +51,9 @@ delete:
     Revokes a role from a group within the tenant; members lose the role's
     group-derived permissions as soon as this returns, though direct user grants
     of the same role are unaffected. This is the counterpart to the
-    grant-role-to-group call. Review the group's remaining roles with the
+    grant-role-to-group call, and is held to the same rule: only an owner takes
+    the owner role off a group (403 rbac.owner_only), and nobody takes off a
+    role carrying a permission they lack (403 rbac.grant_exceeds_caller). Review the group's remaining roles with the
     list-group-roles call.
   summary: Revoke role from group
   tags:

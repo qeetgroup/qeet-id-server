@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
@@ -1287,6 +1288,19 @@ func (h *Handler) applyUserChange(w http.ResponseWriter, r *http.Request, tenant
 		writeSCIMErr(w, http.StatusForbidden, ownerUnchangeable)
 		return false
 	}
+	// Nor does it move an administrator to another address, where their
+	// password reset would then go, as single sign-on doesn't (ssosync).
+	if c.email != "" {
+		admin, err := identitylink.Administers(ctx, tx, userID, tenantID)
+		if err != nil {
+			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
+			return false
+		}
+		if admin {
+			writeSCIMErr(w, http.StatusForbidden, administratorAddressUnchangeable)
+			return false
+		}
+	}
 	// The directory lifts only a suspension it set: one an administrator, a
 	// policy or another directory set stands, and the rest of the change
 	// applies.
@@ -1296,6 +1310,16 @@ func (h *Handler) applyUserChange(w http.ResponseWriter, r *http.Request, tenant
 	if _, err := h.Service.users.UpdateTx(ctx, tx, userID, in); err != nil {
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return false
+	}
+	// Tagging an account as the directory's, or giving it a new address, vouches
+	// for it from now on. One nobody vouched for yet (its holder never proved
+	// the address, nor did the directory provision it) keeps nothing whoever
+	// registered the address first set up, whichever request does it.
+	if c.adopted || c.tag != nil || c.email != "" {
+		if err := h.forgetUnvouched(ctx, tx, r, tenantID, userID); err != nil {
+			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
+			return false
+		}
 	}
 	if c.tag != nil {
 		if err := h.Service.tagProvisionedTx(ctx, tx, userID, *c.tag); err != nil {
@@ -1361,15 +1385,43 @@ func (h *Handler) applyUserChange(w http.ResponseWriter, r *http.Request, tenant
 	return true
 }
 
+// forgetUnvouched removes, inside tx, every credential and sign-in of an
+// account the directory is about to vouch for when nothing vouched for its
+// address yet, and records the removal in tenantID's trail.
+func (h *Handler) forgetUnvouched(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID, userID uuid.UUID) error {
+	vouched, err := identitylink.AddressVerified(ctx, tx, userID)
+	if err != nil || vouched {
+		return err
+	}
+	removed, err := auth.ForgetCredentials(ctx, tx, userID, false)
+	if err != nil {
+		return err
+	}
+	if _, err := auth.EndSignIns(ctx, tx, h.Service.signals, userID, sessionsignal.ReasonAdminRevokedAll); err != nil {
+		return err
+	}
+	// Audited only, as the other first proofs are: no event leaves for webhooks.
+	return audit.Record(ctx, tx, audit.Event{
+		TenantID: &tenantID, ActorType: "scim", Action: "auth.credentials_removed", ResourceType: "user",
+		ResourceID: &userID, IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
+		Metadata: map[string]any{"proof": "scim_adoption", "removed": removed},
+	})
+}
+
 // ownerUnchangeable is the refusal of a directory change to an account that
 // owns the organisation: owners are changed only by people, in the console.
 const ownerUnchangeable = "This account owns the organization, so the directory can't change it."
+
+// administratorAddressUnchangeable is the refusal of a directory change to the
+// address of an account that administers the organisation.
+const administratorAddressUnchangeable = "This account administers the organization, so the directory can't change its address. Change it in the console."
 
 // errOwnerUnchangeable refuses deprovisioning an owner.
 var errOwnerUnchangeable = errors.New("scim: the account owns the organization")
 
 // deprovision soft-deletes a SCIM-managed user, ending every way they sign
-// in, and records it in the same transaction. An owner is refused with
+// in, and records it and what they leave behind (OffboardTx) in the same
+// transaction. An owner is refused with
 // errOwnerUnchangeable.
 func (h *Handler) deprovision(r *http.Request, tenantID, userID uuid.UUID) error {
 	ctx := r.Context()
@@ -1392,6 +1444,10 @@ func (h *Handler) deprovision(r *http.Request, tenantID, userID uuid.UUID) error
 		return err
 	}
 	if err := recordUserEvidence(ctx, tx, r, tenantID, userID, "user.deleted", nil); err != nil {
+		return err
+	}
+	directory := audit.Actor{Type: "scim", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
+	if err := h.Service.users.OffboardTx(ctx, tx, tenantID, userID, directory); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

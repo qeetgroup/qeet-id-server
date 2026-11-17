@@ -52,9 +52,11 @@ func (s *Service) InvitationForNewAccount(ctx context.Context, token string) (uu
 	if err != nil {
 		return uuid.Nil, uuid.Nil, "", err
 	}
-	// The link is also handed to the inviter, so accepting it proves nothing
-	// about who owns the address: on a domain another organisation manages,
-	// only that organisation creates the account.
+	if err := s.CheckInvitationSender(ctx, id); err != nil {
+		return uuid.Nil, uuid.Nil, "", err
+	}
+	// On a domain another organisation manages, only that organisation
+	// creates the account, however the invitation came.
 	if err := domainverify.CheckNewAccount(ctx, s.pool, tenantID, email); err != nil {
 		return uuid.Nil, uuid.Nil, "", err
 	}
@@ -165,6 +167,10 @@ func (s *Service) Lookup(ctx context.Context, token string) (*InvitationPreview,
 	}
 	if time.Now().After(row.ExpiresAt) {
 		return nil, errs.ErrInviteExpired
+	}
+	sent, err := s.q.InviteSenderByToken(ctx, codes.Hash(token))
+	if err := s.checkSender(ctx, sentInvite(sent), err); err != nil {
+		return nil, err
 	}
 	out := &InvitationPreview{Email: row.Email, ExpiresAt: row.ExpiresAt, AccountExists: row.AccountExists}
 	out.Organization.Name, out.Organization.Slug = row.TenantName, row.TenantSlug

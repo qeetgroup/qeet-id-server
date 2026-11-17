@@ -81,6 +81,13 @@ type Lockout struct {
 	Duration  time.Duration
 }
 
+// noLooserThan is l held at least as strict as base: the lower threshold and
+// the longer window and lock win. It governs the lock on one network; the lock
+// on every network always uses the platform's settings.
+func (l Lockout) noLooserThan(base Lockout) Lockout {
+	return Lockout{Threshold: min(l.Threshold, base.Threshold), Window: max(l.Window, base.Window), Duration: max(l.Duration, base.Duration)}
+}
+
 // LockoutSource returns the lockout a tenant applies (uuid.Nil: no tenant —
 // the platform defaults). Satisfied in bootstrap by the auth-policy service;
 // a func so auth doesn't import authpolicy.
@@ -180,25 +187,32 @@ func (s *Service) newSignInAttempt(ctx context.Context, in SignInAttempt) (signI
 }
 
 // signInAttemptIn is an attempt to sign in as account from ip, held to
-// tenantID's lockout (uuid.Nil: the platform defaults).
+// tenantID's lockout (uuid.Nil: the platform defaults). A sign-in may name any
+// organisation's application, so its lockout can tighten the platform's but
+// never loosen it for someone else's account.
 func (s *Service) signInAttemptIn(ctx context.Context, tenantID uuid.UUID, account, ip string) (signInAttempt, error) {
 	a := signInAttempt{
-		email:   strings.ToLower(strings.TrimSpace(account)),
 		network: httpx.SourceNetwork(ip),
 		lockout: s.lockout.Defaults,
 		// Microseconds, as PostgreSQL stores them, so a lock this attempt sets
 		// reads back equal to the one it asked for.
 		now: time.Now().UTC().Truncate(time.Microsecond),
 	}
+	ctx, cancel := lockoutContext(ctx)
+	defer cancel()
+	// The address is folded by the database's LOWER, as the account lookup
+	// folds it, so a case variant never gets a counter of its own.
+	if err := s.pool.QueryRow(ctx, `SELECT LOWER($1::text)`, strings.TrimSpace(account)).Scan(&a.email); err != nil {
+		return a, lockoutFailed(stageSettings, err)
+	}
 	if s.lockoutSource == nil {
 		return a, nil
 	}
-	ctx, cancel := lockoutContext(ctx)
-	defer cancel()
 	var err error
 	if a.lockout, err = s.lockoutSource(ctx, tenantID); err != nil {
 		return a, lockoutFailed(stageSettings, err)
 	}
+	a.lockout = a.lockout.noLooserThan(s.lockout.Defaults)
 	return a, nil
 }
 
@@ -307,20 +321,24 @@ func (s *Service) countFailure(ctx context.Context, a signInAttempt) ([]AccountL
 			Window: a.lockout.Window, LockedUntil: lockUntil,
 		})
 	}
-	accountCap := a.lockout.Threshold * max(s.lockout.AccountMultiplier, 1)
+	// The lock on every network is the platform's alone: an organisation's
+	// stricter settings would let its application lock anyone out everywhere.
+	platform := s.lockout.Defaults
+	accountCap := platform.Threshold * max(s.lockout.AccountMultiplier, 1)
+	accountUntil := a.now.Add(platform.Duration)
 	account, err := q.RecordAccountFailure(ctx, dbgen.RecordAccountFailureParams{
-		Email: a.email, Now: a.now, WindowStart: windowStart,
-		Threshold: int32(accountCap), LockUntil: lockUntil, // #nosec G115 -- bounded threshold × small multiplier
+		Email: a.email, Now: a.now, WindowStart: a.now.Add(-platform.Window),
+		Threshold: int32(accountCap), LockUntil: accountUntil, // #nosec G115 -- bounded threshold × small multiplier
 	})
 	if err != nil {
 		return nil, nil, err
 	}
-	if setNow(account.LockedUntil, lockUntil) {
+	if setNow(account.LockedUntil, accountUntil) {
 		locks = append(locks, AccountLock{
 			Email: a.email, Network: a.network, Counter: CounterAccount,
 			Reason:   fmt.Sprintf("%d failed sign-ins from any network", account.FailedCount),
 			Failures: int(account.FailedCount), Threshold: accountCap,
-			Window: a.lockout.Window, LockedUntil: lockUntil,
+			Window: platform.Window, LockedUntil: accountUntil,
 		})
 	}
 

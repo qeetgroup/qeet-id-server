@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -24,6 +25,10 @@ type Handler struct {
 	Service       *Service
 	PublicBaseURL string
 	CookieSecure  bool // the browser-binding cookie's Secure attribute; off only in development
+	// ActOnCheck lets a change of what a connection trusts through only for a
+	// caller who outranks every administrator linked to it (rbac CheckActOn).
+	// Without it the change is refused while one is linked.
+	ActOnCheck identitylink.ActOn
 }
 
 // Mount registers the administration routes on r.
@@ -186,6 +191,19 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	// A connection signs its linked accounts in on what it trusts, so changing
+	// that acts on each of them.
+	current, err := h.Service.Get(ctx, id, tenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if in.ChangesTrust(current) {
+		if err := identitylink.CheckTrustChange(ctx, h.Service.Pool(), httpx.PrincipalFromCtx(ctx), h.ActOnCheck, tenantID, id, ""); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+	}
 	tx, err := h.Service.Pool().Begin(ctx)
 	if err != nil {
 		httpx.WriteError(w, r, err)

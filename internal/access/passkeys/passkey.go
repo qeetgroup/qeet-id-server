@@ -26,6 +26,7 @@ import (
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/passkeys/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
@@ -640,42 +641,20 @@ func (s *Service) beginSignup(ctx context.Context, tenantID uuid.UUID, email, di
 }
 
 // beginSignupFor starts a passkey sign-up ceremony for email in tenantID,
-// accepting inviteID (uuid.Nil: none).
+// accepting inviteID (uuid.Nil: none). It answers alike whether or not the
+// address has an account and claims nothing: a taken address, and one on a
+// domain another organisation manages, are refused when the ceremony finishes.
 func (s *Service) beginSignupFor(ctx context.Context, tenantID, inviteID uuid.UUID, email, displayName string) (uuid.UUID, *protocol.CredentialCreation, error) {
 	email = strings.TrimSpace(email)
 	if email == "" {
 		return uuid.Nil, nil, errs.ErrAuthEmailRequired
 	}
 	// An address whose organisation requires single sign-on gets its account
-	// from the identity provider; an invitation is accepted as before.
+	// from the identity provider; an invitation was checked when it was opened.
 	if inviteID == uuid.Nil {
 		if err := s.refuseCaptured(ctx, email); err != nil {
 			return uuid.Nil, nil, err
 		}
-	}
-	// Refuse an email a user holds or a live signup ceremony is claiming: no user
-	// row exists until a ceremony finishes, so a rival signup could otherwise race
-	// it. Expired ceremonies don't count, so an abandoned one can't lock the email
-	// out.
-	var existsPtr *bool
-	var err error
-	switch {
-	case inviteID != uuid.Nil:
-		// The invitation was checked for an existing account, and only its
-		// holder can begin it; the unique email still decides at the end.
-	case tenantID == uuid.Nil:
-		existsPtr, err = s.q.CheckEmailExistsNoTenant(ctx, email)
-	default:
-		existsPtr, err = s.q.CheckEmailExistsForTenant(ctx, dbgen.CheckEmailExistsForTenantParams{
-			Lower:    email,
-			TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-		})
-	}
-	if err != nil {
-		return uuid.Nil, nil, err
-	}
-	if existsPtr != nil && *existsPtr {
-		return uuid.Nil, nil, errs.ErrAuthEmailExists
 	}
 
 	// subjectID is the WebAuthn user ID the passkey is registered under, and
@@ -720,6 +699,9 @@ func (s *Service) FinishSignup(ctx context.Context, sessionID uuid.UUID, credent
 	if sess.inviteID != uuid.Nil {
 		return nil, uuid.Nil, errs.ErrPasskeySessionInvalid
 	}
+	if err := domainverify.CheckNewAccount(ctx, s.pool, sess.tenantID, sess.email); err != nil {
+		return nil, uuid.Nil, err
+	}
 	userID, err := s.createUserFromSignup(ctx, sess, cred, name, nil)
 	if err != nil {
 		return nil, uuid.Nil, err
@@ -748,6 +730,10 @@ func (s *Service) FinishTenantSignup(ctx context.Context, sessionID uuid.UUID, c
 	}
 	// The organisation may have switched passkeys off since the ceremony began.
 	if err := s.passkeysAllowed(ctx, sess.tenantID); err != nil {
+		return uuid.Nil, "", err
+	}
+	// On a domain another organisation manages, only it creates accounts.
+	if err := domainverify.CheckNewAccount(ctx, s.pool, sess.tenantID, sess.email); err != nil {
 		return uuid.Nil, "", err
 	}
 	userID, err := s.createUserFromSignup(ctx, sess, cred, name, nil)
@@ -1099,10 +1085,10 @@ type Handler struct {
 	CookieSecure bool
 }
 
-// Mount mounts the signed-in passkey routes. The hosted login calls list,
-// rename and the two enrolment steps with its session cookie rather than a
-// bearer token (see the router's hosted-login session routes); removal stays
-// bearer-only.
+// Mount mounts the signed-in passkey routes. The hosted login calls each of
+// them (list, rename, remove and the two enrolment steps) with its session
+// cookie rather than a bearer token (see the router's hosted-login session
+// routes).
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/passkeys", h.list)
 	r.Patch("/passkeys/{id}", h.rename)

@@ -13,52 +13,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const checkEmailExistsForTenant = `-- name: CheckEmailExistsForTenant :one
-
-SELECT EXISTS (
-    SELECT 1 FROM "user".users
-    WHERE LOWER(email) = LOWER($1) AND tenant_id = $2 AND deleted_at IS NULL
-) OR EXISTS (
-    SELECT 1 FROM auth.webauthn_sessions
-    WHERE kind = 'signup' AND LOWER(pending_email) = LOWER($1)
-      AND pending_tenant_id = $2 AND expires_at > now()
-) AS exists
-`
-
-type CheckEmailExistsForTenantParams struct {
-	Lower    string
-	TenantID pgtype.UUID
-}
-
-// CheckEmailExistsForTenant checks if an email is taken for a specific tenant.
-func (q *Queries) CheckEmailExistsForTenant(ctx context.Context, arg CheckEmailExistsForTenantParams) (*bool, error) {
-	row := q.db.QueryRow(ctx, checkEmailExistsForTenant, arg.Lower, arg.TenantID)
-	var exists *bool
-	err := row.Scan(&exists)
-	return exists, err
-}
-
-const checkEmailExistsNoTenant = `-- name: CheckEmailExistsNoTenant :one
-
-SELECT EXISTS (
-    SELECT 1 FROM "user".users
-    WHERE LOWER(email) = LOWER($1) AND tenant_id IS NULL AND deleted_at IS NULL
-) OR EXISTS (
-    SELECT 1 FROM auth.webauthn_sessions
-    WHERE kind = 'signup' AND LOWER(pending_email) = LOWER($1)
-      AND pending_tenant_id IS NULL AND expires_at > now()
-) AS exists
-`
-
-// CheckEmailExistsNoTenant checks if an email is taken by a real user or a pending
-// signup session for the tenant-less flow.
-func (q *Queries) CheckEmailExistsNoTenant(ctx context.Context, lower string) (*bool, error) {
-	row := q.db.QueryRow(ctx, checkEmailExistsNoTenant, lower)
-	var exists *bool
-	err := row.Scan(&exists)
-	return exists, err
-}
-
 const deleteInviteWebAuthnSessions = `-- name: DeleteInviteWebAuthnSessions :exec
 DELETE FROM auth.webauthn_sessions WHERE pending_invite_id = $1
 `

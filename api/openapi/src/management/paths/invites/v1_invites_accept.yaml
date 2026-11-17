@@ -21,7 +21,10 @@ post:
     auth.method_disabled and nothing is created. An address on a domain another
     organisation has verified gets no new account here (409
     user.domain_managed_elsewhere): that organisation creates it, and the
-    invitee then signs in and accepts as themselves.
+    invitee then signs in and accepts as themselves. An invitation whose
+    sender may no longer give it (no longer active or in the organisation, or
+    no longer holding its role's permissions) is refused with 400
+    invite.invalid.
   responses:
     '200':
       description: A token pair, or the second-factor challenge to complete first.

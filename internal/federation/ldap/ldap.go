@@ -350,6 +350,16 @@ type UpdateInput struct {
 	Status         *string `json:"status"`
 }
 
+// ChangesTrust reports whether in changes what c trusts: the directory it asks,
+// how it reaches it, and which of its entries it reads.
+func (in UpdateInput) ChangesTrust(c *Connection) bool {
+	differs := func(p *string, current string) bool { return p != nil && strings.TrimSpace(*p) != current }
+	if differs(in.ServerURL, c.ServerURL) || differs(in.BindDN, c.BindDN) || differs(in.BaseDN, c.BaseDN) || differs(in.UserFilter, c.UserFilter) {
+		return true
+	}
+	return (in.StartTLS != nil && *in.StartTLS != c.StartTLS) || (in.SkipTLSVerify != nil && *in.SkipTLSVerify != c.SkipTLSVerify)
+}
+
 // Update changes one of the tenant's LDAP connections.
 func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, in UpdateInput) (*Connection, error) {
 	if in.ServerURL != nil {
@@ -822,6 +832,10 @@ type Handler struct {
 	Service *Service
 	// CookieSecure marks the hosted login session cookie Secure; off only in development.
 	CookieSecure bool
+	// ActOnCheck lets a change of what a connection trusts through only for a
+	// caller who outranks every administrator linked to it (rbac CheckActOn).
+	// Without it the change is refused while one is linked.
+	ActOnCheck identitylink.ActOn
 }
 
 // Mount registers the LDAP routes on r.
@@ -987,6 +1001,19 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	// A connection signs its linked accounts in on what it trusts, so changing
+	// that acts on each of them.
+	current, err := h.Service.Get(ctx, id, tenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if in.ChangesTrust(current) {
+		if err := identitylink.CheckTrustChange(ctx, h.Service.Pool(), httpx.PrincipalFromCtx(ctx), h.ActOnCheck, tenantID, id, ""); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+	}
 	tx, err := h.Service.Pool().Begin(ctx)
 	if err != nil {
 		httpx.WriteError(w, r, err)

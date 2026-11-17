@@ -283,6 +283,9 @@ func (h *Handler) removeMembershipWithEvidence(r *http.Request, tenantID, userID
 	if err := recordSuspensionEvidence(ctx, tx, r, tenantID, userID, "user.removed_from_organization"); err != nil {
 		return nil, err
 	}
+	if err := h.Repo.OffboardTx(ctx, tx, tenantID, userID, audit.ActorOf(r)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -693,6 +696,9 @@ func (h *Handler) softDeleteWithEvidence(r *http.Request, tenantID, userID uuid.
 		return nil, err
 	}
 	if err := recordSuspensionEvidence(ctx, tx, r, tenantID, userID, "user.deleted"); err != nil {
+		return nil, err
+	}
+	if err := h.Repo.OffboardTx(ctx, tx, tenantID, userID, audit.ActorOf(r)); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {

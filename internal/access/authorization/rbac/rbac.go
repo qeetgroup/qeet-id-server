@@ -358,6 +358,12 @@ func (r *Repository) UnassignRole(ctx context.Context, tx pgx.Tx, userID, tenant
 	})
 }
 
+// LeftTenant reports, through tx, whether userID is no longer a member of
+// tenantID: it isn't their home and they hold no role there.
+func (r *Repository) LeftTenant(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID) (bool, error) {
+	return r.q.WithTx(tx).LeftTenant(ctx, dbgen.LeftTenantParams{UserID: userID, TenantID: tenantID})
+}
+
 // AssignRoleToGroup grants roleID to groupID; re-granting is a no-op. The
 // INSERT requires both to belong to tenantID, so no role crosses tenants. It
 // reports false, for the caller to answer 404, when the pair isn't valid there.

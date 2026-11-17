@@ -6,12 +6,15 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // TestTheAuditLogIsFilteredAndCounted checks that the audit list narrows by
@@ -80,5 +83,49 @@ func TestTheAuditLogIsFilteredAndCounted(t *testing.T) {
 		if rec := dbtest.Do(t, h, http.MethodGet, "/tenants/"+tenant.String()+"/audit?"+bad.Encode(), nil); rec.Code != http.StatusBadRequest {
 			t.Errorf("audit %v: %d, want 400", bad, rec.Code)
 		}
+	}
+}
+
+// unguarded serves mount as p with no tenant-scope guard or row-level scope in
+// front, so a handler that trusts the path's organisation shows it.
+func unguarded(p *httpx.Principal, mount func(chi.Router)) http.Handler {
+	r := chi.NewRouter()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			next.ServeHTTP(w, req.WithContext(httpx.WithPrincipal(req.Context(), p)))
+		})
+	})
+	mount(r)
+	return r
+}
+
+// TestAuditListTakesTheOrganisationFromTheCaller checks that the audit list and
+// its verification answer only for the caller's own organisation, even without
+// the router's tenant guard in front: another organisation's in the path is
+// refused, not read.
+func TestAuditListTakesTheOrganisationFromTheCaller(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	mine, theirs := dbtest.Tenant(t), dbtest.Tenant(t)
+	admin := dbtest.User(t, mine, mine)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Record(ctx, tx, Actor{Type: "system"}.Event(theirs, "secret.rotated", "key", uuid.New(), nil)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	h := unguarded(dbtest.Principal(admin.ID, mine), (&Handler{Reader: NewReader(pool), Verifier: NewVerifier(pool, nil)}).Mount)
+	for _, path := range []string{"/tenants/" + theirs.String() + "/audit", "/tenants/" + theirs.String() + "/audit/verify"} {
+		rec := dbtest.Do(t, h, http.MethodGet, path, nil)
+		if rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "secret.rotated") {
+			t.Errorf("GET %s as another organisation: %d %.120s, want 403", path, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := dbtest.Do(t, h, http.MethodGet, "/tenants/"+mine.String()+"/audit", nil); rec.Code != http.StatusOK {
+		t.Errorf("the caller's own audit list: %d %s", rec.Code, rec.Body.String())
 	}
 }

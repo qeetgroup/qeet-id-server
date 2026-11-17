@@ -4,8 +4,11 @@ post:
     Confirms phone verification by validating the code delivered by the
     start-phone-verification call and marking the number verified. Codes are
     single-use, time-limited, and retired after a few incorrect attempts,
-    requiring a fresh send. Request the code with the start-phone-verification
-    call before invoking this. Audited in the audit trail of the organization
+    requiring a fresh send; ten wrong codes in an hour, over every code asked
+    for in between, refuse even the right one until the hour has passed (429
+    verification.attempts_exceeded with retry_after, in seconds). Request the
+    code with the start-phone-verification call before invoking this. Audited
+    in the audit trail of the organization
     the session is in as phone.verified, or phone.verification_failed with the
     reason for a wrong, used, expired or retired code, with the number masked to
     its last three digits.

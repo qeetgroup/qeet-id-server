@@ -152,9 +152,24 @@ func sanitizeTemplateHTML(markup string) string {
 	return strings.NewReplacer(replacements...).Replace(emailHTMLPolicy.Sanitize(protected))
 }
 
+// errActionLinkPlacement refuses a one-time link placed anywhere but as a whole
+// href, or on a line of its own in the text.
+var errActionLinkPlacement = errs.ErrBadRequest.WithDetail("action variables must be standalone links and cannot be used in images or text")
+
+// hasActionVariable reports whether value uses a *_url variable.
+func hasActionVariable(value string) bool {
+	for _, match := range varRe.FindAllStringSubmatch(value, -1) {
+		if strings.HasSuffix(match[1], "_url") {
+			return true
+		}
+	}
+	return false
+}
+
 // validateTemplateURLs allows a variable in href or src only as the whole href
-// of a *_url variable, so one-time links cannot leak through images or other
-// URLs.
+// of a *_url variable, and a *_url variable nowhere else in the markup, so a
+// one-time link can't leak through images or other URLs, or be dressed up in
+// the organisation's words.
 func validateTemplateURLs(markup string) error {
 	tokenizer := htmlparser.NewTokenizer(strings.NewReader(markup))
 	for {
@@ -164,18 +179,42 @@ func validateTemplateURLs(markup string) error {
 				return nil
 			}
 			return errs.ErrBadRequest.WithDetail("invalid email markup")
+		case htmlparser.TextToken:
+			if hasActionVariable(string(tokenizer.Text())) {
+				return errActionLinkPlacement
+			}
 		case htmlparser.StartTagToken, htmlparser.SelfClosingTagToken:
 			for _, attribute := range tokenizer.Token().Attr {
-				if (attribute.Key != "href" && attribute.Key != "src") || !varRe.MatchString(attribute.Val) {
+				if attribute.Key != "href" && attribute.Key != "src" {
+					if hasActionVariable(attribute.Val) {
+						return errActionLinkPlacement
+					}
+					continue
+				}
+				if !varRe.MatchString(attribute.Val) {
 					continue
 				}
 				match := varRe.FindStringSubmatch(attribute.Val)
 				if attribute.Key == "src" || strings.TrimSpace(attribute.Val) != match[0] || !strings.HasSuffix(match[1], "_url") {
-					return errs.ErrBadRequest.WithDetail("action variables must be standalone links and cannot be used in images")
+					return errActionLinkPlacement
 				}
 			}
 		}
 	}
+}
+
+// validateTextLinks allows a *_url variable in the text only on a line of its
+// own, and never in the subject or preheader.
+func validateTextLinks(content LocalizedContent) error {
+	if hasActionVariable(content.Subject) || hasActionVariable(content.Preheader) {
+		return errActionLinkPlacement
+	}
+	for _, line := range strings.Split(content.Body, "\n") {
+		if line = strings.TrimSpace(line); hasActionVariable(line) && varRe.FindString(line) != line {
+			return errActionLinkPlacement
+		}
+	}
+	return nil
 }
 
 func normalizeContent(content *LocalizedContent, definition Definition) error {
@@ -196,6 +235,9 @@ func normalizeContent(content *LocalizedContent, definition Definition) error {
 	}
 	content.HTML = sanitizeTemplateHTML(content.HTML)
 	if err := validateTemplateURLs(content.HTML); err != nil {
+		return err
+	}
+	if err := validateTextLinks(*content); err != nil {
 		return err
 	}
 	for _, name := range definition.Variables {

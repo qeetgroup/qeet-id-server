@@ -5,9 +5,13 @@ post:
     delivered by the magic-link start call. On success it returns an access and
     refresh token pair; the token is invalidated once consumed and cannot be
     replayed. Tokens are short-lived, so an expired or already-used link must be
-    re-requested from the start call. A link from an organisation that has since
-    switched magic links off is refused with 403 auth.method_disabled and stays
-    unused. The link proves the first factor only: when the account holds a
+    re-requested from the start call. A link to an account whose organisation
+    has since switched magic links off is refused with 403
+    auth.method_disabled and stays unused. A link that proves the account's address for the first time marks it
+    verified, ends every earlier session and removes everything set up on the
+    account before it, its password included (recorded as email.verified and
+    auth.credentials_removed), so whoever registered the address first keeps no
+    way in. The link proves the first factor only: when the account holds a
     second factor, or must have one, the answer is an MFA challenge instead of
     tokens, completed at POST /v1/auth/mfa (the session then records the method
     magic_link_mfa). The link is spent either way, so an abandoned or failed

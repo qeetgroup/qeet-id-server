@@ -63,7 +63,10 @@ properties:
       Who must use a second factor to sign in, enforced at password sign-in:
       optional (only people who set one up are challenged), required (everyone),
       admin_only (anyone holding a role, directly or through a group, that
-      grants a write permission). Separately, an account an administrator marks
+      grants an administrative permission: one that changes who signs in or
+      with what authority, such as user.write, user.credentials, user.suspend,
+      session.revoke, member.invite or role.write, the same administrators
+      single sign-on never adopts by address). Separately, an account an administrator marks
       as requiring MFA must, whatever is set here. An account that must and
       holds no factor sets up an authenticator app before any session is issued.
   mfa_grace_days:

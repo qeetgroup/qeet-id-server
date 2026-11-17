@@ -151,6 +151,15 @@ func signInCases(w world) []sweepCase {
 			($1::text || '-locked', '203.0.113.0/24', 5, NOW() - INTERVAL '8 days', NOW() - INTERVAL '8 days', NOW() + INTERVAL '1 hour'),
 			($1::text || '-recent', '203.0.113.0/24', 1, NOW() - INTERVAL '1 day', NOW() - INTERVAL '1 day', NULL)`,
 			[]any{w.tag}, byTag("auth.login_attempts_by_network", "email"), w.tag, 2},
+		{"application secret failures", `WITH app AS (
+				INSERT INTO auth.oidc_clients (tenant_id, client_id, name) VALUES ($1, $2, 'App') RETURNING id)
+			INSERT INTO auth.oidc_client_auth_lockouts (client_row_id, source_network, failures, last_failure_at, locked_until)
+			SELECT app.id, v.network, 1, v.failed_at, v.locked_until FROM app, (VALUES
+				('203.0.113.1', NOW() - INTERVAL '8 days', NULL::timestamptz),
+				('203.0.113.2', NOW() - INTERVAL '8 days', NOW() + INTERVAL '1 hour'),
+				('203.0.113.3', NOW() - INTERVAL '1 day', NULL::timestamptz)) AS v (network, failed_at, locked_until)`,
+			[]any{w.tenant, w.client + "-locked"}, `SELECT count(*) FROM auth.oidc_client_auth_lockouts l
+				JOIN auth.oidc_clients c ON c.id = l.client_row_id WHERE c.tenant_id = $1`, w.tenant, 2},
 		{"failed sign-ins by source", `INSERT INTO auth.login_source_failures (network, email, last_failed_at) VALUES
 			($1, 'old@example.test', NOW() - INTERVAL '8 days'), ($1, 'recent@example.test', NOW() - INTERVAL '1 day')`,
 			[]any{w.tag}, `SELECT count(*) FROM auth.login_source_failures WHERE network = $1`, w.tag, 1},

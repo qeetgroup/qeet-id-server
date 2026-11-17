@@ -201,6 +201,12 @@ func (h *Handler) addCertificate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	// Another certificate trusted is another key that can sign its linked
+	// accounts in.
+	if err := h.checkTrust(r, tenantID, id); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	tx, err := h.Service.Pool().Begin(ctx)
 	if err != nil {
 		httpx.WriteError(w, r, err)

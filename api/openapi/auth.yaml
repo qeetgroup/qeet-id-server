@@ -20,7 +20,7 @@ info:
 
     The responses of the sign-up, sign-in (password, MFA, magic link, passkey), refresh, tenant-switch, sign-out (hosted session, everywhere) and forgot-password operations, and of those returning a new authenticator secret, recovery codes, pairing code or device credential, are sent with `Cache-Control: no-store` and `Pragma: no-cache`.
 
-    Every response carries an `X-Request-Id` header naming the request; quote it when reporting a problem. An error body repeats it as `error.request_id`.
+    Every response carries an `X-Request-Id` header naming the request; quote it when reporting a problem. An error body repeats it as `error.request_id`. A path with an encoded slash or backslash (`%2F`, `%5C`) is refused with 400 `bad_request`.
 
     ## Related APIs
 
@@ -460,7 +460,7 @@ paths:
   /v1/auth/magic-link/consume:
     post:
       operationId: consumeMagicLink
-      description: 'Completes passwordless email sign-in by redeeming the single-use token delivered by the magic-link start call. On success it returns an access and refresh token pair; the token is invalidated once consumed and cannot be replayed. Tokens are short-lived, so an expired or already-used link must be re-requested from the start call. A link from an organisation that has since switched magic links off is refused with 403 auth.method_disabled and stays unused. The link proves the first factor only: when the account holds a second factor, or must have one, the answer is an MFA challenge instead of tokens, completed at POST /v1/auth/mfa (the session then records the method magic_link_mfa). The link is spent either way, so an abandoned or failed challenge leaves no tokens and no link to use again; an expired or used link is refused before any challenge is raised. A link to an address that must now sign in with single sign-on is refused with 403 auth.sso_required and stays unused (see the SSORequired response).'
+      description: 'Completes passwordless email sign-in by redeeming the single-use token delivered by the magic-link start call. On success it returns an access and refresh token pair; the token is invalidated once consumed and cannot be replayed. Tokens are short-lived, so an expired or already-used link must be re-requested from the start call. A link to an account whose organisation has since switched magic links off is refused with 403 auth.method_disabled and stays unused. A link that proves the account''s address for the first time marks it verified, ends every earlier session and removes everything set up on the account before it, its password included (recorded as email.verified and auth.credentials_removed), so whoever registered the address first keeps no way in. The link proves the first factor only: when the account holds a second factor, or must have one, the answer is an MFA challenge instead of tokens, completed at POST /v1/auth/mfa (the session then records the method magic_link_mfa). The link is spent either way, so an abandoned or failed challenge leaves no tokens and no link to use again; an expired or used link is refused before any challenge is raised. A link to an address that must now sign in with single sign-on is refused with 403 auth.sso_required and stays unused (see the SSORequired response).'
       summary: Magic link consume
       tags:
         - Auth
@@ -501,7 +501,7 @@ paths:
   /v1/auth/magic-link/start:
     post:
       operationId: sendMagicLink
-      description: 'Begins passwordless email sign-in by emailing a single-use link to the account holding the address. It answers the same whether or not the address has an account, takes the same minimum time, and sends nothing when it has none. The link is stored and emailed after the answer, so whether the email could be delivered does not change the answer either. An empty email is refused with 422 auth.email_required. Asked for from an organisation''s sign-in page (tenant_id), it is refused with 403 auth.method_disabled when that organisation has magic links off; from the console (no tenant_id) the account''s own organisation decides, and nothing is sent when it has them off. A link lives for the organisation''s magic_link_ttl_minutes and works once; it goes to the address as the account stores it, and ends the earlier links to that address. With app hosted_login the link opens the hosted login''s magic page and, once exchanged at the magic-link session call, continues the sign-in journey at return_to (kept only if it is this service''s authorize endpoint); otherwise it opens the console''s, exchanged at the consume call. Requests are bounded to three per address (then one every five minutes) and ten per caller (then one a minute), counted whether or not the address has an account: 429 past either. A link sent is recorded as auth.magic_link_requested in the audit trail of the organisation that asked, or the account''s own. On a domain whose organisation requires single sign-on, the request is refused with 403 auth.sso_required once counted against the bounds, before any account is looked up, and no link is sent (see the SSORequired response).'
+      description: 'Begins passwordless email sign-in by emailing a single-use link to the account holding the address. It answers the same whether or not the address has an account, takes the same minimum time, and sends nothing when it has none. The link is stored and emailed after the answer, so whether the email could be delivered does not change the answer either. An empty email is refused with 422 auth.email_required. Asked for from an organisation''s sign-in page (tenant_id), it is refused with 403 auth.method_disabled when that organisation has magic links off. Whichever organisation asks, the account''s own organisation decides: nothing is sent when it has magic links off, a link lives for its magic_link_ttl_minutes, and a link stops working once it switches them off. A link works once; it goes to the address as the account stores it, and ends the earlier links to that address. With app hosted_login the link opens the hosted login''s magic page and, once exchanged at the magic-link session call, continues the sign-in journey at return_to (kept only if it is this service''s authorize endpoint); otherwise it opens the console''s, exchanged at the consume call. Requests are bounded to three per address (then one every five minutes) and ten per caller (then one a minute), counted whether or not the address has an account: 429 past either. A link sent is recorded as auth.magic_link_requested in the audit trail of the account''s own organisation, and of the one that asked only if the account belongs to it, which alone brands the email; for anyone else it is the console''s link. On a domain whose organisation requires single sign-on, the request is refused with 403 auth.sso_required once counted against the bounds, before any account is looked up, and no link is sent (see the SSORequired response).'
       summary: Magic link start
       tags:
         - Auth
@@ -521,7 +521,7 @@ paths:
                 tenant_id:
                   type: string
                   format: uuid
-                  description: The organisation whose sign-in page asks; omitted from the console.
+                  description: The organisation whose sign-in page asks; omitted from the console. It brands the email and sees the request only for its own members; it never changes the account's own rules.
                 app:
                   type: string
                   enum:
@@ -550,7 +550,7 @@ paths:
     post:
       operationId: createMagicLinkSession
       summary: Magic link — hosted-login session
-      description: 'Exchanges a magic link issued for the hosted login (app hosted_login) for the hosted-login session cookie, and returns where the sign-in journey continues (return_to, empty for none). The link works once: used, expired or unknown links, and console links, are refused (recovery.link_used, recovery.link_expired, recovery.magic_link_invalid), and so are links of an organisation that has since switched magic links off. When the account holds a second factor, or must have one, no cookie is set: the answer is an MFA challenge (with return_to) completed at POST /v1/auth/session/mfa — on the same terms as the hosted password sign-in, including a trusted device (qe_td) skipping it where the organisation allows. The link is spent either way. A link for an organisation whose address rules refuse the browser''s address answers 403 auth.address_not_allowed and opens no session. It is protected against cross-site requests as POST /v1/auth/session is (an allowed Origin, and the qe_csrf token echoed in X-CSRF-Token), and a body not sent as JSON is refused (415 unsupported_media_type). A link to an address that must now sign in with single sign-on is refused with 403 auth.sso_required and stays unused (see the SSORequired response).'
+      description: 'Exchanges a magic link issued for the hosted login (app hosted_login) for the hosted-login session cookie, and returns where the sign-in journey continues (return_to, empty for none). The link works once: used, expired or unknown links, and console links, are refused (recovery.link_used, recovery.link_expired, recovery.magic_link_invalid), and so are links to an account whose organisation has since switched magic links off. A link that proves the account''s address for the first time marks it verified, ends every earlier session and removes everything set up on the account before it, its password included (recorded as email.verified and auth.credentials_removed), so whoever registered the address first keeps no way in. When the account holds a second factor, or must have one, no cookie is set: the answer is an MFA challenge (with return_to) completed at POST /v1/auth/session/mfa — on the same terms as the hosted password sign-in, including a trusted device (qe_td) skipping it where the organisation allows. The link is spent either way. A link for an organisation whose address rules refuse the browser''s address answers 403 auth.address_not_allowed and opens no session. It is protected against cross-site requests as POST /v1/auth/session is (an allowed Origin, and the qe_csrf token echoed in X-CSRF-Token), and a body not sent as JSON is refused (415 unsupported_media_type). A link to an address that must now sign in with single sign-on is refused with 403 auth.sso_required and stays unused (see the SSORequired response).'
       tags:
         - Auth
       security: []
@@ -699,7 +699,7 @@ paths:
   /v1/auth/reset-password:
     post:
       operationId: resetPassword
-      description: Completes the password-reset flow started by the forgot-password call by consuming the emailed token and setting the new password. The token is single-use and time-limited, so an expired or already-redeemed token is rejected. The new password is checked against the rules of the organisation the account belongs to (the platform baseline of 8 characters for an account with no organisation), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed and leaves the password and the token unchanged. On success the password is updated and the user can sign in with the new credentials. Every hosted sign-in (browser) session of the person ends too, so one opened with the old password can no longer start an application's sign-in or enrol a passkey; the audit record counts them (revoked_login_sessions). The completed reset is recorded in the account's organisation's audit trail as auth.password_reset_confirmed. A link for an address that must now sign in with single sign-on is refused with 403 auth.sso_required; the password and the link stay as they were (see the SSORequired response). The account holder is emailed that it happened, with what to do if it wasn't them.
+      description: Completes the password-reset flow started by the forgot-password call by consuming the emailed token and setting the new password. The token is single-use and time-limited, so an expired or already-redeemed token is rejected. The new password is checked against the rules of the organisation the account belongs to (the platform baseline of 8 characters for an account with no organisation), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed and leaves the password and the token unchanged. On success the password is updated and the user can sign in with the new credentials. Every hosted sign-in (browser) session of the person ends too, so one opened with the old password can no longer start an application's sign-in or enrol a passkey; the audit record counts them (revoked_login_sessions). The completed reset is recorded in the account's organisation's audit trail as auth.password_reset_confirmed. A reset that proves the account's address for the first time marks it verified and removes everything set up on the account before it but the new password (passkeys, second factors, linked accounts, pending verifications and sign-in codes, and personal API keys), so whoever registered the address first keeps no way in; recorded as email.verified and auth.credentials_removed. A link for an address that must now sign in with single sign-on is refused with 403 auth.sso_required; the password and the link stay as they were (see the SSORequired response). The account holder is emailed that it happened, with what to do if it wasn't them.
       summary: Reset password
       tags:
         - Auth
@@ -769,7 +769,7 @@ paths:
       description: |-
         Establishes a hosted-login SSO session and sets the HttpOnly qe_ls cookie so the browser can continue into the OAuth authorize and consent flow. When the account has a second factor enrolled, no cookie is set yet and a short-lived mfa_token is returned; complete it at the session-MFA call before the cookie is issued. Because this is a cookie session, later state-changing calls made with it are subject to CSRF protection. End the session with the corresponding destroy-session call.
 
-        Sign-in lockout: failed password sign-ins are counted per account and source network (the client IP behind the trusted proxies; an IPv4 address or an IPv6 /64). Reaching the threshold within the window locks the account for that network for the lock duration, so a stranger on another network cannot lock the owner out. The threshold, window and duration are those of the tenant of the OAuth client named by `client_id` (its authentication policy), or the platform defaults when no client is named. Failures from any mix of networks also lock the account everywhere at a looser cap (the threshold times LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER), and a source network that fails against too many distinct accounts (LOGIN_SPRAY_ACCOUNTS within LOGIN_SPRAY_WINDOW) is refused password sign-in for LOGIN_SPRAY_BLOCK. An address with no account is counted and answered exactly like a wrong password, and so is a wrong password for a suspended or otherwise inactive account (401 auth.invalid_credentials); only the right password is refused with 403 auth.account_inactive. When the counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable (fail closed). When the organisation of the named client_id has switched password sign-in off, the request is refused with 403 auth.method_disabled before any password is checked (the same answer for any account or none); without a client_id, the account's own organisation decides once the password is verified. While the address rules of that client's organisation are on, an address they refuse is answered 403 auth.address_not_allowed before any password is checked, and no cookie is set. A body not sent as JSON is refused (415 unsupported_media_type). Failed attempts are recorded as for POST /v1/auth/login. On a domain whose organisation requires single sign-on, the sign-in is refused with 403 auth.sso_required before any account is looked up or password checked, and nothing is counted against the lockout (see the SSORequired response).
+        Sign-in lockout: failed password sign-ins are counted per account and source network (the client IP behind the trusted proxies; an IPv4 address or an IPv6 /64). Reaching the threshold within the window locks the account for that network for the lock duration, so a stranger on another network cannot lock the owner out. The threshold, window and duration are those of the tenant of the OAuth client named by `client_id` (its authentication policy), or the platform defaults when no client is named. Failures from any mix of networks also lock the account everywhere at a looser cap (the threshold times LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER), and a source network that fails against too many distinct accounts (LOGIN_SPRAY_ACCOUNTS within LOGIN_SPRAY_WINDOW) is refused password sign-in for LOGIN_SPRAY_BLOCK. An address with no account is counted and answered exactly like a wrong password, and so is a wrong password for a suspended or otherwise inactive account (401 auth.invalid_credentials); only the right password is refused with 403 auth.account_inactive. When the counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable (fail closed). When the organisation of the named client_id has switched password sign-in off, the request is refused with 403 auth.method_disabled before any password is checked (the same answer for any account or none); without a client_id, the account's own organisation decides once the password is verified. While the address rules of that client's organisation are on, an address they refuse is answered 403 auth.address_not_allowed before any password is checked, and no cookie is set; the account's own organisation's address rules then apply as well, whichever application asked, since the session reaches the account's self-service routes. A body not sent as JSON is refused (415 unsupported_media_type). Failed attempts are recorded as for POST /v1/auth/login. On a domain whose organisation requires single sign-on, the sign-in is refused with 403 auth.sso_required before any account is looked up or password checked, and nothing is counted against the lockout (see the SSORequired response).
       summary: Create SSO session
       tags:
         - Auth
@@ -906,6 +906,8 @@ paths:
         that failed). An address that already has an account is refused with
         the neutral 422 unprocessable of POST /v1/auth/signup, which does not
         name the reason, and every attempt takes at least the same minimum time.
+        So is an address on a domain another organisation has verified: only
+        that organisation creates accounts there.
 
         An address the organisation's address rules refuse answers 403
         auth.address_not_allowed, and no account is created.
@@ -1405,7 +1407,7 @@ paths:
   /v1/auth/signup:
     post:
       operationId: signUp
-      description: 'Registers a new user from an email and password and returns a token pair alongside the created user record. The password must meet the platform baseline (8 characters), the offline strength baseline and, when enabled, the breached-password check (422 naming the rule that failed). The new user is tenant-less: no tenant is created here, so the returned token carries no tenant scope. Create a tenant through the Identity Management API before any tenant-scoped call, after which the creator becomes the tenant owner. An address that already has an account is refused with a neutral 422 unprocessable that does not name the reason (it suggests signing in or resetting the password), every attempt takes at least the same minimum time, and the endpoint is rate limited. On a domain whose organisation requires single sign-on, the sign-up is refused with 403 auth.sso_required before anything else is checked, and nothing is created: the identity provider creates the account (see the SSORequired response).'
+      description: 'Registers a new user from an email and password and returns a token pair alongside the created user record. The password must meet the platform baseline (8 characters), the offline strength baseline and, when enabled, the breached-password check (422 naming the rule that failed). The new user is tenant-less: no tenant is created here, so the returned token carries no tenant scope. Create a tenant through the Identity Management API before any tenant-scoped call, after which the creator becomes the tenant owner. An address that already has an account is refused with a neutral 422 unprocessable that does not name the reason (it suggests signing in or resetting the password), every attempt takes at least the same minimum time, and the endpoint is rate limited. An address on a domain an organisation has verified gets the same answer and no account: that organisation creates its people''s accounts. On a domain whose organisation requires single sign-on, the sign-up is refused with 403 auth.sso_required before anything else is checked, and nothing is created: the identity provider creates the account (see the SSORequired response).'
       summary: Sign up
       tags:
         - Auth
@@ -1450,7 +1452,7 @@ paths:
   /v1/auth/switch-tenant:
     post:
       operationId: switchTenant
-      description: 'Replaces the caller''s session with one scoped to another tenant they belong to (their own, or one where they hold a role) and returns its token pair. The new access token carries the claims the target tenant''s authentication hook adds, and renewals keep them; the hook may also refuse the switch. The session the presented access token belongs to ends: its refresh and access tokens are refused from now on, and the tenant''s session.revoked subscribers are notified with reason tenant_switch. Use the returned pair from now on. The caller''s session list shows the one sign-in, not one entry per switch. Refused, with nothing changed: a tenant the caller does not belong to (403), a refusal by the tenant''s hook, an address the tenant''s address rules refuse (403 auth.address_not_allowed), or an access token whose session has already ended (401). An organisation that requires a second factor of the caller (its security policy, or administrators-only for its administrators) is entered only by a session whose sign-in met one, or that holds a fresh step-up; otherwise 403 step_up_required (step up, then try again) or 403 mfa.enrollment_required (set a factor up first), unless the organisation''s grace period still lets the caller put the setup off. The new session carries the factor on. Confirm the active scope afterward with the current-principal call.'
+      description: 'Replaces the caller''s session with one scoped to another tenant they belong to (their own, or one where they hold a role) and returns its token pair. The new access token carries the claims the target tenant''s authentication hook adds, and renewals keep them; the hook may also refuse the switch. The session the presented access token belongs to ends: its refresh and access tokens are refused from now on, and the tenant''s session.revoked subscribers are notified with reason tenant_switch. Use the returned pair from now on. The caller''s session list shows the one sign-in, not one entry per switch. Refused, with nothing changed: a tenant the caller does not belong to (403), a refusal by the tenant''s hook, an address the tenant''s address rules refuse (403 auth.address_not_allowed), an organisation that requires single sign-on on the caller''s domain (403 auth.sso_required: its identity provider signs its people in there directly, so no other session is switched into it; break-glass members are exempt), or an access token whose session has already ended (401). An organisation that requires a second factor of the caller (its security policy, or administrators-only for its administrators) is entered only by a session whose sign-in met one, or that holds a fresh step-up; otherwise 403 step_up_required (step up, then try again) or 403 mfa.enrollment_required (set a factor up first), unless the organisation''s grace period still lets the caller put the setup off. The new session carries the factor on. Confirm the active scope afterward with the current-principal call.'
       summary: Switch tenant
       tags:
         - Auth
@@ -1635,7 +1637,7 @@ paths:
     post:
       operationId: createPasskeySession
       summary: Login finish (hosted)
-      description: 'The hosted form of passkey sign-in: completes the ceremony with the assertion and sets the hosted-login SSO cookie (qe_ls), so the browser continues into the OAuth authorize flow, answering with the user id only: no token reaches the page''s script. Only the browser that began the ceremony, holding the binding cookie from POST /v1/passkeys/login/begin, finishes it here; any other is refused with 403 passkey.browser_mismatch and the ceremony is left untouched. It is protected against cross-site requests as POST /v1/auth/session is, and a body not sent as JSON is refused (415 unsupported_media_type). When the account''s organisation has switched passkeys off, the sign-in is refused with 403 passkey.disabled before the assertion is verified. A refused ceremony or assertion is recorded in the organisation''s audit trail as auth.sign_in_failed (method passkey, reason the error code), naming the account when it was identified. A passkey of an account on a domain whose organisation requires single sign-on is refused with 403 auth.sso_required, and no cookie is set (see the SSORequired response).'
+      description: 'The hosted form of passkey sign-in: completes the ceremony with the assertion and sets the hosted-login SSO cookie (qe_ls), so the browser continues into the OAuth authorize flow, answering with the user id only: no token reaches the page''s script. Only the browser that began the ceremony, holding the binding cookie from POST /v1/passkeys/login/begin, finishes it here; any other is refused with 403 passkey.browser_mismatch and the ceremony is left untouched. It is protected against cross-site requests as POST /v1/auth/session is, and a body not sent as JSON is refused (415 unsupported_media_type). When the account''s organisation has switched passkeys off, the sign-in is refused with 403 passkey.disabled before the assertion is verified. A refused ceremony or assertion is recorded in the organisation''s audit trail as auth.sign_in_failed (method passkey, reason the error code), naming the account when it was identified. A passkey of an account on a domain whose organisation requires single sign-on is refused with 403 auth.sso_required, and no cookie is set (see the SSORequired response). While the account''s own organisation''s address rules are on, an address they refuse is answered 403 auth.address_not_allowed (recorded as auth.address_refused), and no cookie is set.'
       tags:
         - Passkeys
       security: []
@@ -1752,7 +1754,7 @@ paths:
   /v1/signup/passkey/begin:
     post:
       operationId: beginPasskeySignUp
-      description: Starts the passwordless counterpart to email/password signup, returning the WebAuthn credential-creation options the authenticator needs to mint a passkey. No password is created and no user exists yet; the account is materialized only when the ceremony completes. Finish registration by returning the signed attestation to the passkey-signup finish call. An address already taken is refused, here or at the finish call, with the neutral 422 unprocessable of POST /v1/auth/signup, which does not name the reason; every attempt here takes at least the same minimum time. On a domain whose organisation requires single sign-on, the ceremony is refused with 403 auth.sso_required and nothing is created (see the SSORequired response).
+      description: Starts the passwordless counterpart to email/password signup, returning the WebAuthn credential-creation options the authenticator needs to mint a passkey. No password is created and no user exists yet; the account is materialized only when the ceremony completes. Finish registration by returning the signed attestation to the passkey-signup finish call. The answer here is the same whether or not the address has an account, and starting claims nothing, so another start for the same address works; an address already taken, or on a domain an organisation has verified (that organisation creates its people's accounts), is refused at the finish call with the neutral 422 unprocessable of POST /v1/auth/signup, which does not name the reason. Every attempt here takes at least the same minimum time. On a domain whose organisation requires single sign-on, the ceremony is refused with 403 auth.sso_required and nothing is created (see the SSORequired response).
       summary: Passkey-first signup begin (tenant-less)
       tags:
         - Passkeys
@@ -1796,7 +1798,7 @@ paths:
   /v1/signup/passkey/finish:
     post:
       operationId: finishPasskeySignUp
-      description: Completes passwordless signup by verifying the authenticator attestation from the begin step and creating a tenant-less user with the new passkey as its founding credential. On success it returns a token pair; because the passkey is first-class, the account has no password and can both authenticate and satisfy MFA with the passkey alone. As with password signup, create a tenant through the Identity Management API before any tenant-scoped call, and the creator becomes the tenant owner. An address already taken is refused with the neutral 422 unprocessable of POST /v1/auth/signup, which does not name the reason, and nothing is created.
+      description: Completes passwordless signup by verifying the authenticator attestation from the begin step and creating a tenant-less user with the new passkey as its founding credential. On success it returns a token pair; because the passkey is first-class, the account has no password and can both authenticate and satisfy MFA with the passkey alone. As with password signup, create a tenant through the Identity Management API before any tenant-scoped call, and the creator becomes the tenant owner. An address already taken, or on a domain an organisation has verified, is refused with the neutral 422 unprocessable of POST /v1/auth/signup, which does not name the reason, and nothing is created.
       summary: Passkey-first signup finish (tenant-less)
       tags:
         - Passkeys
@@ -1861,7 +1863,7 @@ paths:
   /v1/register/passkey/begin:
     post:
       operationId: beginPasskeySignUpInOrganization
-      description: Starts the passwordless counterpart to hosted tenant signup, returning the WebAuthn credential-creation options for a passkey scoped to the supplied tenant. It is gated by the tenant's self-registration policy and is refused when self-registration is disabled. Finish the ceremony by returning the signed attestation to the tenant-scoped passkey-register finish call. Where the organisation has passkeys switched off, it is refused with 403 passkey.disabled before a ceremony starts. An address already taken is refused, here or at the finish call, with the neutral 422 unprocessable of POST /v1/auth/signup, which does not name the reason; every attempt here takes at least the same minimum time. On a domain whose organisation requires single sign-on, the ceremony is refused with 403 auth.sso_required and nothing is created (see the SSORequired response).
+      description: Starts the passwordless counterpart to hosted tenant signup, returning the WebAuthn credential-creation options for a passkey scoped to the supplied tenant. It is gated by the tenant's self-registration policy and is refused when self-registration is disabled. Finish the ceremony by returning the signed attestation to the tenant-scoped passkey-register finish call. Where the organisation has passkeys switched off, it is refused with 403 passkey.disabled before a ceremony starts. The answer here is the same whether or not the address has an account, and starting claims nothing; an address already taken, or on a domain another organisation has verified (only that organisation creates accounts there), is refused at the finish call with the neutral 422 unprocessable of POST /v1/auth/signup, which does not name the reason. Every attempt here takes at least the same minimum time. On a domain whose organisation requires single sign-on, the ceremony is refused with 403 auth.sso_required and nothing is created (see the SSORequired response).
       summary: Passkey-first signup begin (tenant-scoped hosted signup)
       tags:
         - Passkeys
@@ -1908,7 +1910,7 @@ paths:
   /v1/register/passkey/finish:
     post:
       operationId: finishPasskeySignUpInOrganization
-      description: Completes passwordless hosted signup by verifying the authenticator attestation and creating the user in the ceremony's tenant with the passkey as its credential. On success it sets the hosted-login SSO cookie so the browser continues into the OAuth authorize and consent flow rather than returning bearer tokens. The account is passwordless and its passkey satisfies MFA on its own. A body not sent as JSON is refused (415 unsupported_media_type). A ceremony finished after the organisation switched passkeys off is refused with 403 passkey.disabled and nothing is created. An address already taken is refused with the neutral 422 unprocessable of POST /v1/auth/signup, which does not name the reason, and nothing is created.
+      description: Completes passwordless hosted signup by verifying the authenticator attestation and creating the user in the ceremony's tenant with the passkey as its credential. On success it sets the hosted-login SSO cookie so the browser continues into the OAuth authorize and consent flow rather than returning bearer tokens. The account is passwordless and its passkey satisfies MFA on its own. A body not sent as JSON is refused (415 unsupported_media_type). A ceremony finished after the organisation switched passkeys off is refused with 403 passkey.disabled and nothing is created. An address already taken, or on a domain another organisation has verified, is refused with the neutral 422 unprocessable of POST /v1/auth/signup, which does not name the reason, and nothing is created.
       summary: Passkey-first signup finish (tenant-scoped hosted signup)
       tags:
         - Passkeys
@@ -3495,7 +3497,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     delete:
       operationId: revokeGroupRole
-      description: Revokes a role from a group within the tenant; members lose the role's group-derived permissions as soon as this returns, though direct user grants of the same role are unaffected. This is the counterpart to the grant-role-to-group call. Review the group's remaining roles with the list-group-roles call.
+      description: 'Revokes a role from a group within the tenant; members lose the role''s group-derived permissions as soon as this returns, though direct user grants of the same role are unaffected. This is the counterpart to the grant-role-to-group call, and is held to the same rule: only an owner takes the owner role off a group (403 rbac.owner_only), and nobody takes off a role carrying a permission they lack (403 rbac.grant_exceeds_caller). Review the group''s remaining roles with the list-group-roles call.'
       summary: Revoke role from group
       tags:
         - RBAC
@@ -3857,7 +3859,7 @@ paths:
   /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}:
     delete:
       operationId: unassignUserRole
-      description: 'Removes a directly assigned role from a user within the tenant; the user loses that role''s permissions unless a group still confers it. This is the counterpart to the assign-role-to-user call. Confirm the remaining grants with the effective-permissions call. Removing the owner role is refused with 409 tenant.last_owner, and nothing changes, when it would leave an organization with no active owner: make someone else an owner first. Removing a role is held to the rule for giving it (403 rbac.grant_exceeds_caller, or rbac.owner_only for the owner role), and the person must not outrank the caller (403 rbac.target_is_owner / rbac.target_outranks_caller).'
+      description: 'Removes a directly assigned role from a user within the tenant; the user loses that role''s permissions unless a group still confers it. This is the counterpart to the assign-role-to-user call. Confirm the remaining grants with the effective-permissions call. Removing the owner role is refused with 409 tenant.last_owner, and nothing changes, when it would leave an organization with no active owner: make someone else an owner first. Removing a role is held to the rule for giving it (403 rbac.grant_exceeds_caller, or rbac.owner_only for the owner role), and the person must not outrank the caller (403 rbac.target_is_owner / rbac.target_outranks_caller). Removing the last role of someone whose account belongs to another organization ends their membership here, so their sessions here end too (announced as session.revoked, reason removed_from_organization), as removing them from the organization does.'
       summary: Unassign role from user
       tags:
         - RBAC
@@ -4377,7 +4379,7 @@ paths:
   /v1/tenants/{tenantID}/relation-tuples/check:
     post:
       operationId: checkRelation
-      description: 'Evaluates whether a user holds a relation on an object, composing every model: an ABAC deny policy for the object''s type with the relation as action refuses and stops; otherwise a relationship tuple (following userset references transitively), a role granting type:relation or type.relation, or an ABAC allow policy permits. A role grant counts without a tuple. An engine error refuses. The response names the deciding model and rule in decided_by; pass explain=true to also receive the chain of tuples that granted access and the decision''s trace. This is a read-only decision; author the underlying tuples with the write-tuple call.'
+      description: 'Evaluates whether a user holds a relation on an object, composing every model: an ABAC deny policy for the object''s type with the relation as action refuses and stops; otherwise a relationship tuple (following userset references transitively), a role granting type:relation or type.relation, or an ABAC allow policy permits. A role grant counts without a tuple. An engine error refuses. The response names the deciding model and rule in decided_by; pass explain=true to also receive the chain of tuples that granted access and the decision''s trace. A check expands at most 1,000 distinct object#relation pairs, and the check with its explanation reads at most 5,000 relationship sets; past either it is refused with 422 rebac.check_too_complex. This is a read-only decision; author the underlying tuples with the write-tuple call.'
       summary: Check relation
       tags:
         - ReBAC
@@ -4575,6 +4577,9 @@ paths:
         two nodes, following userset references recursively. The result is
         suitable for graph visualization (e.g. a security-posture or privilege-path
         view) or as input to further investigation queries.
+
+        A graph that would read more than 5,000 object and relation pairs is
+        refused with 422 rebac.check_too_complex: narrow the root or the depth.
 
         This is the ReBAC analogue of a privilege-path graph: it is explicit about
         the boundaries of what Qeet ID's own relation-tuple store covers (only
@@ -4785,7 +4790,7 @@ paths:
     post:
       operationId: evaluateAccess
       summary: AuthZEN evaluation
-      description: OpenID AuthZEN core PDP evaluation request, answered by the same composed decision as the permission and relation checks (an ABAC deny refuses; then roles, relationships and ABAC allow policies are a union). When resource.type is "permission", action.name is the permission key; otherwise resource becomes "type:id" and action.name the relation. The response context always carries decided_by. ABAC policies see the request's properties, subject.properties as subject.*, resource.properties as resource.*, action.properties as action.*, and context (but for explain) as context.*. What the platform knows of the subject (id, type, tenant_id, and for a person, groups and roles) wins over a property of the same name, as resource.type and resource.id and action.name win over theirs.
+      description: OpenID AuthZEN core PDP evaluation request, answered by the same composed decision as the permission and relation checks (an ABAC deny refuses; then roles, relationships and ABAC allow policies are a union). When resource.type is "permission", action.name is the permission key; otherwise resource becomes "type:id" and action.name the relation. The response context always carries decided_by. ABAC policies see the request's properties, subject.properties as subject.*, resource.properties as resource.*, action.properties as action.*, and context (but for explain) as context.*. What the platform knows of the subject (id, type, tenant_id, and for a person, groups and roles) wins over a property of the same name, as resource.type and resource.id and action.name win over theirs. A relationship check expands at most 1,000 distinct object#relation pairs, and a request's checks together read at most 5,000 relationship sets; past either it is refused with 422 rebac.check_too_complex.
       tags:
         - AuthZEN
       parameters:
@@ -4860,7 +4865,7 @@ paths:
     post:
       operationId: evaluateAccessBatch
       summary: AuthZEN evaluations
-      description: 'OpenID AuthZEN access evaluations: several evaluations in one call, each answered as the single evaluation endpoint answers one. The top-level subject, resource, action and context are defaults; an evaluation that names one of them replaces it whole. Decisions come back in the request''s order. options.evaluations_semantic is execute_all (the default), deny_on_first_deny, which stops after the first deny, or permit_on_first_permit, which stops after the first permit; the response then holds the evaluations up to that one. An evaluation the caller got wrong, such as one without a subject id, is denied with context.error {status, code, message} and counts as a deny. At most 100 evaluations (more is 422 authzen.too_many_evaluations); an unknown semantic is 422 authzen.evaluations_semantic_invalid. Without evaluations, the request is a single evaluation and the response is a single decision. Requires role.read.'
+      description: 'OpenID AuthZEN access evaluations: several evaluations in one call, each answered as the single evaluation endpoint answers one. The top-level subject, resource, action and context are defaults; an evaluation that names one of them replaces it whole. Decisions come back in the request''s order. options.evaluations_semantic is execute_all (the default), deny_on_first_deny, which stops after the first deny, or permit_on_first_permit, which stops after the first permit; the response then holds the evaluations up to that one. An evaluation the caller got wrong, such as one without a subject id, is denied with context.error {status, code, message} and counts as a deny. At most 100 evaluations (more is 422 authzen.too_many_evaluations); an unknown semantic is 422 authzen.evaluations_semantic_invalid. Without evaluations, the request is a single evaluation and the response is a single decision. Each relationship check expands at most 1,000 distinct object#relation pairs, and the request''s checks together read at most 5,000 relationship sets: an evaluation past either is denied with context.error rebac.check_too_complex (422). Requires role.read.'
       tags:
         - AuthZEN
       parameters:
@@ -6045,7 +6050,7 @@ components:
       type: apiKey
       in: header
       name: Authorization
-      description: 'API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey ` prefix). Accepted on the same authenticated routes as bearerAuth.'
+      description: 'API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey ` prefix). Accepted on the same authenticated routes as bearerAuth. A key works only while its organisation is active, not while it is suspended or deleted.'
     scimBearer:
       type: http
       scheme: bearer
@@ -6275,7 +6280,7 @@ components:
         client_id:
           type: string
           maxLength: 255
-          description: The OAuth client the hosted login is serving. Its tenant's sign-in lockout settings apply; omitted or unknown = the platform defaults.
+          description: The OAuth client the hosted login is serving. Its tenant's sign-in lockout settings apply where they are stricter than the platform defaults, never looser, to the lock on the network the attempt comes from; the lock on every network always uses the platform defaults. Omitted or unknown = the platform defaults. The account's own organisation may still refuse password sign-in after the password is verified (403 auth.method_disabled).
     Truncated:
       type: boolean
       description: 'Present, and true, when the list was cut at its limit (1,000 items unless the operation says otherwise): there are more than were answered.'
@@ -7181,7 +7186,7 @@ components:
     LockoutLimits:
       type: object
       readOnly: true
-      description: The platform defaults for the lockout settings (LOGIN_LOCKOUT_THRESHOLD / _WINDOW / _DURATION, built-in 5 / 15 / 15) and the inclusive bounds a tenant may choose within (LOGIN_LOCKOUT_*_MIN / _MAX). Ignored on update.
+      description: 'The platform defaults for the lockout settings (LOGIN_LOCKOUT_THRESHOLD / _WINDOW / _DURATION, built-in 5 / 15 / 15) and the inclusive bounds a tenant may choose within. The bounds run from the defaults toward stricter only: a threshold down to LOGIN_LOCKOUT_THRESHOLD_MIN, a window and lock up to LOGIN_LOCKOUT_WINDOW_MAX / _DURATION_MAX. A tenant''s settings govern the lock on one network; the lock on every network (LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER times the platform threshold) always uses the platform defaults. Ignored on update.'
       properties:
         defaults:
           $ref: '#/components/schemas/LockoutSettings'
@@ -7229,17 +7234,17 @@ components:
           type:
             - integer
             - 'null'
-          description: Failed password sign-ins to one account from one network, each within the window of the last, that lock the account for that network. null = the platform default. Must lie within lockout_limits (default bounds 3..20).
+          description: 'Failed password sign-ins to one account from one network, each within the window of the last, that lock the account for that network. null = the platform default. Must lie within lockout_limits (default bounds 3..5): an organisation may make the lockout stricter, never looser.'
         lockout_window_minutes:
           type:
             - integer
             - 'null'
-          description: A failure is forgotten once this many minutes pass with no new failure. null = the platform default. Must lie within lockout_limits (default bounds 1..1440).
+          description: A failure is forgotten once this many minutes pass with no new failure. null = the platform default. Must lie within lockout_limits (default bounds 15..1440).
         lockout_duration_minutes:
           type:
             - integer
             - 'null'
-          description: How long a lock lasts. null = the platform default. Must lie within lockout_limits (default bounds 1..1440).
+          description: How long a lock lasts. null = the platform default. Must lie within lockout_limits (default bounds 15..1440).
         lockout_limits:
           $ref: '#/components/schemas/LockoutLimits'
     SecurityPolicy:
@@ -7285,7 +7290,7 @@ components:
             - optional
             - required
             - admin_only
-          description: 'Who must use a second factor to sign in, enforced at password sign-in: optional (only people who set one up are challenged), required (everyone), admin_only (anyone holding a role, directly or through a group, that grants a write permission). Separately, an account an administrator marks as requiring MFA must, whatever is set here. An account that must and holds no factor sets up an authenticator app before any session is issued.'
+          description: 'Who must use a second factor to sign in, enforced at password sign-in: optional (only people who set one up are challenged), required (everyone), admin_only (anyone holding a role, directly or through a group, that grants an administrative permission: one that changes who signs in or with what authority, such as user.write, user.credentials, user.suspend, session.revoke, member.invite or role.write, the same administrators single sign-on never adopts by address). Separately, an account an administrator marks as requiring MFA must, whatever is set here. An account that must and holds no factor sets up an authenticator app before any session is issued.'
         mfa_grace_days:
           type: integer
           minimum: 0
@@ -7574,7 +7579,7 @@ components:
         access_ends_at:
           type: string
           format: date-time
-          description: For an approved, time-limited request, when the role is taken back.
+          description: For an approved, time-limited request, when the role is taken back; cleared once the role is given to the requester for good (assigned directly, by a group or the directory), so it isn't taken back then.
         ended_at:
           type: string
           format: date-time

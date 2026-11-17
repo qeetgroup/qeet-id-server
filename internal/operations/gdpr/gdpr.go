@@ -859,6 +859,10 @@ type Handler struct {
 	Service  *Service
 	Evidence *EvidenceService
 	Reauth   ReauthChecker
+	// ActOnCheck refuses an erasure or export of someone who outranks the
+	// caller (rbac.Repository.CheckActOn), as deleting their account is
+	// refused. Without it both are refused.
+	ActOnCheck func(ctx context.Context, caller *httpx.Principal, tenantID, targetID uuid.UUID) error
 }
 
 // Mount registers the routes.
@@ -939,6 +943,15 @@ func (h *Handler) deleteSelf(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// checkActOn applies ActOnCheck to the caller of r acting on userID in
+// tenantID: nobody erases or exports someone who outranks them.
+func (h *Handler) checkActOn(r *http.Request, tenantID, userID uuid.UUID) error {
+	if h.ActOnCheck == nil {
+		return errs.ErrNotImplemented
+	}
+	return h.ActOnCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, userID)
+}
+
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	tid, err := httpx.RequireTenant(r)
 	if err != nil {
@@ -951,6 +964,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.TenantID = tid
+	if err := h.checkActOn(r, tid, in.UserID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	req, err := h.Service.Request(r.Context(), in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -1003,6 +1020,10 @@ func (h *Handler) createExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.TenantID = tid
+	if err := h.checkActOn(r, tid, in.UserID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	req, err := h.Service.RequestExport(r.Context(), in, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -1040,6 +1061,12 @@ func (h *Handler) getExport(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := h.Service.GetExport(r.Context(), tid, id)
 	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	// Reading an export is reading the person's data, held to the same rule as
+	// asking for it.
+	if err := h.checkActOn(r, tid, out.UserID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

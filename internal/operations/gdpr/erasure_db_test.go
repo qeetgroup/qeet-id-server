@@ -145,7 +145,7 @@ func TestErasureRemovesEveryTrace(t *testing.T) {
 	}
 
 	svc := NewService(dbtest.Pool(t), time.Nanosecond)
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), requests(t, svc).Mount)
 	rec := dbtest.Do(t, asAdmin, http.MethodPost, "/gdpr/purge", map[string]any{"user_id": erased.ID})
 	var req Request
 	dbtest.Decode(t, rec, &req)
@@ -240,7 +240,7 @@ func TestErasureOfAnAccountAlreadyGone(t *testing.T) {
 	admin := dbtest.User(t, tenant, tenant)
 	gone := account(t, tenant)
 	svc := NewService(pool, time.Nanosecond)
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), requests(t, svc).Mount)
 	var req Request
 	dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodPost, "/gdpr/purge", map[string]any{"user_id": gone.ID}), &req)
 	if _, err := pool.Exec(ctx, `UPDATE "user".users SET deleted_at = NOW(), status = 'deleted' WHERE id = $1`, gone.ID); err != nil {

@@ -43,7 +43,8 @@ properties:
     description: >-
       Failed password sign-ins to one account from one network, each within the
       window of the last, that lock the account for that network. null = the
-      platform default. Must lie within lockout_limits (default bounds 3..20).
+      platform default. Must lie within lockout_limits (default bounds 3..5):
+      an organisation may make the lockout stricter, never looser.
   lockout_window_minutes:
     type:
       - integer
@@ -51,13 +52,13 @@ properties:
     description: >-
       A failure is forgotten once this many minutes pass with no new failure.
       null = the platform default. Must lie within lockout_limits (default
-      bounds 1..1440).
+      bounds 15..1440).
   lockout_duration_minutes:
     type:
       - integer
       - 'null'
     description: >-
       How long a lock lasts. null = the platform default. Must lie within
-      lockout_limits (default bounds 1..1440).
+      lockout_limits (default bounds 15..1440).
   lockout_limits:
     $ref: ./LockoutLimits.yaml

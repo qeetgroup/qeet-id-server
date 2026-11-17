@@ -60,10 +60,15 @@ func decideMFARequirement(row dbgen.MFARequirementRow, now time.Time) mfaRequire
 	return req
 }
 
+// SetMemberPermissions sets the permissions a member may hold without counting
+// as an administrator for an organisation's admin_only second-factor requirement.
+func (s *Service) SetMemberPermissions(keys []string) { s.memberPermissions = keys }
+
 // mfaRequirementFor reads, through q, whether the account must use a second
-// factor to sign in to tenantID (uuid.Nil: only the account's own flag applies).
-func mfaRequirementFor(ctx context.Context, q *dbgen.Queries, userID, tenantID uuid.UUID) (mfaRequirement, error) {
-	row, err := q.MFARequirement(ctx, dbgen.MFARequirementParams{UserID: userID, TenantID: tenantID})
+// factor to sign in to tenantID (uuid.Nil: only the account's own flag applies),
+// members being the permissions that don't make it an administrator there.
+func mfaRequirementFor(ctx context.Context, q *dbgen.Queries, userID, tenantID uuid.UUID, members []string) (mfaRequirement, error) {
+	row, err := q.MFARequirement(ctx, dbgen.MFARequirementParams{UserID: userID, TenantID: tenantID, MemberPermissions: members})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return mfaRequirement{}, nil
 	}
@@ -124,7 +129,7 @@ func (s *Service) tenantFactorShortfall(ctx context.Context, userID, tenantID uu
 	if s.mfa == nil || tenantID == uuid.Nil || secondFactor != "" {
 		return nil
 	}
-	req, err := mfaRequirementFor(ctx, s.q, userID, tenantID)
+	req, err := mfaRequirementFor(ctx, s.q, userID, tenantID, s.memberPermissions)
 	if err != nil || req.reason == "" {
 		return err
 	}
@@ -191,12 +196,12 @@ func (s *Service) mfaGateFor(ctx context.Context, userID, tenantID, alsoTenant u
 	if err != nil {
 		return mfaGate{}, err
 	}
-	req, err := mfaRequirementFor(ctx, s.q, userID, tenantID)
+	req, err := mfaRequirementFor(ctx, s.q, userID, tenantID, s.memberPermissions)
 	if err != nil {
 		return mfaGate{}, err
 	}
 	if alsoTenant != uuid.Nil && alsoTenant != tenantID {
-		also, err := mfaRequirementFor(ctx, s.q, userID, alsoTenant)
+		also, err := mfaRequirementFor(ctx, s.q, userID, alsoTenant, s.memberPermissions)
 		if err != nil {
 			return mfaGate{}, err
 		}
@@ -273,7 +278,7 @@ func (s *Service) mayDeferEnrollment(ctx context.Context, tx pgx.Tx, userID, ten
 	if err := s.stillWithoutFactor(ctx, tx, userID); err != nil {
 		return nil, err
 	}
-	req, err := mfaRequirementFor(ctx, s.q.WithTx(tx), userID, tenantID)
+	req, err := mfaRequirementFor(ctx, s.q.WithTx(tx), userID, tenantID, s.memberPermissions)
 	if err != nil {
 		return nil, err
 	}

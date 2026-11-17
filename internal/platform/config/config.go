@@ -141,8 +141,9 @@ type Config struct {
 	//  2. Make the new key SECRETS_KEY and move the old one to
 	//     SECRETS_PREVIOUS_KEYS. New values are sealed with the new key, and the
 	//     secrets-reencrypt job re-seals the stored ones in the background.
-	//  3. When envelope_rows_on_old_keys is 0 for every column, remove the old
-	//     key from SECRETS_PREVIOUS_KEYS.
+	//  3. When envelope_rows_on_old_keys is 0 for every column and the
+	//     audit-chain-verify job has run since (it signs the audit checkpoints
+	//     again with the new key), remove the old key from SECRETS_PREVIOUS_KEYS.
 	//
 	// With aws-kms the steps are the same with SECRETS_WRAPPED_DEK and
 	// SECRETS_PREVIOUS_WRAPPED_DEKS; a key moved from static to aws-kms stays
@@ -346,24 +347,23 @@ type Config struct {
 	TokenExchangeMaxDepth int `envconfig:"TOKEN_EXCHANGE_MAX_DEPTH" default:"2"`
 
 	// Application secret lockout: after CLIENT_AUTH_LOCKOUT_THRESHOLD wrong
-	// secrets for one confidential application within CLIENT_AUTH_LOCKOUT_WINDOW,
-	// on any endpoint that takes one, it is refused for CLIENT_AUTH_LOCKOUT_DURATION.
+	// secrets for one confidential application from one source network within
+	// CLIENT_AUTH_LOCKOUT_WINDOW, on any endpoint that takes one, it is refused
+	// from that network for CLIENT_AUTH_LOCKOUT_DURATION.
 	ClientAuthLockoutThreshold int           `envconfig:"CLIENT_AUTH_LOCKOUT_THRESHOLD" default:"10"`
 	ClientAuthLockoutWindow    time.Duration `envconfig:"CLIENT_AUTH_LOCKOUT_WINDOW" default:"15m"`
 	ClientAuthLockoutDuration  time.Duration `envconfig:"CLIENT_AUTH_LOCKOUT_DURATION" default:"15m"`
 
 	// Sign-in lockout defaults: LOGIN_LOCKOUT_THRESHOLD failed password sign-ins to
 	// one account from one network, each within LOGIN_LOCKOUT_WINDOW of the last,
-	// lock it there for LOGIN_LOCKOUT_DURATION. A tenant policy may override them
-	// within the _MIN/_MAX bounds. Windows and durations are whole minutes.
+	// lock it there for LOGIN_LOCKOUT_DURATION. A tenant policy may only tighten
+	// them, down to the _MIN threshold and up to the _MAX window and lock.
+	// Windows and durations are whole minutes.
 	LoginLockoutThreshold    int           `envconfig:"LOGIN_LOCKOUT_THRESHOLD" default:"5"`
 	LoginLockoutWindow       time.Duration `envconfig:"LOGIN_LOCKOUT_WINDOW" default:"15m"`
 	LoginLockoutDuration     time.Duration `envconfig:"LOGIN_LOCKOUT_DURATION" default:"15m"`
 	LoginLockoutThresholdMin int           `envconfig:"LOGIN_LOCKOUT_THRESHOLD_MIN" default:"3"`
-	LoginLockoutThresholdMax int           `envconfig:"LOGIN_LOCKOUT_THRESHOLD_MAX" default:"20"`
-	LoginLockoutWindowMin    time.Duration `envconfig:"LOGIN_LOCKOUT_WINDOW_MIN" default:"1m"`
 	LoginLockoutWindowMax    time.Duration `envconfig:"LOGIN_LOCKOUT_WINDOW_MAX" default:"24h"`
-	LoginLockoutDurationMin  time.Duration `envconfig:"LOGIN_LOCKOUT_DURATION_MIN" default:"1m"`
 	LoginLockoutDurationMax  time.Duration `envconfig:"LOGIN_LOCKOUT_DURATION_MAX" default:"24h"`
 	// LoginLockoutAccountMultiplier sets the looser per-account cap: threshold
 	// × multiplier failures from any mix of networks lock the account
@@ -514,6 +514,10 @@ func (c *Config) checkSessionLifetime() error {
 	return nil
 }
 
+// maxLoginLockoutThreshold caps the platform's own lockout threshold, so a
+// deployment can't make password guessing cheap for every account.
+const maxLoginLockoutThreshold = 20
+
 // checkSignInLockout rejects lockout settings that would not protect sign-in:
 // a bound that is not positive or not whole minutes, a minimum above its
 // maximum, a default outside its bounds, an account multiplier below 2, or a
@@ -527,21 +531,19 @@ func (c *Config) checkSignInLockout() error {
 	}
 	minutes("LOGIN_LOCKOUT_WINDOW", c.LoginLockoutWindow)
 	minutes("LOGIN_LOCKOUT_DURATION", c.LoginLockoutDuration)
-	minutes("LOGIN_LOCKOUT_WINDOW_MIN", c.LoginLockoutWindowMin)
 	minutes("LOGIN_LOCKOUT_WINDOW_MAX", c.LoginLockoutWindowMax)
-	minutes("LOGIN_LOCKOUT_DURATION_MIN", c.LoginLockoutDurationMin)
 	minutes("LOGIN_LOCKOUT_DURATION_MAX", c.LoginLockoutDurationMax)
 	if c.LoginLockoutThresholdMin < 1 {
 		problems = append(problems, "LOGIN_LOCKOUT_THRESHOLD_MIN must be at least 1")
 	}
-	if c.LoginLockoutThreshold < c.LoginLockoutThresholdMin || c.LoginLockoutThreshold > c.LoginLockoutThresholdMax {
-		problems = append(problems, "LOGIN_LOCKOUT_THRESHOLD must lie within LOGIN_LOCKOUT_THRESHOLD_MIN..LOGIN_LOCKOUT_THRESHOLD_MAX")
+	if c.LoginLockoutThreshold < c.LoginLockoutThresholdMin || c.LoginLockoutThreshold > maxLoginLockoutThreshold {
+		problems = append(problems, fmt.Sprintf("LOGIN_LOCKOUT_THRESHOLD must lie within LOGIN_LOCKOUT_THRESHOLD_MIN..%d", maxLoginLockoutThreshold))
 	}
-	if c.LoginLockoutWindow < c.LoginLockoutWindowMin || c.LoginLockoutWindow > c.LoginLockoutWindowMax {
-		problems = append(problems, "LOGIN_LOCKOUT_WINDOW must lie within LOGIN_LOCKOUT_WINDOW_MIN..LOGIN_LOCKOUT_WINDOW_MAX")
+	if c.LoginLockoutWindow > c.LoginLockoutWindowMax {
+		problems = append(problems, "LOGIN_LOCKOUT_WINDOW must be at most LOGIN_LOCKOUT_WINDOW_MAX")
 	}
-	if c.LoginLockoutDuration < c.LoginLockoutDurationMin || c.LoginLockoutDuration > c.LoginLockoutDurationMax {
-		problems = append(problems, "LOGIN_LOCKOUT_DURATION must lie within LOGIN_LOCKOUT_DURATION_MIN..LOGIN_LOCKOUT_DURATION_MAX")
+	if c.LoginLockoutDuration > c.LoginLockoutDurationMax {
+		problems = append(problems, "LOGIN_LOCKOUT_DURATION must be at most LOGIN_LOCKOUT_DURATION_MAX")
 	}
 	if c.LoginLockoutAccountMultiplier < 2 {
 		problems = append(problems, "LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER must be at least 2")

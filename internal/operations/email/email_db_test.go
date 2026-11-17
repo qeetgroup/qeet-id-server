@@ -55,8 +55,8 @@ func TestRecipientLocaleStaysWithItsOrganisation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := service.UpsertEditor(ctx, tx, tenant, "magic_link", EditorInput{Subject: "Sign in", Body: "Use {{magic_url}}", Options: EditorOptions{
-			Translations: map[string]LocalizedContent{"fr": {Subject: "Connexion", Body: "Utilisez {{magic_url}}"}},
+		if _, err := service.UpsertEditor(ctx, tx, tenant, "magic_link", EditorInput{Subject: "Sign in", Body: "Use this link:\n{{magic_url}}", Options: EditorOptions{
+			Translations: map[string]LocalizedContent{"fr": {Subject: "Connexion", Body: "Utilisez ce lien :\n{{magic_url}}"}},
 		}}); err != nil {
 			t.Fatalf("save template: %v", err)
 		}

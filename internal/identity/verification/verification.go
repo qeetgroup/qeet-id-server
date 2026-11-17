@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -16,8 +17,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/verification/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -28,10 +31,27 @@ import (
 // Service proves a user controls an email address or phone number, by a code
 // sent to it.
 type Service struct {
-	pool   *pgxpool.Pool
-	q      *dbgen.Queries
-	sender notifier.Sender
-	ttl    time.Duration
+	pool        *pgxpool.Pool
+	q           *dbgen.Queries
+	sender      notifier.Sender
+	ttl         time.Duration
+	plan        PlanGate                  // gates SMS codes by plan (nil = no gate)
+	deliverable func(channel string) bool // whether a channel can deliver (nil = assume it can)
+}
+
+// PlanGate reports whether an organisation's plan includes a feature.
+// Satisfied by *entitlements.Service.
+type PlanGate interface {
+	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
+}
+
+// SetPlan wires the plan gate for SMS codes, which cost per message.
+func (s *Service) SetPlan(p PlanGate) { s.plan = p }
+
+// SetDeliveryCheck wires the check that a channel can deliver a code
+// (notifier.Router.Configured).
+func (s *Service) SetDeliveryCheck(deliverable func(channel string) bool) {
+	s.deliverable = deliverable
 }
 
 // Requester is who asked, for the audit trail: the actor, and the organization
@@ -74,10 +94,78 @@ type latestCode struct {
 	attempts  int        // wrong guesses so far
 }
 
-// maxVerificationAttempts is the guess budget for a single code. Five wrong
-// answers retire it, so a 6-digit code can't be ground down: getting a fresh
-// budget means requesting a new code, and the sending routes are throttled.
-const maxVerificationAttempts = 5
+// Limits on guessing and sending codes. Five wrong answers retire a code, and
+// a person gets ten an hour at each flow's codes however many they ask for, so
+// a resend brings no fresh budget; codes go out at the pace of a person asking,
+// as MFA codes do, so nobody can flood an inbox or phone or run up SMS bills.
+const (
+	maxVerificationAttempts     = 5                // wrong guesses that retire one code
+	verificationFailuresPerHour = 10               // wrong guesses per person and flow per hour, over all its codes
+	codeResendAfter             = 30 * time.Second // wait before a person's next SMS code
+	codeSendsPerHourPerUser     = 10               // codes per person per hour, by email or by SMS
+	codeSendsPerHourPerAddress  = 5                // codes per address or number per hour, over all accounts
+)
+
+// e164 matches a phone number in E.164 form: +, a country code, at most 15 digits.
+var e164 = regexp.MustCompile(`^\+[1-9][0-9]{6,14}$`)
+
+// errVerifyPhoneInvalid refuses a number that isn't in E.164 form.
+var errVerifyPhoneInvalid = errs.ErrValidationFailed.WithFields([]errs.FieldError{{
+	Field: "phone", Code: "invalid_phone", Message: "Must be a valid phone number in E.164 format.",
+}})
+
+// changeEmailDigits is an email-change code's length: confirming one moves the
+// account's sign-in address, so it is longer than the other codes' six.
+const changeEmailDigits = 8
+
+// errVerifyFailuresPerHour refuses a confirm once the hour's guesses are spent.
+var errVerifyFailuresPerHour = errs.ErrVerifyAttemptsExceeded.WithMessage("Too many incorrect codes. Try again later.")
+
+// guessBudget is how many wrong guesses a person made at one flow's codes in
+// the last hour, and when the oldest code they hit was sent.
+type guessBudget struct {
+	failures int
+	oldest   time.Time
+}
+
+// spent returns the refusal, with retry_after in seconds, once b is used up.
+func (b guessBudget) spent() error {
+	if b.failures < verificationFailuresPerHour {
+		return nil
+	}
+	return errVerifyFailuresPerHour.WithMetadata(map[string]any{"retry_after": retryAfter(time.Until(b.oldest.Add(time.Hour)))})
+}
+
+// retryAfter is wait in whole seconds, at least one.
+func retryAfter(wait time.Duration) int { return max(1, int(wait.Round(time.Second).Seconds())) }
+
+// codeSends are the codes of the last hour that count against one more: the
+// person's and the address's (by anyone), each with when the oldest went, and
+// for SMS when the person's last went.
+type codeSends struct {
+	mine, toAddress           int32
+	mineOldest, addressOldest time.Time
+	last                      time.Time // zero: no wait between codes
+}
+
+// limit refuses one more code with ErrVerifyCodeSendLimited (retry_after in
+// seconds) within codeResendAfter of last, or once an hourly limit is reached.
+func (c codeSends) limit() error {
+	var wait time.Duration
+	if !c.last.IsZero() {
+		wait = codeResendAfter - time.Since(c.last)
+	}
+	if c.mine >= codeSendsPerHourPerUser {
+		wait = max(wait, time.Until(c.mineOldest.Add(time.Hour)))
+	}
+	if c.toAddress >= codeSendsPerHourPerAddress {
+		wait = max(wait, time.Until(c.addressOldest.Add(time.Hour)))
+	}
+	if wait <= 0 {
+		return nil
+	}
+	return errs.ErrVerifyCodeSendLimited.WithMetadata(map[string]any{"retry_after": retryAfter(wait)})
+}
 
 // matches reports whether the submitted code is the one this row was issued
 // for, compared in constant time so a wrong code can't be recovered by timing.
@@ -133,8 +221,12 @@ func recordFailedAttempt(ctx context.Context, tx pgx.Tx, table string, id uuid.U
 
 // chargeFailure runs the shared checks and, when the submitted code is wrong,
 // persists the failed attempt before returning. It commits the transaction on
-// that path so the count survives the caller's deferred rollback.
-func chargeFailure(ctx context.Context, tx pgx.Tx, table string, row latestCode, code string) error {
+// that path so the count survives the caller's deferred rollback. A spent
+// budget refuses even the right code, as a retired code does.
+func chargeFailure(ctx context.Context, tx pgx.Tx, table string, row latestCode, code string, budget guessBudget) error {
+	if err := budget.spent(); err != nil {
+		return err
+	}
 	err := checkUsable(row, code)
 	if !errors.Is(err, errs.ErrVerifyCodeInvalid) {
 		// Expired, already used, or budget already gone: nothing to charge, and
@@ -150,6 +242,10 @@ func chargeFailure(ctx context.Context, tx pgx.Tx, table string, row latestCode,
 	}
 	if exhausted {
 		return errs.ErrVerifyAttemptsExceeded
+	}
+	budget.failures++
+	if err := budget.spent(); err != nil {
+		return err
 	}
 	return err
 }
@@ -193,12 +289,12 @@ func (s *Service) StartEmail(ctx context.Context, userID uuid.UUID, email string
 	if strings.TrimSpace(email) == "" {
 		return errs.ErrVerifyNoEmail
 	}
-	code, err := s.issueEmailCode(ctx, userID, email, purposeVerifyEmail, who)
+	code, id, err := s.issueEmailCode(ctx, userID, email, purposeVerifyEmail, who)
 	if err != nil {
 		return err
 	}
 	expiry := fmt.Sprintf("%d minutes", int(s.ttl.Minutes()))
-	return s.sender.Send(ctx, notifier.Message{
+	return s.withdrawUndelivered(ctx, s.q.DeleteEmailVerification, id, s.sender.Send(ctx, notifier.Message{
 		Channel: "email",
 		To:      email,
 		Subject: "Verify your email",
@@ -208,36 +304,71 @@ func (s *Service) StartEmail(ctx context.Context, userID uuid.UUID, email string
 			"Use the code below to verify your email address.",
 			code, expiry,
 		),
-	})
+	}))
+}
+
+// withdrawUndelivered deletes code row id with remove when sendErr says the
+// provider didn't take it, so nobody can use a code its holder never got, and
+// returns sendErr. Best effort: the send already failed.
+func (s *Service) withdrawUndelivered(ctx context.Context, remove func(context.Context, uuid.UUID) error, id uuid.UUID, sendErr error) error {
+	if sendErr != nil {
+		if err := remove(ctx, id); err != nil {
+			slog.Warn("verification: could not withdraw an undelivered code", "code_id", id, "err", err)
+		}
+	}
+	return sendErr
 }
 
 // issueEmailCode stores a new code for one purpose (expiring the user's open
-// codes for the other) and audits it, in one transaction. It returns the code
-// to send.
-func (s *Service) issueEmailCode(ctx context.Context, userID uuid.UUID, email, purpose string, who Requester) (string, error) {
-	code, err := codes.Numeric(6)
+// codes) and audits it, in one transaction, unless the sending limits refuse
+// it. It returns the code to send and its row.
+func (s *Service) issueEmailCode(ctx context.Context, userID uuid.UUID, email, purpose string, who Requester) (string, uuid.UUID, error) {
+	digits := 6
+	if purpose == purposeChangeEmail {
+		digits = changeEmailDigits
+	}
+	code, err := codes.Numeric(digits)
 	if err != nil {
-		return "", err
+		return "", uuid.Nil, err
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return "", err
+		return "", uuid.Nil, err
 	}
 	defer tx.Rollback(ctx)
-	if err := s.q.WithTx(tx).InsertEmailVerification(ctx, dbgen.InsertEmailVerificationParams{
+	qtx := s.q.WithTx(tx)
+	if err := qtx.LockAccountForCodeSend(ctx, userID); err != nil {
+		return "", uuid.Nil, err
+	}
+	sent, err := qtx.EmailCodeSends(ctx, dbgen.EmailCodeSendsParams{UserID: userID, Email: email})
+	if err != nil {
+		return "", uuid.Nil, err
+	}
+	if err := (codeSends{mine: sent.UserSends, mineOldest: sent.UserOldest, toAddress: sent.AddressSends,
+		addressOldest: sent.AddressOldest}).limit(); err != nil {
+		return "", uuid.Nil, err
+	}
+	id, err := qtx.InsertEmailVerification(ctx, dbgen.InsertEmailVerificationParams{
 		UserID:    userID,
 		Email:     email,
 		CodeHash:  codes.Hash(code),
 		ExpiresAt: time.Now().UTC().Add(s.ttl),
 		Purpose:   purpose,
-	}); err != nil {
-		return "", err
+	})
+	if err != nil {
+		return "", uuid.Nil, err
 	}
 	if err := audit.Record(ctx, tx, who.event("email.verification_started", userID,
 		map[string]any{"purpose": purpose, "email": email})); err != nil {
-		return "", err
+		return "", uuid.Nil, err
 	}
-	return code, tx.Commit(ctx)
+	return code, id, tx.Commit(ctx)
+}
+
+// emailBudget returns userID's guesses at purpose's codes this hour, in tx.
+func emailBudget(ctx context.Context, tx pgx.Tx, userID uuid.UUID, purpose string) (guessBudget, error) {
+	row, err := dbgen.New(tx).EmailCodeFailures(ctx, dbgen.EmailCodeFailuresParams{UserID: userID, Purpose: purpose})
+	return guessBudget{failures: int(row.Failures), oldest: row.Oldest}, err
 }
 
 // ConfirmEmail verifies the address on file with a verify_email code. The code
@@ -263,7 +394,11 @@ func (s *Service) confirmEmail(ctx context.Context, userID uuid.UUID, code strin
 		}
 		return err
 	}
-	if err := chargeFailure(ctx, tx, "email_verifications", row, code); err != nil {
+	budget, err := emailBudget(ctx, tx, userID, purposeVerifyEmail)
+	if err != nil {
+		return err
+	}
+	if err := chargeFailure(ctx, tx, "email_verifications", row, code, budget); err != nil {
 		return err
 	}
 	n, err := qtx.MarkUserEmailVerified(ctx, dbgen.MarkUserEmailVerifiedParams{UserID: userID, Email: row.value})
@@ -321,6 +456,9 @@ func (s *Service) StartEmailChange(ctx context.Context, userID uuid.UUID, newEma
 	if newEmail == "" {
 		return errs.ErrVerifyNoEmail
 	}
+	if err := checkEmailChange(ctx, s.pool, userID, newEmail); err != nil {
+		return err
+	}
 	taken, err := s.q.EmailTakenByOther(ctx, dbgen.EmailTakenByOtherParams{
 		Email:  newEmail,
 		UserID: userID,
@@ -328,17 +466,18 @@ func (s *Service) StartEmailChange(ctx context.Context, userID uuid.UUID, newEma
 	if err != nil {
 		return err
 	}
-	// A code is stored either way, so it supersedes an earlier one alike. One
-	// for a held address is never sent, and confirming it couldn't assign it.
-	code, err := s.issueEmailCode(ctx, userID, newEmail, purposeChangeEmail, who)
+	// A code is stored either way, so it supersedes an earlier one and counts
+	// against the limits alike. One for a held address is never sent, and
+	// confirming it couldn't assign it.
+	code, id, err := s.issueEmailCode(ctx, userID, newEmail, purposeChangeEmail, who)
 	if err != nil {
 		return err
 	}
 	if taken {
-		return s.noticeAddressInUse(ctx, newEmail)
+		return s.withdrawUndelivered(ctx, s.q.DeleteEmailVerification, id, s.noticeAddressInUse(ctx, newEmail))
 	}
 	expiry := fmt.Sprintf("%d minutes", int(s.ttl.Minutes()))
-	return s.sender.Send(ctx, notifier.Message{
+	return s.withdrawUndelivered(ctx, s.q.DeleteEmailVerification, id, s.sender.Send(ctx, notifier.Message{
 		Channel: "email",
 		To:      newEmail,
 		Subject: "Confirm your new email",
@@ -348,7 +487,42 @@ func (s *Service) StartEmailChange(ctx context.Context, userID uuid.UUID, newEma
 			"Use the code below to confirm your new email address.",
 			code, expiry,
 		),
-	})
+	}))
+}
+
+// checkEmailChange refuses, with ErrVerifyEmailManaged, moving userID's address
+// to newEmail where an organisation decides it: its directory or single
+// sign-on provides the address, the address is on a domain the account's
+// organisation manages and newEmail isn't, or newEmail is on a domain another
+// organisation manages. db is the pool, or the confirming transaction.
+func checkEmailChange(ctx context.Context, db dbgen.DBTX, userID uuid.UUID, newEmail string) error {
+	holder, err := dbgen.New(db).AddressHolder(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if holder.Provided {
+		return errs.ErrVerifyEmailManaged.WithMessage("Your organization's directory or single sign-on provides your email address, so it changes there.")
+	}
+	home := uuid.UUID(holder.TenantID.Bytes)
+	ctx = postgres.AcrossTenants(ctx)
+	next, ok, err := domainverify.ManagingDomain(ctx, db, newEmail)
+	if err != nil {
+		return err
+	}
+	if ok && next.TenantID != home {
+		return errs.ErrVerifyEmailManaged.WithMessage("That address is on a domain another organization manages.")
+	}
+	if ok {
+		return nil
+	}
+	current, ok, err := domainverify.ManagingDomain(ctx, db, holder.Email)
+	if err != nil {
+		return err
+	}
+	if ok && current.TenantID == home {
+		return errs.ErrVerifyEmailManaged.WithMessage("Your organization manages your email address's domain, so it can change only to another address on its domains.")
+	}
+	return nil
 }
 
 // noticeAddressInUse tells an address another account holds that it was asked
@@ -395,7 +569,15 @@ func (s *Service) confirmEmailChange(ctx context.Context, userID uuid.UUID, code
 		}
 		return "", "", err
 	}
-	if err := chargeFailure(ctx, tx, "email_verifications", row, code); err != nil {
+	budget, err := emailBudget(ctx, tx, userID, purposeChangeEmail)
+	if err != nil {
+		return "", "", err
+	}
+	if err := chargeFailure(ctx, tx, "email_verifications", row, code, budget); err != nil {
+		return "", "", err
+	}
+	// Checked again: an organisation may have verified a domain since the start.
+	if err := checkEmailChange(ctx, tx, userID, row.value); err != nil {
 		return "", "", err
 	}
 	oldEmail, err := qtx.GetUserEmail(ctx, userID)
@@ -445,7 +627,9 @@ func (s *Service) noticeEmailChanged(ctx context.Context, userID uuid.UUID, oldE
 }
 
 // StartPhone sends a verification code to the user's phone number, recorded as
-// who's with the number masked.
+// who's with the number masked. As for MFA codes, the number must be in E.164
+// form, and SMS deliverable and in the plan of the organisation who's session
+// is in (none: refused).
 func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string, who Requester) error {
 	// Default to the number on file when the body omits it.
 	if strings.TrimSpace(phone) == "" {
@@ -461,6 +645,9 @@ func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string
 		}
 		phone = *stored
 	}
+	if err := s.canSendSMS(ctx, phone, who.TenantID); err != nil {
+		return err
+	}
 	code, err := codes.Numeric(6)
 	if err != nil {
 		return err
@@ -470,12 +657,25 @@ func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if err := s.q.WithTx(tx).InsertPhoneVerification(ctx, dbgen.InsertPhoneVerificationParams{
+	qtx := s.q.WithTx(tx)
+	if err := qtx.LockAccountForCodeSend(ctx, userID); err != nil {
+		return err
+	}
+	sent, err := qtx.PhoneCodeSends(ctx, dbgen.PhoneCodeSendsParams{UserID: userID, Phone: phone})
+	if err != nil {
+		return err
+	}
+	if err := (codeSends{mine: sent.UserSends, mineOldest: sent.UserOldest, toAddress: sent.NumberSends,
+		addressOldest: sent.NumberOldest, last: sent.UserLast}).limit(); err != nil {
+		return err
+	}
+	id, err := qtx.InsertPhoneVerification(ctx, dbgen.InsertPhoneVerificationParams{
 		UserID:    userID,
 		Phone:     phone,
 		CodeHash:  codes.Hash(code),
 		ExpiresAt: time.Now().UTC().Add(s.ttl),
-	}); err != nil {
+	})
+	if err != nil {
 		return err
 	}
 	if err := audit.Record(ctx, tx, who.event("phone.verification_started", userID,
@@ -485,12 +685,41 @@ func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	return s.sender.Send(ctx, notifier.Message{
+	return s.withdrawUndelivered(ctx, s.q.DeletePhoneVerification, id, s.sender.Send(ctx, notifier.Message{
 		Channel: "sms",
 		To:      phone,
 		Body:    fmt.Sprintf("Your Qeet verification code is %s", code),
-	})
+	}))
 }
+
+// canSendSMS refuses a code to phone unless it is in E.164 form, a provider
+// can deliver SMS, and the plan of tenantID (nil: refused) includes SMS.
+func (s *Service) canSendSMS(ctx context.Context, phone string, tenantID *uuid.UUID) error {
+	if !e164.MatchString(phone) {
+		return errVerifyPhoneInvalid
+	}
+	if s.deliverable != nil && !s.deliverable("sms") {
+		return errs.ErrVerifyDeliveryUnavailable.WithMetadata(map[string]any{"channel": "sms"})
+	}
+	if s.plan == nil {
+		return nil
+	}
+	refused := errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": smsFeature})
+	if tenantID == nil {
+		return refused
+	}
+	ok, err := s.plan.FeatureAllowed(ctx, *tenantID, smsFeature)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return refused
+	}
+	return nil
+}
+
+// smsFeature is the plan feature that pays for SMS codes, MFA's and these alike.
+const smsFeature = "sms_mfa"
 
 // maskPhone keeps a number's last three digits, as audited: "*********567".
 func maskPhone(phone string) string {
@@ -521,7 +750,11 @@ func (s *Service) confirmPhone(ctx context.Context, userID uuid.UUID, code strin
 		}
 		return err
 	}
-	if err := chargeFailure(ctx, tx, "phone_verifications", row, code); err != nil {
+	failed, err := s.q.WithTx(tx).PhoneCodeFailures(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if err := chargeFailure(ctx, tx, "phone_verifications", row, code, guessBudget{failures: int(failed.Failures), oldest: failed.Oldest}); err != nil {
 		return err
 	}
 	if err := s.q.WithTx(tx).MarkPhoneVerificationUsed(ctx, row.id); err != nil {

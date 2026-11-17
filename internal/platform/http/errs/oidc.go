@@ -40,6 +40,8 @@ const (
 	CodeOIDCInsufficientScope              = "oidc.insufficient_scope"
 	CodeOIDCResourceExists                 = "oidc.resource_exists"
 	CodeOIDCResourceDomainTaken            = "oidc.resource_domain_taken"
+	CodeOIDCResourceDomainUnverified       = "oidc.resource_domain_unverified"
+	CodeOIDCResourceReserved               = "oidc.resource_reserved"
 	CodeOIDCResourceNotFound               = "oidc.resource_not_found"
 
 	// Token exchange (RFC 8693) subject/actor tokens.
@@ -126,6 +128,8 @@ var (
 	ErrOIDCResourceInvalid                = New(CodeOIDCResourceInvalid, "A resource identifier is an absolute URI without a fragment, such as https://api.example.com.")
 	ErrOIDCResourceExists                 = New(CodeOIDCResourceExists, "That resource is already registered.")
 	ErrOIDCResourceDomainTaken            = New(CodeOIDCResourceDomainTaken, "That resource is on a domain another organization has verified.")
+	ErrOIDCResourceDomainUnverified       = New(CodeOIDCResourceDomainUnverified, "Verify the resource's domain for your organization before you register it.")
+	ErrOIDCResourceReserved               = New(CodeOIDCResourceReserved, "That resource identifier belongs to Qeet ID itself.")
 	ErrOIDCResourceNotFound               = New(CodeOIDCResourceNotFound, "We couldn't find that resource.")
 	ErrOIDCPKCEExemptionInvalid           = New(CodeOIDCPKCEExemptionInvalid, "A PKCE exemption is for a confidential application, and must end in the future and within 90 days.")
 

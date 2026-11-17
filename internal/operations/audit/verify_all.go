@@ -159,6 +159,12 @@ func (v *Verifier) walkAll(ctx context.Context, run *VerificationRun, fromStart 
 			slog.Error("audit chain verification: store the checkpoint", "tenant_id", c.label(), "err", err)
 			unsaved = err
 		}
+		if res.OK && c.tenant != nil {
+			if err := v.signPurgeCheckpoint(ctx, *c.tenant); err != nil {
+				slog.Error("audit chain verification: sign the purge checkpoint", "tenant_id", c.label(), "err", err)
+				unsaved = err
+			}
+		}
 	}
 	stray, err := v.strayPlatformRow(ctx)
 	if err != nil {
@@ -182,16 +188,17 @@ func (v *Verifier) checkpoints(ctx context.Context) (map[chainKey]checkpoint, er
 	out := make(map[chainKey]checkpoint, len(rows))
 	for _, r := range rows {
 		out[chain{tenant: toUUIDPtr(r.TenantID), shard: r.ChainShard}.key()] = checkpoint{
-			EventID: r.EventID, CreatedAt: r.EventCreatedAt, RowHash: trimmed(&r.RowHash), Broken: r.Broken,
+			EventID: r.EventID, CreatedAt: r.EventCreatedAt, RowHash: trimmed(&r.RowHash),
+			KeyID: deref(r.KeyID), MAC: r.Mac, Broken: r.Broken,
 		}
 	}
 	return out, nil
 }
 
 // keepCheckpoint moves c's checkpoint on from began, where this run found it,
-// to last, the last row it found intact, unless another run has moved it
-// since. A broken chain's checkpoint is marked broken instead and stays where
-// it is.
+// to last, the last row it found intact, signed with the current key, unless
+// another run has moved it since; one that didn't move is signed again when
+// another key signed it. A broken chain's checkpoint is marked broken instead.
 func (v *Verifier) keepCheckpoint(ctx context.Context, c chain, began, last *checkpoint, intact bool) error {
 	tid := pgUUIDNullable(c.tenant)
 	switch {
@@ -201,15 +208,21 @@ func (v *Verifier) keepCheckpoint(ctx context.Context, c chain, began, last *che
 		return v.q.MarkAuditChainCheckpointBroken(ctx, dbgen.MarkAuditChainCheckpointBrokenParams{
 			EventID: began.EventID, ChainShard: c.shard, TenantID: tid,
 		})
-	case !intact, last == nil, began != nil && last.EventID == began.EventID:
+	case !intact, last == nil:
+		return nil
+	}
+	keyID, mac := signCheckpoint(v.key, chainCheckpointKind, c.tenant, c.shard, last)
+	switch {
+	case began != nil && last.EventID == began.EventID && deref(keyID) == began.KeyID:
 		return nil
 	case began == nil:
 		return v.q.InsertAuditChainCheckpoint(ctx, dbgen.InsertAuditChainCheckpointParams{
 			TenantID: tid, ChainShard: c.shard, EventID: last.EventID, EventCreatedAt: last.CreatedAt, RowHash: last.RowHash,
+			KeyID: keyID, Mac: mac,
 		})
 	default:
 		return v.q.AdvanceAuditChainCheckpoint(ctx, dbgen.AdvanceAuditChainCheckpointParams{
-			EventID: last.EventID, EventCreatedAt: last.CreatedAt, RowHash: last.RowHash,
+			EventID: last.EventID, EventCreatedAt: last.CreatedAt, RowHash: last.RowHash, KeyID: keyID, Mac: mac,
 			FromEventID: began.EventID, ChainShard: c.shard, TenantID: tid,
 		})
 	}

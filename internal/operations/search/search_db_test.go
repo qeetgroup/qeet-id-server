@@ -4,6 +4,7 @@ package search
 
 import (
 	"net/http"
+	"net/url"
 	"slices"
 	"testing"
 
@@ -99,5 +100,33 @@ func TestSearchFindsOnlyTheOrganisationsOwn(t *testing.T) {
 	}
 	if rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(reader.ID, mine), (&Handler{Service: svc}).Mount), http.MethodGet, "/search?q=", nil); rec.Code != http.StatusBadRequest {
 		t.Errorf("an empty query: %d, want 400", rec.Code)
+	}
+}
+
+// TestSearchTakesWildcardsLiterally checks that _ and % in a query match only
+// themselves: "a_b" doesn't find "aXb", and "%" finds only names holding one.
+func TestSearchTakesWildcardsLiterally(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	tenant := dbtest.Tenant(t)
+	reader := dbtest.User(t, tenant)
+	dbtest.Assign(t, reader.ID, tenant, dbtest.Role(t, tenant, "group.read"))
+	for _, name := range []string{"qa_b team", "qaXb team", "100% team", "plain team"} {
+		if _, err := pool.Exec(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, $2)`, tenant, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := dbtest.Serve(dbtest.Principal(reader.ID, tenant), (&Handler{Service: NewService(pool, rbac.NewRepository(pool))}).Mount)
+	for query, want := range map[string][]string{"qa_b": {"qa_b team"}, "%": {"100% team"}} {
+		rec := dbtest.Do(t, h, http.MethodGet, "/search?types=group&q="+url.QueryEscape(query), nil)
+		var p page
+		dbtest.Decode(t, rec, &p)
+		var got []string
+		for _, r := range p.Results {
+			got = append(got, r.Title)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("search %q: %d %v, want %v", query, rec.Code, got, want)
+		}
 	}
 }

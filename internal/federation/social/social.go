@@ -23,6 +23,7 @@ import (
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
@@ -73,9 +74,15 @@ type Service struct {
 	oauth         *oauthClient
 	egress        *egress.Policy
 	box           *envelope.Cipher
+	capture       auth.DomainCapture
 	platform      map[string]providerConfig
 	returnOrigins map[string]struct{}
 }
+
+// SetDomainCapture sets the check that keeps a provider from creating an
+// account on a domain whose organisation requires single sign-on (nil: no
+// address is captured).
+func (s *Service) SetDomainCapture(c auth.DomainCapture) { s.capture = c }
 
 // SetAllowedReturnOrigins sets the origins a return_to may point at. With none,
 // only root-relative paths are accepted.
@@ -356,23 +363,27 @@ func (s *Service) ListIdentities(ctx context.Context, userID, tenantID uuid.UUID
 
 // Unlink is an administrator removing an identity linked to an account in
 // their organisation: tenant-scoped, so an identity can only be removed within
-// its tenant. Refused, and recorded, when it is the account's only way to sign
+// its tenant. Refused when mayChange refuses the account (it runs before the
+// transaction opens), and, recorded, when it is the account's only way to sign
 // in.
-func (s *Service) Unlink(ctx context.Context, id, tenantID uuid.UUID, by user.Remover) error {
+func (s *Service) Unlink(ctx context.Context, id, tenantID uuid.UUID, by user.Remover, mayChange func(owner uuid.UUID) error) error {
 	// The account's other ways to sign in span its organisations.
 	ctx = postgres.AcrossTenants(ctx)
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
 	var owner uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT user_id FROM "user".external_identities WHERE id = $1 AND tenant_id = $2`,
+	if err := s.pool.QueryRow(ctx, `SELECT user_id FROM "user".external_identities WHERE id = $1 AND tenant_id = $2`,
 		id, tenantID).Scan(&owner); errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrNotFound
 	} else if err != nil {
 		return err
 	}
+	if err := mayChange(owner); err != nil {
+		return err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
 	methods, err := user.LockSignInMethods(ctx, tx, owner)
 	if err != nil {
 		return err
@@ -702,6 +713,11 @@ func (s *Service) CompleteCallback(ctx context.Context, provider, state, code st
 	if err != nil {
 		return nil, err
 	}
+	// An account already linked signs in no more once its organisation requires
+	// single sign-on on its domain (adoption and sign-up were refused above).
+	if err := s.refuseCapturedAccount(ctx, userID); err != nil {
+		return nil, err
+	}
 
 	// A suspended or deleted account gets no code to sign in with.
 	if err := s.auth.CheckSignInAccount(ctx, userID, st.TenantID, "social", "", ""); err != nil {
@@ -715,6 +731,7 @@ func (s *Service) CompleteCallback(ctx context.Context, provider, state, code st
 		CodeHash:  codeHash,
 		UserID:    userID,
 		TenantID:  st.TenantID,
+		Provider:  provider,
 		ExpiresAt: time.Now().UTC().Add(socialCodeTTL),
 	}); err != nil {
 		return nil, err
@@ -803,6 +820,11 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 	// transaction, as the policy is read on another connection. It decides only
 	// the branch below that creates an account.
 	registration := s.requireSelfRegistration(ctx, tenantID)
+	// The provider's word for the address is weighed before it too.
+	vouch, err := s.vouchingFor(ctx, tenantID, provider, ui)
+	if err != nil {
+		return uuid.Nil, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return uuid.Nil, err
@@ -848,15 +870,20 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 		if registration != nil {
 			return uuid.Nil, registration
 		}
-		// An unverified assertion may name a new account (refusing would lock out
-		// providers that omit the claim) but never marks the address verified. Raw SQL
-		// because InsertUserWithEmail always sets email_verified_at = NOW().
+		// Nor does a provider create an account on a domain that requires single
+		// sign-on, or on one another organisation manages.
+		if vouch.refusal != nil {
+			return uuid.Nil, vouch.refusal
+		}
+		// An address the provider doesn't prove may name a new account (refusing
+		// would lock out providers that omit the claim) but is never marked verified.
+		// Raw SQL because InsertUserWithEmail always sets email_verified_at = NOW().
 		var displayName *string
 		if ui.Name != "" {
 			displayName = &ui.Name
 		}
 		var verifiedAt *time.Time
-		if ui.EmailVerified {
+		if vouch.proved {
 			now := time.Now().UTC()
 			verifiedAt = &now
 		}
@@ -870,11 +897,16 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 	case err != nil:
 		return uuid.Nil, err
 	default:
-		// Adopting an existing account needs three things. First, a verified
-		// assertion, or anyone who gets a provider to emit the victim's address
-		// inherits their account.
-		if !ui.EmailVerified {
+		// Adopting an existing account needs four things. First, an address the
+		// provider proves, or anyone who gets a provider to emit the victim's
+		// address inherits their account.
+		if !vouch.proved {
 			return uuid.Nil, errs.ErrSocialEmailUnverified
+		}
+		// Nor is an account adopted on a domain whose organisation requires
+		// single sign-on: only its identity provider signs its people in.
+		if errors.Is(vouch.refusal, errs.ErrAuthSSORequired) {
+			return uuid.Nil, vouch.refusal
 		}
 		// Second, this tenant must be the account's home. Emails are unique across
 		// tenants, so otherwise a tenant admin's own IdP could assert another tenant's
@@ -888,8 +920,7 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 		}
 		// Third, the address must be vouched for — proved by the account or its
 		// organisation's directory provisioned it — or a squatter who registered
-		// it unverified keeps a working password on the adopted account. The
-		// provider proved it, so it is verified from now on.
+		// it unverified keeps a working password on the adopted account.
 		vouched, err := identitylink.AddressVerified(ctx, tx, userID)
 		if err != nil {
 			return uuid.Nil, err
@@ -897,6 +928,17 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 		if !vouched {
 			return uuid.Nil, errs.ErrSocialAccountUnverified
 		}
+		// Fourth, the account must not administer the organisation, or whoever
+		// can configure a provider could assert an owner's address. It keeps its
+		// own credentials and connects a provider from the account instead.
+		admin, err := identitylink.Administers(ctx, tx, userID, tenantID)
+		if err != nil {
+			return uuid.Nil, err
+		}
+		if admin {
+			return uuid.Nil, errs.ErrSocialAccountAdministers
+		}
+		// The provider proved the address, so it is verified from now on.
 		if err := identitylink.MarkAddressVerified(ctx, tx, userID); err != nil {
 			return uuid.Nil, err
 		}
@@ -919,6 +961,63 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 		return uuid.Nil, err
 	}
 	return userID, nil
+}
+
+// refuseCapturedAccount returns errs.ErrAuthSSORequired when userID's address
+// is on a domain whose organisation requires single sign-on and the account
+// isn't exempt: social sign-in, whichever provider, never satisfies it.
+func (s *Service) refuseCapturedAccount(ctx context.Context, userID uuid.UUID) error {
+	if s.capture == nil {
+		return nil
+	}
+	var email string
+	if err := s.pool.QueryRow(ctx, `SELECT email FROM "user".users WHERE id = $1`, userID).Scan(&email); err != nil {
+		return err
+	}
+	return s.capture.RefuseCaptured(ctx, email)
+}
+
+// vouching is what a provider's word for an address is worth to a tenant:
+// proved reports whether it verifies the address, and refusal, when set, is
+// why the provider may not create an account for it.
+type vouching struct {
+	proved  bool
+	refusal error
+}
+
+// vouchingFor weighs ui's address for tenantID's provider. An OpenID Connect
+// provider's endpoints are the organisation's choice, so it proves only
+// addresses on domains the organisation manages; an adapter's are fixed. It
+// reads every organisation's domains, so it runs before the transaction.
+func (s *Service) vouchingFor(ctx context.Context, tenantID uuid.UUID, provider string, ui userInfo) (vouching, error) {
+	v := vouching{proved: ui.EmailVerified}
+	domain, managed, err := domainverify.ManagingDomain(postgres.AcrossTenants(ctx), s.pool, ui.Email)
+	if err != nil {
+		return v, err
+	}
+	own := managed && domain.TenantID == tenantID
+	if adapterKind(provider) == kindOIDC && !own {
+		v.proved = false
+	}
+	if !managed {
+		return v, nil
+	}
+	// A domain that requires single sign-on takes new accounts through it
+	// alone, and any other managed domain only from its own organisation.
+	if domain.SSO && s.capture != nil {
+		err := s.capture.RefuseCaptured(ctx, ui.Email)
+		if errors.Is(err, errs.ErrAuthSSORequired) {
+			v.refusal = err
+			return v, nil
+		}
+		if err != nil {
+			return v, err
+		}
+	}
+	if !own {
+		v.refusal = errs.ErrUserDomainManaged
+	}
+	return v, nil
 }
 
 // requireSelfRegistration refuses with ErrAuthSelfRegistrationDisabled unless
@@ -964,7 +1063,8 @@ func (s *Service) recordSignUpRefused(ctx context.Context, tenantID uuid.UUID, p
 }
 
 // ExchangeLogin trades a one-time social login code for a Qeet token pair, or
-// the second-factor challenge to complete first.
+// the second-factor challenge to complete first, while the provider that
+// issued it is still on: a code of one since switched off or deleted is refused.
 func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*auth.LoginResult, error) {
 	if rawCode == "" {
 		return nil, errs.ErrSocialCodeRequired
@@ -992,6 +1092,9 @@ func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*a
 	if time.Now().After(row.ExpiresAt) {
 		return nil, errs.ErrSocialLoginCodeExpired
 	}
+	if !row.Enabled {
+		return nil, errs.ErrSocialProviderNotConfigured
+	}
 	if err := q.MarkSocialLoginCodeUsed(ctx, codeHash); err != nil {
 		return nil, err
 	}
@@ -1010,6 +1113,33 @@ type Handler struct {
 	CookieSecure  bool
 	LoginBaseURL  string
 	PublicBaseURL string
+	// ActOnCheck lets a change of where an OpenID Connect provider finds its
+	// keys and claims through only for a caller who outranks every
+	// administrator linked to it (rbac CheckActOn). Without it the change is
+	// refused while one is linked.
+	ActOnCheck identitylink.ActOn
+}
+
+// checkTrust refuses pointing the organisation's OpenID Connect provider name
+// at discoveryURL, unless that is where it already looks, when the caller may
+// not act on every administrator linked to it: the provider signs them in on
+// what that URL serves. A provider set up again under a name it had before
+// gets its earlier links back, so it counts as a change too.
+func (h *Handler) checkTrust(r *http.Request, tenantID uuid.UUID, name, discoveryURL string) error {
+	if adapterKind(name) != kindOIDC {
+		return nil
+	}
+	ctx := r.Context()
+	var current string
+	err := h.Service.pool.QueryRow(ctx, `SELECT coalesce(discovery_url, '') FROM tenant.social_providers WHERE tenant_id = $1 AND provider = $2`,
+		tenantID, name).Scan(&current)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if err == nil && strings.TrimSpace(discoveryURL) == current {
+		return nil
+	}
+	return identitylink.CheckTrustChange(ctx, h.Service.pool, httpx.PrincipalFromCtx(ctx), h.ActOnCheck, tenantID, uuid.Nil, name)
 }
 
 // Mount registers the social sign-in routes on r.
@@ -1066,6 +1196,10 @@ func (h *Handler) upsertProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	in.TenantID = tenantID // scope comes from the principal, never the body
 	in.ChangedBy = changedBy(r)
+	if err := h.checkTrust(r, tenantID, in.Provider, in.DiscoveryURL); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	p, err := h.Service.UpsertProvider(r.Context(), in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -1132,7 +1266,9 @@ func (h *Handler) unlink(w http.ResponseWriter, r *http.Request) {
 		by.UserID = p.UserID
 	}
 	by.IP, by.UserAgent, by.RequestID = httpx.ClientIP(r), r.UserAgent(), httpx.RequestID(r)
-	if err := h.Service.Unlink(r.Context(), id, tenantID, by); err != nil {
+	// Only an administrator who outranks the account takes a way in from it.
+	mayChange := func(owner uuid.UUID) error { return httpx.ActOn(r, h.ActOnCheck, tenantID, owner) }
+	if err := h.Service.Unlink(r.Context(), id, tenantID, by, mayChange); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

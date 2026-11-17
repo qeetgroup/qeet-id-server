@@ -278,3 +278,60 @@ func TestRolesSayWhoHoldsThem(t *testing.T) {
 		t.Errorf("another organisation's role: %d, want 404", rec.Code)
 	}
 }
+
+// TestRemovingAGuestsLastRoleEndsTheirSessions checks that taking a guest's
+// last role in an organisation, which ends their membership, ends their
+// sessions there as removing them does, and only there; a guest keeping a role,
+// and someone whose home it is, keep theirs.
+func TestRemovingAGuestsLastRoleEndsTheirSessions(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	repo := NewRepository(pool)
+	home, tenant := dbtest.Tenant(t), dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant)
+	dbtest.Assign(t, admin.ID, tenant, dbtest.Role(t, tenant, "role.write", "role.read", "user.read"))
+	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Repo: repo, Service: NewService(repo), Validate: validator.New(validator.WithRequiredStructEnabled())}).Mount)
+	session := func(userID, in uuid.UUID) uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := pool.QueryRow(ctx, `INSERT INTO auth.sessions (user_id, tenant_id) VALUES ($1, $2) RETURNING id`, userID, in).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	live := func(id uuid.UUID) bool {
+		return dbtest.Count(t, `SELECT count(*) FROM auth.sessions WHERE id = $1 AND revoked_at IS NULL`, id) == 1
+	}
+	unassign := func(userID, role uuid.UUID) {
+		t.Helper()
+		if rec := dbtest.Do(t, h, http.MethodDelete, "/users/"+userID.String()+"/tenants/"+tenant.String()+"/roles/"+role.String(), nil); rec.Code != http.StatusNoContent {
+			t.Fatalf("remove the role: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+
+	guest := dbtest.User(t, home, home)
+	first, second := dbtest.Role(t, tenant), dbtest.Role(t, tenant)
+	dbtest.Assign(t, guest.ID, tenant, first)
+	dbtest.Assign(t, guest.ID, tenant, second)
+	there, atHome := session(guest.ID, tenant), session(guest.ID, home)
+	unassign(guest.ID, first)
+	if !live(there) {
+		t.Error("taking one of a guest's two roles ended their session")
+	}
+	unassign(guest.ID, second)
+	if live(there) {
+		t.Error("the guest's session in the organisation outlived their last role there")
+	}
+	if !live(atHome) {
+		t.Error("the guest's session in their home organisation was ended")
+	}
+
+	member := dbtest.User(t, tenant)
+	only := dbtest.Role(t, tenant)
+	dbtest.Assign(t, member.ID, tenant, only)
+	own := session(member.ID, tenant)
+	unassign(member.ID, only)
+	if !live(own) {
+		t.Error("taking the last role of someone whose home it is ended their session")
+	}
+}

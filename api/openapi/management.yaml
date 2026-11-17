@@ -20,7 +20,7 @@ info:
 
     The responses of tenant creation and invitation acceptance, including accepting with an existing account (sign-in tokens), are sent with `Cache-Control: no-store` and `Pragma: no-cache`.
 
-    Every response carries an `X-Request-Id` header naming the request; quote it when reporting a problem. An error body repeats it as `error.request_id`.
+    Every response carries an `X-Request-Id` header naming the request; quote it when reporting a problem. An error body repeats it as `error.request_id`. A path with an encoded slash or backslash (`%2F`, `%5C`) is refused with 400 `bad_request`.
 
     ## Related APIs
 
@@ -1191,7 +1191,7 @@ paths:
   /v1/users/{id}:
     delete:
       operationId: deleteUser
-      description: 'Soft-deletes the user, moving the account into the tenant recycle bin rather than erasing it. Requires user.delete. A soft-deleted account can be brought back with the restore call or removed for good with the purge call. It continues to appear in the deleted-users list until purged. In the same transaction every way the user is signed in ends (sessions, hosted-login sessions, application grants, remembered devices and pending authorizations), the deletion is audited (user.deleted, naming the admin) and a user.deleted event is queued; restoring the account brings none of those sessions back. The answer names the deleted user, when, and by whom. Only the organization the account belongs to can delete it; for a member whose account belongs elsewhere the call answers 403 user.managed_elsewhere. Refused with 409 tenant.last_owner, and nothing changes, when it would leave this organization with no active owner: make someone else an owner first. An organization the person owns elsewhere doesn''t block it; it is left without an active owner. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
+      description: 'Soft-deletes the user, moving the account into the tenant recycle bin rather than erasing it. Requires user.delete. A soft-deleted account can be brought back with the restore call or removed for good with the purge call. It continues to appear in the deleted-users list until purged. In the same transaction every way the user is signed in ends (sessions, hosted-login sessions, application grants, remembered devices and pending authorizations), the deletion is audited (user.deleted, naming the admin) and a user.deleted event is queued; restoring the account brings none of those sessions back. The same transaction revokes the admin-portal links and pending invitations the user issued here and, when they created any integration here that still works (a service principal, SCIM token, webhook, auth hook or OIDC application), records the critical user.integrations_left event listing them for review. The answer names the deleted user, when, and by whom. Only the organization the account belongs to can delete it; for a member whose account belongs elsewhere the call answers 403 user.managed_elsewhere. Refused with 409 tenant.last_owner, and nothing changes, when it would leave this organization with no active owner: make someone else an owner first. An organization the person owns elsewhere doesn''t block it; it is left without an active owner. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
       summary: Delete user
       tags:
         - Users
@@ -1459,7 +1459,7 @@ paths:
     delete:
       operationId: forgetAllUserTrustedDevices
       summary: Forget a member's remembered devices
-      description: Forgets every device a member has remembered in the caller's organisation, so each is asked for the second factor at its next sign-in there. Requires the user.credentials permission; each is audited as auth.trusted_device_revoked.
+      description: Forgets every device a member has remembered in the caller's organisation, so each is asked for the second factor at its next sign-in there. Requires the user.credentials permission; each is audited as auth.trusted_device_revoked. Refused with 403 rbac.target_is_owner when the member is an owner and the caller isn't, and 403 rbac.target_outranks_caller when they hold a permission the caller doesn't.
       tags:
         - Users
       parameters:
@@ -1495,7 +1495,7 @@ paths:
     delete:
       operationId: forgetUserTrustedDevice
       summary: Forget one of a member's remembered devices
-      description: Forgets one device a member has remembered in the caller's organisation. Requires the user.credentials permission; 404 for a device that is not theirs there. Audited as auth.trusted_device_revoked.
+      description: Forgets one device a member has remembered in the caller's organisation. Requires the user.credentials permission; 404 for a device that is not theirs there. Audited as auth.trusted_device_revoked. Refused with 403 rbac.target_is_owner when the member is an owner and the caller isn't, and 403 rbac.target_outranks_caller when they hold a permission the caller doesn't.
       tags:
         - Users
       parameters:
@@ -1591,7 +1591,7 @@ paths:
     delete:
       operationId: disconnectUserPushDevice
       summary: Disconnect a member's phone
-      description: Disconnects a member's linked phone, for example a lost one, so it receives no approval requests and cannot answer one. Requires the user.credentials permission; audited as mfa.push_device_revoked.
+      description: Disconnects a member's linked phone, for example a lost one, so it receives no approval requests and cannot answer one. Requires the user.credentials permission; audited as mfa.push_device_revoked. Refused with 403 rbac.target_is_owner when the member is an owner and the caller isn't, and 403 rbac.target_outranks_caller when they hold a permission the caller doesn't.
       tags:
         - Users
       parameters:
@@ -1968,7 +1968,7 @@ paths:
     delete:
       operationId: removeUserMembership
       summary: Remove a member from this organization
-      description: 'Removes a member whose account belongs to another organization (or to none) from the caller''s organization (requires user.delete), in one transaction: their roles and groups here, their sessions here, and the application grants and API keys they hold here. Their account and their other organizations are left alone. Audited as user.removed_from_organization, with an event. The organization''s own accounts are suspended or deleted instead (409 user.managed_here); someone who doesn''t belong here is 404. Removing an owner is refused with 409 tenant.last_owner, and nothing changes, when it would leave the organization with no active owner. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
+      description: 'Removes a member whose account belongs to another organization (or to none) from the caller''s organization (requires user.delete), in one transaction: their roles and groups here, their sessions here, and the application grants and API keys they hold here. Their account and their other organizations are left alone. Audited as user.removed_from_organization, with an event; the admin-portal links and pending invitations they issued here are revoked, and the integrations they created here are listed in the critical user.integrations_left event, as on deleting an account. The organization''s own accounts are suspended or deleted instead (409 user.managed_here); someone who doesn''t belong here is 404. Removing an owner is refused with 409 tenant.last_owner, and nothing changes, when it would leave the organization with no active owner. The person must not outrank the caller: only an owner changes an owner (403 rbac.target_is_owner), and the caller must hold every permission the person holds here (403 rbac.target_outranks_caller naming one); acting on yourself is allowed.'
       tags:
         - Users
       parameters:
@@ -2086,7 +2086,7 @@ paths:
   /v1/users/{id}/verify/email/confirm:
     post:
       operationId: confirmEmailVerification
-      description: Confirms email verification by validating the code delivered by the start-email-verification call and marking the address verified. Codes are single-use, expire after a short window, and are retired after a small number of wrong attempts, at which point a new code must be requested. Request the code with the start-email-verification call before invoking this. Only a code sent by the start-email-verification call to the address now on the account counts; a code sent for an email change is the invalid-code error.
+      description: Confirms email verification by validating the code delivered by the start-email-verification call and marking the address verified. Codes are single-use, expire after a short window, and are retired after a small number of wrong attempts, at which point a new code must be requested; ten wrong codes in an hour, over every code asked for in between, refuse even the right one until the hour has passed (429 verification.attempts_exceeded with retry_after, in seconds). Request the code with the start-email-verification call before invoking this. Only a code sent by the start-email-verification call to the address now on the account counts; a code sent for an email change is the invalid-code error.
       summary: Confirm email verification
       tags:
         - Verification
@@ -2136,7 +2136,7 @@ paths:
     post:
       operationId: startMyEmailChange
       summary: Start changing my email
-      description: Sends a verification code to the address the caller wants to move to, to prove they control it; confirm it with the confirm-email-change call. The answer is the same whether or not the address is already in use by another account. An address in use is sent a notice that it already has an account instead of a code, and is never assigned to the caller.
+      description: 'Sends an 8-digit verification code to the address the caller wants to move to, to prove they control it; confirm it with the confirm-email-change call. A new code replaces the caller''s earlier ones, and one the mail provider refuses is withdrawn. At most ten codes an hour go to one person, and five to one address over every account, an address in use included (429 verification.code_send_limited with retry_after, in seconds). The answer is the same whether or not the address is already in use by another account. An address in use is sent a notice that it already has an account instead of a code, and is never assigned to the caller. An organisation decides some changes, refused with 403 verification.email_managed saying which: an address its directory (SCIM) or single sign-on provides changes there; an address on a domain the account''s organisation manages moves only to another of its domains; and no address moves onto a domain another organisation manages.'
       tags:
         - Verification
       security:
@@ -2167,6 +2167,8 @@ paths:
                     type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -2175,7 +2177,7 @@ paths:
     post:
       operationId: confirmMyEmailChange
       summary: Confirm my email change
-      description: Verifies the code sent to the new address and swaps it onto the account (marking it verified). Returns the new email. Only a code from the start-email-change call counts. The previous address is sent a notice of the change, and the reset and magic links already sent to it stop working.
+      description: Verifies the code sent to the new address and swaps it onto the account (marking it verified). Returns the new email. Only a code from the start-email-change call counts. The previous address is sent a notice of the change, and the reset and magic links already sent to it stop working. The organisation's rules of the start call are applied again here (403 verification.email_managed), so a domain verified in between counts. Five wrong codes retire a code, and ten wrong codes in an hour, over every code asked for in between, refuse even the right one until the hour has passed (429 verification.attempts_exceeded with retry_after, in seconds).
       tags:
         - Verification
       security:
@@ -2210,6 +2212,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
         '429':
@@ -2218,7 +2222,7 @@ paths:
     post:
       operationId: startEmailVerification
       summary: Start email verification
-      description: Sends a 6-digit code to the caller's address on file. It never verifies an address given in the request; moving to another address is the email-change flow (/v1/me/email/change/start).
+      description: Sends a 6-digit code to the caller's address on file. It never verifies an address given in the request; moving to another address is the email-change flow (/v1/me/email/change/start). A new code replaces the caller's earlier ones, and one the mail provider refuses is withdrawn. At most ten codes an hour go to one person, and five to one address over every account (429 verification.code_send_limited with retry_after, in seconds).
       tags:
         - Verification
       parameters:
@@ -2253,7 +2257,7 @@ paths:
   /v1/users/{id}/verify/phone/confirm:
     post:
       operationId: confirmPhoneVerification
-      description: Confirms phone verification by validating the code delivered by the start-phone-verification call and marking the number verified. Codes are single-use, time-limited, and retired after a few incorrect attempts, requiring a fresh send. Request the code with the start-phone-verification call before invoking this. Audited in the audit trail of the organization the session is in as phone.verified, or phone.verification_failed with the reason for a wrong, used, expired or retired code, with the number masked to its last three digits.
+      description: Confirms phone verification by validating the code delivered by the start-phone-verification call and marking the number verified. Codes are single-use, time-limited, and retired after a few incorrect attempts, requiring a fresh send; ten wrong codes in an hour, over every code asked for in between, refuse even the right one until the hour has passed (429 verification.attempts_exceeded with retry_after, in seconds). Request the code with the start-phone-verification call before invoking this. Audited in the audit trail of the organization the session is in as phone.verified, or phone.verification_failed with the reason for a wrong, used, expired or retired code, with the number masked to its last three digits.
       summary: Confirm phone verification
       tags:
         - Verification
@@ -2303,7 +2307,7 @@ paths:
     post:
       operationId: startPhoneVerification
       summary: Start phone verification
-      description: Sends a 6-digit code to the number on file. Pass `phone` only to verify a different number. Audited as phone.verification_started, with the number masked to its last three digits, in the audit trail of the organization the session is in.
+      description: Sends a 6-digit code to the number on file. Pass `phone` only to verify a different number. The number must be in E.164 form (422 validation_failed), SMS must be in the plan of the organization the session is in (402 billing.upgrade_required; refused outright for a session in none), and an SMS provider must be set up (503 verification.delivery_unavailable). As for MFA codes, a code goes at most every 30 seconds, ten an hour to one person and five an hour to one number over every account (429 verification.code_send_limited with retry_after, in seconds). A new code replaces the caller's earlier ones, and one the SMS provider refuses is withdrawn. Audited as phone.verification_started, with the number masked to its last three digits, in the audit trail of the organization the session is in.
       tags:
         - Verification
       parameters:
@@ -2324,7 +2328,7 @@ paths:
               properties:
                 phone:
                   type: string
-                  description: Optional; defaults to the user's phone on file.
+                  description: Optional; defaults to the user's phone on file. In E.164 form.
       responses:
         '200':
           description: Code sent; returns a confirmation message
@@ -2337,6 +2341,8 @@ paths:
                     type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '402':
+          description: The plan of the organization the session is in does not include SMS.
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -2345,6 +2351,8 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '503':
+          description: No SMS provider is set up to deliver the code.
   /v1/groups:
     post:
       operationId: createGroup
@@ -2444,7 +2452,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Deletes one of the organisation's groups and its subgroups; members keep their accounts. Requires group.write.
+      description: 'Deletes one of the organisation''s groups and its subgroups; members keep their accounts. Requires group.write and a fresh second factor (step-up). Deleting takes the group''s roles from its members, so it is held to the rule for giving them: only an owner deletes a group holding the owner role (403 rbac.owner_only), and nobody deletes one whose roles carry a permission they lack (403 rbac.grant_exceeds_caller).'
       responses:
         '204':
           description: No Content
@@ -2744,7 +2752,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Removes a user from a group. Requires group.write. Someone whose identity provider still asserts a group mapped to this one rejoins it at their next single sign-on.
+      description: 'Removes a user from a group. Requires group.write and a fresh second factor (step-up). Removing takes the group''s roles from them, so it is held to the rule for giving them, as adding is (403 rbac.owner_only for a group holding the owner role, 403 rbac.grant_exceeds_caller for one whose roles carry a permission the caller lacks), and to their standing: nobody removes someone who outranks them (403 rbac.target_is_owner or rbac.target_outranks_caller). Someone whose identity provider still asserts a group mapped to this one rejoins it at their next single sign-on.'
       responses:
         '204':
           description: No Content
@@ -2868,7 +2876,7 @@ paths:
               tenant_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
             schema:
               $ref: '#/components/schemas/InviteCreateInput'
-      description: 'Creates an invitation and emails its accept link. Requires member.invite. The address is kept lower-case and matched without regard to case. An invitation with no role_id, to someone already at home in another organization, is refused with 422 invite.role_required, as accepting it would join them to nothing. The accept link goes only to the invited address; the response carries the invitation and invite.delivery: status sent when a provider accepted the email, or not_sent with code and message when it did not (email.suppressed: the address bounced or reported spam before; email.provider_unavailable: no provider is configured). The invitation is created either way. A role_id that is not a role of the caller''s organization is refused with 404 not_found, the same answer whether the role does not exist or belongs to another organization, and no invitation is created. A pending invitation holds a seat, as does each person holding a role, directly or through a group; when the plan''s seats are all taken the invitation is refused with 402 billing.plan_limit (metadata resource seats, limit), and accepting it later takes no further seat. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key.'
+      description: 'Creates an invitation and emails its accept link. Requires member.invite. The address is kept lower-case and matched without regard to case. An invitation with no role_id, to someone already at home in another organization, is refused with 422 invite.role_required, as accepting it would join them to nothing. The accept link goes only to the invited address; the response carries the invitation and invite.delivery: status sent when a provider accepted the email, or not_sent with code and message when it did not (email.suppressed: the address bounced or reported spam before; email.provider_unavailable: no provider is configured). The invitation is created either way. A role_id that is not a role of the caller''s organization is refused with 404 not_found, the same answer whether the role does not exist or belongs to another organization, and no invitation is created. A pending invitation holds a seat, as does each person holding a role, directly or through a group; when the plan''s seats are all taken the invitation is refused with 402 billing.plan_limit (metadata resource seats, limit), and accepting it later takes no further seat. An invitation a person sent is accepted only while they still may give it: active, still in the organization and able to give its role, or acceptance is refused with 400 invite.invalid; removing them from the organization or deleting their account withdraws the invitations they sent. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key.'
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
@@ -2925,7 +2933,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/AcceptInput'
-      description: 'Creates the invited account and signs it in. Its address is not verified by this: the account proves it later with a code or link sent to it (its invitations inbox stays closed until then). The response is a token pair, or, where the organisation requires a second factor, the sign-in''s challenge instead (mfa_required, mfa_token and, for an account with no factor yet, enrollment_required), met as at sign-in. Where the inviting organisation has password sign-in switched off, accepting with a password is refused with 403 auth.method_disabled and nothing is created. An address on a domain another organisation has verified gets no new account here (409 user.domain_managed_elsewhere): that organisation creates it, and the invitee then signs in and accepts as themselves.'
+      description: 'Creates the invited account and signs it in. Its address is not verified by this: the account proves it later with a code or link sent to it (its invitations inbox stays closed until then). The response is a token pair, or, where the organisation requires a second factor, the sign-in''s challenge instead (mfa_required, mfa_token and, for an account with no factor yet, enrollment_required), met as at sign-in. Where the inviting organisation has password sign-in switched off, accepting with a password is refused with 403 auth.method_disabled and nothing is created. An address on a domain another organisation has verified gets no new account here (409 user.domain_managed_elsewhere): that organisation creates it, and the invitee then signs in and accepts as themselves. An invitation whose sender may no longer give it (no longer active or in the organisation, or no longer holding its role''s permissions) is refused with 400 invite.invalid.'
       responses:
         '200':
           description: A token pair, or the second-factor challenge to complete first.
@@ -2952,7 +2960,7 @@ paths:
     post:
       operationId: lookUpInvite
       summary: Look up an invitation (public)
-      description: 'Previews the invitation an emailed link names, so the acceptance screen can show the organisation and address and offer the ways of accepting it. A password is offered where the organisation allows password sign-in, and a passkey where it allows passkeys. account_exists means an account already holds the address, so the invitee signs in and accepts as themselves. Refused like acceptance: invite.link_invalid, invite.invalid (no longer pending), invite.expired. Read-only. The token travels in the body so it stays out of logs.'
+      description: 'Previews the invitation an emailed link names, so the acceptance screen can show the organisation and address and offer the ways of accepting it. A password is offered where the organisation allows password sign-in, and a passkey where it allows passkeys. account_exists means an account already holds the address, so the invitee signs in and accepts as themselves. Refused like acceptance: invite.link_invalid, invite.invalid (no longer pending, or its sender may no longer give it), invite.expired. Read-only. The token travels in the body so it stays out of logs.'
       tags:
         - Invites
       security: []
@@ -3054,7 +3062,7 @@ paths:
     post:
       operationId: finishPasskeyInviteAcceptance
       summary: Accept an invitation with a passkey — finish (public)
-      description: 'Verifies the passkey and, in one transaction, creates the account in the inviting organisation with it, grants the invited role and marks the invitation accepted; then signs the invitee in, returning a token pair as POST /v1/invites/accept does. Each ceremony finishes once: a second attempt, or one after the ceremony expired (auth.session_expired), creates nothing and leaves the invitation as it was. Refused, with nothing created, when the invitation was accepted, revoked or expired meanwhile, or the organisation switched passkeys off.'
+      description: 'Verifies the passkey and, in one transaction, creates the account in the inviting organisation with it, grants the invited role and marks the invitation accepted; then signs the invitee in, returning a token pair as POST /v1/invites/accept does. Each ceremony finishes once: a second attempt, or one after the ceremony expired (auth.session_expired), creates nothing and leaves the invitation as it was. Refused, with nothing created, when the invitation was accepted, revoked or expired meanwhile, its sender may no longer give it (400 invite.invalid), or the organisation switched passkeys off.'
       tags:
         - Invites
       security: []
@@ -3149,7 +3157,7 @@ paths:
                   type: string
               required:
                 - token
-      description: 'Joins the caller''s existing account to the invited tenant (no new user, no password) and returns a tenant-scoped token pair. The invite must be addressed to the caller''s own email (`invite.email_mismatch` otherwise). An organisation that requires a second factor of the caller (its security policy, or administrators-only for its administrators) is entered (the pair issued) only by a session whose sign-in met one, or that holds a fresh step-up; otherwise 403 step_up_required (step up, then switch in) or 403 mfa.enrollment_required (set a factor up first), unless the organisation''s grace period still lets the caller put the setup off. The new session carries the factor on, and continues the caller''s sign-in: it ends when the caller''s session would. The invite stays accepted when the pair is refused.'
+      description: 'Joins the caller''s existing account to the invited tenant (no new user, no password) and returns a tenant-scoped token pair. The invite must be addressed to the caller''s own email (`invite.email_mismatch` otherwise), and its sender must still be able to give it (400 `invite.invalid`). An organisation that requires a second factor of the caller (its security policy, or administrators-only for its administrators) is entered (the pair issued) only by a session whose sign-in met one, or that holds a fresh step-up; otherwise 403 step_up_required (step up, then switch in) or 403 mfa.enrollment_required (set a factor up first), unless the organisation''s grace period still lets the caller put the setup off. The new session carries the factor on, and continues the caller''s sign-in: it ends when the caller''s session would. The invite stays accepted when the pair is refused.'
       responses:
         '200':
           description: OK
@@ -3277,7 +3285,7 @@ paths:
   /v1/invites/{id}/resend:
     post:
       operationId: resendInvite
-      description: 'Rotates the invitation token, extends its expiry, and re-sends the invitation email; the new link goes only to the invited address. Requires member.invite. The response carries the invitation. Only pending or expired invites belonging to the caller''s tenant qualify; already-accepted or revoked invites are rejected. The recipient completes the flow through the accept-invite call, as with the original invitation. invite.delivery says whether the email went out (as on create): a suppressed address reports not_sent with email.suppressed rather than success.'
+      description: 'Rotates the invitation token, extends its expiry, and re-sends the invitation email; the new link goes only to the invited address. Requires member.invite, and, as creating it does, every permission of the role the invitation grants (403 rbac.grant_exceeds_caller naming one the caller lacks; nothing changes). The response carries the invitation. Only pending or expired invites belonging to the caller''s tenant qualify; already-accepted or revoked invites are rejected. The recipient completes the flow through the accept-invite call, as with the original invitation. invite.delivery says whether the email went out (as on create): a suppressed address reports not_sent with email.suppressed rather than success.'
       summary: Resend an invitation
       tags:
         - Invites
@@ -3695,7 +3703,7 @@ components:
       type: apiKey
       in: header
       name: Authorization
-      description: 'API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey ` prefix). Accepted on the same authenticated routes as bearerAuth.'
+      description: 'API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey ` prefix). Accepted on the same authenticated routes as bearerAuth. A key works only while its organisation is active, not while it is suspended or deleted.'
     scimBearer:
       type: http
       scheme: bearer

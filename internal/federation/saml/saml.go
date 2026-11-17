@@ -5,6 +5,7 @@
 package saml
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -412,6 +413,24 @@ type UpdateInput struct {
 	AllowIdPInitiated *bool   `json:"allow_idp_initiated"`
 }
 
+// ChangesTrust reports whether in changes what c trusts: its IdP's entity ID
+// or signing certificate. A connection signing in its linked accounts on that
+// trust, such a change can sign in as any of them.
+func (in UpdateInput) ChangesTrust(c *Connection) bool {
+	if in.IdpEntityID != nil && strings.TrimSpace(*in.IdpEntityID) != c.IdpEntityID {
+		return true
+	}
+	if in.IdpCertificate == nil {
+		return false
+	}
+	next, err := parseCertificate(*in.IdpCertificate)
+	if err != nil {
+		return true
+	}
+	current, err := parseCertificate(c.IdpCertificate)
+	return err != nil || !bytes.Equal(next.Raw, current.Raw)
+}
+
 // check applies CreateInput's checks to the fields being changed.
 func (in *UpdateInput) check() error {
 	if in.IdpSSOURL != nil {
@@ -725,6 +744,23 @@ func (s *Service) validateResponse(base string, conn *Connection, certs []*x509.
 	return nil, nil, errs.ErrSAMLAssertionInvalid.Wrap(errors.Join(failures...))
 }
 
+// replayKeepUntil is how long the IDs of a response carrying assertions are
+// kept against replay: replayIDTTL from now, or until its longest-lived
+// assertion stops being accepted (NotOnOrAfter plus the clock skew allowed),
+// whichever is later.
+func replayKeepUntil(assertions []samltypes.Assertion, now time.Time) time.Time {
+	until := now.Add(replayIDTTL)
+	for _, a := range assertions {
+		if a.Conditions == nil {
+			continue
+		}
+		if end, err := time.Parse(time.RFC3339, a.Conditions.NotOnOrAfter); err == nil && end.Add(assertionClockSkew).After(until) {
+			until = end.Add(assertionClockSkew)
+		}
+	}
+	return until
+}
+
 // withinValidity reports whether every assertion's Conditions hold at now,
 // allowing assertionClockSkew either way.
 func withinValidity(assertions []samltypes.Assertion, now time.Time) bool {
@@ -789,12 +825,12 @@ func (s *Service) hostedReturn(ctx context.Context, connectionID uuid.UUID, requ
 }
 
 // ConsumeValidatedResponse atomically reserves the response and assertion IDs
-// against replay and consumes the matching AuthnRequest, returning where the
-// hosted login asked the browser to go back to ("" for a console sign-in). Call
-// it only after the signature and conditions are validated. An empty requestID
-// (IdP-initiated) is refused with ErrSAMLRequestCorrelation unless
-// allowIdPInitiated.
-func (s *Service) ConsumeValidatedResponse(ctx context.Context, connectionID uuid.UUID, requestID, responseID string, assertionIDs []string, allowIdPInitiated bool) (string, error) {
+// against replay until keepUntil (replayKeepUntil) and consumes the matching
+// AuthnRequest, returning where the hosted login asked the browser to go back
+// to ("" for a console sign-in). Call it only after the signature and
+// conditions are validated. An empty requestID (IdP-initiated) is refused with
+// ErrSAMLRequestCorrelation unless allowIdPInitiated.
+func (s *Service) ConsumeValidatedResponse(ctx context.Context, connectionID uuid.UUID, requestID, responseID string, assertionIDs []string, keepUntil time.Time, allowIdPInitiated bool) (string, error) {
 	returnTo := ""
 	idpInitiated := strings.TrimSpace(requestID) == ""
 	if idpInitiated && !allowIdPInitiated {
@@ -830,7 +866,7 @@ func (s *Service) ConsumeValidatedResponse(ctx context.Context, connectionID uui
 			INSERT INTO auth.saml_replay_ids (connection_id, kind, saml_id, expires_at)
 			VALUES ($1, $2, $3, $4)
 			ON CONFLICT DO NOTHING
-		`, connectionID, candidate.kind, candidate.id, time.Now().UTC().Add(replayIDTTL))
+		`, connectionID, candidate.kind, candidate.id, keepUntil.UTC())
 		if err != nil {
 			return "", err
 		}
@@ -1010,7 +1046,8 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID, connID uuid.UU
 	return userID, tx.Commit(ctx)
 }
 
-// ExchangeLogin trades a one-time SAML login code for a Qeet token pair.
+// ExchangeLogin trades a one-time SAML login code for a Qeet token pair, while
+// the connection that issued it is still active.
 func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*auth.TokenPair, error) {
 	userID, tenantID, err := s.consumeLoginCode(ctx, rawCode)
 	if err != nil {
@@ -1020,6 +1057,7 @@ func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*a
 }
 
 // consumeLoginCode spends a one-time code the ACS issued, once, and returns whom it signs in.
+// A code of a connection since disabled, put back to draft or deleted is refused.
 func (s *Service) consumeLoginCode(ctx context.Context, rawCode string) (uuid.UUID, uuid.UUID, error) {
 	if rawCode == "" {
 		return uuid.Nil, uuid.Nil, errs.ErrSAMLLoginCodeRequired
@@ -1044,6 +1082,9 @@ func (s *Service) consumeLoginCode(ctx context.Context, rawCode string) (uuid.UU
 	if time.Now().After(row.ExpiresAt) {
 		return uuid.Nil, uuid.Nil, errs.ErrSAMLLoginCodeExpired
 	}
+	if err := signInStatus(row.Status); err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
 	if err := q.MarkSamlLoginCodeUsed(ctx, codeHash); err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
@@ -1053,13 +1094,14 @@ func (s *Service) consumeLoginCode(ctx context.Context, rawCode string) (uuid.UU
 	return row.UserID, row.TenantID, nil
 }
 
-// insertLoginCode persists a one-time code issued at the ACS endpoint.
-func (s *Service) insertLoginCode(ctx context.Context, codeHash string, userID, tenantID uuid.UUID, expiresAt time.Time) error {
+// insertLoginCode persists a one-time code connection conn issued at its ACS endpoint.
+func (s *Service) insertLoginCode(ctx context.Context, codeHash string, userID uuid.UUID, conn *Connection, expiresAt time.Time) error {
 	return s.q.InsertSamlLoginCode(ctx, dbgen.InsertSamlLoginCodeParams{
-		CodeHash:  codeHash,
-		UserID:    userID,
-		TenantID:  tenantID,
-		ExpiresAt: expiresAt,
+		CodeHash:     codeHash,
+		UserID:       userID,
+		TenantID:     conn.TenantID,
+		ConnectionID: conn.ID,
+		ExpiresAt:    expiresAt,
 	})
 }
 
@@ -1078,6 +1120,16 @@ type Handler struct {
 	IdP           *IdP
 	PublicBaseURL string
 	CookieSecure  bool // the browser-binding cookie's Secure attribute; off only in development
+	// ActOnCheck lets a change of what a connection trusts through only for a
+	// caller who outranks every administrator linked to it (rbac CheckActOn).
+	// Without it the change is refused while one is linked.
+	ActOnCheck identitylink.ActOn
+}
+
+// checkTrust refuses changing what connection id of tenantID trusts unless the
+// caller may act on every administrator linked to it (see ActOnCheck).
+func (h *Handler) checkTrust(r *http.Request, tenantID, id uuid.UUID) error {
+	return identitylink.CheckTrustChange(r.Context(), h.Service.Pool(), httpx.PrincipalFromCtx(r.Context()), h.ActOnCheck, tenantID, id, "")
 }
 
 // binding ties an SP-initiated sign-in to the browser that began it, so the
@@ -1308,6 +1360,19 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	if in.IdpEntityID != nil || in.IdpCertificate != nil {
+		current, err := h.Service.Get(ctx, id, tenantID)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		if in.ChangesTrust(current) {
+			if err := h.checkTrust(r, tenantID, id); err != nil {
+				httpx.WriteError(w, r, err)
+				return
+			}
+		}
+	}
 	tx, err := h.Service.Pool().Begin(ctx)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -1522,7 +1587,8 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		// An unencrypted assertion doesn't need the key; an encrypted one fails.
 		slog.Error("saml acs: SP encryption key unusable", "err", err, "connection", conn.ID)
 	}
-	response, info, err := h.Service.validateResponse(h.publicBase(r), conn, certs, key, encoded, time.Now())
+	now := time.Now()
+	response, info, err := h.Service.validateResponse(h.publicBase(r), conn, certs, key, encoded, now)
 	if err != nil {
 		fail(err)
 		return
@@ -1549,7 +1615,7 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		fail(err)
 		return
 	}
-	returnTo, err := h.Service.ConsumeValidatedResponse(r.Context(), conn.ID, requestID, response.ID, assertionIDs, allowIdPInitiated)
+	returnTo, err := h.Service.ConsumeValidatedResponse(r.Context(), conn.ID, requestID, response.ID, assertionIDs, replayKeepUntil(response.Assertions, now), allowIdPInitiated)
 	if err != nil {
 		fail(err)
 		return
@@ -1593,7 +1659,7 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		fail(errs.ErrInternalServer)
 		return
 	}
-	if err := h.Service.insertLoginCode(ctx, codeHash, userID, conn.TenantID, time.Now().UTC().Add(loginCodeTTL)); err != nil {
+	if err := h.Service.insertLoginCode(ctx, codeHash, userID, conn, time.Now().UTC().Add(loginCodeTTL)); err != nil {
 		slog.Error("saml acs: persist login code", "err", err)
 		fail(errs.ErrInternalServer)
 		return

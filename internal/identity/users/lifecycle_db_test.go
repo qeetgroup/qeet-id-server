@@ -385,13 +385,16 @@ func TestSuspendedPagesFollowTheirOrder(t *testing.T) {
 	var own []dated
 	for _, when := range []time.Time{at, at.Add(time.Hour), at.Add(time.Hour)} {
 		u := dbtest.User(t, tenant, tenant)
-		exec(t, `UPDATE "user".users SET status = 'suspended', suspended_at = $2 WHERE id = $1`, u.ID, when)
+		// The suspension trigger stamps the time of any status change, so the
+		// chosen time is written after it.
+		exec(t, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, u.ID)
+		exec(t, `UPDATE "user".users SET suspended_at = $2 WHERE id = $1`, u.ID, when)
 		own = append(own, dated{u.ID, when})
 	}
 	var guests []uuid.UUID
 	for range 2 {
 		g := dbtest.User(t, other, other, tenant)
-		exec(t, `UPDATE "user".users SET status = 'suspended', suspended_at = now() WHERE id = $1`, g.ID)
+		exec(t, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, g.ID)
 		guests = append(guests, g.ID)
 	}
 	slices.SortFunc(own, func(a, b dated) int {
@@ -422,5 +425,25 @@ func TestSuspendedPagesFollowTheirOrder(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("paged %v, want %v", got, want)
+	}
+}
+
+// TestSuspendedSearchTakesWildcardsLiterally checks that _ and % in the
+// suspended-accounts search match only themselves.
+func TestSuspendedSearchTakesWildcardsLiterally(t *testing.T) {
+	tenant := dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	names := map[string]uuid.UUID{}
+	for _, name := range []string{"qa_b", "qaXb", "100%", "plain"} {
+		u := dbtest.User(t, tenant, tenant)
+		exec(t, `UPDATE "user".users SET status = 'suspended', display_name = $2 WHERE id = $1`, u.ID, name)
+		names[name] = u.ID
+	}
+	as := dbtest.Serve(dbtest.Principal(admin.ID, tenant), testHandler(t, nil).Mount)
+	for query, want := range map[string]string{"qa_b": "qa_b", "%": "100%"} {
+		page := suspendedPage(t, as, "?q="+url.QueryEscape(query))
+		if len(page.Items) != 1 || page.Items[0].ID != names[want] || page.Total != 1 {
+			t.Errorf("search %q: %d accounts (total %d), want only %q", query, len(page.Items), page.Total, want)
+		}
 	}
 }

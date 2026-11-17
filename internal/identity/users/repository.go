@@ -315,7 +315,7 @@ func (r *Repository) StandingIn(ctx context.Context, id, tenantID uuid.UUID) (ho
 // RemoveFromTenantTx removes a user from one tenant in tx: their roles and
 // groups there, and the application grants and API keys they hold there. It
 // returns how many roles were removed. Their account and other tenants are
-// untouched.
+// untouched; OffboardTx withdraws what they issued there.
 func (r *Repository) RemoveFromTenantTx(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID) (int64, error) {
 	q := r.q.WithTx(tx)
 	roles, err := q.RemoveUserRolesInTenant(ctx, dbgen.RemoveUserRolesInTenantParams{UserID: userID, TenantID: tenantID})

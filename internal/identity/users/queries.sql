@@ -343,3 +343,34 @@ WHERE s.id = @id AND s.user_id = @user_id AND s.revoked_at IS NULL
   AND (s.tenant_id = @tenant_id::uuid
        OR (s.tenant_id IS NULL AND EXISTS (SELECT 1 FROM "user".users u WHERE u.id = s.user_id AND u.tenant_id = @tenant_id::uuid)))
 RETURNING COALESCE(s.tenant_id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS tenant_id;
+
+-- ---- Offboarding ----
+
+-- IntegrationsCreatedBy lists the integrations user_id created in the
+-- organisation that still work: service principals, SCIM tokens, webhooks,
+-- auth hooks and OpenID Connect applications.
+-- name: IntegrationsCreatedBy :many
+SELECT 'service_principal'::text AS kind, sp.id, sp.name FROM auth.service_principals sp
+WHERE sp.tenant_id = @tenant_id AND sp.created_by = @user_id::uuid AND sp.disabled_at IS NULL
+UNION ALL
+SELECT 'scim_token', st.id, st.name FROM tenant.scim_tokens st
+WHERE st.tenant_id = @tenant_id AND st.created_by = @user_id::uuid AND st.revoked_at IS NULL
+  AND (st.expires_at IS NULL OR st.expires_at > NOW())
+UNION ALL
+SELECT 'webhook', ws.id, ws.url FROM tenant.webhook_subscriptions ws
+WHERE ws.tenant_id = @tenant_id AND ws.created_by = @user_id::uuid AND ws.disabled_at IS NULL
+UNION ALL
+SELECT 'auth_hook', ah.id, ah.url FROM tenant.auth_hooks ah
+WHERE ah.tenant_id = @tenant_id AND ah.created_by = @user_id::uuid
+UNION ALL
+SELECT 'oidc_client', oc.id, oc.name FROM auth.oidc_clients oc
+WHERE oc.tenant_id = @tenant_id AND oc.created_by = @user_id::uuid
+ORDER BY 1, 3;
+
+-- name: RevokeAdminPortalLinksCreatedBy :execrows
+UPDATE tenant.admin_portal_links SET revoked_at = NOW()
+WHERE tenant_id = @tenant_id AND created_by = @user_id::uuid AND revoked_at IS NULL AND expires_at > NOW();
+
+-- name: RevokeInvitesSentBy :execrows
+UPDATE tenant.invites SET status = 'revoked'
+WHERE tenant_id = @tenant_id AND invited_by = @user_id::uuid AND status = 'pending';

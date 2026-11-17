@@ -2,80 +2,25 @@ package webhook
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/requestsig"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// sign, truncate, and deliver carry the security-critical webhook contract
-// (HMAC-SHA256 signature over the timestamp and body, and the headers) and
-// need no DB, so they are unit-tested here. The DB-backed dispatcher/queue
-// paths live in integration.
-
-func TestSign_MatchesHMACSHA256Hex(t *testing.T) {
-	secret := "whsec_abc123"
-	body := []byte(`{"event":"user.created","id":"01J"}`)
-
-	// Independently recompute with HMAC-SHA256 → hex over "timestamp.body".
-	// This guards against algorithm drift (sha1/md5), encoding drift (base64
-	// vs hex) and the timestamp falling out of what is signed.
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte("1700000000." + string(body)))
-	want := hex.EncodeToString(mac.Sum(nil))
-
-	got := sign(secret, "1700000000", body)
-	if got != want {
-		t.Errorf("sign = %q; want %q", got, want)
-	}
-	if len(got) != 64 {
-		t.Errorf("signature length = %d; want 64 hex chars (sha256)", len(got))
-	}
-	if got != strings.ToLower(got) {
-		t.Errorf("signature %q must be lowercase hex", got)
-	}
-}
-
-func TestSign_Deterministic(t *testing.T) {
-	secret, body := "s", []byte("payload")
-	first := sign(secret, "1", body)
-	second := sign(secret, "1", body)
-	if first != second {
-		t.Error("sign must be deterministic for the same secret+body")
-	}
-}
-
-func TestSign_SensitiveToSecretTimestampAndBody(t *testing.T) {
-	body := []byte(`{"a":1}`)
-	if sign("secret-A", "1", body) == sign("secret-B", "1", body) {
-		t.Error("different secrets must produce different signatures")
-	}
-	if sign("secret", "1", body) == sign("secret", "2", body) {
-		t.Error("different timestamps must produce different signatures")
-	}
-	if sign("secret", "1", []byte(`{"a":1}`)) == sign("secret", "1", []byte(`{"a":2}`)) {
-		t.Error("different bodies must produce different signatures")
-	}
-}
-
-func TestSign_EmptyBody(t *testing.T) {
-	// Empty body still yields a valid 64-char HMAC (an empty message is signed).
-	if got := sign("secret", "1", []byte{}); len(got) != 64 {
-		t.Errorf("empty-body signature length = %d; want 64", len(got))
-	}
-}
+// truncate and deliver carry the security-critical webhook contract (the
+// headers, signed with requestsig over the timestamp and body) and need no
+// DB, so they are unit-tested here. The DB-backed dispatcher/queue paths live
+// in integration.
 
 func TestTruncate(t *testing.T) {
 	cases := []struct {
@@ -150,7 +95,7 @@ func TestDeliver_SignsBodyAndSetsHeaders(t *testing.T) {
 	if sent, err := strconv.ParseInt(gotTimestamp, 10, 64); err != nil || time.Since(time.Unix(sent, 0)).Abs() > time.Minute {
 		t.Errorf("X-Qeet-Timestamp = %q; want the Unix time of sending", gotTimestamp)
 	}
-	wantSig := "sha256=" + sign(secret, gotTimestamp, body)
+	wantSig := "sha256=" + requestsig.Sign(secret, gotTimestamp, body)
 	if gotSig != wantSig {
 		t.Errorf("X-Qeet-Signature = %q; want %q", gotSig, wantSig)
 	}
@@ -171,7 +116,7 @@ func TestDeliver_SignsWithEachSecret(t *testing.T) {
 	if _, _, err := s.deliver(context.Background(), uuid.New(), srv.URL, []string{"new", "old"}, "evt", body); err != nil {
 		t.Fatalf("deliver: %v", err)
 	}
-	want := "sha256=" + sign("new", gotTimestamp, body) + ",sha256=" + sign("old", gotTimestamp, body)
+	want := "sha256=" + requestsig.Sign("new", gotTimestamp, body) + ",sha256=" + requestsig.Sign("old", gotTimestamp, body)
 	if gotSig != want {
 		t.Errorf("X-Qeet-Signature = %q; want %q", gotSig, want)
 	}

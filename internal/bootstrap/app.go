@@ -40,9 +40,10 @@ func parseLogLevel(s string) slog.Level {
 	}
 }
 
-// loadConfig loads and validates the configuration and installs the logger.
-// It exits the process if either fails.
-func loadConfig() *config.Config {
+// LoadConfig loads and validates the configuration and installs the logger
+// it asks for (LOG_LEVEL, LOG_FORMAT), as every command does. It exits the
+// process if either fails.
+func LoadConfig() *config.Config {
 	// JSON until the configuration chooses, so even a refusal to start is a
 	// structured line.
 	slog.SetDefault(slog.New(logging.NewRedactingHandler(slog.NewJSONHandler(os.Stdout, nil))))
@@ -81,7 +82,7 @@ func loadConfig() *config.Config {
 // Run loads and validates the configuration, then runs the API server and its
 // workers until shutdown. It exits the process if startup fails.
 func Run() {
-	cfg := loadConfig()
+	cfg := LoadConfig()
 
 	// Client IP resolution must be configured before the listener starts: it
 	// keys the login rate limiter and every audit record.
@@ -187,7 +188,7 @@ func Run() {
 // migrations; this refuses a schema it can't run on. It exits the process if
 // startup fails.
 func RunWorkers() {
-	cfg := loadConfig()
+	cfg := LoadConfig()
 	bi := buildinfo.Get()
 	slog.Info("worker starting", "service", cfg.ServiceName+"-worker", "version", bi.Version, "commit", bi.Commit, "go", bi.GoVersion)
 

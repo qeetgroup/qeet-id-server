@@ -37,6 +37,7 @@ var Actions = map[string]string{
 	"auth.mfa_locked":           High,
 	"mfa.admin_reset":           High,
 	"session.admin_revoked_all": High,
+	"user.integrations_left":    High,
 	"role.assigned":             Medium,
 	"user.reactivated":          Medium,
 	"mfa.totp_disabled":         Medium,

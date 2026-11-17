@@ -3,8 +3,11 @@ post:
   description: >-
     Trades the one-time login code minted by the SAML Assertion Consumer Service
     for a Qeet access and refresh token pair, with Qeet acting as the Service
-    Provider. The code is single-use and short-lived. Mounted at the root, not
-    under /v1, and unauthenticated; it is the second step after POST
+    Provider. The code is single-use and short-lived. It trades only while the
+    connection that issued it is still active: 403 saml.connection_disabled or
+    saml.connection_draft once it has been switched off or put back to draft,
+    and 401 saml.login_code_invalid once it is deleted. Mounted at the root,
+    not under /v1, and unauthenticated; it is the second step after POST
     /saml/acs/{id}.
   summary: Exchange code (public)
   tags:
@@ -37,3 +40,5 @@ post:
       $ref: ../../../shared/responses/BadRequest.yaml
     '401':
       $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml

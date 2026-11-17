@@ -96,7 +96,7 @@ SELECT
                   LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
                   LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
                   WHERE ur.user_id = a.id AND ur.tenant_id = $1::uuid
-                    AND ((ro.is_system AND ro.name = 'owner') OR p.key = ANY($2::text[])))
+                    AND ((ro.is_system AND ro.name = 'owner') OR (p.key IS NOT NULL AND NOT (p.key = ANY($2::text[])))))
                OR EXISTS (
                   SELECT 1 FROM tenant.group_members gm
                   JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
@@ -104,7 +104,7 @@ SELECT
                   LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
                   LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
                   WHERE gm.user_id = a.id AND gm.tenant_id = $1::uuid
-                    AND ((ro.is_system AND ro.name = 'owner') OR p.key = ANY($2::text[]))))
+                    AND ((ro.is_system AND ro.name = 'owner') OR (p.key IS NOT NULL AND NOT (p.key = ANY($2::text[]))))))
           AND NOT (a.tenant_id IS NOT DISTINCT FROM $1::uuid AND EXISTS (
                   SELECT 1 FROM "user".external_identities ei
                   WHERE ei.user_id = a.id AND ei.tenant_id = $1::uuid
@@ -118,9 +118,9 @@ SELECT
 `
 
 type GetCaptureExemptionParams struct {
-	TenantID         uuid.UUID
-	AdminPermissions []string
-	Email            string
+	TenantID          uuid.UUID
+	MemberPermissions []string
+	Email             string
 }
 
 type GetCaptureExemptionRow struct {
@@ -136,7 +136,7 @@ type GetCaptureExemptionRow struct {
 // administrator is never adopted by address, so only a home account linked to
 // an active connection can). Every branch runs for every address.
 func (q *Queries) GetCaptureExemption(ctx context.Context, arg GetCaptureExemptionParams) (GetCaptureExemptionRow, error) {
-	row := q.db.QueryRow(ctx, getCaptureExemption, arg.TenantID, arg.AdminPermissions, arg.Email)
+	row := q.db.QueryRow(ctx, getCaptureExemption, arg.TenantID, arg.MemberPermissions, arg.Email)
 	var i GetCaptureExemptionRow
 	err := row.Scan(&i.Sso, &i.BreakGlass, &i.UnadoptableAdmin)
 	return i, err

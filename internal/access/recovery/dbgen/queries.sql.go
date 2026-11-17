@@ -13,6 +13,28 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const accountBelongsTo = `-- name: AccountBelongsTo :one
+SELECT EXISTS (
+    SELECT 1 FROM "user".users WHERE id = $1 AND tenant_id = $2::uuid
+    UNION ALL
+    SELECT 1 FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2::uuid
+)::bool AS belongs
+`
+
+type AccountBelongsToParams struct {
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+}
+
+// AccountBelongsTo reports whether the account belongs to the organisation: it
+// is the account's home, or the account holds a role there.
+func (q *Queries) AccountBelongsTo(ctx context.Context, arg AccountBelongsToParams) (bool, error) {
+	row := q.db.QueryRow(ctx, accountBelongsTo, arg.UserID, arg.TenantID)
+	var belongs bool
+	err := row.Scan(&belongs)
+	return belongs, err
+}
+
 const expireMagicLinks = `-- name: ExpireMagicLinks :exec
 UPDATE auth.magic_links SET expires_at = NOW() - INTERVAL '1 minute'
 WHERE LOWER(email) = LOWER($1) AND used_at IS NULL AND expires_at > NOW() - INTERVAL '1 minute'
@@ -242,17 +264,17 @@ func (q *Queries) UpsertPasswordCredential(ctx context.Context, arg UpsertPasswo
 	return err
 }
 
-const verifyEmailByReset = `-- name: VerifyEmailByReset :one
+const verifyEmailByLink = `-- name: VerifyEmailByLink :one
 UPDATE "user".users SET email_verified_at = NOW(), updated_at = NOW()
 WHERE id = $1 AND email_verified_at IS NULL AND deleted_at IS NULL
 RETURNING email
 `
 
-// A used reset link was sent to the account's address and to nobody else, so
-// it proves the person owns the address: verify it if it wasn't. No row when
-// it already was.
-func (q *Queries) VerifyEmailByReset(ctx context.Context, userID uuid.UUID) (string, error) {
-	row := q.db.QueryRow(ctx, verifyEmailByReset, userID)
+// A used reset or sign-in link was sent to the account's address and to nobody
+// else, so it proves the person owns the address: verify it if it wasn't. No
+// row when it already was.
+func (q *Queries) VerifyEmailByLink(ctx context.Context, userID uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, verifyEmailByLink, userID)
 	var email string
 	err := row.Scan(&email)
 	return email, err

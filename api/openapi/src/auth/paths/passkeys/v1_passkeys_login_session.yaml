@@ -17,7 +17,9 @@ post:
     the error code), naming the account when it was identified. A passkey of an
     account on a domain whose organisation requires single sign-on is refused
     with 403 auth.sso_required, and no cookie is set (see the SSORequired
-    response).
+    response). While the account's own organisation's address rules are on, an
+    address they refuse is answered 403 auth.address_not_allowed (recorded as
+    auth.address_refused), and no cookie is set.
   tags:
     - Passkeys
   security: []

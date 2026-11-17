@@ -25,8 +25,8 @@ WHERE id = @id AND tenant_id = @tenant_id::uuid;
 
 -- SyncTargets returns the groups the asserted values reach, compared ignoring
 -- case: through one of the connection's mappings, or as the external id of a
--- group SCIM made. A group whose roles carry the owner role or one of
--- admin_permissions is left out.
+-- group SCIM made. A group whose roles carry the owner role or a permission
+-- outside member_permissions is left out.
 -- name: SyncTargets :many
 WITH asserted AS (
     SELECT DISTINCT lower(v) AS value FROM unnest(@idp_groups::text[]) AS v
@@ -47,7 +47,7 @@ WHERE g.tenant_id = @tenant_id
       LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
       LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
       WHERE gr.tenant_id = g.tenant_id AND gr.group_id = g.id
-        AND ((ro.is_system AND ro.name = 'owner') OR p.key = ANY(@admin_permissions::text[]))
+        AND ((ro.is_system AND ro.name = 'owner') OR (p.key IS NOT NULL AND NOT (p.key = ANY(@member_permissions::text[]))))
   )
 ORDER BY g.id;
 
@@ -79,7 +79,8 @@ SELECT EXISTS (SELECT 1 FROM tenant.saml_connections WHERE id = @id AND tenant_i
 SELECT EXISTS (SELECT 1 FROM tenant.ldap_connections WHERE id = @id AND tenant_id = @tenant_id);
 
 -- GroupPrivileged returns no row for a group that isn't the tenant's, else its
--- name and whether its roles carry the owner role or one of admin_permissions.
+-- name and whether its roles carry the owner role or a permission outside
+-- member_permissions.
 -- name: GroupPrivileged :one
 SELECT g.name, EXISTS (
     SELECT 1 FROM rbac.group_roles gr
@@ -87,7 +88,7 @@ SELECT g.name, EXISTS (
     LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
     LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
     WHERE gr.tenant_id = g.tenant_id AND gr.group_id = g.id
-      AND ((ro.is_system AND ro.name = 'owner') OR p.key = ANY(@admin_permissions::text[]))
+      AND ((ro.is_system AND ro.name = 'owner') OR (p.key IS NOT NULL AND NOT (p.key = ANY(@member_permissions::text[]))))
 ) AS privileged
 FROM tenant.groups g WHERE g.id = @group_id AND g.tenant_id = @tenant_id;
 

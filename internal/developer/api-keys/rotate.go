@@ -112,23 +112,11 @@ func (h *Handler) rotate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if h.GrantCheck == nil {
-		httpx.WriteError(w, r, errs.ErrNotImplemented)
-		return
-	}
-	// The replacement carries the old key's scopes, which the caller must hold.
-	keys, err := h.Service.List(r.Context(), tid)
-	if err != nil {
+	// The new key carries the old key's scopes, so whoever rotates it
+	// must hold them, as for creating one.
+	if err := h.checkScopes(r, tid, id); err != nil {
 		httpx.WriteError(w, r, err)
 		return
-	}
-	for _, k := range keys {
-		if k.ID == id {
-			if err := h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tid, k.Scopes); err != nil {
-				httpx.WriteError(w, r, err)
-				return
-			}
-		}
 	}
 	k, raw, err := h.Service.Rotate(r.Context(), tid, id, overlap, audit.ActorOf(r))
 	if err != nil {
@@ -140,4 +128,26 @@ func (h *Handler) rotate(w http.ResponseWriter, r *http.Request) {
 		"secret":  raw,
 		"warning": "This secret is only shown once. Store it now. The old key stops at the end of the overlap.",
 	})
+}
+
+// Scopes returns the scopes of API key id of tenantID, or ErrAPIKeyNotFound.
+func (s *Service) Scopes(ctx context.Context, tenantID, id uuid.UUID) ([]string, error) {
+	scopes, err := s.q.APIKeyScopes(ctx, dbgen.APIKeyScopesParams{ID: id, TenantID: tenantID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrAPIKeyNotFound
+	}
+	return scopes, err
+}
+
+// checkScopes refuses the caller taking over credential id's scopes in
+// tenantID (GrantCheck); without the check it refuses every caller.
+func (h *Handler) checkScopes(r *http.Request, tenantID, id uuid.UUID) error {
+	if h.GrantCheck == nil {
+		return errs.ErrNotImplemented
+	}
+	scopes, err := h.Service.Scopes(r.Context(), tenantID, id)
+	if err != nil {
+		return err
+	}
+	return h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, scopes)
 }

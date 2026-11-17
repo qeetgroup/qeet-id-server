@@ -84,7 +84,9 @@ delete:
     Forgets every device a member has remembered in the caller's organisation,
     so each is asked for the second factor at its next sign-in there. Requires
     the user.credentials permission; each is audited as
-    auth.trusted_device_revoked.
+    auth.trusted_device_revoked. Refused with 403 rbac.target_is_owner when the
+    member is an owner and the caller isn't, and 403
+    rbac.target_outranks_caller when they hold a permission the caller doesn't.
   tags:
     - Users
   parameters:

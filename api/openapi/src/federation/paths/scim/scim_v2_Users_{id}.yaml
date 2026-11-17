@@ -5,7 +5,11 @@ delete:
     token, soft-deleting the account after confirming it belongs to the tenant
     and ending every way it signs in (sessions, hosted-login sessions,
     remembered devices, application grants, pending authorizations and unused
-    recovery links), with Qeet acting as the SCIM server. Mounted at the root
+    recovery links), with Qeet acting as the SCIM server. As an
+    administrator's deletion does, it revokes the admin-portal links and
+    pending invitations the user issued and records the critical
+    user.integrations_left event listing the integrations they created; the
+    SCIM response is unchanged. Mounted at the root
     under /scim/v2, not under /v1. Errors use the RFC 7644 SCIM error envelope
     rather than the standard Qeet error shape. An account that owns the
     organisation is never deleted by the directory (403).
@@ -72,7 +76,10 @@ patch:
     acting as the SCIM server. Mounted at the root under /scim/v2, not under
     /v1. Errors use the RFC 7644 SCIM error envelope, not the standard Qeet
     error shape. An account that owns the organisation is never changed or
-    deleted by the directory (403). Setting active to true lifts only a
+    deleted by the directory (403). A new userName for an account that administers the organisation (any
+    administrative permission, directly or through a group) is refused with
+    403 and nothing changes: its address is changed in the console, as single
+    sign-on never moves it either. Setting active to true lifts only a
     suspension the directory set: one an administrator, a policy or another
     directory set stands, while the rest of the change applies.
   summary: '[scim] Patch user (deprovision)'
@@ -114,7 +121,10 @@ put:
     SCIM server. Use PATCH for targeted changes such as deprovisioning. Mounted
     at the root under /scim/v2; errors use the RFC 7644 SCIM error envelope, not
     the standard Qeet error shape. An account that owns the organisation is
-    never changed or deleted by the directory (403). Setting active to true
+    never changed or deleted by the directory (403). A new userName for an account that administers the organisation (any
+    administrative permission, directly or through a group) is refused with
+    403 and nothing changes: its address is changed in the console, as single
+    sign-on never moves it either. Setting active to true
     lifts only a suspension the directory set: one an administrator, a policy or
     another directory set stands, while the rest of the change applies.
   summary: '[scim] Replace user'

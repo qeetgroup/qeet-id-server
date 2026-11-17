@@ -184,6 +184,9 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(httpx.RequestIDHeader)    // every response names its request, for support and tracing
 	r.Use(httpx.ClientIPContext)    // the client address, for audit records written below a handler
 	r.Use(auth.SignInClientContext) // the application a hosted sign-in is for, for its audit record
+	// No encoded slash or backslash in a path, so the router and every check
+	// that matches a path see the same segments.
+	r.Use(httpx.RefuseEncodedSeparators)
 	// chimw.RealIP is deliberately not used: it trusts X-Forwarded-For from anyone.
 	// Client IPs come from httpx.ClientIP, governed by TRUSTED_PROXY_HOPS.
 	r.Use(httpx.GeoCountryContext) // the trusted upstream country, for the sessions a request opens

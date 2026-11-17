@@ -14,7 +14,11 @@ post:
     {status, code, message} and counts as a deny. At most 100 evaluations (more
     is 422 authzen.too_many_evaluations); an unknown semantic is 422
     authzen.evaluations_semantic_invalid. Without evaluations, the request is a
-    single evaluation and the response is a single decision. Requires role.read.
+    single evaluation and the response is a single decision. Each relationship
+    check expands at most 1,000 distinct object#relation pairs, and the
+    request's checks together read at most 5,000 relationship sets: an
+    evaluation past either is denied with context.error rebac.check_too_complex
+    (422). Requires role.read.
   tags:
     - AuthZEN
   parameters:

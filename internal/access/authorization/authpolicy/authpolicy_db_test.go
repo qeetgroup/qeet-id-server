@@ -48,8 +48,8 @@ func TestPolicyIsSavedAndAppliedToSignIn(t *testing.T) {
 	}
 	wantLimits := LockoutLimitsView{
 		Defaults: LockoutSettingsView{Threshold: 5, WindowMinutes: 15, DurationMinutes: 15},
-		Min:      LockoutSettingsView{Threshold: 3, WindowMinutes: 1, DurationMinutes: 1},
-		Max:      LockoutSettingsView{Threshold: 20, WindowMinutes: 1440, DurationMinutes: 1440},
+		Min:      LockoutSettingsView{Threshold: 3, WindowMinutes: 15, DurationMinutes: 15},
+		Max:      LockoutSettingsView{Threshold: 5, WindowMinutes: 1440, DurationMinutes: 1440},
 	}
 	if limits == nil || *limits != wantLimits {
 		t.Errorf("lockout limits %+v, want %+v", limits, wantLimits)
@@ -73,7 +73,7 @@ func TestPolicyIsSavedAndAppliedToSignIn(t *testing.T) {
 		PasswordRequireUppercase: true, PasswordRequireNumber: true, PasswordRequireSymbol: true,
 		MagicLinkTTLMinutes: 30, PasskeyEnabled: true, SelfRegistrationEnabled: true,
 		RememberDeviceEnabled: true, RememberDeviceDays: 14,
-		LockoutThreshold: ptr(3), LockoutWindowMinutes: ptr(10), LockoutDurationMinutes: ptr(60),
+		LockoutThreshold: ptr(3), LockoutWindowMinutes: ptr(30), LockoutDurationMinutes: ptr(60),
 		LockoutLimits: limits, // read-only: sent back as GET returned it, and ignored
 	}
 	rec = dbtest.Do(t, h, http.MethodPut, path, want)
@@ -115,8 +115,8 @@ func TestPolicyIsSavedAndAppliedToSignIn(t *testing.T) {
 	if on, d, err := svc.RememberDevicePolicy(ctx, tenant); err != nil || !on || d != 14*24*time.Hour {
 		t.Errorf("remembered devices after saving: %v for %s, %v; want on, 14 days", on, d, err)
 	}
-	if l, err := svc.SignInLockout(ctx, tenant); err != nil || l != (Lockout{Threshold: 3, Window: 10 * time.Minute, Duration: time.Hour}) {
-		t.Errorf("lockout after saving: %+v, %v; want 3 failures in 10 minutes locking for an hour", l, err)
+	if l, err := svc.SignInLockout(ctx, tenant); err != nil || l != (Lockout{Threshold: 3, Window: 30 * time.Minute, Duration: time.Hour}) {
+		t.Errorf("lockout after saving: %+v, %v; want 3 failures in 30 minutes locking for an hour", l, err)
 	}
 	for pw, wantCode := range map[string]string{
 		"Zq7#xLm2-Wv":   errs.CodeAuthPolicyPasswordTooShort,
@@ -178,6 +178,9 @@ func TestPolicyRefusalsStoreNothing(t *testing.T) {
 		body              map[string]any
 	}{
 		{"a threshold under the minimum", "lockout_threshold", "out_of_range", map[string]any{"passkey_enabled": true, "lockout_threshold": 2}},
+		{"a threshold looser than the platform's", "lockout_threshold", "out_of_range", map[string]any{"passkey_enabled": true, "lockout_threshold": 6}},
+		{"a window shorter than the platform's", "lockout_window_minutes", "out_of_range", map[string]any{"passkey_enabled": true, "lockout_window_minutes": 14}},
+		{"a lock shorter than the platform's", "lockout_duration_minutes", "out_of_range", map[string]any{"passkey_enabled": true, "lockout_duration_minutes": 14}},
 		{"a window over a day", "lockout_window_minutes", "out_of_range", map[string]any{"passkey_enabled": true, "lockout_window_minutes": 1441}},
 		{"a lock lasting no time", "lockout_duration_minutes", "out_of_range", map[string]any{"passkey_enabled": true, "lockout_duration_minutes": 0}},
 		{"a device remembered for 91 days", "remember_device_days", "out_of_range", map[string]any{"passkey_enabled": true, "remember_device_days": 91}},

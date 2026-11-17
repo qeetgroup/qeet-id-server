@@ -485,3 +485,30 @@ func TestReplayBeyondItsBoundCarriesOn(t *testing.T) {
 		cursor = next
 	}
 }
+
+// TestHistorySearchTakesWildcardsLiterally checks that _ and % in a search for
+// an actor match only themselves.
+func TestHistorySearchTakesWildcardsLiterally(t *testing.T) {
+	tenant := dbtest.Tenant(t)
+	admin := dbtest.User(t, tenant, tenant)
+	events := map[string]uuid.UUID{}
+	for _, name := range []string{"qa_b", "qaXb", "100%"} {
+		actor := dbtest.User(t, tenant, tenant)
+		id := uuid.New()
+		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `UPDATE "user".users SET display_name = $2 WHERE id = $1`, actor.ID, name); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
+			INSERT INTO audit.events (id, tenant_id, actor_type, actor_user_id, action, resource_type) VALUES ($1, $2, 'user', $3, 'user.updated', 'user')
+		`, id, tenant, actor.ID); err != nil {
+			t.Fatal(err)
+		}
+		events[name] = id
+	}
+	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), NewHandler(dbtest.Pool(t), NewHub(nil)).Mount)
+	for q, want := range map[string]string{"qa_b": "qa_b", "%": "100%"} {
+		if got := allPages(t, h, "q="+url.QueryEscape(q)); !slices.Equal(got, []uuid.UUID{events[want]}) {
+			t.Errorf("search %q: %v, want only the event of %q", q, got, want)
+		}
+	}
+}

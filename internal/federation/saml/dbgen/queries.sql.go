@@ -14,8 +14,11 @@ import (
 )
 
 const consumeSamlLoginCode = `-- name: ConsumeSamlLoginCode :one
-SELECT user_id, tenant_id, expires_at, used_at
-FROM auth.saml_login_codes WHERE code_hash = $1 FOR UPDATE
+SELECT lc.user_id, lc.tenant_id, lc.expires_at, lc.used_at, c.status
+FROM auth.saml_login_codes lc
+JOIN tenant.saml_connections c ON c.tenant_id = lc.tenant_id AND c.id = lc.connection_id
+WHERE lc.code_hash = $1
+FOR UPDATE OF lc
 `
 
 type ConsumeSamlLoginCodeRow struct {
@@ -23,8 +26,10 @@ type ConsumeSamlLoginCodeRow struct {
 	TenantID  uuid.UUID
 	ExpiresAt time.Time
 	UsedAt    pgtype.Timestamptz
+	Status    string
 }
 
+// With the status of the connection that issued the code: one since deleted finds no row.
 func (q *Queries) ConsumeSamlLoginCode(ctx context.Context, codeHash string) (ConsumeSamlLoginCodeRow, error) {
 	row := q.db.QueryRow(ctx, consumeSamlLoginCode, codeHash)
 	var i ConsumeSamlLoginCodeRow
@@ -33,6 +38,7 @@ func (q *Queries) ConsumeSamlLoginCode(ctx context.Context, codeHash string) (Co
 		&i.TenantID,
 		&i.ExpiresAt,
 		&i.UsedAt,
+		&i.Status,
 	)
 	return i, err
 }
@@ -659,15 +665,16 @@ func (q *Queries) InsertSamlConnectionKey(ctx context.Context, arg InsertSamlCon
 
 const insertSamlLoginCode = `-- name: InsertSamlLoginCode :exec
 
-INSERT INTO auth.saml_login_codes (code_hash, user_id, tenant_id, expires_at)
-VALUES ($1, $2, $3, $4)
+INSERT INTO auth.saml_login_codes (code_hash, user_id, tenant_id, connection_id, expires_at)
+VALUES ($1, $2, $3, $4::uuid, $5)
 `
 
 type InsertSamlLoginCodeParams struct {
-	CodeHash  string
-	UserID    uuid.UUID
-	TenantID  uuid.UUID
-	ExpiresAt time.Time
+	CodeHash     string
+	UserID       uuid.UUID
+	TenantID     uuid.UUID
+	ConnectionID uuid.UUID
+	ExpiresAt    time.Time
 }
 
 // ==========================================================================
@@ -678,6 +685,7 @@ func (q *Queries) InsertSamlLoginCode(ctx context.Context, arg InsertSamlLoginCo
 		arg.CodeHash,
 		arg.UserID,
 		arg.TenantID,
+		arg.ConnectionID,
 		arg.ExpiresAt,
 	)
 	return err

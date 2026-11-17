@@ -75,12 +75,13 @@ var scopesSupported = []string{"openid", "profile", "email", "phone", scopeOffli
 // protectedResourceMetadata implements RFC 9728 §3 — OAuth 2.0 Protected
 // Resource Metadata. MCP authorization servers must advertise this document
 // so MCP clients can discover the resource's authorization server and
-// supported token types without out-of-band configuration.
+// supported token types without out-of-band configuration. The authorization
+// server is named by its issuer identifier, as the tokens carry it.
 func (h *Handler) protectedResourceMetadata(w http.ResponseWriter, r *http.Request) {
 	base := httpx.PublicOrigin(r, h.PublicBaseURL)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"resource":                              base,
-		"authorization_servers":                 []string{base},
+		"authorization_servers":                 []string{h.Service.issuer.JWTIssuer()},
 		"bearer_methods_supported":              []string{"header"},
 		"resource_signing_alg_values_supported": []string{h.Service.issuer.Alg()},
 		"resource_documentation":                "https://docs.qeet.in/id/api-reference",

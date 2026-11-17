@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -115,20 +116,40 @@ type RegisterProviderInput struct {
 	Scopes       string `json:"scopes"`
 }
 
-// RegisterProvider stores the tenant's settings for an OAuth provider.
+// RegisterProvider stores the tenant's settings for an OAuth provider. Its
+// endpoints and client don't change while anyone is connected through it
+// (ErrTokenVaultProviderInUse): their refresh tokens would go to the new ones.
 func (s *Service) RegisterProvider(ctx context.Context, tenantID uuid.UUID, in RegisterProviderInput) (*Provider, error) {
+	var missing []errs.FieldError
+	for field, value := range map[string]string{"provider": in.Provider, "client_id": in.ClientID, "client_secret": in.ClientSecret} {
+		if strings.TrimSpace(value) == "" {
+			missing = append(missing, errs.FieldError{Field: field, Code: "required", Message: "This field is required."})
+		}
+	}
+	if len(missing) > 0 {
+		slices.SortFunc(missing, func(a, b errs.FieldError) int { return strings.Compare(a.Field, b.Field) })
+		return nil, errs.ErrValidationFailed.WithFields(missing)
+	}
 	if _, err := s.egress.ValidateHTTPURL(in.AuthorizeURL); err != nil {
 		return nil, errs.ErrTokenVaultProviderAuthorizeInvalid
 	}
 	if _, err := s.egress.ValidateHTTPURL(in.TokenURL); err != nil {
-		return nil, errs.ErrTokenVaultProviderAuthorizeInvalid
+		return nil, errs.ErrTokenVaultProviderTokenURLInvalid
 	}
 	ct, nonce, err := s.box.Seal(tenantID, "token-vault-provider", in.Provider, []byte(in.ClientSecret))
 	if err != nil {
 		return nil, err
 	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	if err := refuseRepointing(ctx, s.q.WithTx(tx), tenantID, in); err != nil {
+		return nil, err
+	}
 	var provider Provider
-	err = s.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO tenant.token_vault_providers
 		    (tenant_id, provider, client_id, client_secret, client_secret_ct,
 		     client_secret_nonce, encryption_version, authorize_url, token_url, scopes)
@@ -148,7 +169,32 @@ func (s *Service) RegisterProvider(ctx context.Context, tenantID uuid.UUID, in R
 		&provider.ID, &provider.Provider, &provider.ClientID, &provider.AuthorizeURL,
 		&provider.TokenURL, &provider.Scopes, &provider.CreatedAt, &provider.UpdatedAt,
 	)
-	return &provider, err
+	if err != nil {
+		return nil, err
+	}
+	return &provider, tx.Commit(ctx)
+}
+
+// refuseRepointing refuses giving a provider other endpoints or another client,
+// or setting up again a name that still has grants, while anyone is connected
+// through it. Its row is locked first, so no grant is stored under the
+// settings being replaced (UpsertTokenGrant share-locks it).
+func refuseRepointing(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, in RegisterProviderInput) error {
+	current, err := q.LockProvider(ctx, dbgen.LockProviderParams{TenantID: tenantID, Provider: in.Provider})
+	if err == nil && current.ClientID == in.ClientID && current.AuthorizeUrl == in.AuthorizeURL && current.TokenUrl == in.TokenURL {
+		return nil
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	inUse, err := q.ProviderHasGrants(ctx, dbgen.ProviderHasGrantsParams{TenantID: tenantID, Provider: in.Provider})
+	if err != nil {
+		return err
+	}
+	if inUse {
+		return errs.ErrTokenVaultProviderInUse
+	}
+	return nil
 }
 
 // ListProviders returns the tenant's OAuth providers.
@@ -168,16 +214,29 @@ func (s *Service) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]Prov
 	return out, nil
 }
 
-// DeleteProvider removes the tenant's settings for an OAuth provider.
+// DeleteProvider removes the tenant's settings for an OAuth provider and
+// disconnects everyone connected through it, so a provider set up again under
+// its name inherits no grant.
 func (s *Service) DeleteProvider(ctx context.Context, tenantID uuid.UUID, provider string) error {
-	n, err := s.q.DeleteProvider(ctx, dbgen.DeleteProviderParams{TenantID: tenantID, Provider: provider})
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	q := s.q.WithTx(tx)
+	// The grants go first: a refresh holds its grant's row while it waits to
+	// share the provider's.
+	if err := q.DeleteProviderGrants(ctx, dbgen.DeleteProviderGrantsParams{TenantID: tenantID, Provider: provider}); err != nil {
+		return err
+	}
+	n, err := q.DeleteProvider(ctx, dbgen.DeleteProviderParams{TenantID: tenantID, Provider: provider})
 	if err != nil {
 		return err
 	}
 	if n == 0 {
 		return errs.ErrTokenVaultProviderNotFound
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (s *Service) providerConfig(ctx context.Context, tenantID uuid.UUID, provider string) (clientID, clientSecret, authorizeURL, tokenURL, scopes string, err error) {
@@ -324,10 +383,13 @@ func (s *Service) FinishConnect(ctx context.Context, state, code, base string) e
 	if err != nil {
 		return err
 	}
-	return s.storeGrant(ctx, tenantID, userID, provider, tok)
+	return s.storeGrant(ctx, s.q, tenantID, userID, provider, tokenURL, clientID, tok)
 }
 
-func (s *Service) storeGrant(ctx context.Context, tenantID, userID uuid.UUID, provider string, tok *oauthTokenResponse) error {
+// storeGrant encrypts and stores tok, which tokenURL issued to clientID,
+// through q. It stores nothing, and refuses with ErrTokenVaultConnectStateInvalid,
+// once the provider has another token URL or client.
+func (s *Service) storeGrant(ctx context.Context, q *dbgen.Queries, tenantID, userID uuid.UUID, provider, tokenURL, clientID string, tok *oauthTokenResponse) error {
 	accessCT, accessNonce, err := s.encrypt(tenantID, userID, provider, "token-vault-access", tok.AccessToken)
 	if err != nil {
 		return err
@@ -353,7 +415,7 @@ func (s *Service) storeGrant(ctx context.Context, tenantID, userID uuid.UUID, pr
 	if tok.Scope != "" {
 		scopeArg = &tok.Scope
 	}
-	return s.q.UpsertTokenGrant(ctx, dbgen.UpsertTokenGrantParams{
+	n, err := q.UpsertTokenGrant(ctx, dbgen.UpsertTokenGrantParams{
 		TenantID:          tenantID,
 		UserID:            userID,
 		Provider:          provider,
@@ -364,7 +426,16 @@ func (s *Service) storeGrant(ctx context.Context, tenantID, userID uuid.UUID, pr
 		TokenType:         tokenType,
 		Scope:             scopeArg,
 		ExpiresAt:         expiresAt,
+		TokenUrl:          tokenURL,
+		ClientID:          clientID,
 	})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errs.ErrTokenVaultConnectStateInvalid
+	}
+	return nil
 }
 
 // exchange POSTs a form-encoded OAuth2 token request and parses the response.
@@ -409,22 +480,49 @@ func (s *Service) GetAccessToken(ctx context.Context, tenantID, userID uuid.UUID
 	if err != nil {
 		return "", err
 	}
-	accessCT, accessNonce := grant.AccessTokenCt, grant.AccessTokenNonce
-	refreshCT, refreshNonce := grant.RefreshTokenCt, grant.RefreshTokenNonce
-	expiresAt := tsPtr(grant.ExpiresAt)
+	if !dueForRefresh(grant.ExpiresAt) {
+		return s.decrypt(tenantID, userID, provider, "token-vault-access", grant.AccessTokenCt, grant.AccessTokenNonce)
+	}
+	return s.refresh(ctx, tenantID, userID, provider)
+}
 
-	if expiresAt == nil || time.Now().Before(expiresAt.Add(-expirySkew)) {
-		return s.decrypt(tenantID, userID, provider, "token-vault-access", accessCT, accessNonce)
-	}
-	if refreshCT == nil {
-		// Expired with no refresh token on file — the caller must reconnect.
-		return "", errs.ErrTokenVaultTokenExpired
-	}
-	refreshToken, err := s.decrypt(tenantID, userID, provider, "token-vault-refresh", refreshCT, refreshNonce)
+// dueForRefresh reports whether a token expiring at expiresAt (none: never)
+// should be refreshed before it is handed out.
+func dueForRefresh(expiresAt pgtype.Timestamptz) bool {
+	e := tsPtr(expiresAt)
+	return e != nil && !time.Now().Before(e.Add(-expirySkew))
+}
+
+// refresh renews a grant due for it and returns its new access token. The
+// grant's row is locked and read again first, so of two reads at once one
+// refreshes and the other gets what it got: a provider that rotates refresh
+// tokens never sees one presented twice.
+func (s *Service) refresh(ctx context.Context, tenantID, userID uuid.UUID, provider string) (string, error) {
+	clientID, clientSecret, _, tokenURL, _, err := s.providerConfig(ctx, tenantID, provider)
 	if err != nil {
 		return "", err
 	}
-	clientID, clientSecret, _, tokenURL, _, err := s.providerConfig(ctx, tenantID, provider)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	q := s.q.WithTx(tx)
+	grant, err := q.LockTokenGrant(ctx, dbgen.LockTokenGrantParams{TenantID: tenantID, UserID: userID, Provider: provider})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errs.ErrTokenVaultGrantNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if !dueForRefresh(grant.ExpiresAt) {
+		return s.decrypt(tenantID, userID, provider, "token-vault-access", grant.AccessTokenCt, grant.AccessTokenNonce)
+	}
+	if grant.RefreshTokenCt == nil {
+		// Expired with no refresh token on file — the caller must reconnect.
+		return "", errs.ErrTokenVaultTokenExpired
+	}
+	refreshToken, err := s.decrypt(tenantID, userID, provider, "token-vault-refresh", grant.RefreshTokenCt, grant.RefreshTokenNonce)
 	if err != nil {
 		return "", err
 	}
@@ -442,7 +540,10 @@ func (s *Service) GetAccessToken(ctx context.Context, tenantID, userID uuid.UUID
 	if tok.RefreshToken == "" {
 		tok.RefreshToken = refreshToken
 	}
-	if err := s.storeGrant(ctx, tenantID, userID, provider, tok); err != nil {
+	if err := s.storeGrant(ctx, q, tenantID, userID, provider, tokenURL, clientID, tok); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return "", err
 	}
 	return tok.AccessToken, nil

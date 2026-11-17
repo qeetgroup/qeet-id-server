@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
@@ -39,6 +40,11 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 	// An address whose organisation requires single sign-on gets its account
 	// from the identity provider.
 	if err := s.refuseCaptured(ctx, in.Email); err != nil {
+		return nil, nil, nil, err
+	}
+	// Nor is one made on a domain an organisation manages: it creates its own
+	// people's accounts.
+	if err := domainverify.CheckNewAccount(ctx, s.pool, uuid.Nil, in.Email); err != nil {
 		return nil, nil, nil, err
 	}
 	// The account belongs to no organisation, so the platform baseline applies.
@@ -143,6 +149,10 @@ func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, emai
 		return nil, nil, errs.ErrNotImplemented
 	}
 	if err := s.refuseCaptured(ctx, email); err != nil {
+		return nil, nil, err
+	}
+	// On a domain another organisation manages, only it creates accounts.
+	if err := domainverify.CheckNewAccount(ctx, s.pool, tenantID, email); err != nil {
 		return nil, nil, err
 	}
 	enabled, err := s.regPolicy.SelfRegistrationEnabled(ctx, tenantID)

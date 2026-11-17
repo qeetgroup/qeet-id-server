@@ -5,11 +5,13 @@ package invite
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -66,5 +68,51 @@ func TestInviteRoleMustBelongToTheTenant(t *testing.T) {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "23503" {
 		t.Errorf("an invitation carrying another tenant's role was stored: %v, want a foreign key violation", err)
+	}
+}
+
+// TestResendingAnInvitationNeedsItsRole checks that resending, and so reviving,
+// an invitation carrying a role is held to the grant check creating it is:
+// someone who may invite but doesn't hold the role's permissions is refused
+// and the invitation stays as it was; one without a role, or a caller holding
+// them, resends.
+func TestResendingAnInvitationNeedsItsRole(t *testing.T) {
+	ctx := dbtest.Context(t)
+	h, _ := newHandler(t)
+	tenant := dbtest.Tenant(t)
+	powerful := dbtest.Role(t, tenant, "user.write", "member.invite")
+	invite := func(role *uuid.UUID) uuid.UUID {
+		t.Helper()
+		iv, _, err := h.Service.Create(ctx, CreateInput{TenantID: tenant, Email: dbtest.Unique("invitee") + "@example.test", RoleID: role}, audit.Actor{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE tenant.invites SET status = 'expired' WHERE id = $1`, iv.ID); err != nil {
+			t.Fatal(err)
+		}
+		return iv.ID
+	}
+	asCaller := func(permissions ...string) http.Handler {
+		caller := dbtest.User(t, tenant)
+		dbtest.Assign(t, caller.ID, tenant, dbtest.Role(t, tenant, permissions...))
+		return dbtest.Serve(dbtest.Principal(caller.ID, tenant), h.MountAuthed)
+	}
+	inviter := asCaller("member.invite")
+
+	withRole := invite(&powerful)
+	if rec := dbtest.Do(t, inviter, http.MethodPost, "/invites/"+withRole.String()+"/resend", nil); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeRBACGrantExceedsCaller) {
+		t.Errorf("resend an invitation to a role above the caller's: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeRBACGrantExceedsCaller)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.invites WHERE id = $1 AND status = 'expired'`, withRole); n != 1 {
+		t.Error("a refused resend revived the invitation")
+	}
+	if rec := dbtest.Do(t, inviter, http.MethodPost, "/invites/"+invite(nil).String()+"/resend", nil); rec.Code != http.StatusOK {
+		t.Errorf("resend an invitation without a role: %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	if rec := dbtest.Do(t, asCaller("user.write", "member.invite"), http.MethodPost, "/invites/"+withRole.String()+"/resend", nil); rec.Code != http.StatusOK {
+		t.Errorf("resend it as a caller holding the role's permissions: %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	if rec := dbtest.Do(t, inviter, http.MethodPost, "/invites/"+uuid.NewString()+"/resend", nil); rec.Code != http.StatusNotFound {
+		t.Errorf("resend an unknown invitation: %d, want 404", rec.Code)
 	}
 }

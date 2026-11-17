@@ -25,10 +25,10 @@ post:
     it in. An address not yet linked is adopted or given an account only on a
     domain the organisation has verified (the most specific verified domain
     decides, 403 saml.email_domain_unverified otherwise), and an account that
-    owns the organisation or holds an admin permission there (user.write,
-    user.delete, user.suspend, user.credentials, session.revoke, member.invite,
-    role.write, group.write, connection.write, policy.write, tenant.write or
-    tenant.delete) is not adopted by its address (403 saml.account_administers):
+    owns the organisation or holds any permission there but the reads
+    tenant.read, user.read, role.read, group.read, connection.read, apikey.read,
+    webhook.read, billing.read, policy.read, audit.read and analytics.read is
+    not adopted by its address (403 saml.account_administers):
     it keeps its own credentials. A new account is created only while the domain
     that manages the address has jit_enabled on; otherwise an address with no
     account is refused with 403 saml.jit_not_allowed and nothing is created.

@@ -48,9 +48,18 @@ post:
     envelope. A refresh is refused with unauthorized_client when the client is
     no longer registered for refresh_token, and with invalid_grant once the
     person is no longer an active member of the client's organisation (its own
-    account, or one holding a role there) or the organisation is suspended; the
+    account, or one holding a role there) or the organisation is suspended. A
+    refresh carries forward only the granted scopes the client still registers
+    (scope in the response says which) and is refused with invalid_scope when
+    none is left. The
     same membership is required when a code, device approval or backchannel
-    request is redeemed. A browser may call it from an origin one of the
+    request is redeemed (a code or backchannel request refused so is spent).
+    A code, device code or backchannel approval is refused with
+    unauthorized_client once its client is no longer registered for that
+    grant, and a backchannel approval also once its client is no longer a
+    confidential one. A backchannel request is spent only together with
+    storing its refresh token, so a failure leaves it for the next poll. A
+    browser may call it from an origin one of the
     applications allows (web_origins), without credentials.
   summary: Token (authorization_code)
   tags:

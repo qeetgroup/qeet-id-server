@@ -19,6 +19,7 @@ const (
 	CodeSocialReturnToInvalid       = "social.return_to_invalid"
 	CodeSocialEmailUnverified       = "social.email_unverified"
 	CodeSocialAccountUnverified     = "social.account_unverified"
+	CodeSocialAccountAdministers    = "social.account_administers"
 	CodeSocialCodeRequired          = "social.code_required"
 	CodeSocialLoginCodeInvalid      = "social.login_code_invalid"
 	CodeSocialLoginCodeUsed         = "social.login_code_used"
@@ -58,6 +59,8 @@ var (
 	ErrSocialEmailUnverified   = New(CodeSocialEmailUnverified, "The sign-in provider did not verify ownership of that email address. Link it from a signed-in account instead.")
 	ErrSocialAccountUnverified = New(CodeSocialAccountUnverified,
 		"An account already uses this email address, but the address hasn't been verified. Verify it, or reset the password from the link we email you, then sign in with this provider.")
+	ErrSocialAccountAdministers = New(CodeSocialAccountAdministers,
+		"This account administers the organization, so a sign-in provider can't take it over by its email address. Sign in with the account's own password or passkey, then connect the provider from your account.")
 	ErrSocialCodeRequired     = New(CodeSocialCodeRequired, "A sign-in code is required.")
 	ErrSocialLoginCodeInvalid = New(CodeSocialLoginCodeInvalid, "That sign-in code is invalid. Please start again.").AsRetryable()
 	ErrSocialLoginCodeUsed    = New(CodeSocialLoginCodeUsed, "That sign-in code has already been used. Please start again.")

@@ -93,6 +93,7 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Princ
 		Description: in.Description,
 		SecretHash:  hash,
 		Scopes:      in.Scopes,
+		CreatedBy:   httpx.PrincipalUserID(ctx),
 	})
 	if err != nil {
 		return nil, "", err
@@ -172,9 +173,16 @@ func (s *Service) IssueClientCredentials(ctx context.Context, clientID, clientSe
 		return nil, err
 	}
 	// The secret first, so only its holder learns that it is disabled.
-	ok, rehash := password.VerifySecret(row.SecretHash, clientSecret)
+	ok, rehash, err := password.VerifySecret(ctx, row.SecretHash, clientSecret)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
-		if !previousSecretWorks(row.PreviousSecretHash, row.PreviousSecretExpiresAt, clientSecret) {
+		previous, err := previousSecretWorks(ctx, row.PreviousSecretHash, row.PreviousSecretExpiresAt, clientSecret)
+		if err != nil {
+			return nil, err
+		}
+		if !previous {
 			return nil, errs.ErrPrincipalInvalidCredentials
 		}
 		rehash = false

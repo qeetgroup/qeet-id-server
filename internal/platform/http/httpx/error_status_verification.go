@@ -10,6 +10,9 @@ import (
 // an exhausted guess budget is 429, not a validation failure.
 func init() {
 	registerStatuses(map[string]int{
-		errs.CodeVerifyAttemptsExceeded: http.StatusTooManyRequests,
+		errs.CodeVerifyAttemptsExceeded:    http.StatusTooManyRequests,
+		errs.CodeVerifyCodeSendLimited:     http.StatusTooManyRequests,
+		errs.CodeVerifyDeliveryUnavailable: http.StatusServiceUnavailable,
+		errs.CodeVerifyEmailManaged:        http.StatusForbidden,
 	})
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
@@ -328,7 +329,7 @@ func (service *Service) Events(ctx context.Context, tenantID uuid.UUID, filter e
 	if tenantID == uuid.Nil || service.pool == nil {
 		return page, errs.ErrUnauthorized
 	}
-	arguments := []any{tenantID, filter.Since, filter.ConnectionID, filter.Status, filter.Search}
+	arguments := []any{tenantID, filter.Since, filter.ConnectionID, filter.Status, postgres.EscapeLike(filter.Search)}
 	err := service.pool.QueryRow(ctx, `SELECT count(*),count(*) FILTER(WHERE status='success'),count(*) FILTER(WHERE status='warning'),count(*) FILTER(WHERE status='failed'),round(avg(duration_ms))::bigint FROM tenant.directory_events WHERE `+eventWhere, arguments...).Scan(&page.Summary.Total, &page.Summary.Successful, &page.Summary.Warnings, &page.Summary.Failed, &page.Summary.AverageDurationMS)
 	if err != nil {
 		return page, err

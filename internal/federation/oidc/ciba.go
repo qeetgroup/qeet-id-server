@@ -40,6 +40,13 @@ type Notifier interface {
 // SetNotifier wires the CIBA consent-prompt notifier.
 func (s *Service) SetNotifier(n Notifier) { s.notifier = n }
 
+// SetSessionFactors sets the check of what second factor an organisation
+// still requires of a person's session (auth.Service.SessionFactorShortfall),
+// which approving a backchannel request in its name must meet. Nil checks none.
+func (s *Service) SetSessionFactors(check func(ctx context.Context, sessionID, userID, tenantID uuid.UUID) error) {
+	s.sessionFactors = check
+}
+
 // CIBAAuthResponse is the OpenID CIBA §7 backchannel-authentication response.
 type CIBAAuthResponse struct {
 	AuthReqID string `json:"auth_req_id"`
@@ -167,9 +174,24 @@ func (s *Service) ListPendingCIBA(ctx context.Context, userID uuid.UUID) ([]CIBA
 }
 
 // DecideBackchannel records userID's approval or denial of one of their own
-// pending CIBA requests, identified by its ID rather than auth_req_id. It
-// rejects any request that isn't userID's.
-func (s *Service) DecideBackchannel(ctx context.Context, userID, id uuid.UUID, approve bool) error {
+// pending CIBA requests, identified by its ID rather than auth_req_id, made
+// through their session sessionID from ip. It rejects any request that isn't
+// userID's.
+func (s *Service) DecideBackchannel(ctx context.Context, userID, sessionID, id uuid.UUID, approve bool, ip string) error {
+	// Approving is the person's sign-in to the application, so the session it
+	// is made through must meet the second factor the request's organisation
+	// requires. That check reads the pool, so it comes before the transaction.
+	if approve && s.sessionFactors != nil {
+		tenantID, err := s.q.CIBARequestTenant(ctx, dbgen.CIBARequestTenantParams{ID: id, UserID: userID})
+		if err == nil {
+			err = s.sessionFactors(ctx, sessionID, userID, tenantID)
+		} else if errors.Is(err, pgx.ErrNoRows) {
+			err = nil // refused below, as for any request that isn't theirs
+		}
+		if err != nil {
+			return err
+		}
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -200,6 +222,24 @@ func (s *Service) DecideBackchannel(ctx context.Context, userID, id uuid.UUID, a
 		}
 		return tx.Commit(ctx)
 	}
+	// As at device approval: an active member of the request's active
+	// organisation, from an address its rules allow. Nothing else is written
+	// yet, so committing keeps only the refusal's record.
+	live, err := s.activeTenantPrincipal(ctx, q, userID, row.TenantID)
+	if err != nil {
+		return err
+	}
+	if !live {
+		return errs.ErrOIDCUserTenantMismatch
+	}
+	if err := s.checkAddressTx(ctx, tx, row.TenantID, userID, ip, "ciba_approval"); err != nil {
+		if errors.Is(err, errs.ErrAuthAddressNotAllowed) {
+			if cerr := tx.Commit(ctx); cerr != nil {
+				return cerr
+			}
+		}
+		return err
+	}
 	if err := q.ApproveCIBARequest(ctx, id); err != nil {
 		return err
 	}
@@ -211,8 +251,17 @@ func (s *Service) DecideBackchannel(ctx context.Context, userID, id uuid.UUID, a
 // authentication (CIBA §10.1), pending/denied/expired/slow_down handling and
 // one-time consumption.
 func (s *Service) BackchannelToken(ctx context.Context, clientID, clientSecret, rawAuthReqID string) (*TokenResponse, error) {
-	if _, err := s.authenticateClient(ctx, clientID, clientSecret); err != nil {
+	client, err := s.authenticateClient(ctx, clientID, clientSecret)
+	if err != nil {
 		return nil, err
+	}
+	// A client no longer confidential, or no longer registered for CIBA,
+	// redeems no approval it was given, as it could start none.
+	if err := s.requireConfidential(ctx, client); err != nil {
+		return nil, err
+	}
+	if !contains(client.GrantTypes, grantTypeCIBA) {
+		return nil, errs.ErrOIDCGrantTypeNotAllowed
 	}
 	if rawAuthReqID == "" {
 		return nil, oauthErr("invalid_request", "auth_req_id required")
@@ -281,30 +330,47 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, clientSecret, 
 	if err := q.ConsumeCIBARequest(ctx, cr.ID); err != nil {
 		return nil, err
 	}
-	// An approval given before the account was suspended or deleted issues
-	// nothing; the request is spent either way.
+	// An approval given before the account was suspended or deleted, or before
+	// its person left the application's organisation, issues nothing; the
+	// request is spent either way.
 	active, err := accountActive(ctx, q, cr.UserID)
 	if err != nil {
 		return nil, err
 	}
-	if !active {
+	member, err := s.activeTenantPrincipal(ctx, q, cr.UserID, cr.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	if !active || !member {
 		if err := tx.Commit(ctx); err != nil {
 			return nil, err
 		}
-		return nil, oauthErr("invalid_grant", "account_suspended")
+		if !active {
+			return nil, oauthErr("invalid_grant", "account_suspended")
+		}
+		return nil, errs.ErrOIDCUserTenantMismatch
 	}
 	registered, err := q.GetClientTenantAndScopes(ctx, clientID)
 	if err != nil {
 		return nil, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
 	userID := cr.UserID
 	tenantID := cr.TenantID
 	scopes := cr.Scopes
+	// The refresh token is stored with the spent request, so a failure to
+	// store it leaves the request for a later poll.
+	refresh := ""
+	if issuesRefreshToken(registered.Scopes, registered.GrantTypes, scopes) {
+		refresh, err = s.issueRefreshToken(ctx, q, clientID, userID, tenantID, scopes, "", pgtype.UUID{}, "", pgtype.Timestamptz{})
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	access, _, err := s.issuer.IssueClientAccess(tokens.ClientAccess{
-		UserID: userID, TenantID: tenantID, SessionID: uuid.New(), Scopes: strings.Join(scopes, " "), ClientID: clientID,
+		UserID: userID, TenantID: tenantID, Scopes: strings.Join(scopes, " "), ClientID: clientID,
 	})
 	if err != nil {
 		return nil, err
@@ -316,13 +382,6 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, clientSecret, 
 			return nil, err
 		}
 		idTok = t
-	}
-	refresh := ""
-	if issuesRefreshToken(registered.Scopes, registered.GrantTypes, scopes) {
-		refresh, err = s.issueRefreshToken(ctx, s.q, clientID, userID, tenantID, scopes, "", pgtype.UUID{}, "", pgtype.Timestamptz{})
-		if err != nil {
-			return nil, err
-		}
 	}
 	return &TokenResponse{
 		AccessToken:  access,
@@ -398,7 +457,11 @@ func (h *Handler) backchannelDecision(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.DecideBackchannel(r.Context(), userID, in.ID, in.Approve); err != nil {
+	var sessionID uuid.UUID
+	if p := httpx.PrincipalFromCtx(r.Context()); p != nil && p.SessionID != nil {
+		sessionID = *p.SessionID
+	}
+	if err := h.Service.DecideBackchannel(r.Context(), userID, sessionID, in.ID, in.Approve, httpx.ClientIP(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

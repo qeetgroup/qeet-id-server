@@ -107,7 +107,9 @@ DELETE FROM rbac.role_permissions WHERE role_id = @role_id AND permission_id = @
 -- an admin-created account has no membership row until its first role, and
 -- that first assignment must still work. valid is false for a missing,
 -- deleted or foreign user and for a missing or foreign role alike, and true
--- for a role the user already holds (the insert is then a no-op).
+-- for a role the user already holds (the insert is then a no-op). Giving a
+-- role someone holds for a time through an access request gives it for good:
+-- the request's end is cleared, so its sweep leaves the role.
 -- name: AssignUserRole :one
 WITH allowed AS (
     SELECT (
@@ -133,6 +135,12 @@ ins AS (
     FROM allowed
     WHERE allowed.ok
     ON CONFLICT DO NOTHING
+),
+for_good AS (
+    UPDATE rbac.access_requests SET access_ends_at = NULL
+    WHERE tenant_id = @tenant_id AND requester_id = @user_id AND role_id = @role_id
+      AND status = 'approved' AND granted AND ended_at IS NULL AND access_ends_at IS NOT NULL
+      AND (SELECT ok FROM allowed)
 )
 SELECT allowed.ok AS valid FROM allowed;
 
@@ -141,6 +149,13 @@ SELECT allowed.ok AS valid FROM allowed;
 -- tenant's role must stay removable by the tenant it was written into.
 -- name: UnassignUserRole :exec
 DELETE FROM rbac.user_roles WHERE user_id = @user_id AND tenant_id = @tenant_id AND role_id = @role_id;
+
+-- LeftTenant reports whether the user is no longer a member of the tenant: it
+-- isn't their home and they hold no role there.
+-- name: LeftTenant :one
+SELECT (NOT EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = @user_id::uuid AND ur.tenant_id = @tenant_id::uuid)
+    AND NOT EXISTS (SELECT 1 FROM "user".users u WHERE u.id = @user_id::uuid AND u.tenant_id = @tenant_id::uuid))::bool
+    AS left_tenant;
 
 -- name: CheckPermission :one
 SELECT EXISTS (

@@ -13,8 +13,10 @@ get:
     sessions are unaffected. Advertised as end_session_endpoint in discovery; a
     POST variant exists at the same path for relying parties that submit the
     request as a form. A sign-out must carry an id_token_hint (one of our ID
-    tokens, expired or not, issued to client_id and naming this session and
-    person; another session's is refused with 400 invalid_request) or a
+    tokens, expired or not, issued to a registered application, client_id when
+    given, for this session's person and naming this session when it names
+    one; another session's, and any other token this server signs, such as an
+    access token or a sign-in ticket, is refused with 400 invalid_request) or a
     logout_confirmation ticket: without either, the browser is sent to the
     hosted login's /sign-out page to confirm, with a ticket that brings it back,
     so a plain link or image can't sign anyone out. Every application that holds

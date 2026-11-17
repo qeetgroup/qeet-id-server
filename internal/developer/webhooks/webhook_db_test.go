@@ -18,9 +18,11 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/requestsig"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
@@ -39,18 +41,21 @@ func TestWebhooksStayInTheirTenant(t *testing.T) {
 	svc := NewService(pool)
 	svc.SetCipher(box)
 	tenantA, tenantB := dbtest.Tenant(t), dbtest.Tenant(t)
-	adminB := dbtest.User(t, tenantB, tenantB)
+	adminA, adminB := dbtest.User(t, tenantA, tenantA), dbtest.User(t, tenantB, tenantB)
 
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	subA, err := svc.Create(ctx, tx, CreateInput{TenantID: tenantA, URL: "https://hooks.example.test/a", Events: []string{"user.created"}})
+	subA, err := svc.Create(httpx.WithPrincipal(ctx, dbtest.Principal(adminA.ID, tenantA)), tx, CreateInput{TenantID: tenantA, URL: "https://hooks.example.test/a", Events: []string{"user.created"}})
 	if err != nil {
 		t.Fatalf("create subscription in A: %v", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit: %v", err)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.webhook_subscriptions WHERE id = $1 AND tenant_id = $2 AND created_by = $3`, subA.ID, tenantA, adminA.ID); n != 1 {
+		t.Error("the subscription doesn't record who created it")
 	}
 	if err := svc.Enqueue(ctx, tenantA, "user.created", map[string]any{"n": 1}); err != nil {
 		t.Fatalf("enqueue in A: %v", err)
@@ -256,7 +261,7 @@ func TestOutboxEventsReachWebhooksOnce(t *testing.T) {
 		t.Errorf("delivered %s; want the event's id, type, organisation, time and data", sent.body)
 	}
 	timestamp := sent.header.Get("X-Qeet-Timestamp")
-	if sent.header.Get("X-Qeet-Signature") != "sha256="+sign(sub.Secret, timestamp, sent.body) {
+	if sent.header.Get("X-Qeet-Signature") != "sha256="+requestsig.Sign(sub.Secret, timestamp, sent.body) {
 		t.Error("the signature doesn't verify with the subscription's secret over the timestamp and body")
 	}
 
@@ -418,7 +423,7 @@ func TestRotatedSecretOverlaps(t *testing.T) {
 	dispatch(t, svc, groupCreated(tenant))
 	got, _ := ep.last("group.created")
 	timestamp := got.header.Get("X-Qeet-Timestamp")
-	want := "sha256=" + sign(rotated.Secret, timestamp, got.body) + ",sha256=" + sign(sub.Secret, timestamp, got.body)
+	want := "sha256=" + requestsig.Sign(rotated.Secret, timestamp, got.body) + ",sha256=" + requestsig.Sign(sub.Secret, timestamp, got.body)
 	if got.header.Get("X-Qeet-Signature") != want {
 		t.Errorf("during the overlap: signature %q; want the new secret's then the old one's", got.header.Get("X-Qeet-Signature"))
 	}
@@ -428,7 +433,7 @@ func TestRotatedSecretOverlaps(t *testing.T) {
 	}
 	dispatch(t, svc, groupCreated(tenant))
 	got, _ = ep.last("group.created")
-	if want := "sha256=" + sign(rotated.Secret, got.header.Get("X-Qeet-Timestamp"), got.body); got.header.Get("X-Qeet-Signature") != want {
+	if want := "sha256=" + requestsig.Sign(rotated.Secret, got.header.Get("X-Qeet-Timestamp"), got.body); got.header.Get("X-Qeet-Signature") != want {
 		t.Errorf("after the overlap: signature %q; want the new secret's alone", got.header.Get("X-Qeet-Signature"))
 	}
 }

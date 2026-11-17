@@ -28,12 +28,12 @@ const (
 
 // previousSecretWorks reports whether secret is the one replaced at the last
 // rotation and its overlap hasn't ended.
-func previousSecretWorks(hash *string, until pgtype.Timestamptz, secret string) bool {
+func previousSecretWorks(ctx context.Context, hash *string, until pgtype.Timestamptz, secret string) (bool, error) {
 	if hash == nil || !until.Valid || !until.Time.After(time.Now()) {
-		return false
+		return false, nil
 	}
-	ok, _ := password.VerifySecret(*hash, secret)
-	return ok
+	ok, _, err := password.VerifySecret(ctx, *hash, secret)
+	return ok, err
 }
 
 // RotateSecret gives one of the tenant's service principals a new secret,
@@ -138,6 +138,12 @@ func (h *Handler) rotateSecret(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	// The new secret carries the credential's scopes, so whoever rotates it
+	// must hold them, as for creating one.
+	if err := h.checkScopes(r, tid, id); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	secret, until, err := h.Service.RotateSecret(r.Context(), tid, id, overlap, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -163,4 +169,26 @@ func (h *Handler) enable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Scopes returns the scopes of service principal id of tenantID, or ErrPrincipalNotFound.
+func (s *Service) Scopes(ctx context.Context, tenantID, id uuid.UUID) ([]string, error) {
+	scopes, err := s.q.ServicePrincipalScopes(ctx, dbgen.ServicePrincipalScopesParams{ID: id, TenantID: tenantID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrPrincipalNotFound
+	}
+	return scopes, err
+}
+
+// checkScopes refuses the caller taking over credential id's scopes in
+// tenantID (GrantCheck); without the check it refuses every caller.
+func (h *Handler) checkScopes(r *http.Request, tenantID, id uuid.UUID) error {
+	if h.GrantCheck == nil {
+		return errs.ErrNotImplemented
+	}
+	scopes, err := h.Service.Scopes(r.Context(), tenantID, id)
+	if err != nil {
+		return err
+	}
+	return h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, scopes)
 }

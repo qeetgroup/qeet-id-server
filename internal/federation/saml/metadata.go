@@ -564,6 +564,14 @@ func (h *Handler) applyMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	metadataURL, metadataXML := strings.TrimSpace(body.MetadataURL), strings.TrimSpace(body.MetadataXML)
+	// Metadata from anywhere but the connection's own URL changes what it
+	// trusts; a refresh from that URL is the IdP's own rollover.
+	if metadataXML != "" || (metadataURL != "" && (conn.MetadataURL == nil || metadataURL != *conn.MetadataURL)) {
+		if err := h.checkTrust(r, tenantID, id); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+	}
 	if metadataURL == "" && metadataXML == "" && conn.MetadataURL != nil {
 		metadataURL = *conn.MetadataURL
 	}

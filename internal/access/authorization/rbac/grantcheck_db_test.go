@@ -212,3 +212,48 @@ func permissionKeys(t *testing.T, role uuid.UUID) []string {
 	}
 	return keys
 }
+
+// TestRemovingARoleFromAGroupNeedsTheRole checks that taking a role off a group
+// is held to the rule for giving it, as taking it off a person is: only an
+// owner takes the owner role off a group, and a role editor takes off no role
+// carrying a permission they lack.
+func TestRemovingARoleFromAGroupNeedsTheRole(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	repo := NewRepository(pool)
+	tenant := dbtest.Tenant(t)
+	editor := dbtest.User(t, tenant)
+	dbtest.Assign(t, editor.ID, tenant, dbtest.Role(t, tenant, "role.write", "group.read"))
+	var ownerRole, group uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO tenant.groups (tenant_id, name) VALUES ($1, 'Owners') RETURNING id`, tenant).Scan(&group); err != nil {
+		t.Fatal(err)
+	}
+	powerful, held := dbtest.Role(t, tenant, "user.write"), dbtest.Role(t, tenant, "group.read")
+	for _, role := range []uuid.UUID{ownerRole, powerful, held} {
+		if _, err := pool.Exec(ctx, `INSERT INTO rbac.group_roles (tenant_id, group_id, role_id) VALUES ($1, $2, $3)`, tenant, group, role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := dbtest.Serve(dbtest.Principal(editor.ID, tenant),
+		(&Handler{Repo: repo, Service: NewService(repo), Validate: validator.New(validator.WithRequiredStructEnabled())}).Mount)
+	unassign := func(role uuid.UUID) (int, string) {
+		rec := dbtest.Do(t, h, http.MethodDelete, "/tenants/"+tenant.String()+"/groups/"+group.String()+"/roles/"+role.String(), nil)
+		return rec.Code, rec.Body.String()
+	}
+
+	if status, body := unassign(ownerRole); status != http.StatusForbidden || !strings.Contains(body, errs.CodeRBACOwnerOnly) {
+		t.Errorf("a role editor takes the owner role off a group: %d %s, want 403 %s", status, body, errs.CodeRBACOwnerOnly)
+	}
+	if status, body := unassign(powerful); status != http.StatusForbidden || !strings.Contains(body, errs.CodeRBACGrantExceedsCaller) {
+		t.Errorf("a role editor takes off a role with user.write: %d %s, want 403 %s", status, body, errs.CodeRBACGrantExceedsCaller)
+	}
+	if status, body := unassign(held); status != http.StatusNoContent {
+		t.Errorf("a role editor takes off a role they hold: %d %s, want 204", status, body)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.group_roles WHERE tenant_id = $1 AND group_id = $2`, tenant, group); n != 2 {
+		t.Errorf("the group holds %d roles, want the 2 the editor couldn't take off", n)
+	}
+}

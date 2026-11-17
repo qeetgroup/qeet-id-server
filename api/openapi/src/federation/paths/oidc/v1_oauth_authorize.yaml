@@ -11,10 +11,12 @@ get:
     carrying an authorization code and state. Exchange that code for tokens at
     the token-code endpoint (authorization_code grant), not at the
     client-credentials token endpoint. The redirect_uri must be one the client
-    registered, character for character, except that an http redirect to a
-    loopback IP literal (such as http://127.0.0.1/cb or http://[::1]/cb) may
-    name any port (RFC 8252 §7.3), as a native application listens on whatever
-    port it is given; localhost is a name, not a literal, and matches exactly.
+    registered, character for character, except that a public (native)
+    client's http redirect to a loopback IP literal (such as
+    http://127.0.0.1/cb or http://[::1]/cb) may name any port (RFC 8252 §7.3),
+    as a native application listens on whatever port it is given; a
+    confidential client's matches exactly, and localhost is a name, not a
+    literal, and matches exactly.
     Otherwise the error is shown here and nothing is sent to that address. The
     code goes to the redirect_uri as requested, port included, and redeems only
     with that same redirect_uri. When consent is needed, the request is stored
@@ -56,8 +58,8 @@ get:
       name: redirect_uri
       required: true
       description: >-
-        A registered redirect URI, matched exactly; on an http loopback IP
-        literal any port matches.
+        A registered redirect URI, matched exactly; for a public client, on an
+        http loopback IP literal any port matches.
       schema:
         type: string
         format: uri

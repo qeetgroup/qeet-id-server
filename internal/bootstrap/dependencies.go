@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -117,12 +118,12 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	userRepo := user.NewRepository(pool)
 	rbacRepo := rbac.NewRepository(pool)
 	rbacService := rbac.NewService(rbacRepo)
-	if err := rbacRepo.SeedBuiltins(rootCtx); err != nil {
-		slog.Warn("rbac seed", "err", err)
-	}
 	billingService := NewBillingService(cfg, pool, tenantRepo)
-	if err := billingService.SeedBuiltins(rootCtx); err != nil {
-		slog.Warn("billing seed", "err", err)
+	if err := seedCatalogues(rootCtx, []namedSeeder{
+		{"permission catalogue", rbacRepo.SeedBuiltins}, {"billing plans", billingService.SeedBuiltins},
+	}); err != nil {
+		slog.Error("start-up refused", "err", err)
+		os.Exit(1)
 	}
 	// entitlementSvc turns a tenant's plan into a capability set (feature flags +
 	// numeric limits). It's the single source of truth read by the entitlements
@@ -136,11 +137,16 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	sender := mail.sender
 	billingService.SetMailer(sender, cfg.AppBaseURL)
 	verifyService := verification.NewService(pool, sender, 10*time.Minute)
+	verifyService.SetPlan(entitlementSvc) // SMS codes only on plans that include them
+	if mail.routed {
+		verifyService.SetDeliveryCheck(mail.transport.Configured) // refuse codes no provider can deliver
+	}
 	recoveryService := recovery.NewService(pool, sender, time.Hour, cfg.AppBaseURL)
 	recoveryService.SetHostedLogin(cfg.LoginBaseURL) // resets requested there link back to it
 	retentionService := retention.NewService(pool)
 	salesService := sales.NewService(pool, sender, cfg.SalesEmail)
 	inviteService := invite.NewService(pool, sender, 14*24*time.Hour, cfg.AppBaseURL)
+	inviteService.SetGrantCheck(rbacRepo.CheckGrantRole) // an invitation's sender must still be able to give its role
 	authService := auth.NewService(pool, userRepo, issuer)
 	authPolicyService := authpolicy.NewService(pool)
 
@@ -189,15 +195,17 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	authService.SetRegistrationPolicy(authPolicyService) // gate hosted signup + the password check (signup, register, change)
 	authService.SetMethodPolicy(authPolicyService)       // password sign-in only where the tenant allows it
 	authService.SetDevicePolicy(authPolicyService)       // gate adaptive MFA (trusted-device skip)
+	// Who an organisation's "second factor for administrators" applies to.
+	authService.SetMemberPermissions(identitylink.MemberPermissions())
 
 	// Sign-in lockout: platform defaults and the bounds a tenant may choose come
 	// from LOGIN_LOCKOUT_* and LOGIN_SPRAY_*; a tenant's own settings live in its
-	// authentication policy.
+	// authentication policy and may only be stricter than the defaults.
 	lockoutDefaults := authpolicy.Lockout{Threshold: cfg.LoginLockoutThreshold, Window: cfg.LoginLockoutWindow, Duration: cfg.LoginLockoutDuration}
 	authPolicyService.SetLockoutLimits(authpolicy.LockoutLimits{
 		Defaults: lockoutDefaults,
-		Min:      authpolicy.Lockout{Threshold: cfg.LoginLockoutThresholdMin, Window: cfg.LoginLockoutWindowMin, Duration: cfg.LoginLockoutDurationMin},
-		Max:      authpolicy.Lockout{Threshold: cfg.LoginLockoutThresholdMax, Window: cfg.LoginLockoutWindowMax, Duration: cfg.LoginLockoutDurationMax},
+		Min:      authpolicy.Lockout{Threshold: cfg.LoginLockoutThresholdMin, Window: cfg.LoginLockoutWindow, Duration: cfg.LoginLockoutDuration},
+		Max:      authpolicy.Lockout{Threshold: cfg.LoginLockoutThreshold, Window: cfg.LoginLockoutWindowMax, Duration: cfg.LoginLockoutDurationMax},
 	})
 	authService.SetLockoutConfig(auth.LockoutConfig{
 		Defaults:          auth.Lockout(lockoutDefaults),
@@ -269,6 +277,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	// can react before access tokens expire.
 	sessionSignals := sessionsignal.New(webhookService.EnqueueTx)
 	authService.SetSessionSignals(sessionSignals)
+	// A guest's last role taken ends their sessions there, announced.
+	rbacService.SetSessionSignals(sessionSignals)
 	authService.SetSessionLifetime(cfg.SessionMaxAge, cfg.SessionIdleTimeout) // session bounds where the organisation sets none
 	verifier.SessionUsed = authService.SessionUsed                            // a session's last use, for its idle timeout and the session list
 	verifier.SessionLive = authService.SessionLive                            // an ended session's access tokens are refused at once
@@ -278,7 +288,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	gdprService := gdpr.NewService(pool, 30*24*time.Hour)
 	gdprService.SetSessionSignals(sessionSignals)
 	auditReader := audit.NewReader(pool)
-	auditVerifier := audit.NewVerifier(pool)
+	auditVerifier := audit.NewVerifier(pool, sharedCipher)
 	evidenceService := gdpr.NewEvidenceService(pool, auditVerifier, cfg.BreachedPasswordCheck)
 	auditAnomalyService := anomaly.NewService(pool)
 	analyticsReader := analytics.NewReader(pool)
@@ -301,6 +311,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Threshold: cfg.ClientAuthLockoutThreshold, Window: cfg.ClientAuthLockoutWindow, Duration: cfg.ClientAuthLockoutDuration,
 	})
 	oidcService.SetNotifier(notificationService) // CIBA async consent prompts
+	// A CIBA approval is a sign-in: the session it comes through meets the organisation's second factor.
+	oidcService.SetSessionFactors(authService.SessionFactorShortfall)
 	rpID, rpDisplayName, rpOrigins := cfg.WebAuthnRP()
 	// UserVerification must be Required: go-webauthn checks the UV flag only on
 	// strict equality, and without it a passkey proves possession alone. Passkey-only
@@ -389,7 +401,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		os.Exit(1)
 	}
 
-	samlHandler := &saml.Handler{Service: samlService, IdP: samlIdP, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev()}
+	samlHandler := &saml.Handler{Service: samlService, IdP: samlIdP, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev(), ActOnCheck: rbacRepo.CheckActOn}
 	adminPortalService := adminportal.NewService(pool, brandingRepo, cfg.LoginBaseURL)
 
 	ldapService := ldap.NewService(pool, authService, outboundPolicy)
@@ -406,6 +418,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	authService.SetSignOutNotifier(oidcService)  // tell applications when someone signs out of the hosted login
 	oidcService.SetLogoutHTTPClient(outboundPolicy)
 	oidcService.SetAddressPolicy(ipAllowService) // address rules: application authorize, device approval and collection
+	// The SAML IdP signs an assertion under the same address rules and second factor.
+	samlIdP.SetSignInRules(ipAllowService, authService)
 
 	// Plan enforcement: inject the entitlement checker into every gated create
 	// path. Numeric limits (seats/apps/api keys/custom roles) use SetPlanLimiter;
@@ -438,10 +452,11 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	// Domain capture: an address on a verified domain with SSO on, in an
 	// organisation with an active SAML or LDAP connection, signs in only there,
 	// except break-glass members and the administrators SSO never adopts.
-	domainVerifyService.SetAdminPermissions(identitylink.AdminPermissions())
+	domainVerifyService.SetMemberPermissions(identitylink.MemberPermissions())
 	authService.SetDomainCapture(domainVerifyService)     // password sign-in, sign-up, hosted registration
 	recoveryService.SetDomainCapture(domainVerifyService) // password reset, magic links
 	passkeyService.SetDomainCapture(domainVerifyService)  // passkey sign-in and sign-up
+	socialService.SetDomainCapture(domainVerifyService)   // social sign-up
 
 	limits := newRateLimits(rootCtx, cfg, pool)
 	recoveryService.SetMagicLinkLimits(limits.magicAddress, limits.magicCaller)
@@ -468,7 +483,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		User: &user.Handler{Repo: userRepo, Validate: v, PasswordPolicy: authPolicyService.ValidateForTenant, MFA: mfaService, SignIns: authService, Signals: sessionSignals, Mailer: sender, ActOnCheck: rbacRepo.CheckActOn,
 			Roles: importRoles{repo: rbacRepo, seats: inviteService}},
 		AuthPolicy:     &authpolicy.Handler{Service: authPolicyService},
-		Auth:           &auth.Handler{Service: authService, Validate: v, CookieSecure: !cfg.IsDev(), Bot: botService, GeoCountryHeader: cfg.GeoCountryHeader},
+		Auth:           &auth.Handler{Service: authService, Validate: v, CookieSecure: !cfg.IsDev(), Bot: botService, GeoCountryHeader: cfg.GeoCountryHeader, ActOnCheck: rbacRepo.CheckActOn},
 		RBAC:           &rbac.Handler{Repo: rbacRepo, Service: rbacService, Validate: v, Decider: decider, Decisions: decisionLog},
 		AccessRequest:  &accessrequest.Handler{Service: accessRequestService, GrantCheck: rbacRepo.CheckGrantRole},
 		DecisionLog:    &decisionlog.Handler{Log: decisionLog},
@@ -484,10 +499,10 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		APIKey:         &apikey.Handler{Service: apikeyService, GrantCheck: rbacRepo.CheckGrantScopes},
 		APIKeyService:  apikeyService,
 		Principal:      &principal.Handler{Service: principalService, GrantCheck: rbacRepo.CheckGrantScopes},
-		MFA:            &mfa.Handler{Service: mfaService, WebAuthn: passkeyService},
+		MFA:            &mfa.Handler{Service: mfaService, WebAuthn: passkeyService, ActOnCheck: rbacRepo.CheckActOn},
 		Webhook:        &webhook.Handler{Service: webhookService},
 		Policy:         &policy.Handler{Repo: policyRepo},
-		GDPR:           &gdpr.Handler{Service: gdprService, Evidence: evidenceService, Reauth: authService},
+		GDPR:           &gdpr.Handler{Service: gdprService, Evidence: evidenceService, Reauth: authService, ActOnCheck: rbacRepo.CheckActOn},
 		Audit:          &audit.Handler{Reader: auditReader, Verifier: auditVerifier},
 		AuditAnomaly:   &anomaly.Handler{Service: auditAnomalyService},
 		CriticalEvents: &critical.Handler{Service: critical.NewService(auditReader, auditAnomalyService)},
@@ -498,8 +513,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		ServiceHealth:  &servicehealth.Handler{Service: serviceHealth},
 		OIDC:           &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Methods: authPolicyService, Policy: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: !cfg.IsDev(), PublicBaseURL: cfg.PublicBaseURL},
 		Passkey:        &passkey.Handler{Service: passkeyService, CookieSecure: !cfg.IsDev()},
-		Social:         &social.Handler{Service: socialService, CookieSecure: !cfg.IsDev(), LoginBaseURL: cfg.LoginBaseURL, PublicBaseURL: cfg.PublicBaseURL},
-		Group: &group.Handler{Service: groupService, GrantCheck: rbacRepo.CheckGrantGroup, ReadsRoles: func(r *http.Request) bool {
+		Social:         &social.Handler{Service: socialService, CookieSecure: !cfg.IsDev(), LoginBaseURL: cfg.LoginBaseURL, PublicBaseURL: cfg.PublicBaseURL, ActOnCheck: rbacRepo.CheckActOn},
+		Group: &group.Handler{Service: groupService, GrantCheck: rbacRepo.CheckGrantGroup, ActOnCheck: rbacRepo.CheckActOn, ReadsRoles: func(r *http.Request) bool {
 			ok, err := rbac.Holds(r.Context(), rbacRepo, httpx.PrincipalFromCtx(r.Context()), "role.read")
 			return err == nil && ok
 		}},
@@ -508,9 +523,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		TokenVault:   &tokenvault.Handler{Service: tokenVaultService, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev()},
 		SAML:         samlHandler,
 		AdminPortal:  &adminportal.Handler{Service: adminPortalService, SAML: samlService, SAMLSignIn: samlHandler, SCIM: scimService, Domains: domainVerifyService, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev()},
-		LDAP:         &ldap.Handler{Service: ldapService, CookieSecure: !cfg.IsDev()},
+		LDAP:         &ldap.Handler{Service: ldapService, CookieSecure: !cfg.IsDev(), ActOnCheck: rbacRepo.CheckActOn},
 		SSOGroups:    &ssosync.Handler{Service: ssosync.NewService(pool), GrantCheck: rbacRepo.CheckGrantGroup},
-		OIDCSSO:      &oidcsso.Handler{Service: oidcSSOService, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev()},
+		OIDCSSO:      &oidcsso.Handler{Service: oidcSSOService, PublicBaseURL: cfg.PublicBaseURL, CookieSecure: !cfg.IsDev(), ActOnCheck: rbacRepo.CheckActOn},
 		Directory:    &directory.Handler{Service: directoryService},
 		IPAllow:      &ipallow.Handler{Service: ipAllowService},
 		Threat:       &threat.Handler{Service: threatService},
@@ -574,9 +589,51 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		{name: "scheduler", run: func(ctx context.Context) {
 			jobs := append(MaintenanceJobs(pool, sessionSignals, sharedCipher, outboundPolicy), BillingJobs(billingService)...)
 			jobs = append(jobs, AccessRequestJobs(accessRequestService)...)
+			jobs = append(jobs, AuditRetentionJobs(pool, billingService, sharedCipher)...)
 			worker.RunScheduled(ctx, pool, jobs, worker.SchedulerTick)
 		}},
 	}
 	RegisterMaintenanceMetrics(pool, sharedCipher)
 	return deps, workers
+}
+
+// namedSeeder seeds one built-in catalogue, named for the error that stops
+// start-up when it can't.
+type namedSeeder struct {
+	name string
+	seed func(ctx context.Context) error
+}
+
+// seedAttempts and seedRetryDelay bound how long start-up waits out a database
+// that fails a seed, as one still starting up does.
+var (
+	seedAttempts   = 5
+	seedRetryDelay = 2 * time.Second
+)
+
+// seedCatalogues seeds each catalogue, trying a failing one up to seedAttempts
+// times, seedRetryDelay apart. One still failing is returned: a server without
+// its permission catalogue or plans would answer every permission check and
+// plan question from an empty one, so it must not start.
+func seedCatalogues(ctx context.Context, seeders []namedSeeder) error {
+	for _, s := range seeders {
+		var err error
+		for attempt := 1; attempt <= seedAttempts; attempt++ {
+			if err = s.seed(ctx); err == nil {
+				break
+			}
+			slog.Warn("seed a built-in catalogue", "catalogue", s.name, "attempt", attempt, "err", err)
+			if attempt < seedAttempts {
+				select {
+				case <-ctx.Done():
+					return fmt.Errorf("seed the %s: %w", s.name, ctx.Err())
+				case <-time.After(seedRetryDelay):
+				}
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("seed the %s: %w", s.name, err)
+		}
+	}
+	return nil
 }

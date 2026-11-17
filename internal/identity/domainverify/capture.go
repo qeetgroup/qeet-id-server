@@ -36,10 +36,10 @@ type OwnerChecker interface {
 // SetOwners sets the owner check break-glass changes need (nil refuses them).
 func (s *Service) SetOwners(o OwnerChecker) { s.owners = o }
 
-// SetAdminPermissions sets the permissions that make a member an
-// administrator single sign-on doesn't adopt by address (identitylink's);
-// owners always count.
-func (s *Service) SetAdminPermissions(keys []string) { s.adminPermissions = keys }
+// SetMemberPermissions sets the permissions a member may hold without being an
+// administrator single sign-on doesn't adopt by address (identitylink's); any
+// other permission, and the owner role, make one.
+func (s *Service) SetMemberPermissions(keys []string) { s.memberPermissions = keys }
 
 // errBreakGlassOwnerOnly refuses a break-glass change by anyone but an owner.
 var errBreakGlassOwnerOnly = errs.ErrRBACOwnerOnly.WithMessage("Only an owner can choose who keeps signing in without single sign-on.")
@@ -58,7 +58,7 @@ func (s *Service) RefuseCaptured(ctx context.Context, email string) error {
 		return err
 	}
 	ex, err := s.q.GetCaptureExemption(ctx, dbgen.GetCaptureExemptionParams{
-		TenantID: managed.TenantID, AdminPermissions: s.adminPermissions, Email: email,
+		TenantID: managed.TenantID, MemberPermissions: s.memberPermissions, Email: email,
 	})
 	if err != nil {
 		return err

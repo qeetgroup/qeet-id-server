@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -32,10 +34,10 @@ func TestResourceIdentifiersBelongToOneOrganisation(t *testing.T) {
 		rec := dbtest.Do(t, h, http.MethodPost, "/tenants/"+tenant.String()+"/oidc/resources", map[string]any{"identifier": identifier, "name": "API"})
 		return rec.Code, rec.Body.String()
 	}
-	if code, body := register(beta, "https://api.shared.example"); code != http.StatusCreated {
+	if code, body := register(beta, "urn:shared-example:api"); code != http.StatusCreated {
 		t.Fatalf("register a free identifier: %d %s", code, body)
 	}
-	if code, body := register(alpha, "https://api.shared.example"); code != http.StatusConflict || !strings.Contains(body, errs.CodeOIDCResourceExists) {
+	if code, body := register(alpha, "urn:shared-example:api"); code != http.StatusConflict || !strings.Contains(body, errs.CodeOIDCResourceExists) {
 		t.Errorf("register another organisation's identifier: %d %s, want 409 %s", code, body, errs.CodeOIDCResourceExists)
 	}
 	for _, identifier := range []string{"https://alpha-bank.example/loans", "https://api.alpha-bank.example"} {
@@ -46,7 +48,74 @@ func TestResourceIdentifiersBelongToOneOrganisation(t *testing.T) {
 	if code, body := register(alpha, "https://api.alpha-bank.example"); code != http.StatusCreated {
 		t.Errorf("register on your own verified domain: %d %s, want 201", code, body)
 	}
+	verifyDomain(t, beta, "notalpha-bank.example")
 	if code, body := register(beta, "https://notalpha-bank.example"); code != http.StatusCreated {
 		t.Errorf("register on a domain that merely ends the same way: %d %s, want 201", code, body)
+	}
+}
+
+// verifyDomain records domain as verified by tenant.
+func verifyDomain(t *testing.T, tenant uuid.UUID, domain string) {
+	t.Helper()
+	if _, err := dbtest.Pool(t).Exec(context.Background(), `
+		INSERT INTO tenant.domains (tenant_id, domain, verification_token, verified_at) VALUES ($1, $2, 'token', NOW())`, tenant, domain); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestResourceCannotUseThePlatformAudience checks that no organisation may
+// register the platform's own token audience or issuer, or any identifier on
+// the API's public host, even one on a domain it has verified: its tokens
+// would carry an audience the platform's own services accept.
+func TestResourceCannotUseThePlatformAudience(t *testing.T) {
+	key, err := tokens.GenerateES256KeyPEM()
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer, err := tokens.NewIssuer(key, "https://issuer.platform-qeet.example", "https://audience.platform-qeet.example/v1", 15*time.Minute, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(dbtest.Pool(t), issuer)
+	tenant := dbtest.Tenant(t)
+	verifyDomain(t, tenant, "platform-qeet.example")
+	h := dbtest.Serve(dbtest.Principal(dbtest.User(t, tenant, tenant).ID, tenant),
+		(&Handler{Service: svc, PublicBaseURL: "https://api.platform-qeet.example"}).Mount)
+	for _, identifier := range []string{
+		"https://audience.platform-qeet.example/v1",
+		"https://issuer.platform-qeet.example",
+		"https://issuer.platform-qeet.example/orders",
+		"https://API.platform-qeet.example/orders",
+	} {
+		rec := dbtest.Do(t, h, http.MethodPost, "/tenants/"+tenant.String()+"/oidc/resources", map[string]any{"identifier": identifier, "name": "API"})
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), errs.CodeOIDCResourceReserved) {
+			t.Errorf("register %s: %d %s, want 409 %s", identifier, rec.Code, rec.Body.String(), errs.CodeOIDCResourceReserved)
+		}
+	}
+	if rec := dbtest.Do(t, h, http.MethodPost, "/tenants/"+tenant.String()+"/oidc/resources", map[string]any{"identifier": "https://orders.platform-qeet.example", "name": "API"}); rec.Code != http.StatusCreated {
+		t.Errorf("register another host on the organisation's domain: %d %s, want 201", rec.Code, rec.Body.String())
+	}
+}
+
+// TestResourceHostMustBeVerifiedByTheOrganisation checks that a resource on a
+// host is registered only by an organisation that has verified that host or a
+// domain above it, so nobody gets tokens for a host before its owner proves
+// it; an identifier without a host, such as a URN, needs no domain.
+func TestResourceHostMustBeVerifiedByTheOrganisation(t *testing.T) {
+	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	tenant := dbtest.Tenant(t)
+	h := dbtest.Serve(dbtest.Principal(dbtest.User(t, tenant, tenant).ID, tenant), (&Handler{Service: svc}).Mount)
+	register := func(identifier string) (int, string) {
+		rec := dbtest.Do(t, h, http.MethodPost, "/tenants/"+tenant.String()+"/oidc/resources", map[string]any{"identifier": identifier, "name": "API"})
+		return rec.Code, rec.Body.String()
+	}
+	if code, body := register("https://api.unproved-host.example"); code != http.StatusForbidden || !strings.Contains(body, errs.CodeOIDCResourceDomainUnverified) {
+		t.Errorf("register on a host nobody verified: %d %s, want 403 %s", code, body, errs.CodeOIDCResourceDomainUnverified)
+	}
+	verifyDomain(t, tenant, "unproved-host.example")
+	for _, identifier := range []string{"https://api.unproved-host.example", "https://unproved-host.example/v2", "urn:unproved-host:orders"} {
+		if code, body := register(identifier); code != http.StatusCreated {
+			t.Errorf("register %s once its domain is verified: %d %s, want 201", identifier, code, body)
+		}
 	}
 }

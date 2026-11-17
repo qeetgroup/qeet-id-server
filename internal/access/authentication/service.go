@@ -30,6 +30,10 @@ type Service struct {
 	// mfa gates login on a second factor (nil = MFA-at-login off). Set via
 	// SetMFA; kept as an interface so package auth doesn't import package mfa.
 	mfa MFAEnroller
+	// memberPermissions are all a member may hold without counting as an
+	// administrator for an organisation's admin_only second-factor requirement
+	// (nil: any permission counts). Set via SetMemberPermissions.
+	memberPermissions []string
 	// regPolicy gates hosted self-registration and is the password check every
 	// password this service sets goes through (nil = self-registration off, and
 	// no password can be set). Set via SetRegistrationPolicy; an interface so

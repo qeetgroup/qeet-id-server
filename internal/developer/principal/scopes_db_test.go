@@ -36,4 +36,7 @@ func TestServicePrincipalsCarryOnlyTheCreatorsAuthority(t *testing.T) {
 	if n := dbtest.Count(t, `SELECT count(*) FROM auth.service_principals WHERE tenant_id = $1`, tenant); n != 1 {
 		t.Errorf("%d credentials stored, want only the permitted one", n)
 	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.service_principals WHERE tenant_id = $1 AND created_by = $2`, tenant, developer.ID); n != 1 {
+		t.Error("the credential doesn't record who created it")
+	}
 }

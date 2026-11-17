@@ -455,9 +455,16 @@ func (s *Service) IssueToken(ctx context.Context, agentID, secret string) (*Toke
 		return nil, err
 	}
 	// The secret first, so only its holder learns the agent's status.
-	ok, rehash := password.VerifySecret(row.SecretHash, secret)
+	ok, rehash, err := password.VerifySecret(ctx, row.SecretHash, secret)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
-		if !previousSecretWorks(row.PreviousSecretHash, row.PreviousSecretExpiresAt, secret) {
+		previous, err := previousSecretWorks(ctx, row.PreviousSecretHash, row.PreviousSecretExpiresAt, secret)
+		if err != nil {
+			return nil, err
+		}
+		if !previous {
 			return nil, errs.ErrAgentTokenInvalid
 		}
 		rehash = false

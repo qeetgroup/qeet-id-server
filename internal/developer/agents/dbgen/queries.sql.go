@@ -13,6 +13,23 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const agentScopes = `-- name: AgentScopes :one
+SELECT scopes FROM auth.agents WHERE id = $1 AND tenant_id = $2 AND status <> 'decommissioned'
+`
+
+type AgentScopesParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+// AgentScopes returns the scopes of one of the tenant's agents still in service.
+func (q *Queries) AgentScopes(ctx context.Context, arg AgentScopesParams) ([]string, error) {
+	row := q.db.QueryRow(ctx, agentScopes, arg.ID, arg.TenantID)
+	var scopes []string
+	err := row.Scan(&scopes)
+	return scopes, err
+}
+
 const createAgent = `-- name: CreateAgent :one
 INSERT INTO auth.agents (tenant_id, name, secret_hash, scopes, token_ttl_seconds, sponsor_user_id)
 VALUES ($1, $2, $3, $4, $5, $6)
@@ -92,8 +109,10 @@ func (q *Queries) DeleteAgent(ctx context.Context, arg DeleteAgentParams) (int64
 }
 
 const getAgentForToken = `-- name: GetAgentForToken :one
-SELECT tenant_id, secret_hash, scopes, token_ttl_seconds, status, previous_secret_hash, previous_secret_expires_at
-FROM auth.agents WHERE id = $1
+SELECT a.tenant_id, a.secret_hash, a.scopes, a.token_ttl_seconds, a.status, a.previous_secret_hash, a.previous_secret_expires_at
+FROM auth.agents a
+JOIN tenant.tenants t ON t.id = a.tenant_id AND t.status = 'active' AND t.deleted_at IS NULL
+WHERE a.id = $1
 `
 
 type GetAgentForTokenRow struct {
@@ -106,6 +125,7 @@ type GetAgentForTokenRow struct {
 	PreviousSecretExpiresAt pgtype.Timestamptz
 }
 
+// GetAgentForToken finds no agent of a suspended or deleted organisation.
 func (q *Queries) GetAgentForToken(ctx context.Context, id uuid.UUID) (GetAgentForTokenRow, error) {
 	row := q.db.QueryRow(ctx, getAgentForToken, id)
 	var i GetAgentForTokenRow
@@ -139,12 +159,15 @@ func (q *Queries) GetAgentStatus(ctx context.Context, arg GetAgentStatusParams) 
 
 const getAgentStatusByID = `-- name: GetAgentStatusByID :one
 
-SELECT status FROM auth.agents WHERE id = $1
+SELECT a.status FROM auth.agents a
+JOIN tenant.tenants t ON t.id = a.tenant_id AND t.status = 'active' AND t.deleted_at IS NULL
+WHERE a.id = $1
 `
 
 // Queries for the agents domain.
 // Dynamic SQL in transition() (disabled_at = NOW() vs NULL for suspend/resume)
 // is handled as two separate static queries below.
+// GetAgentStatusByID finds no agent of a suspended or deleted organisation.
 func (q *Queries) GetAgentStatusByID(ctx context.Context, id uuid.UUID) (string, error) {
 	row := q.db.QueryRow(ctx, getAgentStatusByID, id)
 	var status string

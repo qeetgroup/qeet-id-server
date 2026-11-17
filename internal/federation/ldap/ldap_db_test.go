@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -459,5 +461,52 @@ func TestLoginProvisionsOnlyWithJIT(t *testing.T) {
 	res, err := svc.Login(ctx, connID, "bob", "bob-secret", "192.0.2.23", "test")
 	if err != nil || res.Pair == nil || dbtest.Count(t, `SELECT count(*) FROM "user".users WHERE id = $1 AND tenant_id = $2 AND email = $3`, res.Pair.UserID, tenant, newcomer) != 1 {
 		t.Errorf("a newcomer while the domain has JIT on: %+v, %v; want an account in the organisation", res, err)
+	}
+}
+
+// TestLDAPTrustChangeMustOutrankLinkedAdministrators checks that pointing a
+// directory connection an owner is linked to at another server, or at other
+// entries of its directory, is refused to someone who can change connections
+// but doesn't outrank the owner, as it could then sign in as them, while
+// renaming it isn't.
+func TestLDAPTrustChangeMustOutrankLinkedAdministrators(t *testing.T) {
+	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
+	tenant := dbtest.Tenant(t)
+	h := &Handler{Service: directoryService(t), ActOnCheck: rbac.NewRepository(pool).CheckActOn}
+	var ownerRole uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+		t.Fatal(err)
+	}
+	owner, editor := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
+	dbtest.Assign(t, owner.ID, tenant, ownerRole)
+	dbtest.Assign(t, editor.ID, tenant, dbtest.Role(t, tenant, "connection.write", "connection.read"))
+	base := "/tenants/" + tenant.String() + "/ldap"
+	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(owner.ID, tenant), h.Mount), http.MethodPost, base, map[string]any{
+		"name": "Directory", "server_url": "ldap://directory.example.test", "bind_dn": "cn=service,dc=example,dc=test",
+		"bind_password": "service-secret", "base_dn": "dc=example,dc=test", "status": "active",
+	})
+	var conn Connection
+	dbtest.Decode(t, rec, &conn)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, connection_id, subject) VALUES ($1, $2, 'ldap', $3, 'uid=owner')`,
+		owner.ID, tenant, conn.ID); err != nil {
+		t.Fatal(err)
+	}
+	asEditor := dbtest.Serve(dbtest.Principal(editor.ID, tenant), h.Mount)
+
+	for name, body := range map[string]map[string]any{
+		"server":      {"server_url": "ldap://directory.attacker.example"},
+		"base DN":     {"base_dn": "ou=people,dc=example,dc=test"},
+		"user filter": {"user_filter": "(mail=%s)"},
+	} {
+		if rec := dbtest.Do(t, asEditor, http.MethodPatch, base+"/"+conn.ID.String(), body); rec.Code != http.StatusForbidden ||
+			!strings.Contains(rec.Body.String(), errs.CodeRBACTrustChangeOutranks) {
+			t.Errorf("an editor changes the %s of a connection an owner is linked to: %d %s, want 403 %s", name, rec.Code, rec.Body.String(), errs.CodeRBACTrustChangeOutranks)
+		}
+	}
+	if rec := dbtest.Do(t, asEditor, http.MethodPatch, base+"/"+conn.ID.String(), map[string]any{"name": "Directory (EU)"}); rec.Code != http.StatusOK {
+		t.Errorf("an editor renames it: %d %s, want 200", rec.Code, rec.Body.String())
 	}
 }

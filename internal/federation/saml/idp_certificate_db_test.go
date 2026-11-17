@@ -245,6 +245,40 @@ func TestSignedRequestsAreRequiredWhenAsked(t *testing.T) {
 	}
 }
 
+// TestRedirectSignatureCoversTheParsedRequest checks that a signed
+// Redirect-binding request is answered only when the SAMLRequest read is the
+// one signed: a second SAMLRequest beside it, under a percent-encoded name or
+// the same one, or any other signed parameter given twice, is refused.
+func TestRedirectSignatureCoversTheParsedRequest(t *testing.T) {
+	s := newIdPSide(t)
+	tenant := dbtest.Tenant(t)
+	cookie := s.signIn(dbtest.User(t, tenant, tenant).ID)
+	keys := newSPKeys(t)
+	sp, err := createSP(t, s.idp, tenant, CreateSPInput{Name: "App", EntityID: "https://signed.example.test/sp",
+		ACSURL: "https://signed.example.test/acs", Status: "active", Certificate: keys.certPEM, RequireSignedRequests: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sso := "/saml/idp/" + tenant.String() + "/sso?"
+	signed := signedRedirectQuery(t, keys.signer.key, sp.EntityID, "_signed", "back")
+	forged := strings.TrimPrefix(authnRequestTo(sp.EntityID, "_forged", ""), "SAMLRequest=")
+	for name, query := range map[string]string{
+		"a forged request under an encoded name before the signed one": "SAML%52equest=" + forged + "&" + signed,
+		"a forged request under an encoded name after the signed one":  signed + "&SAML%52equest=" + forged,
+		"a forged request under the same name after the signed one":    signed + "&SAMLRequest=" + forged,
+		"the relay state given again under an encoded name":            "Relay%53tate=elsewhere&" + signed,
+		"the signature algorithm given twice":                          signed + "&SigAlg=x",
+	} {
+		rec := idpGet(t, s.router, sso+query, cookie)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeSAMLRequestSignatureInvalid) {
+			t.Errorf("%s: %d %s, want 403 %s", name, rec.Code, rec.Body.String(), errs.CodeSAMLRequestSignatureInvalid)
+		}
+	}
+	if acs, _ := postedTo(t, idpGet(t, s.router, sso+signed, cookie)); acs != sp.ACSURL {
+		t.Errorf("the signed request alone posted to %q", acs)
+	}
+}
+
 // TestAssertionsAreEncryptedWhenAsked checks that an app set to receive
 // encrypted assertions gets the signed assertion only encrypted to its key,
 // which it decrypts and verifies with the IdP's published certificate, which

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -228,7 +229,11 @@ func (s *Service) StartPasswordReset(ctx context.Context, email string, from Res
 		}); err != nil {
 			return err
 		}
-		s.recordRequest(ctx, "auth.password_reset_requested", userID, tenantID, from.Audit, map[string]any{"app": from.App})
+		var orgs []uuid.UUID
+		if tenantID != nil {
+			orgs = []uuid.UUID{*tenantID}
+		}
+		s.recordRequest(ctx, "auth.password_reset_requested", userID, orgs, from.Audit, map[string]any{"app": from.App})
 		return nil
 	})
 	return raw, nil
@@ -272,11 +277,11 @@ func init() {
 	}
 }
 
-// recordRequest records a recovery request in the audit trail of the account's
-// organisation (tenantID nil: none), naming the account as the subject, not the
-// actor, since whoever asked may not own it. It is bounded per account and best
+// recordRequest records a recovery request in the audit trail of each of orgs
+// (none: no organisation's), naming the account as the subject, not the actor,
+// since whoever asked may not own it. It is bounded per account and best
 // effort: a record that can't be written is logged.
-func (s *Service) recordRequest(ctx context.Context, action string, userID uuid.UUID, tenantID *uuid.UUID, ac AuditCtx, meta map[string]any) {
+func (s *Service) recordRequest(ctx context.Context, action string, userID uuid.UUID, orgs []uuid.UUID, ac AuditCtx, meta map[string]any) {
 	if s.requestRecords != nil {
 		if ok, _ := s.requestRecords.Take(ctx, action+":"+userID.String()); !ok {
 			unrecordedRequests.WithLabelValues(action).Inc()
@@ -292,17 +297,68 @@ func (s *Service) recordRequest(ctx context.Context, action string, userID uuid.
 		}
 		defer tx.Rollback(ctx)
 		subject := userID
-		if err := audit.Record(ctx, tx, audit.Event{
-			TenantID: tenantID, ActorType: "anonymous", Action: action, ResourceType: "user", ResourceID: &subject,
-			IP: ac.IP, UserAgent: ac.UserAgent, RequestID: ac.RequestID, Metadata: meta,
-		}); err != nil {
-			return err
+		for _, org := range auditOrgs(orgs) {
+			if err := audit.Record(ctx, tx, audit.Event{
+				TenantID: org, ActorType: "anonymous", Action: action, ResourceType: "user", ResourceID: &subject,
+				IP: ac.IP, UserAgent: ac.UserAgent, RequestID: ac.RequestID, Metadata: meta,
+			}); err != nil {
+				return err
+			}
 		}
 		return tx.Commit(ctx)
 	}()
 	if err != nil {
 		slog.Warn("recovery: record a request", "action", action, "err", err)
 	}
+}
+
+// proveAddress marks userID's address verified inside tx after a link sent to
+// it was used (proof names which). The first proof also removes every
+// credential set up before it, keeping the password only if keepPassword, and
+// records both in org's trail. proved reports whether this was the first proof.
+func proveAddress(ctx context.Context, tx pgx.Tx, userID uuid.UUID, org *uuid.UUID, proof string, keepPassword bool, ac AuditCtx) (proved bool, err error) {
+	email, err := dbgen.New(tx).VerifyEmailByLink(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	removed, err := auth.ForgetCredentials(ctx, tx, userID, keepPassword)
+	if err != nil {
+		return false, err
+	}
+	subject := userID
+	for _, e := range []struct {
+		action string
+		meta   map[string]any
+	}{
+		{"email.verified", map[string]any{"email": email, "proof": proof}},
+		{"auth.credentials_removed", map[string]any{"proof": proof, "removed": removed}},
+	} {
+		if err := audit.Record(ctx, tx, audit.Event{
+			TenantID: org, ActorUserID: &subject, ActorType: "user", Action: e.action, ResourceType: "user",
+			ResourceID: &subject, IP: ac.IP, UserAgent: ac.UserAgent, RequestID: ac.RequestID, Metadata: e.meta,
+		}); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// auditOrgs is the audit tenant of each distinct organisation in orgs, or one
+// nil tenant (no organisation's trail) when there are none.
+func auditOrgs(orgs []uuid.UUID) []*uuid.UUID {
+	var out []*uuid.UUID
+	for i, org := range orgs {
+		if org != uuid.Nil && !slices.Contains(orgs[:i], org) {
+			out = append(out, &orgs[i])
+		}
+	}
+	if len(out) == 0 {
+		return []*uuid.UUID{nil}
+	}
+	return out
 }
 
 // ConfirmPasswordReset sets a new password with a reset link, checked against
@@ -363,28 +419,10 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 	}
 	// The link reached the address and nobody else: it proves the address,
 	// so an account registered with it unproved becomes the owner's here —
-	// its old password and every session it had end below.
-	verifiedEmail, err := qtx.VerifyEmailByReset(ctx, row.UserID)
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-	case err != nil:
+	// everything set up before but the new password goes, and every session
+	// it had ends below.
+	if _, err := proveAddress(ctx, tx, row.UserID, orgOf, "password_reset", true, ac); err != nil {
 		return err
-	default:
-		verifiedID := row.UserID
-		if err := audit.Record(ctx, tx, audit.Event{
-			TenantID:     orgOf,
-			ActorUserID:  &verifiedID,
-			ActorType:    "user",
-			Action:       "email.verified",
-			ResourceType: "user",
-			ResourceID:   &verifiedID,
-			IP:           ac.IP,
-			UserAgent:    ac.UserAgent,
-			RequestID:    ac.RequestID,
-			Metadata:     map[string]any{"email": verifiedEmail, "proof": "password_reset"},
-		}); err != nil {
-			return err
-		}
 	}
 	// End every sign-in the old password could have opened, and announce the
 	// ended sessions: sessions, hosted sessions, remembered devices,

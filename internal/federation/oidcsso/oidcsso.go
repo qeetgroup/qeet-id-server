@@ -472,6 +472,17 @@ type UpdateInput struct {
 	Status              *string            `json:"status"`
 }
 
+// ChangesTrust reports whether in changes what c trusts: its issuer, where its
+// keys are found, the client its tokens are for, or which tenants of a
+// multi-tenant identity provider it accepts.
+func (in UpdateInput) ChangesTrust(c *Connection) bool {
+	differs := func(p *string, current string) bool { return p != nil && strings.TrimSpace(*p) != current }
+	if differs(in.Issuer, c.Issuer) || differs(in.DiscoveryURL, c.DiscoveryURL) || differs(in.ClientID, c.ClientID) {
+		return true
+	}
+	return in.AllowedIdPTenantIDs != nil && !slices.Equal(in.AllowedIdPTenantIDs, c.AllowedIdPTenantIDs)
+}
+
 // check applies CreateInput's checks to the fields being changed.
 func (in *UpdateInput) check(policy *egress.Policy) error {
 	trimmed := func(p *string) bool {

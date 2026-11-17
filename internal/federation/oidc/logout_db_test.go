@@ -9,10 +9,13 @@ import (
 	"net/url"
 	"slices"
 	"testing"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -37,6 +40,82 @@ func signInThrough(t *testing.T, p *provider, client *Client, secret string, use
 		t.Fatalf("redeem: %v", err)
 	}
 	return issued
+}
+
+// TestIntrospectionReportsInactiveAfterSignOut checks that an application's
+// access token names the hosted-login session it was issued in and introspects
+// inactive once that session is signed out; that a session which only expired
+// leaves a token renewed from its grant active; and that a device grant's
+// token, from no session, names none and stays active.
+func TestIntrospectionReportsInactiveAfterSignOut(t *testing.T) {
+	ctx := dbtest.Context(t)
+	p := newProvider(t)
+	p.svc.SetSessionLive(p.sessions.SessionLive)
+	tenant := dbtest.Tenant(t)
+	person := dbtest.User(t, tenant, tenant)
+	client, secret := registerClientWith(t, p.svc, CreateClientInput{
+		TenantID: tenant, GrantTypes: []string{"authorization_code", "refresh_token", grantTypeDeviceCode},
+	})
+	active := func(token string) bool {
+		t.Helper()
+		out, err := p.svc.Introspect(ctx, client.ClientID, secret, token, "")
+		if err != nil {
+			t.Fatalf("introspect: %v", err)
+		}
+		return out["active"] == true
+	}
+	sid := func(token string) uuid.UUID {
+		t.Helper()
+		claims, err := p.svc.issuer.VerifyAccessAnyAudience(token)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return claims.SessionID
+	}
+
+	cookie, sessionID := p.signIn(t, person.ID)
+	issued := signInThrough(t, p, client, secret, person.ID, sessionID)
+	if got := sid(issued.AccessToken); got != sessionID {
+		t.Errorf("access token sid %v, want the hosted-login session %v", got, sessionID)
+	}
+	if !active(issued.AccessToken) {
+		t.Fatal("a signed-in application's access token introspects inactive")
+	}
+	if err := p.sessions.RevokeLoginSession(ctx, cookie.Value); err != nil {
+		t.Fatal(err)
+	}
+	if active(issued.AccessToken) {
+		t.Error("the application's access token still introspects active after its sign-in was signed out")
+	}
+
+	// The clean-up of expired sessions deletes the row but leaves the grant.
+	_, sessionID = p.signIn(t, person.ID)
+	issued = signInThrough(t, p, client, secret, person.ID, sessionID)
+	if _, err := dbtest.Pool(t).Exec(ctx, `DELETE FROM auth.login_sessions WHERE id = $1`, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	renewed, err := p.svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken, "")
+	if err != nil {
+		t.Fatalf("refresh after the session expired: %v", err)
+	}
+	if got := sid(renewed.AccessToken); got != sessionID || !active(renewed.AccessToken) {
+		t.Errorf("a token renewed after its session expired: sid %v (want %v), active %t; want active", got, sessionID, active(renewed.AccessToken))
+	}
+
+	raw, userCode, _, err := p.svc.DeviceAuthorize(ctx, client.ClientID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.svc.DecideDevice(ctx, person.ID, userCode, true, deviceIP); err != nil {
+		t.Fatal(err)
+	}
+	device, err := p.svc.DeviceToken(ctx, client.ClientID, secret, raw, deviceIP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sid(device.AccessToken); got != uuid.Nil || !active(device.AccessToken) {
+		t.Errorf("a device grant's token: sid %v, active %t; want no sid, active", got, active(device.AccessToken))
+	}
 }
 
 // TestRPInitiatedLogout checks that without an ID token hint the person confirms
@@ -136,6 +215,79 @@ func TestRPInitiatedLogout(t *testing.T) {
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM auth.oidc_logout_deliveries WHERE tenant_id = $1 AND delivered_at IS NOT NULL`, tenant); n != 2 {
 		t.Errorf("%d notices marked delivered, want 2", n)
+	}
+}
+
+// TestLogoutHintMustBeAnIDToken checks that a sign-out skips its confirmation
+// only for an ID token this server issued to a registered application for the
+// session's person: every other token it signs, naming the session or not, is
+// refused with invalid_request and the session stays.
+func TestLogoutHintMustBeAnIDToken(t *testing.T) {
+	ctx := dbtest.Context(t)
+	p := newProvider(t)
+	tenant := dbtest.Tenant(t)
+	person := dbtest.User(t, tenant, tenant)
+	client, secret := registerClientWith(t, p.svc, CreateClientInput{TenantID: tenant})
+	must := func(raw string, err error) string {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	sign := func(claims jwt.MapClaims) string {
+		t.Helper()
+		claims["iss"] = p.svc.issuer.JWTIssuer()
+		return must(p.svc.issuer.Sign(claims))
+	}
+	issued := func(raw string, _ time.Time, err error) string { return must(raw, err) }
+	live := func(c *http.Cookie) bool {
+		_, err := p.sessions.ResolveLoginSession(ctx, c.Value)
+		return err == nil
+	}
+	for name, hint := range map[string]func(session uuid.UUID) string{
+		"a forced sign-in's login_after marker": func(uuid.UUID) string { return must(p.svc.loginAfterMarker(time.Now())) },
+		"a sign-out continuation ticket": func(uuid.UUID) string {
+			return must(p.svc.logoutContinuation("https://app.example.test/"))
+		},
+		"the session's own sign-out confirmation": func(sid uuid.UUID) string { return must(p.svc.logoutConfirmation(sid)) },
+		"the person's access token": func(sid uuid.UUID) string {
+			return issued(p.svc.issuer.IssueAccess(person.ID, tenant, sid, ""))
+		},
+		"an application's access token": func(sid uuid.UUID) string {
+			return issued(p.svc.issuer.IssueClientAccess(tokens.ClientAccess{UserID: person.ID, TenantID: tenant, SessionID: sid, ClientID: client.ClientID}))
+		},
+		"a back-channel logout token": func(sid uuid.UUID) string { return must(p.svc.logoutToken(client.ClientID, person.ID, sid)) },
+		"a token with no subject": func(sid uuid.UUID) string {
+			return sign(jwt.MapClaims{"aud": client.ClientID, "sid": sid.String()})
+		},
+		"a token with no audience": func(sid uuid.UUID) string {
+			return sign(jwt.MapClaims{"sub": person.ID.String(), "sid": sid.String()})
+		},
+		"a token for an unregistered application": func(sid uuid.UUID) string {
+			return sign(jwt.MapClaims{"sub": person.ID.String(), "aud": "no-such-client", "sid": sid.String()})
+		},
+		"a token of another type": func(sid uuid.UUID) string {
+			return sign(jwt.MapClaims{"sub": person.ID.String(), "aud": client.ClientID, "sid": sid.String(), "typ": "other"})
+		},
+	} {
+		cookie, sessionID := p.signIn(t, person.ID)
+		rec := browse(t, p.public, http.MethodGet, "/oauth/logout?id_token_hint="+url.QueryEscape(hint(sessionID)), cookie, nil)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: %d, want 400 invalid_request", name, rec.Code)
+		} else if got, _ := decodeTokenError(t, rec); got != "invalid_request" {
+			t.Errorf("%s: %s, want invalid_request", name, got)
+		}
+		if !live(cookie) {
+			t.Errorf("%s ended the session", name)
+		}
+	}
+
+	// The person's own ID token still signs out at once.
+	cookie, sessionID := p.signIn(t, person.ID)
+	idToken := signInThrough(t, p, client, secret, person.ID, sessionID).IDToken
+	if to, _ := redirected(t, browse(t, p.public, http.MethodGet, "/oauth/logout?id_token_hint="+url.QueryEscape(idToken), cookie, nil)); to != loginBase+"/sign-out/done" || live(cookie) {
+		t.Errorf("the person's ID token: sent to %s, want signed out to the signed-out page", to)
 	}
 }
 

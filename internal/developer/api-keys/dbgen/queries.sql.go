@@ -16,6 +16,7 @@ import (
 const aPIKeyLive = `-- name: APIKeyLive :one
 SELECT EXISTS (
     SELECT 1 FROM auth.api_keys k
+    JOIN tenant.tenants t ON t.id = k.tenant_id AND t.status = 'active' AND t.deleted_at IS NULL
     LEFT JOIN "user".users u ON u.id = k.user_id
     WHERE k.id = $1 AND k.tenant_id = $2 AND k.revoked_at IS NULL
       AND (k.expires_at IS NULL OR k.expires_at > NOW())
@@ -29,12 +30,30 @@ type APIKeyLiveParams struct {
 }
 
 // Whether a key would still authenticate, as VerifyAPIKey decides: not revoked
-// or expired, and the person it acts for, if any, still active.
+// or expired, its organisation and the person it acts for, if any, still
+// active.
 func (q *Queries) APIKeyLive(ctx context.Context, arg APIKeyLiveParams) (bool, error) {
 	row := q.db.QueryRow(ctx, aPIKeyLive, arg.ID, arg.TenantID)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const aPIKeyScopes = `-- name: APIKeyScopes :one
+SELECT scopes FROM auth.api_keys WHERE id = $1 AND tenant_id = $2
+`
+
+type APIKeyScopesParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+// APIKeyScopes returns the scopes of one of the tenant's API keys.
+func (q *Queries) APIKeyScopes(ctx context.Context, arg APIKeyScopesParams) ([]string, error) {
+	row := q.db.QueryRow(ctx, aPIKeyScopes, arg.ID, arg.TenantID)
+	var scopes []string
+	err := row.Scan(&scopes)
+	return scopes, err
 }
 
 const countActiveAPIKeys = `-- name: CountActiveAPIKeys :one
@@ -278,6 +297,7 @@ func (q *Queries) UpgradeAPIKeyHash(ctx context.Context, arg UpgradeAPIKeyHashPa
 const verifyAPIKey = `-- name: VerifyAPIKey :one
 SELECT k.id, k.tenant_id, k.user_id, k.name, k.prefix, k.scopes, k.expires_at, k.last_used_at, k.revoked_at, k.created_at, k.key_hash
 FROM auth.api_keys k
+JOIN tenant.tenants t ON t.id = k.tenant_id AND t.status = 'active' AND t.deleted_at IS NULL
 LEFT JOIN "user".users u ON u.id = k.user_id
 WHERE k.prefix = $1 AND k.revoked_at IS NULL
   AND (k.user_id IS NULL OR (u.status = 'active' AND u.deleted_at IS NULL))
@@ -301,7 +321,8 @@ type VerifyAPIKeyRow struct {
 // bcrypt/argon2 comparison. Only non-revoked keys are eligible.
 // VerifyAPIKey finds a live key by its prefix. A personal key works only
 // while its person's account is active, so suspending, deleting or
-// deprovisioning them stops it too.
+// deprovisioning them stops it too, and any key only while its organisation
+// is active.
 func (q *Queries) VerifyAPIKey(ctx context.Context, prefix string) (VerifyAPIKeyRow, error) {
 	row := q.db.QueryRow(ctx, verifyAPIKey, prefix)
 	var i VerifyAPIKeyRow

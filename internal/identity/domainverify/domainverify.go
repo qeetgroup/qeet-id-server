@@ -44,8 +44,9 @@ type Service struct {
 	web    *http.Client
 	gate   PlanGate
 	owners OwnerChecker
-	// adminPermissions make a member an administrator for domain capture.
-	adminPermissions []string
+	// memberPermissions are all a member may hold without being an
+	// administrator for domain capture.
+	memberPermissions []string
 }
 
 // NewService returns the domain verification service. Its checks of a custom

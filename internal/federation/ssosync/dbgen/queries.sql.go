@@ -119,15 +119,15 @@ SELECT g.name, EXISTS (
     LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
     LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
     WHERE gr.tenant_id = g.tenant_id AND gr.group_id = g.id
-      AND ((ro.is_system AND ro.name = 'owner') OR p.key = ANY($1::text[]))
+      AND ((ro.is_system AND ro.name = 'owner') OR (p.key IS NOT NULL AND NOT (p.key = ANY($1::text[]))))
 ) AS privileged
 FROM tenant.groups g WHERE g.id = $2 AND g.tenant_id = $3
 `
 
 type GroupPrivilegedParams struct {
-	AdminPermissions []string
-	GroupID          uuid.UUID
-	TenantID         uuid.UUID
+	MemberPermissions []string
+	GroupID           uuid.UUID
+	TenantID          uuid.UUID
 }
 
 type GroupPrivilegedRow struct {
@@ -136,9 +136,10 @@ type GroupPrivilegedRow struct {
 }
 
 // GroupPrivileged returns no row for a group that isn't the tenant's, else its
-// name and whether its roles carry the owner role or one of admin_permissions.
+// name and whether its roles carry the owner role or a permission outside
+// member_permissions.
 func (q *Queries) GroupPrivileged(ctx context.Context, arg GroupPrivilegedParams) (GroupPrivilegedRow, error) {
-	row := q.db.QueryRow(ctx, groupPrivileged, arg.AdminPermissions, arg.GroupID, arg.TenantID)
+	row := q.db.QueryRow(ctx, groupPrivileged, arg.MemberPermissions, arg.GroupID, arg.TenantID)
 	var i GroupPrivilegedRow
 	err := row.Scan(&i.Name, &i.Privileged)
 	return i, err
@@ -374,16 +375,16 @@ WHERE g.tenant_id = $1
       LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
       LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
       WHERE gr.tenant_id = g.tenant_id AND gr.group_id = g.id
-        AND ((ro.is_system AND ro.name = 'owner') OR p.key = ANY($3::text[]))
+        AND ((ro.is_system AND ro.name = 'owner') OR (p.key IS NOT NULL AND NOT (p.key = ANY($3::text[]))))
   )
 ORDER BY g.id
 `
 
 type SyncTargetsParams struct {
-	TenantID         uuid.UUID
-	ConnectionID     uuid.UUID
-	AdminPermissions []string
-	IdpGroups        []string
+	TenantID          uuid.UUID
+	ConnectionID      uuid.UUID
+	MemberPermissions []string
+	IdpGroups         []string
 }
 
 // ==========================================================================
@@ -391,13 +392,13 @@ type SyncTargetsParams struct {
 // ==========================================================================
 // SyncTargets returns the groups the asserted values reach, compared ignoring
 // case: through one of the connection's mappings, or as the external id of a
-// group SCIM made. A group whose roles carry the owner role or one of
-// admin_permissions is left out.
+// group SCIM made. A group whose roles carry the owner role or a permission
+// outside member_permissions is left out.
 func (q *Queries) SyncTargets(ctx context.Context, arg SyncTargetsParams) ([]uuid.UUID, error) {
 	rows, err := q.db.Query(ctx, syncTargets,
 		arg.TenantID,
 		arg.ConnectionID,
-		arg.AdminPermissions,
+		arg.MemberPermissions,
 		arg.IdpGroups,
 	)
 	if err != nil {

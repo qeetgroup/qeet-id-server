@@ -148,3 +148,44 @@ func TestRotatedSecretsOverlapAndPrincipalsEnable(t *testing.T) {
 		t.Errorf("an enabled principal: live %v, %v", live, err)
 	}
 }
+
+// TestClientCredentialsRefusedForDeletedOrganisation checks that a service
+// principal of a suspended or deleted organisation gets no token, its right
+// secret included, and that the tokens it was already issued stop: it is no
+// longer live. Reactivating the organisation restores both.
+func TestClientCredentialsRefusedForDeletedOrganisation(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := NewService(pool, dbtest.Issuer(t))
+	tenant := dbtest.Tenant(t)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	p, secret, err := svc.Create(ctx, tx, CreateInput{TenantID: tenant, Name: "Reporting", Scopes: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct {
+		name, change string
+		works        bool
+	}{
+		{"suspended", `UPDATE tenant.tenants SET status = 'suspended' WHERE id = $1`, false},
+		{"reactivated", `UPDATE tenant.tenants SET status = 'active' WHERE id = $1`, true},
+		{"deleted", `UPDATE tenant.tenants SET deleted_at = NOW() WHERE id = $1`, false},
+	} {
+		if _, err := pool.Exec(ctx, step.change, tenant); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.IssueClientCredentials(ctx, p.ID.String(), secret); (err == nil) != step.works {
+			t.Errorf("a token for a principal of a %s organisation: %v, want works=%v", step.name, err, step.works)
+		}
+		if live, err := svc.PrincipalLive(ctx, p.ID); err != nil || live != step.works {
+			t.Errorf("an issued token of a %s organisation's principal: live %v, %v; want %v", step.name, live, err, step.works)
+		}
+	}
+}

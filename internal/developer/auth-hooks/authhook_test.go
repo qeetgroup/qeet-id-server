@@ -42,17 +42,6 @@ func TestDecide(t *testing.T) {
 	}
 }
 
-func TestSignDeterministic(t *testing.T) {
-	a := sign("secret", []byte("payload"))
-	b := sign("secret", []byte("payload"))
-	if a == "" || a != b {
-		t.Error("sign must be deterministic and non-empty")
-	}
-	if sign("other", []byte("payload")) == a {
-		t.Error("different secret must produce a different signature")
-	}
-}
-
 // TestDecideUnparseableBodyHonoursFailClosed checks that a 2xx answer with an
 // unparseable body counts as no answer: denied for a fail-closed hook, allowed
 // for a fail-open one.

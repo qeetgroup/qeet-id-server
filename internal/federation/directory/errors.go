@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
@@ -57,7 +58,7 @@ func (service *Service) Errors(ctx context.Context, tenantID uuid.UUID, filter e
 	if tenantID == uuid.Nil || service.pool == nil {
 		return page, errs.ErrUnauthorized
 	}
-	args := []any{tenantID, filter.Since, filter.ConnectionID, filter.Severity, filter.Resolution, filter.Search}
+	args := []any{tenantID, filter.Since, filter.ConnectionID, filter.Severity, filter.Resolution, postgres.EscapeLike(filter.Search)}
 	var impacted, unknown int
 	err := service.pool.QueryRow(ctx, `SELECT count(*),count(*) FILTER(WHERE resolution='open'),count(*) FILTER(WHERE resolution='open' AND severity='critical'),count(*) FILTER(WHERE resolution='open' AND severity='warning'),count(*) FILTER(WHERE resolution='retried'),count(DISTINCT NULLIF(resource_id,'')) FILTER(WHERE resource_type='user'),count(*) FILTER(WHERE resource_type='user' AND resource_id='') FROM tenant.directory_events WHERE `+errorWhere, args...).Scan(&page.Total, &page.Summary.Open, &page.Summary.Critical, &page.Summary.Warning, &page.Summary.Retried, &impacted, &unknown)
 	if err != nil {

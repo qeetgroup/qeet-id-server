@@ -17,6 +17,7 @@ import (
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
@@ -129,7 +130,8 @@ func newSocialFixture(t *testing.T) *socialFixture {
 	}
 	svc.SetCipher(box)
 	svc.SetAllowedReturnOrigins("https://app.example.test")
-	h := &Handler{Service: svc, LoginBaseURL: "https://login.example.test", PublicBaseURL: "https://id.example.test"}
+	h := &Handler{Service: svc, LoginBaseURL: "https://login.example.test", PublicBaseURL: "https://id.example.test",
+		ActOnCheck: rbac.NewRepository(pool).CheckActOn}
 	public := chi.NewRouter()
 	h.MountPublic(public)
 	return &socialFixture{svc: svc, idp: newIdentityProvider(t), public: public, mount: h.Mount}
@@ -198,7 +200,10 @@ func TestOrganisationSocialSignIn(t *testing.T) {
 		t.Errorf("a provider without an http discovery URL: %d, want refused", rec.Code)
 	}
 
-	member := dbtest.User(t, tenant, tenant)
+	// The organisation chose the provider's endpoints, so it vouches only for
+	// people on the organisation's own domain.
+	domain := dbtest.Domain(t, tenant)
+	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, tenant, tenant)
 	person := verified(t, member)
 	start := "/social/okta/start?tenant_id=" + tenant.String()
 	target, q := redirectQuery(t, f.signIn(t, "okta", start, person))
@@ -248,7 +253,7 @@ func TestOrganisationSocialSignIn(t *testing.T) {
 	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'social.signup_refused'`, tenant); n != 1 {
 		t.Errorf("%d refused sign-ups recorded, want 1", n)
 	}
-	suspended := dbtest.User(t, tenant, tenant)
+	suspended := dbtest.UserAt(t, dbtest.Unique("ravi")+"@"+domain, tenant, tenant)
 	suspendedPerson := verified(t, suspended)
 	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE "user".users SET status = 'suspended' WHERE id = $1`, suspended.ID); err != nil {
 		t.Fatal(err)
@@ -295,6 +300,37 @@ func TestOrganisationSocialSignIn(t *testing.T) {
 	}
 	if rec := dbtest.Do(t, asAdmin, http.MethodDelete, "/social/providers/okta", nil); rec.Code != http.StatusNoContent {
 		t.Errorf("delete provider: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSocialCodeOfAProviderTurnedOffDoesNotExchange checks that a login code
+// issued just before its provider was switched off or deleted signs nobody in.
+func TestSocialCodeOfAProviderTurnedOffDoesNotExchange(t *testing.T) {
+	f := newSocialFixture(t)
+	tenant := dbtest.Tenant(t)
+	asAdmin := dbtest.Serve(dbtest.Principal(dbtest.User(t, tenant, tenant).ID, tenant), f.mount)
+	member := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+dbtest.Domain(t, tenant), tenant, tenant)
+	person := verified(t, member)
+	for _, tc := range []struct{ provider, change, want string }{
+		{"okta", `UPDATE tenant.social_providers SET enabled = false WHERE tenant_id = $1 AND provider = $2`, errs.CodeSocialProviderNotConfigured},
+		{"keycloak", `DELETE FROM tenant.social_providers WHERE tenant_id = $1 AND provider = $2`, errs.CodeSocialLoginCodeInvalid},
+	} {
+		if rec := dbtest.Do(t, asAdmin, http.MethodPost, "/social/providers", map[string]string{
+			"provider": tc.provider, "client_id": "qeet", "client_secret": "idp-client-secret",
+			"discovery_url": f.idp.URL + "/.well-known/openid-configuration",
+		}); rec.Code != http.StatusOK {
+			t.Fatalf("add provider: %d %s", rec.Code, rec.Body.String())
+		}
+		_, q := redirectQuery(t, f.signIn(t, tc.provider, "/social/"+tc.provider+"/start?tenant_id="+tenant.String(), person))
+		if q.Get("code") == "" {
+			t.Fatalf("sign-in: %v, want a one-time code", q)
+		}
+		if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), tc.change, tenant, tc.provider); err != nil {
+			t.Fatal(err)
+		}
+		if rec := browse(t, f.public, http.MethodPost, "/social/exchange", nil, map[string]string{"code": q.Get("code")}); rec.Code == http.StatusOK || !strings.Contains(rec.Body.String(), tc.want) {
+			t.Errorf("%s %s, then exchange its code: %d %.80s, want %s", tc.change, tc.provider, rec.Code, rec.Body.String(), tc.want)
+		}
 	}
 }
 

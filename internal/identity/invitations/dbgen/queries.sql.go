@@ -43,7 +43,7 @@ WHERE id = $1
 
 // ActivateInvitedAccount activates the account created to accept an
 // invitation. Its address stays unverified, as the password path's
-// InsertInvitedUser leaves it: the link proves nothing about who owns it.
+// InsertInvitedUser leaves it.
 func (q *Queries) ActivateInvitedAccount(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, activateInvitedAccount, userID)
 	return err
@@ -231,6 +231,22 @@ func (q *Queries) GetInviteForAccept(ctx context.Context, tokenHash string) (Get
 	return i, err
 }
 
+const getInviteRole = `-- name: GetInviteRole :one
+SELECT role_id FROM tenant.invites WHERE id = $1 AND tenant_id = $2
+`
+
+type GetInviteRoleParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+func (q *Queries) GetInviteRole(ctx context.Context, arg GetInviteRoleParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getInviteRole, arg.ID, arg.TenantID)
+	var role_id pgtype.UUID
+	err := row.Scan(&role_id)
+	return role_id, err
+}
+
 const getUserEmailByID = `-- name: GetUserEmailByID :one
 SELECT email FROM "user".users WHERE id = $1
 `
@@ -351,14 +367,88 @@ type InsertInvitedUserParams struct {
 }
 
 // InsertInvitedUser creates a brand-new invited account (no prior user). Its
-// address is not verified: the invitation link is also handed to the inviter
-// to share, so having it proves nothing about who owns the address. A code or
-// link sent to it later does.
+// address is left unverified; a code or link sent to it later verifies it.
 func (q *Queries) InsertInvitedUser(ctx context.Context, arg InsertInvitedUserParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, insertInvitedUser, arg.TenantID, arg.Email, arg.DisplayName)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const inviteSenderByID = `-- name: InviteSenderByID :one
+SELECT tenant_id, role_id, invited_by, status, expires_at FROM tenant.invites WHERE id = $1
+`
+
+type InviteSenderByIDRow struct {
+	TenantID  uuid.UUID
+	RoleID    pgtype.UUID
+	InvitedBy pgtype.UUID
+	Status    string
+	ExpiresAt time.Time
+}
+
+// InviteSenderByID is InviteSenderByToken for an invitation picked by id.
+func (q *Queries) InviteSenderByID(ctx context.Context, id uuid.UUID) (InviteSenderByIDRow, error) {
+	row := q.db.QueryRow(ctx, inviteSenderByID, id)
+	var i InviteSenderByIDRow
+	err := row.Scan(
+		&i.TenantID,
+		&i.RoleID,
+		&i.InvitedBy,
+		&i.Status,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const inviteSenderByToken = `-- name: InviteSenderByToken :one
+SELECT tenant_id, role_id, invited_by, status, expires_at FROM tenant.invites WHERE token_hash = $1
+`
+
+type InviteSenderByTokenRow struct {
+	TenantID  uuid.UUID
+	RoleID    pgtype.UUID
+	InvitedBy pgtype.UUID
+	Status    string
+	ExpiresAt time.Time
+}
+
+// InviteSenderByToken is who sent the invitation a token names, and what it
+// gives, for the check acceptance makes before its transaction.
+func (q *Queries) InviteSenderByToken(ctx context.Context, tokenHash string) (InviteSenderByTokenRow, error) {
+	row := q.db.QueryRow(ctx, inviteSenderByToken, tokenHash)
+	var i InviteSenderByTokenRow
+	err := row.Scan(
+		&i.TenantID,
+		&i.RoleID,
+		&i.InvitedBy,
+		&i.Status,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const inviterActive = `-- name: InviterActive :one
+SELECT EXISTS (
+    SELECT 1 FROM "user".users u
+    WHERE u.id = $1 AND u.status = 'active' AND u.deleted_at IS NULL
+      AND (u.tenant_id = $2::uuid OR EXISTS (
+          SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $2::uuid))
+)
+`
+
+type InviterActiveParams struct {
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+}
+
+// InviterActive reports whether the account that sent an invitation is active
+// and still belongs to its organisation: at home there or holding a role.
+func (q *Queries) InviterActive(ctx context.Context, arg InviterActiveParams) (bool, error) {
+	row := q.db.QueryRow(ctx, inviterActive, arg.UserID, arg.TenantID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const listInvites = `-- name: ListInvites :many

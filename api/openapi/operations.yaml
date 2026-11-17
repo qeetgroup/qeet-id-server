@@ -19,7 +19,7 @@ info:
 
     Responses that carry a token, a sign-in session or a newly created secret are sent with `Cache-Control: no-store` and `Pragma: no-cache`; no operation in this API returns one.
 
-    Every response carries an `X-Request-Id` header naming the request; quote it when reporting a problem. An error body repeats it as `error.request_id`.
+    Every response carries an `X-Request-Id` header naming the request; quote it when reporting a problem. An error body repeats it as `error.request_id`. A path with an encoded slash or backslash (`%2F`, `%5C`) is refused with 400 `bad_request`.
 
     ## Related APIs
 
@@ -758,7 +758,7 @@ paths:
   /v1/tenants/{tenantID}/audit:
     get:
       operationId: listAuditEvents
-      description: Returns the tenant's audit events in reverse chronological order with cursor-based pagination and optional filters for action, resource type, actor, and a free-text query. The audit log is append-only and hash-chained, so results reflect an immutable record of activity. Pass the returned cursor to page through history; access is restricted to the tenant named in the path.
+      description: Returns the tenant's audit events in reverse chronological order with cursor-based pagination and optional filters for action, resource type, actor, and a free-text query. The audit log is append-only and hash-chained, so results reflect an immutable record of activity. Events are kept for the plan's audit_retention_days (7, 30, 90 days, or for good), then deleted. Pass the returned cursor to page through history; access is restricted to the tenant named in the path.
       summary: List audit events
       tags:
         - Audit
@@ -984,7 +984,7 @@ paths:
     get:
       operationId: verifyAuditChain
       summary: Verify audit chain
-      description: Walks the tenant's hash chain from the seed and recomputes each row's hash, returning the first broken link (if any). No side effects.
+      description: Walks the tenant's hash chain from the seed and recomputes each row's hash, returning the first broken link (if any). No side effects. Once events older than the plan keeps them (audit_retention_days) have been deleted, the walk starts from the last one deleted, whose hash the first one kept links to.
       tags:
         - Audit
       parameters:
@@ -1627,7 +1627,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/GdprCreateInput'
-      description: 'Requests erasure of a person''s account, carried out after the grace period unless cancelled. The erasure ends their sessions, redacts the account (email, phone, name, avatar, external ID and metadata) and deletes everything else it left: credentials and second factors, sign-in history, sessions and remembered devices, linked social and single sign-on accounts, application consents and grants, connected accounts and their tokens, personal API keys, role, group and break-glass memberships, application assignments and the persistent identifiers applications know them by, directory profiles, notifications, sign-in links and failed sign-in counters, and the payloads of the person''s data exports; verifiable credentials issued to them are revoked and their claims cleared. The audit trail and the request itself are kept; the request goes on naming the account by user_id after the account is deleted for good. Requires gdpr.write.'
+      description: 'Requests erasure of a person''s account, carried out after the grace period unless cancelled. The erasure ends their sessions, redacts the account (email, phone, name, avatar, external ID and metadata) and deletes everything else it left: credentials and second factors, sign-in history, sessions and remembered devices, linked social and single sign-on accounts, application consents and grants, connected accounts and their tokens, personal API keys, role, group and break-glass memberships, application assignments and the persistent identifiers applications know them by, directory profiles, notifications, sign-in links and failed sign-in counters, and the payloads of the person''s data exports; verifiable credentials issued to them are revoked and their claims cleared. The audit trail and the request itself are kept; the request goes on naming the account by user_id after the account is deleted for good. Requires gdpr.write. Held to the rule for deleting the account: nobody erases someone who outranks them (403 rbac.target_is_owner for an owner, unless the caller is one, or 403 rbac.target_outranks_caller).'
       responses:
         '201':
           description: Created
@@ -1728,7 +1728,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/ExportInput'
-      description: Queues an async export job; poll GET .../gdpr/export/{id} for status and payload.
+      description: Queues an async export job; poll GET .../gdpr/export/{id} for status and payload. Nobody exports someone who outranks them (403 rbac.target_is_owner for an owner, unless the caller is one, or 403 rbac.target_outranks_caller), as for deleting their account.
       responses:
         '202':
           description: Accepted
@@ -1801,7 +1801,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Returns status plus the full data payload once status is "ready"; response carries a Content-Disposition download header in that case. The payload is deleted seven days after it was built, or when the person is erased, and the status becomes "expired".
+      description: 'Returns status plus the full data payload once status is "ready"; response carries a Content-Disposition download header in that case. The payload is deleted seven days after it was built, or when the person is erased, and the status becomes "expired". Reading an export is held to the rule for asking for one: an export of someone who outranks the caller answers 403 (rbac.target_is_owner or rbac.target_outranks_caller).'
       responses:
         '200':
           description: OK
@@ -3017,7 +3017,7 @@ paths:
       description: |-
         Opens a streaming turn of the AI qeetai conversation. The response is a `text/event-stream` of SSE frames (thinking, token, tool_call, tool_result, error, done). Each frame is `event: <type>\ndata: <json>\n\n`.
 
-        On `stop_reason=tool_use` the stream ends with `done{reason:"tool_use"}`; the browser executes the tool under its own bearer token and posts `tool_results` to this same endpoint to continue generation.
+        On `stop_reason=tool_use` the stream ends with `done{reason:"tool_use"}`; the browser executes the tool under its own bearer token and posts `tool_results` to this same endpoint to continue generation. Only the tools the model is offered (read-only in this version) are sent as `tool_call` frames: a call to any other tool is dropped, recorded as `qeetai.tool.refused` and noted in the reply's text.
 
         Requires `QEETAI_PROVIDER` configured server-side; returns `409 qeetai_unconfigured` otherwise.
 
@@ -3347,7 +3347,7 @@ paths:
     post:
       operationId: receivePaymentWebhook
       summary: Payment webhook
-      description: Receives provider payment events. Authenticated by the provider's webhook signature (no user session); on a verified successful payment the referenced checkout is completed idempotently.
+      description: Receives provider payment events. Authenticated by the provider's webhook signature (no user session); on a verified successful payment the referenced checkout is completed idempotently. A Stripe event is accepted when any v1 signature in its Stripe-Signature header is right (Stripe sends one per secret while a webhook secret rotates) and its timestamp is within five minutes of now.
       tags:
         - Billing
       security: []
@@ -3830,7 +3830,7 @@ paths:
       summary: Get plan entitlements
       tags:
         - Entitlements
-      description: 'Returns the tenant''s resolved entitlements: the effective plan code, the boolean feature flags, and the numeric limits (-1 = unlimited). Resolved from the active subscription (falling back to the tenant''s plan label), so an in-app upgrade is reflected immediately. A subscription grants its plan only until current_period_end (a trial until trial_end): nothing renews it, so after that the tenant has the free plan''s entitlements until it pays again. Readable by any authenticated member of the tenant; scoped to the caller''s own tenant.'
+      description: 'Returns the tenant''s resolved entitlements: the effective plan code, the boolean feature flags, and the numeric limits (-1 = unlimited). Resolved from the active subscription (falling back to the tenant''s plan label), so an in-app upgrade is reflected immediately. A subscription grants its plan only until current_period_end (a trial until trial_end): nothing renews it, so after that the tenant has the free plan''s entitlements until it pays again. Readable by any authenticated member of the tenant; scoped to the caller''s own tenant. audit_retention_days is enforced: once a day, the tenant''s audit events older than that are deleted (all but the newest, its chain kept verifiable) and the deletion is recorded as audit.events_purged; -1 keeps them all.'
       parameters:
         - $ref: '#/components/parameters/TenantID'
       security:
@@ -4009,7 +4009,7 @@ components:
       type: apiKey
       in: header
       name: Authorization
-      description: 'API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey ` prefix). Accepted on the same authenticated routes as bearerAuth.'
+      description: 'API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey ` prefix). Accepted on the same authenticated routes as bearerAuth. A key works only while its organisation is active, not while it is suspended or deleted.'
     scimBearer:
       type: http
       scheme: bearer
@@ -4697,7 +4697,9 @@ components:
           enum:
             - audit.chain_prev_hash_mismatch
             - audit.chain_row_hash_mismatch
-          description: 'Set when the chain is broken: the row''s link to the one before it is wrong, or its contents no longer match its hash.'
+            - audit.chain_checkpoint_gone
+            - audit.chain_checkpoint_unsigned
+          description: 'Set when the chain is broken: the row''s link to the one before it is wrong, or its contents no longer match its hash; the row the chain''s last verification checkpoint names is gone; or a checkpoint the chain relies on (its last verification''s, or where it starts after a purge) doesn''t carry the server''s signature, as when the chain and its checkpoint were rewritten together.'
         rows_checked:
           type: integer
     NextCursor:
@@ -5304,7 +5306,7 @@ components:
             $ref: '#/components/schemas/EmailLocalizedContent'
     EmailEditorInput:
       type: object
-      description: Subject and preheader limits count Unicode characters. Text and HTML limits count UTF-8 bytes. Action URL variables must remain in both text and HTML when provided. Variables in URLs are allowed only as standalone action-link href values, never in image sources or within external URLs.
+      description: Subject and preheader limits count Unicode characters. Text and HTML limits count UTF-8 bytes. Action URL variables must remain in both text and HTML when provided. Variables in URLs are allowed only as standalone action-link href values, never in image sources or within external URLs. An action URL variable (reset_url, magic_url, invite_url) appears in the HTML only as a whole href and in the text only on a line of its own, never in the subject, the preheader or among other words (400 otherwise), so a template's wording can't disguise the one-time link.
       required:
         - subject
         - body

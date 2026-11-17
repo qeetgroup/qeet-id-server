@@ -553,6 +553,12 @@ func (h *Handler) unassignGroupRole(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid roleID"))
 		return
 	}
+	// Taking a role off a group takes it from everyone in it, so it is held to
+	// the rule for giving it, as taking it off a person is.
+	if err := h.Repo.CheckGrantRole(r.Context(), httpx.PrincipalFromCtx(r.Context()), tid, rid); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	if err := h.Service.RemoveRoleFromGroup(r.Context(), gid, tid, rid, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return

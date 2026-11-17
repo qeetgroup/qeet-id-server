@@ -13,4 +13,9 @@ properties:
     maxLength: 255
     description: >-
       The OAuth client the hosted login is serving. Its tenant's sign-in lockout
-      settings apply; omitted or unknown = the platform defaults.
+      settings apply where they are stricter than the platform defaults, never
+      looser, to the lock on the network the attempt comes from; the lock on
+      every network always uses the platform defaults. Omitted or unknown = the
+      platform defaults. The account's own
+      organisation may still refuse password sign-in after the password is
+      verified (403 auth.method_disabled).

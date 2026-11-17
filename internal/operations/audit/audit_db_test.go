@@ -49,7 +49,7 @@ func TestAuditEventsStayInTheirTenant(t *testing.T) {
 	record(t, tenantA, "user.updated")
 	eventB := record(t, tenantB, "user.created")
 
-	asB := dbtest.Serve(dbtest.Principal(adminB.ID, tenantB), (&Handler{Reader: NewReader(pool), Verifier: NewVerifier(pool)}).Mount)
+	asB := dbtest.Serve(dbtest.Principal(adminB.ID, tenantB), (&Handler{Reader: NewReader(pool), Verifier: NewVerifier(pool, nil)}).Mount)
 	for _, path := range []string{"/tenants/" + tenantA.String() + "/audit", "/tenants/" + tenantA.String() + "/audit/verify"} {
 		if rec := dbtest.Do(t, asB, http.MethodGet, path, nil); rec.Code != http.StatusForbidden {
 			t.Errorf("tenant B GET %s: status %d, want 403", path, rec.Code)
@@ -66,7 +66,7 @@ func TestAuditEventsStayInTheirTenant(t *testing.T) {
 		}
 	}
 
-	res, err := NewVerifier(pool).Verify(ctx, &tenantB)
+	res, err := NewVerifier(pool, nil).Verify(ctx, &tenantB)
 	if err != nil || !res.OK || res.RowsChecked != 1 {
 		t.Errorf("verify tenant B's chain: %+v, %v; want 1 valid row", res, err)
 	}
@@ -151,21 +151,21 @@ func TestVerifyReadsTheChainInPages(t *testing.T) {
 	verifyPageSize = 2
 	t.Cleanup(func() { verifyPageSize = 5000 })
 
-	res, err := NewVerifier(dbtest.Pool(t)).Verify(ctx, &tenant)
+	res, err := NewVerifier(dbtest.Pool(t), nil).Verify(ctx, &tenant)
 	if err != nil || !res.OK || res.RowsChecked != 7 {
 		t.Fatalf("verify: %+v, %v; want 7 valid rows", res, err)
 	}
 	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE audit.events SET action = 'user.deleted' WHERE id = $1 AND tenant_id = $2`, ids[5], tenant); err != nil {
 		t.Fatal(err)
 	}
-	res, err = NewVerifier(dbtest.Pool(t)).Verify(ctx, &tenant)
+	res, err = NewVerifier(dbtest.Pool(t), nil).Verify(ctx, &tenant)
 	if err != nil || res.OK || res.BrokenAtID == nil || *res.BrokenAtID != ids[5] || res.RowsChecked != 5 || res.ReasonCode != ChainRowHashMismatch {
 		t.Errorf("verify an altered chain: %+v, %v; want broken at %s after 5 rows, its row hash wrong", res, err, ids[5])
 	}
 	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE audit.events SET prev_hash = 'x' WHERE id = $1 AND tenant_id = $2`, ids[2], tenant); err != nil {
 		t.Fatal(err)
 	}
-	res, err = NewVerifier(dbtest.Pool(t)).Verify(ctx, &tenant)
+	res, err = NewVerifier(dbtest.Pool(t), nil).Verify(ctx, &tenant)
 	if err != nil || res.BrokenAtID == nil || *res.BrokenAtID != ids[2] || res.ReasonCode != ChainPrevHashMismatch {
 		t.Errorf("verify a relinked chain: %+v, %v; want broken at %s, its link wrong", res, err, ids[2])
 	}
@@ -190,7 +190,7 @@ func TestChainSurvivesAnInstanceWhoseClockIsAhead(t *testing.T) {
 	if first != ahead {
 		t.Errorf("the chain starts at %s, want the earlier write %s before %s", first, ahead, behind)
 	}
-	if res, err := NewVerifier(dbtest.Pool(t)).Verify(ctx, &tenant); err != nil || !res.OK || res.RowsChecked != 2 {
+	if res, err := NewVerifier(dbtest.Pool(t), nil).Verify(ctx, &tenant); err != nil || !res.OK || res.RowsChecked != 2 {
 		t.Errorf("verify: %+v, %v; want both rows valid", res, err)
 	}
 }
@@ -280,7 +280,7 @@ func TestEventsNameWhatTheyAreAbout(t *testing.T) {
 			}
 		}
 	}
-	if res, err := NewVerifier(pool).Verify(ctx, &tenant); err != nil || !res.OK {
+	if res, err := NewVerifier(pool, nil).Verify(ctx, &tenant); err != nil || !res.OK {
 		t.Errorf("verify the labelled chain: %+v, %v", res, err)
 	}
 }

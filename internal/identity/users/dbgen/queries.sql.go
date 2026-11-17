@@ -632,6 +632,61 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (InsertU
 	return i, err
 }
 
+const integrationsCreatedBy = `-- name: IntegrationsCreatedBy :many
+
+SELECT 'service_principal'::text AS kind, sp.id, sp.name FROM auth.service_principals sp
+WHERE sp.tenant_id = $1 AND sp.created_by = $2::uuid AND sp.disabled_at IS NULL
+UNION ALL
+SELECT 'scim_token', st.id, st.name FROM tenant.scim_tokens st
+WHERE st.tenant_id = $1 AND st.created_by = $2::uuid AND st.revoked_at IS NULL
+  AND (st.expires_at IS NULL OR st.expires_at > NOW())
+UNION ALL
+SELECT 'webhook', ws.id, ws.url FROM tenant.webhook_subscriptions ws
+WHERE ws.tenant_id = $1 AND ws.created_by = $2::uuid AND ws.disabled_at IS NULL
+UNION ALL
+SELECT 'auth_hook', ah.id, ah.url FROM tenant.auth_hooks ah
+WHERE ah.tenant_id = $1 AND ah.created_by = $2::uuid
+UNION ALL
+SELECT 'oidc_client', oc.id, oc.name FROM auth.oidc_clients oc
+WHERE oc.tenant_id = $1 AND oc.created_by = $2::uuid
+ORDER BY 1, 3
+`
+
+type IntegrationsCreatedByParams struct {
+	TenantID uuid.UUID
+	UserID   uuid.UUID
+}
+
+type IntegrationsCreatedByRow struct {
+	Kind string
+	ID   uuid.UUID
+	Name string
+}
+
+// ---- Offboarding ----
+// IntegrationsCreatedBy lists the integrations user_id created in the
+// organisation that still work: service principals, SCIM tokens, webhooks,
+// auth hooks and OpenID Connect applications.
+func (q *Queries) IntegrationsCreatedBy(ctx context.Context, arg IntegrationsCreatedByParams) ([]IntegrationsCreatedByRow, error) {
+	rows, err := q.db.Query(ctx, integrationsCreatedBy, arg.TenantID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IntegrationsCreatedByRow{}
+	for rows.Next() {
+		var i IntegrationsCreatedByRow
+		if err := rows.Scan(&i.Kind, &i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDeletedUsers = `-- name: ListDeletedUsers :many
 SELECT id, email, display_name, deleted_at, created_at, deleted_by
 FROM "user".users
@@ -938,6 +993,42 @@ WHERE id = $1 AND deleted_at IS NOT NULL
 
 func (q *Queries) RestoreUser(ctx context.Context, id uuid.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, restoreUser, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const revokeAdminPortalLinksCreatedBy = `-- name: RevokeAdminPortalLinksCreatedBy :execrows
+UPDATE tenant.admin_portal_links SET revoked_at = NOW()
+WHERE tenant_id = $1 AND created_by = $2::uuid AND revoked_at IS NULL AND expires_at > NOW()
+`
+
+type RevokeAdminPortalLinksCreatedByParams struct {
+	TenantID uuid.UUID
+	UserID   uuid.UUID
+}
+
+func (q *Queries) RevokeAdminPortalLinksCreatedBy(ctx context.Context, arg RevokeAdminPortalLinksCreatedByParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeAdminPortalLinksCreatedBy, arg.TenantID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const revokeInvitesSentBy = `-- name: RevokeInvitesSentBy :execrows
+UPDATE tenant.invites SET status = 'revoked'
+WHERE tenant_id = $1 AND invited_by = $2::uuid AND status = 'pending'
+`
+
+type RevokeInvitesSentByParams struct {
+	TenantID uuid.UUID
+	UserID   uuid.UUID
+}
+
+func (q *Queries) RevokeInvitesSentBy(ctx context.Context, arg RevokeInvitesSentByParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeInvitesSentBy, arg.TenantID, arg.UserID)
 	if err != nil {
 		return 0, err
 	}

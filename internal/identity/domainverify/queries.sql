@@ -74,7 +74,7 @@ SELECT
                   LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
                   LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
                   WHERE ur.user_id = a.id AND ur.tenant_id = sqlc.arg(tenant_id)::uuid
-                    AND ((ro.is_system AND ro.name = 'owner') OR p.key = ANY(sqlc.arg(admin_permissions)::text[])))
+                    AND ((ro.is_system AND ro.name = 'owner') OR (p.key IS NOT NULL AND NOT (p.key = ANY(sqlc.arg(member_permissions)::text[])))))
                OR EXISTS (
                   SELECT 1 FROM tenant.group_members gm
                   JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
@@ -82,7 +82,7 @@ SELECT
                   LEFT JOIN rbac.role_permissions rp ON rp.role_id = ro.id
                   LEFT JOIN rbac.permissions p ON p.id = rp.permission_id
                   WHERE gm.user_id = a.id AND gm.tenant_id = sqlc.arg(tenant_id)::uuid
-                    AND ((ro.is_system AND ro.name = 'owner') OR p.key = ANY(sqlc.arg(admin_permissions)::text[]))))
+                    AND ((ro.is_system AND ro.name = 'owner') OR (p.key IS NOT NULL AND NOT (p.key = ANY(sqlc.arg(member_permissions)::text[]))))))
           AND NOT (a.tenant_id IS NOT DISTINCT FROM sqlc.arg(tenant_id)::uuid AND EXISTS (
                   SELECT 1 FROM "user".external_identities ei
                   WHERE ei.user_id = a.id AND ei.tenant_id = sqlc.arg(tenant_id)::uuid

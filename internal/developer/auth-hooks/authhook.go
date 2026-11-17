@@ -8,9 +8,6 @@ package authhook
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -23,6 +20,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -30,6 +28,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/developer/auth-hooks/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/requestsig"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -89,19 +88,22 @@ func stateOf(hooks []dbgen.ListEnabledSignInHooksRow) hookState {
 
 // Hook is a tenant's login hook, without its signing secret. LastOutcome is
 // how its last sign-in call ended: allowed, denied or skipped (no answer).
+// PreviousSecretExpiresAt is when a replaced secret stops signing its calls
+// beside the new one (nil: none does).
 type Hook struct {
-	ID             uuid.UUID  `json:"id"`
-	Trigger        string     `json:"trigger"`
-	URL            string     `json:"url"`
-	Enabled        bool       `json:"enabled"`
-	FailOpen       bool       `json:"fail_open"`
-	CreatedAt      time.Time  `json:"created_at"`
-	LastCalledAt   *time.Time `json:"last_called_at"`
-	LastOutcome    *string    `json:"last_outcome"`
-	LastStatusCode *int       `json:"last_status_code"`
-	Calls          int64      `json:"calls"`
-	Skips          int64      `json:"skips"`
-	Denies         int64      `json:"denies"`
+	ID                      uuid.UUID  `json:"id"`
+	Trigger                 string     `json:"trigger"`
+	URL                     string     `json:"url"`
+	Enabled                 bool       `json:"enabled"`
+	FailOpen                bool       `json:"fail_open"`
+	CreatedAt               time.Time  `json:"created_at"`
+	LastCalledAt            *time.Time `json:"last_called_at"`
+	LastOutcome             *string    `json:"last_outcome"`
+	LastStatusCode          *int       `json:"last_status_code"`
+	Calls                   int64      `json:"calls"`
+	Skips                   int64      `json:"skips"`
+	Denies                  int64      `json:"denies"`
+	PreviousSecretExpiresAt *time.Time `json:"previous_secret_expires_at"`
 }
 
 // Service manages and runs sign-in hooks. known holds each organisation's hooks
@@ -171,17 +173,18 @@ func (s *Service) Run(ctx context.Context, tenantID, userID uuid.UUID, email str
 	return claims, nil
 }
 
-// runHook calls one hook with payload, signed with its secret, and returns the
-// claims it asked for, ErrAuthHookDenied when it denies, or skipped's answer
-// when it gives none. A plaintext secret is encrypted on first use.
+// runHook calls one hook with payload, signed with its secrets, and returns
+// the claims it asked for, ErrAuthHookDenied when it denies, or skipped's
+// answer when it gives none. A plaintext secret is encrypted on first use.
 func (s *Service) runHook(ctx context.Context, tenantID, userID uuid.UUID, hook dbgen.ListEnabledSignInHooksRow, payload []byte) (map[string]any, error) {
-	secretValue, err := s.secretOf(ctx, tenantID, hook.ID, hook.Secret, hook.SecretCt, hook.SecretNonce)
+	secrets, err := s.secretsOf(ctx, tenantID, hook.ID, hook.Secret, hook.SecretCt, hook.SecretNonce,
+		previousSecret{hook.PreviousSecretCt, hook.PreviousSecretNonce, hook.PreviousSecretExpiresAt})
 	if err != nil {
 		s.counted(ctx, tenantID, hook.ID, outcomeSkipped, 0)
 		return s.skipped(ctx, tenantID, userID, hook.ID, skipSecretUnavailable, hook.FailOpen, err)
 	}
 
-	body, status, err := s.call(ctx, hook.Url, secretValue, payload)
+	body, status, err := s.call(ctx, hook.Url, secrets, payload)
 	if err != nil {
 		s.counted(ctx, tenantID, hook.ID, outcomeSkipped, status)
 		return s.skipped(ctx, tenantID, userID, hook.ID, skipCallFailed, hook.FailOpen, err)
@@ -219,6 +222,35 @@ func (s *Service) counted(ctx context.Context, tenantID, hookID uuid.UUID, outco
 	}); err != nil {
 		slog.Warn("authhook: count a call", "hook_id", hookID, "err", err)
 	}
+}
+
+// SecretRotationOverlap is how long a hook's replaced secret goes on signing
+// its calls beside the new one, as for webhooks.
+const SecretRotationOverlap = 24 * time.Hour
+
+// previousSecret is a hook's replaced secret, sealed, and when it stops signing.
+type previousSecret struct {
+	ct, nonce []byte
+	until     pgtype.Timestamptz
+}
+
+// secretsOf is what a hook's calls are signed with: its secret (see secretOf),
+// then while it overlaps the one it replaced. A replaced secret that can't be
+// opened is left out, with a warning, rather than stop the calls.
+func (s *Service) secretsOf(ctx context.Context, tenantID, hookID uuid.UUID, legacy string, ct, nonce []byte, previous previousSecret) ([]string, error) {
+	current, err := s.secretOf(ctx, tenantID, hookID, legacy, ct, nonce)
+	if err != nil {
+		return nil, err
+	}
+	secrets := []string{current}
+	if len(previous.ct) > 0 && previous.until.Valid && time.Now().Before(previous.until.Time) && s.box != nil {
+		if plain, err := s.box.Open(tenantID, "auth-hook-signing", hookID.String(), previous.ct, previous.nonce); err == nil {
+			secrets = append(secrets, string(plain))
+		} else {
+			slog.Warn("authhook: replaced secret unreadable; signing with the current one only", "hook_id", hookID, "err", err)
+		}
+	}
+	return secrets, nil
 }
 
 // secretOf is a hook's signing secret, opened; a plaintext one is encrypted on
@@ -301,10 +333,11 @@ func parseAnswer(body []byte) (answer, bool) {
 	return r, true
 }
 
-// call POSTs the signed payload, returning the response body, its status (0
-// when there was none) and a non-nil error on transport failure, timeout, or
-// a non-2xx status.
-func (s *Service) call(ctx context.Context, url, secret string, payload []byte) ([]byte, int, error) {
+// call POSTs payload signed with secrets as webhook deliveries are
+// (requestsig: a timestamp, and a signature for each), returning the response
+// body, its status (0 when there was none) and a non-nil error on transport
+// failure, timeout, or a non-2xx status.
+func (s *Service) call(ctx context.Context, url string, secrets []string, payload []byte) ([]byte, int, error) {
 	cctx, cancel := context.WithTimeout(ctx, hookTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(cctx, http.MethodPost, url, bytes.NewReader(payload))
@@ -312,7 +345,7 @@ func (s *Service) call(ctx context.Context, url, secret string, payload []byte) 
 		return nil, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Qeet-Signature", "sha256="+sign(secret, payload))
+	requestsig.SetHeaders(req.Header, time.Now(), payload, secrets...)
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, 0, err
@@ -323,12 +356,6 @@ func (s *Service) call(ctx context.Context, url, secret string, payload []byte) 
 		return b, resp.StatusCode, errors.New("hook returned non-2xx")
 	}
 	return b, resp.StatusCode, nil
-}
-
-func sign(secret string, body []byte) string {
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(body)
-	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // decide turns a hook call's outcome into a deny message, or an allow with the
@@ -388,10 +415,10 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, url, secret st
 	defer tx.Rollback(ctx)
 	err = tx.QueryRow(ctx, `
 		INSERT INTO tenant.auth_hooks
-		    (id, tenant_id, url, secret, secret_ct, secret_nonce, encryption_version, fail_open)
-		VALUES ($1, $2, $3, '', $4, $5, 1, $6)
+		    (id, tenant_id, url, secret, secret_ct, secret_nonce, encryption_version, fail_open, created_by)
+		VALUES ($1, $2, $3, '', $4, $5, 1, $6, NULLIF($7::uuid, '00000000-0000-0000-0000-000000000000'))
 		RETURNING id, trigger, url, enabled, fail_open, created_at
-	`, id, tenantID, url, ciphertext, nonce, failOpen).Scan(
+	`, id, tenantID, url, ciphertext, nonce, failOpen, httpx.PrincipalUserID(ctx)).Scan(
 		&row.ID, &row.Trigger, &row.URL, &row.Enabled, &row.FailOpen, &row.CreatedAt,
 	)
 	if err != nil {
@@ -444,6 +471,10 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Hook, error) 
 		if row.LastCalledAt.Valid {
 			at := row.LastCalledAt.Time
 			h.LastCalledAt = &at
+		}
+		if row.PreviousSecretExpiresAt.Valid && time.Now().Before(row.PreviousSecretExpiresAt.Time) {
+			until := row.PreviousSecretExpiresAt.Time
+			h.PreviousSecretExpiresAt = &until
 		}
 		if row.LastStatusCode != nil {
 			code := int(*row.LastStatusCode)
@@ -504,7 +535,9 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in HookSet
 }
 
 // setEndpoint gives one of the tenant's hooks a new URL, checked as on
-// creation, a new signing secret, encrypted, or both, within tx.
+// creation, a new signing secret, encrypted, or both, within tx. The secret a
+// new one replaces signs beside it for SecretRotationOverlap; replacing it
+// again within that ends the older one's at once.
 func (s *Service) setEndpoint(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, url, secret *string) error {
 	if url != nil {
 		if _, err := s.egress.ValidateHTTPURL(*url); err != nil {
@@ -515,6 +548,23 @@ func (s *Service) setEndpoint(ctx context.Context, tx pgx.Tx, id, tenantID uuid.
 	if secret != nil {
 		if s.box == nil {
 			return errs.ErrInternalServer.WithDetail("auth-hook secret encryption is unavailable")
+		}
+		cur, err := s.q.WithTx(tx).LockHookSecret(ctx, dbgen.LockHookSecretParams{ID: id, TenantID: tenantID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errs.ErrAuthHookNotFound
+		}
+		if err != nil {
+			return err
+		}
+		params.PreviousCt, params.PreviousNonce = cur.SecretCt, cur.SecretNonce
+		if len(cur.SecretCt) == 0 && cur.Secret != "" {
+			// A secret stored before encryption is sealed as it steps aside.
+			if params.PreviousCt, params.PreviousNonce, err = s.box.Seal(tenantID, "auth-hook-signing", id.String(), []byte(cur.Secret)); err != nil {
+				return err
+			}
+		}
+		if len(params.PreviousCt) > 0 {
+			params.PreviousExpiresAt = pgtype.Timestamptz{Time: time.Now().UTC().Add(SecretRotationOverlap), Valid: true}
 		}
 		ct, nonce, err := s.box.Seal(tenantID, "auth-hook-signing", id.String(), []byte(*secret))
 		if err != nil {
@@ -556,7 +606,8 @@ func (s *Service) Test(ctx context.Context, id, tenantID uuid.UUID, actor audit.
 		return nil, err
 	}
 	out := &TestResult{Decision: "none"}
-	secret, err := s.secretOf(ctx, tenantID, hook.ID, hook.Secret, hook.SecretCt, hook.SecretNonce)
+	secrets, err := s.secretsOf(ctx, tenantID, hook.ID, hook.Secret, hook.SecretCt, hook.SecretNonce,
+		previousSecret{hook.PreviousSecretCt, hook.PreviousSecretNonce, hook.PreviousSecretExpiresAt})
 	if err != nil {
 		out.Error = "the signing secret can't be read"
 	} else {
@@ -565,7 +616,7 @@ func (s *Service) Test(ctx context.Context, id, tenantID uuid.UUID, actor audit.
 			"email": "test@example.invalid", "timestamp": time.Now().UTC().Format(time.RFC3339),
 		})
 		started := time.Now()
-		body, status, callErr := s.call(ctx, hook.Url, secret, payload)
+		body, status, callErr := s.call(ctx, hook.Url, secrets, payload)
 		out.StatusCode, out.DurationMS = status, time.Since(started).Milliseconds()
 		switch r, ok := parseAnswer(body); {
 		case callErr != nil:

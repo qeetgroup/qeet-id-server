@@ -2,11 +2,20 @@ post:
   operationId: startMyEmailChange
   summary: Start changing my email
   description: >-
-    Sends a verification code to the address the caller wants to move to, to
-    prove they control it; confirm it with the confirm-email-change call. The
+    Sends an 8-digit verification code to the address the caller wants to move
+    to, to prove they control it; confirm it with the confirm-email-change
+    call. A new code replaces the caller's earlier ones, and one the mail
+    provider refuses is withdrawn. At most ten codes an hour go to one person,
+    and five to one address over every account, an address in use included
+    (429 verification.code_send_limited with retry_after, in seconds). The
     answer is the same whether or not the address is already in use by another
     account. An address in use is sent a notice that it already has an account
     instead of a code, and is never assigned to the caller.
+    An organisation decides some changes, refused with 403
+    verification.email_managed saying which: an address its directory (SCIM)
+    or single sign-on provides changes there; an address on a domain the
+    account's organisation manages moves only to another of its domains; and no
+    address moves onto a domain another organisation manages.
   tags:
     - Verification
   security:
@@ -37,6 +46,8 @@ post:
                 type: string
     '401':
       $ref: ../../../shared/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../../shared/responses/Forbidden.yaml
     '422':
       $ref: ../../../shared/responses/Unprocessable.yaml
     '429':

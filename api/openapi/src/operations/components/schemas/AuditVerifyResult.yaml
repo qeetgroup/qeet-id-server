@@ -21,8 +21,14 @@ properties:
     enum:
       - audit.chain_prev_hash_mismatch
       - audit.chain_row_hash_mismatch
+      - audit.chain_checkpoint_gone
+      - audit.chain_checkpoint_unsigned
     description: >-
       Set when the chain is broken: the row's link to the one before it is
-      wrong, or its contents no longer match its hash.
+      wrong, or its contents no longer match its hash; the row the chain's
+      last verification checkpoint names is gone; or a checkpoint the chain
+      relies on (its last verification's, or where it starts after a purge)
+      doesn't carry the server's signature, as when the chain and its
+      checkpoint were rewritten together.
   rows_checked:
     type: integer

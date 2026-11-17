@@ -27,12 +27,21 @@ get:
     saml.service_provider_draft, whether or not anyone is signed in (a signed-in
     person's attempt is audited as saml.idp_assertion_refused, reason draft).
     The organisation's plan must include enterprise SSO at every sign-in, not
-    only when the SP was registered (402 billing.upgrade_required). An SP with
+    only when the SP was registered (402 billing.upgrade_required). As at OIDC
+    authorize, the organisation's address rules apply (403
+    auth.address_not_allowed, recorded as auth.address_refused with path
+    saml_idp), and so does its second-factor requirement: a session whose
+    sign-in didn't meet it is sent to sign in again (302 to the hosted login's
+    /sign-in with prompt=login, returning here marked with login_after), and a
+    fresh sign-in that still hasn't is refused with 403 step_up_required or
+    mfa.enrollment_required, audited as saml.idp_assertion_refused with reason
+    second_factor_required. An SP with
     require_signed_requests is signed in only by a request signed with its
     certificate, over the query as the Redirect binding defines (RSA or ECDSA
     with SHA-256 or SHA-512) or by an enveloped XML signature, and is otherwise
-    refused with 403 saml.request_signature_invalid; IdP-initiated sign-in is
-    unaffected. An SP with encrypt_assertions gets the signed assertion as an
+    refused with 403 saml.request_signature_invalid, as is a Redirect-binding
+    query that gives SAMLRequest, RelayState, SigAlg or Signature twice or
+    under a percent-encoded name; IdP-initiated sign-in is unaffected. An SP with encrypt_assertions gets the signed assertion as an
     EncryptedAssertion to its certificate. The POST-binding variant is POST
     /saml/idp/{tenantID}/sso.
   summary: '[idp] IdP SSO (redirect binding)'
@@ -95,7 +104,8 @@ post:
     /saml/idp/{tenantID}/sso: an SP with assignment_required refuses anyone not
     assigned to it with an audited 403 saml.sp_not_assigned. An unknown or
     inactive tenant, or an unknown SP, returns 404. The organisation's plan must
-    include enterprise SSO at every sign-in (402 billing.upgrade_required).
+    include enterprise SSO at every sign-in (402 billing.upgrade_required), and
+    its address rules and second-factor requirement apply as for GET.
   summary: '[idp] IdP SSO (POST binding)'
   tags:
     - SAML

@@ -132,11 +132,12 @@ func TestCheckLockout_BoundsAreInclusiveAndUnsetIsTheDefault(t *testing.T) {
 	if got := limits.CheckLockout(Policy{}); len(got) != 0 {
 		t.Errorf("unset settings take the platform default, got %v", got)
 	}
-	ok := Policy{LockoutThreshold: n(3), LockoutWindowMinutes: n(1440), LockoutDurationMinutes: n(1)}
+	ok := Policy{LockoutThreshold: n(3), LockoutWindowMinutes: n(1440), LockoutDurationMinutes: n(15)}
 	if got := limits.CheckLockout(ok); len(got) != 0 {
 		t.Errorf("settings on the bounds must be accepted, got %v", got)
 	}
-	bad := Policy{LockoutThreshold: n(21), LockoutWindowMinutes: n(0), LockoutDurationMinutes: n(1441)}
+	// Looser than the platform default is out of range, as is past 24 hours.
+	bad := Policy{LockoutThreshold: n(6), LockoutWindowMinutes: n(14), LockoutDurationMinutes: n(1441)}
 	got := limits.CheckLockout(bad)
 	if len(got) != 3 {
 		t.Fatalf("want all three settings refused, got %v", got)

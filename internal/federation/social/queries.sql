@@ -70,16 +70,20 @@ DELETE FROM auth.social_oauth_states WHERE state_hash = @state_hash
 RETURNING tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at, nonce_hash;
 
 -- name: InsertSocialLoginCode :exec
-INSERT INTO auth.social_login_codes (code_hash, user_id, tenant_id, expires_at)
-VALUES (@code_hash, @user_id, @tenant_id, @expires_at);
+INSERT INTO auth.social_login_codes (code_hash, user_id, tenant_id, provider, expires_at)
+VALUES (@code_hash, @user_id, @tenant_id, @provider::text, @expires_at);
 
 -- name: EnabledSocialProviderNames :many
 SELECT provider FROM tenant.social_providers
 WHERE tenant_id = @tenant_id AND enabled ORDER BY provider;
 
 -- name: ConsumeSocialLoginCode :one
-SELECT user_id, tenant_id, expires_at, used_at
-FROM auth.social_login_codes WHERE code_hash = @code_hash FOR UPDATE;
+-- With whether the provider that issued the code is on: one since deleted finds no row.
+SELECT lc.user_id, lc.tenant_id, lc.expires_at, lc.used_at, p.enabled
+FROM auth.social_login_codes lc
+JOIN tenant.social_providers p ON p.tenant_id = lc.tenant_id AND p.provider = lc.provider
+WHERE lc.code_hash = @code_hash
+FOR UPDATE OF lc;
 
 -- name: MarkSocialLoginCodeUsed :exec
 UPDATE auth.social_login_codes SET used_at = NOW() WHERE code_hash = @code_hash;

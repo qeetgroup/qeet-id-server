@@ -286,6 +286,12 @@ func (h *Handler) updateProvider(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	if in.DiscoveryURL != nil {
+		if err := h.checkTrust(r, tenantID, chi.URLParam(r, "provider"), *in.DiscoveryURL); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+	}
 	p, err := h.Service.UpdateProvider(r.Context(), tenantID, chi.URLParam(r, "provider"), in, changedBy(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)

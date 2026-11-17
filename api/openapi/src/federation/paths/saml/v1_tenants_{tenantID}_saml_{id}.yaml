@@ -73,6 +73,10 @@ patch:
     after changing IdP details. An active connection needs the IdP's entity ID,
     SSO URL and a certificate: turning on one without them is refused with 422
     saml.connection_incomplete.
+    Changing what the connection trusts (a new idp_entity_id or idp_certificate)
+    is acting on every account linked to it, as the changed connection could
+    sign in as any of them: while an administrator is linked, it needs a caller
+    who outranks each one (403 rbac.trust_change_outranks_caller otherwise).
   summary: Update connection
   tags:
     - SAML

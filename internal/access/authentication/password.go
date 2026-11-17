@@ -167,8 +167,8 @@ func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, t
 // token. It does not create tokens or sessions.
 func (s *Service) CheckPassword(ctx context.Context, in SignInAttempt) (*user.User, map[string]any, error) {
 	// A hosted login names the application, so its organisation decides whether
-	// password sign-in is allowed before the password is checked. Otherwise the
-	// account's own organisation decides after verification.
+	// password sign-in is allowed before the password is checked; the account's
+	// own organisation decides too, after verification.
 	signInTenant, err := s.SignInTenant(ctx, in.ClientID)
 	if err != nil {
 		return nil, nil, err
@@ -237,7 +237,9 @@ func (s *Service) CheckPassword(ctx context.Context, in SignInAttempt) (*user.Us
 	if err := s.clearFailedSignIns(ctx, attempt); err != nil {
 		return nil, nil, err
 	}
-	if signInTenant == uuid.Nil {
+	// Whichever application the sign-in named, an organisation that switched
+	// passwords off keeps its people from signing in with one.
+	if u.TenantID != signInTenant {
 		if err := s.passwordAllowed(ctx, u.TenantID); err != nil {
 			return nil, nil, err
 		}

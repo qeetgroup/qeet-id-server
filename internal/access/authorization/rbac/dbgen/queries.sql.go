@@ -72,6 +72,12 @@ ins AS (
     FROM allowed
     WHERE allowed.ok
     ON CONFLICT DO NOTHING
+),
+for_good AS (
+    UPDATE rbac.access_requests SET access_ends_at = NULL
+    WHERE tenant_id = $2 AND requester_id = $3 AND role_id = $1
+      AND status = 'approved' AND granted AND ended_at IS NULL AND access_ends_at IS NOT NULL
+      AND (SELECT ok FROM allowed)
 )
 SELECT allowed.ok AS valid FROM allowed
 `
@@ -92,7 +98,9 @@ type AssignUserRoleParams struct {
 // an admin-created account has no membership row until its first role, and
 // that first assignment must still work. valid is false for a missing,
 // deleted or foreign user and for a missing or foreign role alike, and true
-// for a role the user already holds (the insert is then a no-op).
+// for a role the user already holds (the insert is then a no-op). Giving a
+// role someone holds for a time through an access request gives it for good:
+// the request's end is cleared, so its sweep leaves the role.
 func (q *Queries) AssignUserRole(ctx context.Context, arg AssignUserRoleParams) (*bool, error) {
 	row := q.db.QueryRow(ctx, assignUserRole,
 		arg.RoleID,
@@ -387,6 +395,26 @@ type GrantPermissionsParams struct {
 func (q *Queries) GrantPermissions(ctx context.Context, arg GrantPermissionsParams) error {
 	_, err := q.db.Exec(ctx, grantPermissions, arg.RoleID, arg.PermissionIds)
 	return err
+}
+
+const leftTenant = `-- name: LeftTenant :one
+SELECT (NOT EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = $1::uuid AND ur.tenant_id = $2::uuid)
+    AND NOT EXISTS (SELECT 1 FROM "user".users u WHERE u.id = $1::uuid AND u.tenant_id = $2::uuid))::bool
+    AS left_tenant
+`
+
+type LeftTenantParams struct {
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+}
+
+// LeftTenant reports whether the user is no longer a member of the tenant: it
+// isn't their home and they hold no role there.
+func (q *Queries) LeftTenant(ctx context.Context, arg LeftTenantParams) (bool, error) {
+	row := q.db.QueryRow(ctx, leftTenant, arg.UserID, arg.TenantID)
+	var left_tenant bool
+	err := row.Scan(&left_tenant)
+	return left_tenant, err
 }
 
 const listEffectivePermissions = `-- name: ListEffectivePermissions :many

@@ -15,10 +15,7 @@ package webhook
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -39,6 +36,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/developer/webhooks/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/requestsig"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -199,10 +197,10 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Subsc
 	}
 	err = tx.QueryRow(ctx, `
 		INSERT INTO tenant.webhook_subscriptions
-		    (id, tenant_id, url, secret, secret_ct, secret_nonce, encryption_version, events)
-		VALUES ($1, $2, $3, '', $4, $5, 1, $6)
+		    (id, tenant_id, url, secret, secret_ct, secret_nonce, encryption_version, events, created_by)
+		VALUES ($1, $2, $3, '', $4, $5, 1, $6, NULLIF($7::uuid, '00000000-0000-0000-0000-000000000000'))
 		RETURNING id, tenant_id, url, events, disabled_at, created_at
-	`, id, in.TenantID, in.URL, ciphertext, nonce, in.Events).Scan(
+	`, id, in.TenantID, in.URL, ciphertext, nonce, in.Events, httpx.PrincipalUserID(ctx)).Scan(
 		&row.ID, &row.TenantID, &row.URL, &row.Events, &row.DisabledAt, &row.CreatedAt,
 	)
 	if err != nil {
@@ -882,16 +880,10 @@ func (s *Service) deliver(ctx context.Context, deliveryID uuid.UUID, url string,
 	if err != nil {
 		return 0, "", err
 	}
-	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Qeet-Event", eventType)
 	req.Header.Set("X-Qeet-Delivery-ID", deliveryID.String())
-	req.Header.Set("X-Qeet-Timestamp", timestamp)
-	signatures := make([]string, len(secrets))
-	for i, secret := range secrets {
-		signatures[i] = "sha256=" + sign(secret, timestamp, body)
-	}
-	req.Header.Set("X-Qeet-Signature", strings.Join(signatures, ","))
+	requestsig.SetHeaders(req.Header, time.Now(), body, secrets...)
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return 0, "", err
@@ -902,15 +894,6 @@ func (s *Service) deliver(ctx context.Context, deliveryID uuid.UUID, url string,
 		return resp.StatusCode, string(rb), errors.New("non-2xx response")
 	}
 	return resp.StatusCode, string(rb), nil
-}
-
-// sign returns the hex HMAC-SHA256 of timestamp, ".", and body, keyed by
-// secret.
-func sign(secret, timestamp string, body []byte) string {
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(timestamp + "."))
-	mac.Write(body)
-	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func truncate(s string, max int) string {

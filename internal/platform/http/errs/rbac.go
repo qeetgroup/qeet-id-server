@@ -11,6 +11,7 @@ const (
 	CodeRBACOwnerOnly           = "rbac.owner_only"
 	CodeRBACTargetIsOwner       = "rbac.target_is_owner"
 	CodeRBACTargetOutranks      = "rbac.target_outranks_caller"
+	CodeRBACTrustChangeOutranks = "rbac.trust_change_outranks_caller"
 	CodeRBACSystemRoleFixed     = "rbac.system_role_fixed"
 	CodeRBACRoleInUse           = "rbac.role_in_use"
 )
@@ -28,6 +29,10 @@ var (
 	ErrRBACOwnerOnly           = New(CodeRBACOwnerOnly, "Only an owner can make someone an owner.")
 	ErrRBACTargetIsOwner       = New(CodeRBACTargetIsOwner, "Only an owner can change an owner's account or roles.")
 	ErrRBACTargetOutranks      = New(CodeRBACTargetOutranks, "You can't change the account of someone who holds a permission you don't.")
-	ErrRBACSystemRoleFixed     = New(CodeRBACSystemRoleFixed, "A built-in role can't be changed. Create a role of your own for a different set of permissions.")
-	ErrRBACRoleInUse           = New(CodeRBACRoleInUse, "Someone still holds this role. Give its people, groups and invitations another role first.")
+	// ErrRBACTrustChangeOutranks refuses changing what a connection trusts while
+	// it signs in someone who outranks the caller: it could then sign in as them.
+	ErrRBACTrustChangeOutranks = New(CodeRBACTrustChangeOutranks,
+		"This connection signs in someone who outranks you, so you can't change what it trusts. Ask an owner.")
+	ErrRBACSystemRoleFixed = New(CodeRBACSystemRoleFixed, "A built-in role can't be changed. Create a role of your own for a different set of permissions.")
+	ErrRBACRoleInUse       = New(CodeRBACRoleInUse, "Someone still holds this role. Give its people, groups and invitations another role first.")
 )

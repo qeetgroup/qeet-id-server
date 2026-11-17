@@ -3,7 +3,9 @@ post:
   description: >-
     Rotates the invitation token, extends its expiry, and re-sends the
     invitation email; the new link goes only to the invited address. Requires
-    member.invite. The response carries the invitation. Only pending or expired
+    member.invite, and, as creating it does, every permission of the role the
+    invitation grants (403 rbac.grant_exceeds_caller naming one the caller
+    lacks; nothing changes). The response carries the invitation. Only pending or expired
     invites belonging to the caller's tenant qualify; already-accepted or
     revoked invites are rejected. The recipient completes the flow through the
     accept-invite call, as with the original invitation. invite.delivery says

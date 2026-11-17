@@ -250,3 +250,47 @@ func mustHex(t *testing.T, s string) []byte {
 	}
 	return b
 }
+
+// TestMACChecksOnlyWhatItsKeySigned checks that a MAC checks under the key that
+// made it, current or previous, and fails for another purpose, message, key or
+// an empty MAC.
+func TestMACChecksOnlyWhatItsKeySigned(t *testing.T) {
+	oldKey, newKey := bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32)
+	signer, err := New(oldKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotated, err := New(newKey, oldKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := New(newKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := []byte("chain|row|hash")
+	keyID, mac := signer.MAC("audit-checkpoint", msg)
+	cases := []struct {
+		name    string
+		c       *Cipher
+		purpose string
+		msg     []byte
+		mac     []byte
+		want    bool
+	}{
+		{"the signing key", signer, "audit-checkpoint", msg, mac, true},
+		{"a previous key", rotated, "audit-checkpoint", msg, mac, true},
+		{"a cipher without the key", other, "audit-checkpoint", msg, mac, false},
+		{"another purpose", signer, "other", msg, mac, false},
+		{"another message", signer, "audit-checkpoint", []byte("chain|row|other"), mac, false},
+		{"no MAC", signer, "audit-checkpoint", msg, nil, false},
+	}
+	for _, tc := range cases {
+		if got := tc.c.CheckMAC(tc.purpose, keyID, tc.msg, tc.mac); got != tc.want {
+			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	if newID, _ := rotated.MAC("audit-checkpoint", msg); newID == keyID {
+		t.Error("a rotated cipher signs with the previous key")
+	}
+}

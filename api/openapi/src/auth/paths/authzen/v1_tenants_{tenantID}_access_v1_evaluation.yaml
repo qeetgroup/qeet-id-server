@@ -12,7 +12,10 @@ post:
     resource.*, action.properties as action.*, and context (but for explain) as
     context.*. What the platform knows of the subject (id, type, tenant_id, and
     for a person, groups and roles) wins over a property of the same name, as
-    resource.type and resource.id and action.name win over theirs.
+    resource.type and resource.id and action.name win over theirs. A
+    relationship check expands at most 1,000 distinct object#relation pairs,
+    and a request's checks together read at most 5,000 relationship sets; past
+    either it is refused with 422 rebac.check_too_complex.
   tags:
     - AuthZEN
   parameters:

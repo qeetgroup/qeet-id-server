@@ -33,6 +33,9 @@ type Service struct {
 	// addresses is the organisations' address rules (nil = no rules). See
 	// address.go.
 	addresses AddressPolicy
+	// sessionFactors is the second factor an organisation still requires of a
+	// person's session (nil: none checked).
+	sessionFactors func(ctx context.Context, sessionID, userID, tenantID uuid.UUID) error
 	// lockout bounds wrong application secrets. See client_lockout.go.
 	lockout ClientLockout
 	// logoutClient sends back-channel sign-out notices under logoutEgress

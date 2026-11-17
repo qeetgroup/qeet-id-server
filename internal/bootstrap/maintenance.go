@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -15,6 +16,8 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/billing"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/qeetai"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
@@ -35,10 +38,11 @@ const AuditVerifyInterval = 6 * time.Hour
 // MaintenanceJobs returns the scheduled housekeeping jobs. Each runs once per
 // interval across all instances. Expired sessions the cleanup removes are
 // announced through signals as session.revoked (reason expired); stored values
-// are re-sealed with box's current key. outbound, public addresses only if not
-// given, bounds the jobs that fetch from the web.
+// are re-sealed with box's current key, which also signs the audit chains'
+// checkpoints. outbound, public addresses only if not given, bounds the jobs
+// that fetch from the web.
 func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller, box *envelope.Cipher, outbound ...*egress.Policy) []worker.Scheduled {
-	verifier := audit.NewVerifier(pool)
+	verifier := audit.NewVerifier(pool, box)
 	return []worker.Scheduled{
 		{
 			// A connection backed by its IdP's metadata URL picks up the IdP's
@@ -277,6 +281,31 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller, box *
 			},
 		},
 	}
+}
+
+// AuditRetentionInterval is how often audit events past their organisation's
+// plan's retention are deleted.
+const AuditRetentionInterval = 24 * time.Hour
+
+// AuditRetentionJobs returns the job that deletes each organisation's audit
+// events older than its plan keeps them (audit_retention_days), the plan
+// resolved as everywhere else: its billing subscription, then its plan label.
+// box signs the chains' purge checkpoints.
+func AuditRetentionJobs(pool *pgxpool.Pool, billingService *billing.Service, box *envelope.Cipher) []worker.Scheduled {
+	plans := entitlements.NewService(entitlementPlanResolver{billing: billingService, tenants: tenant.NewRepository(pool)})
+	return []worker.Scheduled{{
+		Name:     "audit-retention",
+		Interval: AuditRetentionInterval,
+		Run: func(ctx context.Context) error {
+			n, err := audit.PurgeExpired(ctx, pool, box, func(ctx context.Context, tenantID uuid.UUID) (int, error) {
+				return plans.Limit(ctx, tenantID, entitlements.LimitAuditRetentionDays)
+			})
+			if n > 0 {
+				slog.Info("audit events past their plan's retention deleted", "deleted", n)
+			}
+			return err
+		},
+	}}
 }
 
 // runSweeps runs the retention sweeps across every organisation and logs what

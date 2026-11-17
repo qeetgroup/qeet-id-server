@@ -236,8 +236,9 @@ func (q *Queries) InsertScimGroup(ctx context.Context, arg InsertScimGroupParams
 }
 
 const insertScimToken = `-- name: InsertScimToken :one
-INSERT INTO tenant.scim_tokens (tenant_id, name, token_hash, token_prefix, expires_at)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO tenant.scim_tokens (tenant_id, name, token_hash, token_prefix, expires_at, created_by)
+VALUES ($1, $2, $3, $4, $5,
+        NULLIF($6::uuid, '00000000-0000-0000-0000-000000000000'))
 RETURNING id, name, token_prefix, created_at, expires_at, last_used_at, revoked_at, replaced_by
 `
 
@@ -247,6 +248,7 @@ type InsertScimTokenParams struct {
 	TokenHash   string
 	TokenPrefix string
 	ExpiresAt   pgtype.Timestamptz
+	CreatedBy   uuid.UUID
 }
 
 type InsertScimTokenRow struct {
@@ -267,6 +269,7 @@ func (q *Queries) InsertScimToken(ctx context.Context, arg InsertScimTokenParams
 		arg.TokenHash,
 		arg.TokenPrefix,
 		arg.ExpiresAt,
+		arg.CreatedBy,
 	)
 	var i InsertScimTokenRow
 	err := row.Scan(

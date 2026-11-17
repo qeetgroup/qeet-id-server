@@ -9,11 +9,12 @@
 INSERT INTO auth.oidc_clients (
     tenant_id, client_id, client_secret_hash, type, name,
     redirect_uris, post_logout_uris, grant_types, scopes, backchannel_logout_uri, frontchannel_logout_uri,
-    logo_uri, client_uri
+    logo_uri, client_uri, created_by
 ) VALUES (@tenant_id, @client_id, sqlc.narg('client_secret_hash'), @type, @name,
           @redirect_uris, @post_logout_uris, @grant_types, @scopes,
           NULLIF(@backchannel_logout_uri::text, ''), NULLIF(@frontchannel_logout_uri::text, ''),
-          NULLIF(@logo_uri::text, ''), NULLIF(@client_uri::text, ''))
+          NULLIF(@logo_uri::text, ''), NULLIF(@client_uri::text, ''),
+          NULLIF(@created_by::uuid, '00000000-0000-0000-0000-000000000000'))
 RETURNING id, tenant_id, client_id, type, name, redirect_uris,
           post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri, logo_uri, client_uri;
 
@@ -351,8 +352,13 @@ WHERE user_id = @user_id AND status = 'pending' AND expires_at > NOW()
 ORDER BY created_at DESC;
 
 -- name: LockCIBARequest :one
-SELECT user_id, status, expires_at
+SELECT user_id, tenant_id, status, expires_at
 FROM auth.oidc_ciba_requests WHERE id = @id FOR UPDATE;
+
+-- CIBARequestTenant is the organisation of one of the user's backchannel
+-- requests, for the checks its approval makes before locking it.
+-- name: CIBARequestTenant :one
+SELECT tenant_id FROM auth.oidc_ciba_requests WHERE id = @id AND user_id = @user_id;
 
 -- name: DenyCIBARequest :exec
 UPDATE auth.oidc_ciba_requests SET status = 'denied' WHERE id = @id;
@@ -432,17 +438,26 @@ SELECT EXISTS (
 -- Application secret lockout
 -- ==========================================================================
 
--- GetClientLockedUntil reports a lockout still in force for an application.
+-- GetClientLockedUntil reports a lockout still in force for an application
+-- from a source network.
 -- name: GetClientLockedUntil :one
 SELECT locked_until FROM auth.oidc_client_auth_lockouts
-WHERE client_row_id = @client_row_id AND locked_until > NOW();
+WHERE client_row_id = @client_row_id AND source_network = @source_network AND locked_until > NOW();
 
--- RecordClientAuthFailure counts one wrong secret, restarting the count when
--- the window it started has passed, and returns the count.
+-- GetClientLatestLockout reports the lockout in force for an application from
+-- any source network that ends last.
+-- name: GetClientLatestLockout :one
+SELECT max(locked_until)::timestamptz AS locked_until FROM auth.oidc_client_auth_lockouts
+WHERE client_row_id = @client_row_id AND locked_until > NOW()
+HAVING count(*) > 0;
+
+-- RecordClientAuthFailure counts one wrong secret from a source network,
+-- restarting the count when the window it started has passed, and returns the
+-- count.
 -- name: RecordClientAuthFailure :one
-INSERT INTO auth.oidc_client_auth_lockouts AS l (client_row_id, failures, window_started_at, last_failure_at)
-VALUES (@client_row_id, 1, NOW(), NOW())
-ON CONFLICT (client_row_id) DO UPDATE SET
+INSERT INTO auth.oidc_client_auth_lockouts AS l (client_row_id, source_network, failures, window_started_at, last_failure_at)
+VALUES (@client_row_id, @source_network, 1, NOW(), NOW())
+ON CONFLICT (client_row_id, source_network) DO UPDATE SET
     failures = CASE WHEN l.window_started_at <= NOW() - make_interval(secs => @window_seconds::float8)
                     THEN 1 ELSE l.failures + 1 END,
     window_started_at = CASE WHEN l.window_started_at <= NOW() - make_interval(secs => @window_seconds::float8)
@@ -450,19 +465,21 @@ ON CONFLICT (client_row_id) DO UPDATE SET
     last_failure_at = NOW()
 RETURNING failures;
 
--- LockClient starts a lockout and restarts the count, unless one is already
--- in force: only the attempt that starts it gets a row back.
+-- LockClient starts a lockout of a source network and restarts its count,
+-- unless one is already in force: only the attempt that starts it gets a row
+-- back.
 -- name: LockClient :one
 UPDATE auth.oidc_client_auth_lockouts
 SET locked_until = NOW() + make_interval(secs => @duration_seconds::float8),
     failures = 0, window_started_at = NOW()
-WHERE client_row_id = @client_row_id AND (locked_until IS NULL OR locked_until <= NOW())
+WHERE client_row_id = @client_row_id AND source_network = @source_network
+  AND (locked_until IS NULL OR locked_until <= NOW())
 RETURNING locked_until;
 
--- ClearClientAuthFailures forgets an application's failures after it
--- authenticates.
+-- ClearClientAuthFailures forgets an application's failures from a source
+-- network after it authenticates from there; other networks' stand.
 -- name: ClearClientAuthFailures :exec
-DELETE FROM auth.oidc_client_auth_lockouts WHERE client_row_id = @client_row_id;
+DELETE FROM auth.oidc_client_auth_lockouts WHERE client_row_id = @client_row_id AND source_network = @source_network;
 
 -- ListClientAuthFailures is an application's recent wrong-secret attempts,
 -- newest first, from the audit log (which never holds the secret).
@@ -493,6 +510,15 @@ FROM auth.oidc_resources WHERE tenant_id = @tenant_id ORDER BY identifier;
 SELECT EXISTS (
     SELECT 1 FROM tenant.domains d
     WHERE d.tenant_id <> @tenant_id AND d.verified_at IS NOT NULL
+      AND (lower(@host::text) = lower(d.domain) OR lower(@host::text) LIKE '%.' || lower(d.domain))
+)::bool;
+
+-- ResourceHostVerifiedHere reports whether the organisation has verified the
+-- host of a resource identifier, or a domain above it.
+-- name: ResourceHostVerifiedHere :one
+SELECT EXISTS (
+    SELECT 1 FROM tenant.domains d
+    WHERE d.tenant_id = @tenant_id AND d.verified_at IS NOT NULL
       AND (lower(@host::text) = lower(d.domain) OR lower(@host::text) LIKE '%.' || lower(d.domain))
 )::bool;
 
@@ -583,3 +609,16 @@ WHERE id = @id AND tenant_id = @tenant_id;
 -- Every application's redirect URIs and web origins, for the CORS check of
 -- the OAuth endpoints a browser calls before it names its application.
 SELECT redirect_uris, web_origins FROM auth.oidc_clients;
+
+-- name: ApplicationSignInLive :one
+-- Whether the hosted-login session an application's token names is still open,
+-- or a grant it started for that application still stands: signing out deletes
+-- the session and revokes its grants, while expiry leaves the grants.
+SELECT (EXISTS (
+            SELECT 1 FROM auth.login_sessions ls
+            WHERE ls.id = @session_id AND ls.user_id = @user_id AND ls.expires_at > NOW())
+        OR EXISTS (
+            SELECT 1 FROM auth.oidc_refresh_tokens rt
+            WHERE rt.login_session_id = @session_id AND rt.tenant_id = @tenant_id AND rt.client_id = @client_id
+              AND rt.user_id = @user_id AND rt.revoked_at IS NULL AND rt.expires_at > NOW()
+              AND (rt.grant_expires_at IS NULL OR rt.grant_expires_at > NOW())))::boolean AS live;

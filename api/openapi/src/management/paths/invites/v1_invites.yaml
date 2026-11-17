@@ -33,7 +33,11 @@ post:
     person holding a role, directly or through a group; when the plan's seats
     are all taken the invitation is refused with 402 billing.plan_limit
     (metadata resource seats, limit), and accepting it later takes no further
-    seat. Send an Idempotency-Key header to retry it safely: a retry with the
+    seat. An invitation a person sent is accepted only while they still may
+    give it: active, still in the organization and able to give its role, or
+    acceptance is refused with 400 invite.invalid; removing them from the
+    organization or deleting their account withdraws the invitations they sent.
+    Send an Idempotency-Key header to retry it safely: a retry with the
     same key and body within 24 hours gets the first answer, marked
     Idempotent-Replayed: true; the same key with another body answers 422
     idempotency.key_reused, one still being processed 409

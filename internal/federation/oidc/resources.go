@@ -87,14 +87,21 @@ type CreateResourceInput struct {
 	ServerClientID string `json:"server_client_id"`
 }
 
-// CheckResourceDomain refuses, with ErrOIDCResourceDomainTaken, a resource
-// identifier on a domain another organisation has verified: only it may name
-// a service there. It reads every organisation's domains, so it runs before
-// the registration's transaction; CreateResource rejects a malformed one.
-func (s *Service) CheckResourceDomain(ctx context.Context, tenantID uuid.UUID, identifier string) error {
-	host := ""
-	if u, perr := url.Parse(strings.TrimSpace(identifier)); perr == nil {
-		host = u.Hostname()
+// CheckResourceDomain refuses a resource identifier that names the platform
+// itself (ErrOIDCResourceReserved: its token issuer or audience, or their host
+// or publicBaseURL's), one on a domain another organisation has verified
+// (ErrOIDCResourceDomainTaken), and one on a host the organisation hasn't
+// verified, or a domain above it (ErrOIDCResourceDomainUnverified): only a
+// host's owner may name a service there. It reads every organisation's
+// domains, so it runs before the registration's transaction; CreateResource
+// rejects a malformed one.
+func (s *Service) CheckResourceDomain(ctx context.Context, tenantID uuid.UUID, identifier, publicBaseURL string) error {
+	identifier = strings.TrimSpace(identifier)
+	host := hostOf(identifier)
+	for _, own := range []string{s.issuer.JWTIssuer(), s.issuer.JWTAudience(), publicBaseURL} {
+		if own != "" && (identifier == own || (host != "" && host == hostOf(own))) {
+			return errs.ErrOIDCResourceReserved
+		}
 	}
 	if host == "" {
 		return nil
@@ -106,7 +113,22 @@ func (s *Service) CheckResourceDomain(ctx context.Context, tenantID uuid.UUID, i
 	if taken {
 		return errs.ErrOIDCResourceDomainTaken
 	}
+	verified, err := s.q.ResourceHostVerifiedHere(ctx, dbgen.ResourceHostVerifiedHereParams{TenantID: tenantID, Host: host})
+	if err != nil {
+		return err
+	}
+	if !verified {
+		return errs.ErrOIDCResourceDomainUnverified
+	}
 	return nil
+}
+
+// hostOf is the lower-case host of an absolute URI, or "" for none.
+func hostOf(uri string) string {
+	if u, err := url.Parse(uri); err == nil {
+		return strings.ToLower(u.Hostname())
+	}
+	return ""
 }
 
 // CreateResource registers a resource for the organisation. An identifier is
@@ -178,7 +200,7 @@ func (h *Handler) createResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	if err := h.Service.CheckResourceDomain(ctx, tenantID, in.Identifier); err != nil {
+	if err := h.Service.CheckResourceDomain(ctx, tenantID, in.Identifier, h.PublicBaseURL); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

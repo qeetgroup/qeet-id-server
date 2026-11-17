@@ -9,7 +9,12 @@ delete:
     sessions, application grants, remembered devices and pending
     authorizations), the deletion is audited (user.deleted, naming the admin)
     and a user.deleted event is queued; restoring the account brings none of
-    those sessions back. The answer names the deleted user, when, and by whom.
+    those sessions back. The same transaction revokes the admin-portal links
+    and pending invitations the user issued here and, when they created any
+    integration here that still works (a service principal, SCIM token,
+    webhook, auth hook or OIDC application), records the critical
+    user.integrations_left event listing them for review. The answer names the
+    deleted user, when, and by whom.
     Only the organization the account belongs to can delete it; for a member
     whose account belongs elsewhere the call answers 403 user.managed_elsewhere.
     Refused with 409 tenant.last_owner, and nothing changes, when it would leave

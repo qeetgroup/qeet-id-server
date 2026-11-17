@@ -77,6 +77,20 @@ func (q *Queries) DeleteProvider(ctx context.Context, arg DeleteProviderParams) 
 	return result.RowsAffected(), nil
 }
 
+const deleteProviderGrants = `-- name: DeleteProviderGrants :exec
+DELETE FROM tenant.token_vault_grants WHERE tenant_id = $1 AND provider = $2
+`
+
+type DeleteProviderGrantsParams struct {
+	TenantID uuid.UUID
+	Provider string
+}
+
+func (q *Queries) DeleteProviderGrants(ctx context.Context, arg DeleteProviderGrantsParams) error {
+	_, err := q.db.Exec(ctx, deleteProviderGrants, arg.TenantID, arg.Provider)
+	return err
+}
+
 const getTokenGrant = `-- name: GetTokenGrant :one
 SELECT access_token_ct, access_token_nonce, refresh_token_ct, refresh_token_nonce, expires_at
 FROM tenant.token_vault_grants
@@ -232,12 +246,97 @@ func (q *Queries) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]List
 	return items, nil
 }
 
-const upsertTokenGrant = `-- name: UpsertTokenGrant :exec
+const lockProvider = `-- name: LockProvider :one
+SELECT client_id, authorize_url, token_url FROM tenant.token_vault_providers
+WHERE tenant_id = $1 AND provider = $2
+FOR UPDATE
+`
+
+type LockProviderParams struct {
+	TenantID uuid.UUID
+	Provider string
+}
+
+type LockProviderRow struct {
+	ClientID     string
+	AuthorizeUrl string
+	TokenUrl     string
+}
+
+// LockProvider reads a provider's endpoints and client, locking its row until
+// the transaction ends.
+func (q *Queries) LockProvider(ctx context.Context, arg LockProviderParams) (LockProviderRow, error) {
+	row := q.db.QueryRow(ctx, lockProvider, arg.TenantID, arg.Provider)
+	var i LockProviderRow
+	err := row.Scan(&i.ClientID, &i.AuthorizeUrl, &i.TokenUrl)
+	return i, err
+}
+
+const lockTokenGrant = `-- name: LockTokenGrant :one
+SELECT access_token_ct, access_token_nonce, refresh_token_ct, refresh_token_nonce, expires_at
+FROM tenant.token_vault_grants
+WHERE tenant_id = $1 AND user_id = $2 AND provider = $3
+FOR UPDATE
+`
+
+type LockTokenGrantParams struct {
+	TenantID uuid.UUID
+	UserID   uuid.UUID
+	Provider string
+}
+
+type LockTokenGrantRow struct {
+	AccessTokenCt     []byte
+	AccessTokenNonce  []byte
+	RefreshTokenCt    []byte
+	RefreshTokenNonce []byte
+	ExpiresAt         pgtype.Timestamptz
+}
+
+// LockTokenGrant reads a grant to refresh it, locking its row until the
+// transaction ends.
+func (q *Queries) LockTokenGrant(ctx context.Context, arg LockTokenGrantParams) (LockTokenGrantRow, error) {
+	row := q.db.QueryRow(ctx, lockTokenGrant, arg.TenantID, arg.UserID, arg.Provider)
+	var i LockTokenGrantRow
+	err := row.Scan(
+		&i.AccessTokenCt,
+		&i.AccessTokenNonce,
+		&i.RefreshTokenCt,
+		&i.RefreshTokenNonce,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const providerHasGrants = `-- name: ProviderHasGrants :one
+SELECT EXISTS (
+    SELECT 1 FROM tenant.token_vault_grants WHERE tenant_id = $1 AND provider = $2
+)::bool
+`
+
+type ProviderHasGrantsParams struct {
+	TenantID uuid.UUID
+	Provider string
+}
+
+func (q *Queries) ProviderHasGrants(ctx context.Context, arg ProviderHasGrantsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, providerHasGrants, arg.TenantID, arg.Provider)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const upsertTokenGrant = `-- name: UpsertTokenGrant :execrows
 INSERT INTO tenant.token_vault_grants
     (tenant_id, user_id, provider, access_token_ct, access_token_nonce,
      refresh_token_ct, refresh_token_nonce, token_type, scope, expires_at)
-VALUES ($1, $2, $3, $4, $5,
-        $6, $7, $8, $9, $10)
+SELECT p.tenant_id, $1::uuid, p.provider, $2::bytea, $3::bytea,
+       $4::bytea, $5::bytea, $6::text,
+       $7::text, $8::timestamptz
+FROM tenant.token_vault_providers p
+WHERE p.tenant_id = $9 AND p.provider = $10
+  AND p.token_url = $11 AND p.client_id = $12
+FOR SHARE
 ON CONFLICT (tenant_id, user_id, provider) DO UPDATE SET
     access_token_ct = EXCLUDED.access_token_ct,
     access_token_nonce = EXCLUDED.access_token_nonce,
@@ -250,9 +349,7 @@ ON CONFLICT (tenant_id, user_id, provider) DO UPDATE SET
 `
 
 type UpsertTokenGrantParams struct {
-	TenantID          uuid.UUID
 	UserID            uuid.UUID
-	Provider          string
 	AccessTokenCt     []byte
 	AccessTokenNonce  []byte
 	RefreshTokenCt    []byte
@@ -260,17 +357,21 @@ type UpsertTokenGrantParams struct {
 	TokenType         string
 	Scope             *string
 	ExpiresAt         pgtype.Timestamptz
+	TenantID          uuid.UUID
+	Provider          string
+	TokenUrl          string
+	ClientID          string
 }
 
-// UpsertTokenGrant writes (or refreshes) a connected account's token pair.
-// refresh_token_ct / refresh_token_nonce are nullable: NULL means "no refresh
-// token" on insert; COALESCE preserves the existing one on update when the
-// provider omits it from the refresh response.
-func (q *Queries) UpsertTokenGrant(ctx context.Context, arg UpsertTokenGrantParams) error {
-	_, err := q.db.Exec(ctx, upsertTokenGrant,
-		arg.TenantID,
+// UpsertTokenGrant writes (or refreshes) a connected account's token pair,
+// only while the provider still has the token URL and client the tokens came
+// from: it writes no row otherwise. The provider's row is share-locked, so it
+// can't change under the write. refresh_token_ct / refresh_token_nonce are
+// nullable: NULL means "no refresh token" on insert; COALESCE preserves the
+// existing one on update when the provider omits it from the refresh response.
+func (q *Queries) UpsertTokenGrant(ctx context.Context, arg UpsertTokenGrantParams) (int64, error) {
+	result, err := q.db.Exec(ctx, upsertTokenGrant,
 		arg.UserID,
-		arg.Provider,
 		arg.AccessTokenCt,
 		arg.AccessTokenNonce,
 		arg.RefreshTokenCt,
@@ -278,6 +379,13 @@ func (q *Queries) UpsertTokenGrant(ctx context.Context, arg UpsertTokenGrantPara
 		arg.TokenType,
 		arg.Scope,
 		arg.ExpiresAt,
+		arg.TenantID,
+		arg.Provider,
+		arg.TokenUrl,
+		arg.ClientID,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

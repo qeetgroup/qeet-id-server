@@ -51,6 +51,11 @@ patch:
     Switching it off is refused with 409 social.provider_in_use
     (metadata.people: how many) while anyone in the organisation can sign in
     only through it, as removing it is; give them another way in first.
+    Changing what the connection trusts (an OpenID Connect provider's
+    discovery_url) is acting on every account linked to it, as the changed
+    connection could sign in as any of them: while an administrator is linked,
+    it needs a caller who outranks each one (403
+    rbac.trust_change_outranks_caller otherwise).
   responses:
     '200':
       description: The provider (never its secret)

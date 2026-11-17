@@ -493,10 +493,14 @@ func (s *Service) ListMembers(ctx context.Context, groupID, tenantID uuid.UUID) 
 // Handler serves the group HTTP API.
 type Handler struct {
 	Service *Service
-	// GrantCheck refuses adding someone to a group whose roles carry authority
-	// the caller doesn't hold (rbac.Repository.CheckGrantGroup). Without it
-	// adding a member is refused.
+	// GrantCheck refuses adding someone to a group, taking them out or deleting
+	// it, when its roles carry authority the caller doesn't hold
+	// (rbac.Repository.CheckGrantGroup). Without it all three are refused.
 	GrantCheck func(ctx context.Context, caller *httpx.Principal, tenantID, groupID uuid.UUID) error
+	// ActOnCheck refuses taking someone out of a group when they outrank the
+	// caller (rbac.Repository.CheckActOn). Without it removing a member is
+	// refused.
+	ActOnCheck func(ctx context.Context, caller *httpx.Principal, tenantID, userID uuid.UUID) error
 	// ReadsRoles reports whether the caller may read roles (role.read), and so
 	// sees each listed group's roles. Without it no one does.
 	ReadsRoles func(r *http.Request) bool
@@ -594,6 +598,12 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	// Deleting a group takes its roles from everyone in it, so it is held to
+	// the rule for giving them.
+	if err := h.grant(r, tenantID, id); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	if err := h.Service.Delete(r.Context(), id, tenantID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -641,11 +651,7 @@ func (h *Handler) addMember(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if h.GrantCheck == nil {
-		httpx.WriteError(w, r, errs.ErrNotImplemented)
-		return
-	}
-	if err := h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, id); err != nil {
+	if err := h.grant(r, tenantID, id); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -672,11 +678,35 @@ func (h *Handler) removeMember(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	// Taking someone out of a group takes its roles from them: held to the rule
+	// for giving them, and to their standing, as removing a role is.
+	if err := h.grant(r, tenantID, id); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if h.ActOnCheck == nil {
+		httpx.WriteError(w, r, errs.ErrNotImplemented)
+		return
+	}
+	if err := h.ActOnCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, uid); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	if err := h.Service.RemoveMember(r.Context(), id, uid, tenantID, audit.ActorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// grant refuses the caller giving or taking away group id's roles in tenantID
+// when they lack what the roles carry (GrantCheck); without the check it
+// refuses every caller.
+func (h *Handler) grant(r *http.Request, tenantID, id uuid.UUID) error {
+	if h.GrantCheck == nil {
+		return errs.ErrNotImplemented
+	}
+	return h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tenantID, id)
 }
 
 func (h *Handler) listMembers(w http.ResponseWriter, r *http.Request) {

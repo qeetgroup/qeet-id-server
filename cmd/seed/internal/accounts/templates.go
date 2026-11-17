@@ -24,7 +24,7 @@ var customTemplates = map[string][]template{
 		{key: "invite", after: 6, input: email.EditorInput{
 			Subject: "Join {{tenant_name}} on Qeet ID",
 			Body: "Hi,\n\nYou've been invited to join {{tenant_name}} on Qeet ID, the single sign-on for every Qeet product.\n\n" +
-				"Accept your invitation: {{invite_url}}\n\nThe link works once and expires in 14 days. If you weren't expecting it, you can ignore this email.\n\n— Qeet Group IT",
+				"Accept your invitation:\n{{invite_url}}\n\nThe link works once and expires in 14 days. If you weren't expecting it, you can ignore this email.\n\n— Qeet Group IT",
 			Options: email.EditorOptions{
 				Preheader: "Your invitation expires in 14 days.",
 				HTML: `<p>Hi,</p><p>You've been invited to join <strong>{{tenant_name}}</strong> on Qeet ID, the single sign-on for every Qeet product.</p>` +
@@ -34,20 +34,20 @@ var customTemplates = map[string][]template{
 		}},
 		{key: "magic_link", after: 6, input: email.EditorInput{
 			Subject: "Your Qeet sign-in link",
-			Body:    "Use this link to sign in to Qeet: {{magic_url}}\n\nIt works once and expires in 30 minutes. If you didn't ask for it, ignore this email — nobody can sign in without the link.",
+			Body:    "Use this link to sign in to Qeet:\n{{magic_url}}\n\nIt works once and expires in 30 minutes. If you didn't ask for it, ignore this email — nobody can sign in without the link.",
 			Options: email.EditorOptions{Preheader: "Expires in 30 minutes.", ShowLogo: yes(), Alignment: "left"},
 		}},
 	},
 	"northwind": {
 		{key: "invite", after: 4, input: email.EditorInput{
 			Subject: "You have been granted access to {{tenant_name}}",
-			Body: "You have been granted access to {{tenant_name}} systems.\n\nAccept your invitation: {{invite_url}}\n\n" +
+			Body: "You have been granted access to {{tenant_name}} systems.\n\nAccept your invitation:\n{{invite_url}}\n\n" +
 				"Access is for authorised business use only and is monitored. Do not forward this email.\n\nNorthwind Capital IT Service Desk · ext. 4357",
 			Options: email.EditorOptions{Preheader: "Authorised business use only.", ShowLogo: yes(), Alignment: "center"},
 		}},
 		{key: "password_reset", after: 4, input: email.EditorInput{
 			Subject: "Northwind Capital: reset your password",
-			Body: "A password reset was requested for your Northwind Capital account.\n\nReset your password: {{reset_url}}\n\n" +
+			Body: "A password reset was requested for your Northwind Capital account.\n\nReset your password:\n{{reset_url}}\n\n" +
 				"The link expires in 60 minutes. If you did not request it, call the IT Service Desk on ext. 4357 straight away. Northwind Capital will never ask for your password.",
 			Options: email.EditorOptions{ShowLogo: yes(), Alignment: "center"},
 		}},
@@ -60,7 +60,7 @@ var customTemplates = map[string][]template{
 	"meridian": {
 		{key: "invite", after: 15, input: email.EditorInput{
 			Subject: "Your Meridian Health account is ready",
-			Body: "Welcome to {{tenant_name}}.\n\nAccept your invitation to set up your account: {{invite_url}}\n\n" +
+			Body: "Welcome to {{tenant_name}}.\n\nAccept your invitation to set up your account:\n{{invite_url}}\n\n" +
 				"This message is intended for Meridian Health workforce members only. If you received it in error, delete it and notify the IT Service Desk at servicedesk@meridianhealth.us.",
 			Options: email.EditorOptions{
 				Preheader: "Set up your Meridian Health sign-in.",
@@ -78,26 +78,26 @@ var customTemplates = map[string][]template{
 	"lumen": {
 		{key: "magic_link", after: 9, input: email.EditorInput{
 			Subject: "Your Lumen Labs sign-in link",
-			Body:    "Click to sign in to Lumen Labs: {{magic_url}}\n\nThe link works once and expires in 15 minutes.",
+			Body:    "Click to sign in to Lumen Labs:\n{{magic_url}}\n\nThe link works once and expires in 15 minutes.",
 			Options: email.EditorOptions{
 				Preheader: "Expires in 15 minutes.", ShowLogo: yes(), Alignment: "center",
 				Translations: map[string]email.LocalizedContent{
 					"de": {
 						Subject: "Dein Anmeldelink für Lumen Labs",
-						Body:    "Klicke hier, um dich bei Lumen Labs anzumelden: {{magic_url}}\n\nDer Link funktioniert einmal und läuft in 15 Minuten ab.",
+						Body:    "Klicke hier, um dich bei Lumen Labs anzumelden:\n{{magic_url}}\n\nDer Link funktioniert einmal und läuft in 15 Minuten ab.",
 					},
 				},
 			},
 		}},
 		{key: "invite", after: 9, input: email.EditorInput{
 			Subject: "Join {{tenant_name}}",
-			Body:    "You're invited to {{tenant_name}}.\n\nAccept the invitation: {{invite_url}}\n\nSee you inside!\nThe Lumen Labs team",
+			Body:    "You're invited to {{tenant_name}}.\n\nAccept the invitation:\n{{invite_url}}\n\nSee you inside!\nThe Lumen Labs team",
 			Options: email.EditorOptions{
 				ShowLogo: yes(), Alignment: "center",
 				Translations: map[string]email.LocalizedContent{
 					"de": {
 						Subject: "Einladung zu {{tenant_name}}",
-						Body:    "Du wurdest zu {{tenant_name}} eingeladen.\n\nEinladung annehmen: {{invite_url}}\n\nBis gleich!\nDas Lumen-Labs-Team",
+						Body:    "Du wurdest zu {{tenant_name}} eingeladen.\n\nEinladung annehmen:\n{{invite_url}}\n\nBis gleich!\nDas Lumen-Labs-Team",
 					},
 				},
 			},
@@ -106,7 +106,7 @@ var customTemplates = map[string][]template{
 	"aster": {
 		{key: "invite", after: 3, input: email.EditorInput{
 			Subject: "{{tenant_name}} has invited you to the team",
-			Body:    "Namaste!\n\nYou've been invited to {{tenant_name}}. Accept your invitation: {{invite_url}}\n\nNeed help? Write to care@asterretail.in.",
+			Body:    "Namaste!\n\nYou've been invited to {{tenant_name}}. Accept your invitation:\n{{invite_url}}\n\nNeed help? Write to care@asterretail.in.",
 			Options: email.EditorOptions{ShowLogo: yes(), Alignment: "center"},
 		}},
 	},

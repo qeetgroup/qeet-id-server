@@ -642,3 +642,36 @@ func TestPersonsDirectoryProfileIsReturned(test *testing.T) {
 		test.Errorf("another organisation's person: %+v, want nothing", got.Items)
 	}
 }
+
+// TestDirectorySearchTakesWildcardsLiterally checks that _ and % in an event or
+// error search match only themselves.
+func TestDirectorySearchTakesWildcardsLiterally(test *testing.T) {
+	pool := dbtest.Pool(test)
+	ctx := dbtest.Context(test)
+	tenantID := dbtest.Tenant(test)
+	for _, message := range []string{"qa_b refused", "qaXb refused", "100% refused", "plain refused"} {
+		if _, err := pool.Exec(ctx, `INSERT INTO tenant.directory_events (id, tenant_id, connection_id, operation, trigger_type, resource_type, started_at, duration_ms, http_status, status, message)
+			VALUES ($1, $2, 'scim', 'post', 'push', 'user', NOW(), 1, 502, 'failed', $3)`, uuid.New(), tenantID, message); err != nil {
+			test.Fatal(err)
+		}
+	}
+	service := NewService(&scimFixture{config: &scim.ConfigView{TokenSet: true}}, &ldapFixture{})
+	service.SetEventStore(pool)
+	for search, want := range map[string]string{"qa_b": "qa_b refused", "%": "100% refused"} {
+		filter := eventFilter{Since: time.Now().Add(-time.Hour), Search: search, Limit: 25}
+		events, err := service.Events(ctx, tenantID, filter)
+		if err != nil {
+			test.Fatal(err)
+		}
+		if len(events.Items) != 1 || events.Items[0].Message != want {
+			test.Errorf("events matching %q: %d, want only %q", search, len(events.Items), want)
+		}
+		failures, err := service.Errors(ctx, tenantID, errorFilter{eventFilter: filter})
+		if err != nil {
+			test.Fatal(err)
+		}
+		if len(failures.Items) != 1 || failures.Items[0].Message != want {
+			test.Errorf("errors matching %q: %d, want only %q", search, len(failures.Items), want)
+		}
+	}
+}

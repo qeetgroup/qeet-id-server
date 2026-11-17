@@ -9,7 +9,8 @@ post:
     as the discovery token_endpoint. Errors take the RFC 6749 §5.2 shape (error,
     error_description): a missing grant_type is invalid_request, another grant
     unsupported_grant_type, a disabled principal unauthorized_client, and a
-    missing or wrong secret or an unknown client 401 invalid_client, with
+    missing or wrong secret, an unknown client or a principal of a suspended or
+    deleted organisation 401 invalid_client, with
     WWW-Authenticate: Basic when the client used HTTP Basic. The per-address
     rate limit answers 429 too_many_requests in the error envelope.
   summary: OAuth token (client_credentials)

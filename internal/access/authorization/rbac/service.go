@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -20,7 +21,12 @@ type Service struct {
 	emitter EventEmitter
 	limits  PlanLimiter
 	seats   SeatGuard
+	signals *sessionsignal.Signaller // announces sessions a lost membership ends (nil: none)
 }
+
+// SetSessionSignals wires the announcement of the sessions a guest's last role
+// ending ends (session.revoked webhooks).
+func (s *Service) SetSessionSignals(sig *sessionsignal.Signaller) { s.signals = sig }
 
 // SeatGuard keeps the people holding a role in a tenant within its plan's
 // seats. Satisfied by *invite.Service.
@@ -253,7 +259,8 @@ func (s *Service) recordAssignRefused(ctx context.Context, userID, tenantID, rol
 }
 
 // UnassignRole takes a role away from a user in the tenant, recorded as
-// actor's.
+// actor's. Their last role in an organisation that isn't their home ends their
+// membership, so their sessions there end too, as removing them does.
 func (s *Service) UnassignRole(ctx context.Context, userID, tenantID, roleID uuid.UUID, actor audit.Actor) error {
 	tx, err := s.repo.Pool().Begin(ctx)
 	if err != nil {
@@ -263,6 +270,17 @@ func (s *Service) UnassignRole(ctx context.Context, userID, tenantID, roleID uui
 
 	if err := s.repo.UnassignRole(ctx, tx, userID, tenantID, roleID); err != nil {
 		return err
+	}
+	left, err := s.repo.LeftTenant(ctx, tx, userID, tenantID)
+	if err != nil {
+		return err
+	}
+	if left {
+		ended, err := sessionsignal.EndUserSessionsInTenant(ctx, tx, userID, tenantID)
+		if err != nil {
+			return err
+		}
+		s.signals.Revoked(ctx, tx, sessionsignal.ReasonRemovedFromOrganization, ended...)
 	}
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "role.unassigned", "user", userID,
 		map[string]any{"role_id": roleID})); err != nil {

@@ -94,6 +94,11 @@ patch:
     refused with 422 ldap.tls_verify_required, and so is any other change to a
     connection saved that way until it turns verification back on; only a
     development server (SERVICE_ENV=dev) allows it. Requires connection.write.
+    Changing what the connection trusts (its server_url, bind_dn, base_dn,
+    user_filter or TLS settings) is acting on every account linked to it, as the
+    changed connection could sign in as any of them: while an administrator is
+    linked, it needs a caller who outranks each one (403
+    rbac.trust_change_outranks_caller otherwise).
   responses:
     '200':
       description: OK

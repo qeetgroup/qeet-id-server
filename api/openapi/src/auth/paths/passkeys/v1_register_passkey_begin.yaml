@@ -7,10 +7,13 @@ post:
     when self-registration is disabled. Finish the ceremony by returning the
     signed attestation to the tenant-scoped passkey-register finish call. Where
     the organisation has passkeys switched off, it is refused with 403
-    passkey.disabled before a ceremony starts. An address already taken is
-    refused, here or at the finish call, with the neutral 422 unprocessable of
-    POST /v1/auth/signup, which does not name the reason; every attempt here
-    takes at least the same minimum time. On a domain whose organisation
+    passkey.disabled before a ceremony starts. The answer here is the same
+    whether or not the address has an account, and starting claims nothing; an
+    address already taken, or on a domain another organisation has verified
+    (only that organisation creates accounts there), is refused at the finish
+    call with the neutral 422 unprocessable of POST /v1/auth/signup, which does
+    not name the reason. Every attempt here takes at least the same minimum
+    time. On a domain whose organisation
     requires single sign-on, the ceremony is refused with 403 auth.sso_required
     and nothing is created (see the SSORequired response).
   summary: Passkey-first signup begin (tenant-scoped hosted signup)

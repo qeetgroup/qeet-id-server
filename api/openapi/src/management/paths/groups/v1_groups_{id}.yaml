@@ -64,7 +64,11 @@ delete:
     - apiKeyAuth: []
   description: >-
     Deletes one of the organisation's groups and its subgroups; members keep
-    their accounts. Requires group.write.
+    their accounts. Requires group.write and a fresh second factor (step-up).
+    Deleting takes the group's roles from its members, so it is held to the
+    rule for giving them: only an owner deletes a group holding the owner role
+    (403 rbac.owner_only), and nobody deletes one whose roles carry a
+    permission they lack (403 rbac.grant_exceeds_caller).
   responses:
     '204':
       description: No Content

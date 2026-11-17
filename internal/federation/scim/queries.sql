@@ -29,8 +29,9 @@ WHERE tenant_id = @tenant_id AND revoked_at IS NULL AND replaced_by IS NULL
   AND (expires_at IS NULL OR expires_at > NOW());
 
 -- name: InsertScimToken :one
-INSERT INTO tenant.scim_tokens (tenant_id, name, token_hash, token_prefix, expires_at)
-VALUES (@tenant_id, @name, @token_hash, @token_prefix, sqlc.narg('expires_at'))
+INSERT INTO tenant.scim_tokens (tenant_id, name, token_hash, token_prefix, expires_at, created_by)
+VALUES (@tenant_id, @name, @token_hash, @token_prefix, sqlc.narg('expires_at'),
+        NULLIF(@created_by::uuid, '00000000-0000-0000-0000-000000000000'))
 RETURNING id, name, token_prefix, created_at, expires_at, last_used_at, revoked_at, replaced_by;
 
 -- LockScimToken reads one of the organisation's tokens and locks it for a

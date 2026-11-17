@@ -16,6 +16,7 @@ import (
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -334,6 +335,9 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 		if err != nil {
 			return nil, err
 		}
+		if err := s.refuseCapturedAccount(ctx, userID); err != nil {
+			return nil, err
+		}
 		if err := s.q.UpsertPlatformSocialIdentity(ctx, dbgen.UpsertPlatformSocialIdentityParams{
 			UserID: userID, Provider: provider, Subject: ui.Subject, Email: emailPtr(ui.Email),
 		}); err != nil {
@@ -341,6 +345,10 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 		}
 	}
 
+	// Nor does one whose organisation requires single sign-on on its domain.
+	if err := s.refuseCapturedAccount(ctx, userID); err != nil {
+		return nil, err
+	}
 	// A suspended or deleted account gets no code to sign in with.
 	if err := s.auth.CheckSignInAccount(ctx, userID, uuid.Nil, "social", "", ""); err != nil {
 		return nil, err
@@ -388,6 +396,11 @@ func (s *Service) CompletePlatformLink(ctx context.Context, rawCode string, user
 	}
 	if linkUserID != userID {
 		return "", errs.ErrSocialLinkAccountMismatch
+	}
+	// An account whose organisation requires single sign-on signs in only
+	// through it, so a provider linked now would never sign it in.
+	if err := s.refuseCapturedAccount(ctx, userID); err != nil {
+		return "", err
 	}
 	owner, err := s.q.GetPlatformSocialIdentityOwner(ctx, dbgen.GetPlatformSocialIdentityOwnerParams{
 		Provider: provider,
@@ -442,6 +455,10 @@ func (s *Service) findOrCreatePlatformUser(ctx context.Context, ui userInfo, all
 	if !allowCreate {
 		return uuid.Nil, errs.ErrSocialNoAccount
 	}
+	// Nor on a domain an organisation manages: it creates its people's accounts.
+	if err := domainverify.CheckNewAccount(ctx, s.pool, uuid.Nil, ui.Email); err != nil {
+		return uuid.Nil, err
+	}
 	var displayName, avatar *string
 	if ui.Name != "" {
 		displayName = &ui.Name
@@ -449,8 +466,9 @@ func (s *Service) findOrCreatePlatformUser(ctx context.Context, ui userInfo, all
 	if ui.Picture != "" {
 		avatar = &ui.Picture
 	}
+	// The platform provider verified the address: the callback takes no other.
 	if err := s.pool.QueryRow(ctx,
-		`INSERT INTO "user".users (email, display_name, avatar_url) VALUES ($1, $2, $3) RETURNING id`,
+		`INSERT INTO "user".users (email, display_name, avatar_url, email_verified_at) VALUES ($1, $2, $3, NOW()) RETURNING id`,
 		ui.Email, displayName, avatar,
 	).Scan(&userID); err != nil {
 		return uuid.Nil, err

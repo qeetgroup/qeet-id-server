@@ -119,6 +119,35 @@ func (c *Cipher) KeyIDs() []string {
 	return ids
 }
 
+// MAC returns an HMAC-SHA256 of msg under a key derived for purpose from the
+// current data key, and that data key's hex id, which CheckMAC needs.
+func (c *Cipher) MAC(purpose string, msg []byte) (keyID string, mac []byte) {
+	k := c.keys[0]
+	return hex.EncodeToString(k.id[:]), k.mac(purpose, msg)
+}
+
+// CheckMAC reports whether mac is MAC's result for purpose and msg under the
+// data key named keyID, the current one or a previous one. An unknown key fails.
+func (c *Cipher) CheckMAC(purpose, keyID string, msg, mac []byte) bool {
+	id, err := hex.DecodeString(keyID)
+	if err != nil || len(mac) != sha256.Size {
+		return false
+	}
+	k := c.key(id)
+	return k != nil && hmac.Equal(k.mac(purpose, msg), mac)
+}
+
+// mac is msg's HMAC-SHA256 under k's subkey for purpose.
+func (k *dataKey) mac(purpose string, msg []byte) []byte {
+	sub, err := hkdf.Key(sha256.New, k.master, []byte("qeet-id-mac-v1"), purpose, sha256.Size)
+	if err != nil {
+		return nil // unreachable: sha256.Size is within HKDF's limit
+	}
+	h := hmac.New(sha256.New, sub)
+	h.Write(msg)
+	return h.Sum(nil)
+}
+
 // CurrentPrefix returns the bytes every ciphertext the current key seals
 // starts with, so stored values sealed otherwise can be found.
 func (c *Cipher) CurrentPrefix() []byte { return append([]byte(nil), c.prefix...) }

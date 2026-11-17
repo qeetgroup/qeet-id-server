@@ -22,7 +22,7 @@ func TestAnErasureRequestNamesItsPersonUntilErased(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := NewService(dbtest.Pool(t), 30*24*time.Hour)
-	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
+	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant), requests(t, svc).Mount)
 	var req Request
 	dbtest.Decode(t, dbtest.Do(t, h, http.MethodPost, "/gdpr/purge", map[string]any{"user_id": person.ID}), &req)
 	if req.SubjectEmail == nil || *req.SubjectEmail != person.Email || req.SubjectName == nil || *req.SubjectName != "Asha Iyer" ||

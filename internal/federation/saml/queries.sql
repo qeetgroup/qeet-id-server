@@ -163,12 +163,16 @@ ON CONFLICT (connection_id) DO NOTHING;
 -- ==========================================================================
 
 -- name: InsertSamlLoginCode :exec
-INSERT INTO auth.saml_login_codes (code_hash, user_id, tenant_id, expires_at)
-VALUES (@code_hash, @user_id, @tenant_id, @expires_at);
+INSERT INTO auth.saml_login_codes (code_hash, user_id, tenant_id, connection_id, expires_at)
+VALUES (@code_hash, @user_id, @tenant_id, @connection_id::uuid, @expires_at);
 
 -- name: ConsumeSamlLoginCode :one
-SELECT user_id, tenant_id, expires_at, used_at
-FROM auth.saml_login_codes WHERE code_hash = @code_hash FOR UPDATE;
+-- With the status of the connection that issued the code: one since deleted finds no row.
+SELECT lc.user_id, lc.tenant_id, lc.expires_at, lc.used_at, c.status
+FROM auth.saml_login_codes lc
+JOIN tenant.saml_connections c ON c.tenant_id = lc.tenant_id AND c.id = lc.connection_id
+WHERE lc.code_hash = @code_hash
+FOR UPDATE OF lc;
 
 -- name: MarkSamlLoginCodeUsed :exec
 UPDATE auth.saml_login_codes SET used_at = NOW() WHERE code_hash = @code_hash;

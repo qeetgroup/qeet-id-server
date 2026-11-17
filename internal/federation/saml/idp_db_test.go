@@ -22,8 +22,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
+	"github.com/qeetgroup/qeet-id-server/internal/access/risk/ipallow"
+	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
@@ -294,5 +298,88 @@ func TestCreateSPPlanGateWithOneConnection(t *testing.T) {
 	}
 	if rec := create(free, "http://sp.example.com/acs"); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), errs.CodeSAMLACSURLInvalid) {
 		t.Errorf("invalid SP in a plan without SSO = %d %s, want %s", rec.Code, rec.Body.String(), errs.CodeSAMLACSURLInvalid)
+	}
+}
+
+// TestSAMLIdPAppliesTheOrganisationsAddressRulesAndSecondFactor checks that the
+// IdP signs an assertion only as OIDC authorize would: from an address the
+// organisation's rules allow (a refused one is refused and recorded), and for a
+// session that met the second factor the organisation requires. One that
+// didn't is sent to sign in again for this request, and refused when that
+// fresh sign-in still hasn't.
+func TestSAMLIdPAppliesTheOrganisationsAddressRulesAndSecondFactor(t *testing.T) {
+	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
+	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
+	authSvc.SetMFA(mfa.NewService(pool, "Qeet", notifier.LogSender{}, ""))
+	keyPEM, certPEM, err := GenerateIdPKeyPEM("Test Qeet IdP")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idp, err := NewIdP(pool, keyPEM, certPEM, "https://login.id.qeet.in", authSvc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idp.SetSignInRules(ipallow.NewService(pool), authSvc)
+	router := chi.NewRouter()
+	(&Handler{Service: &Service{}, IdP: idp, PublicBaseURL: testPublicBase}).MountPublic(router)
+	tenant := dbtest.Tenant(t)
+	member := dbtest.User(t, tenant, tenant)
+	sp := registerSP(t, ctx, idp, tenant, "https://sp.example.test/metadata", "https://sp.example.test/acs")
+	sso := "/saml/idp/" + tenant.String() + "/sso?" + authnRequestTo(sp.EntityID, "_req-1", "")
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`WITH rule AS (INSERT INTO tenant.ip_rules (tenant_id, cidr, label, action) VALUES ($1, '192.0.2.0/24', 'office', 'allow'))
+		INSERT INTO tenant.ip_rules_config (tenant_id, enabled) VALUES ($1, TRUE)`, tenant)
+	session := func() string {
+		t.Helper()
+		raw, err := authSvc.CreateLoginSession(ctx, member.ID, "192.0.2.10", "test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	const office, elsewhere = "192.0.2.10:4000", "198.51.100.7:4000"
+	get := func(path, cookie, from string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "https://other.example"+path, nil)
+		req.AddCookie(&http.Cookie{Name: auth.LoginSessionCookie, Value: cookie})
+		req.RemoteAddr = from
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	cookie := session()
+	if rec := get(sso, cookie, elsewhere); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeAuthAddressNotAllowed) {
+		t.Errorf("SSO from an address the rules refuse: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeAuthAddressNotAllowed)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE tenant_id = $1 AND action = 'auth.address_refused' AND metadata->>'path' = 'saml_idp'`, tenant); n != 1 {
+		t.Errorf("the refused address was recorded %d times, want once", n)
+	}
+	if acs, _ := postedTo(t, get(sso, cookie, office)); acs != sp.ACSURL {
+		t.Fatalf("SSO from the office posted to %q, want %q", acs, sp.ACSURL)
+	}
+
+	exec(`INSERT INTO tenant.security_policies (tenant_id, mfa_enforcement, mfa_grace_days, mfa_enforced_since) VALUES ($1, 'required', 0, NOW())`, tenant)
+	rec := get(sso, cookie, office)
+	to, err := url.Parse(rec.Header().Get("Location"))
+	if rec.Code != http.StatusFound || err != nil || to.Host != "login.id.qeet.in" || to.Path != "/sign-in" || to.Query().Get("prompt") != "login" {
+		t.Fatalf("SSO for a session short of the required factor: %d to %s, want sent to sign in again", rec.Code, rec.Header().Get("Location"))
+	}
+	back, err := url.Parse(to.Query().Get("return_to"))
+	if err != nil || back.Query().Get("SAMLRequest") == "" || back.Query().Get("login_after") == "" {
+		t.Fatalf("return_to %q, want this request, marked", to.Query().Get("return_to"))
+	}
+	fresh := session()
+	if rec := get(back.RequestURI(), fresh, office); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), errs.CodeMFAEnrollmentRequired) {
+		t.Errorf("SSO after a fresh sign-in still short of the factor: %d %s, want 403 %s", rec.Code, rec.Body.String(), errs.CodeMFAEnrollmentRequired)
+	}
+	exec(`UPDATE auth.login_sessions SET second_factor = 'mfa' WHERE user_id = $1`, member.ID)
+	if acs, _ := postedTo(t, get(sso, cookie, office)); acs != sp.ACSURL {
+		t.Errorf("SSO for a session that met the factor posted to %q, want %q", acs, sp.ACSURL)
 	}
 }

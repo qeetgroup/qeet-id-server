@@ -249,7 +249,7 @@ func (s *stripeProvider) CreateCheckout(ctx context.Context, in CheckoutInput) (
 }
 
 func (s *stripeProvider) VerifyAndParse(body []byte, signature string) (string, bool, error) {
-	if !verifyStripeSignature(s.webhookSecret, signature, body) {
+	if !verifyStripeSignature(s.webhookSecret, signature, body, time.Now()) {
 		return "", false, errors.New("invalid stripe signature")
 	}
 	var evt struct {
@@ -322,13 +322,20 @@ func (s *stripeProvider) PaymentMethod(ctx context.Context, body []byte) (*Payme
 	return &PaymentMethod{Type: m.Type, Brand: m.Card.Brand, Last4: m.Card.Last4, ExpMonth: m.Card.ExpMonth, ExpYear: m.Card.ExpYear}, nil
 }
 
-// verifyStripeSignature checks a `t=...,v1=...` Stripe-Signature header: the v1
-// HMAC-SHA256 of "<t>.<body>" keyed by the webhook secret. Constant-time.
-func verifyStripeSignature(secret, header string, body []byte) bool {
+// stripeTolerance is how far from now a Stripe event's signing time may be,
+// as Stripe's own libraries allow, so a captured event can't be replayed later.
+const stripeTolerance = 5 * time.Minute
+
+// verifyStripeSignature checks a `t=...,v1=...` Stripe-Signature header at
+// now: some v1 must be the HMAC-SHA256 of "<t>.<body>" keyed by the webhook
+// secret (Stripe sends one per secret while one rotates), compared in constant
+// time, and t within stripeTolerance of now.
+func verifyStripeSignature(secret, header string, body []byte, now time.Time) bool {
 	if secret == "" || header == "" {
 		return false
 	}
-	var ts, v1 string
+	var ts string
+	var v1 []string
 	for _, part := range strings.Split(header, ",") {
 		kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
 		if len(kv) != 2 {
@@ -338,18 +345,26 @@ func verifyStripeSignature(secret, header string, body []byte) bool {
 		case "t":
 			ts = kv[1]
 		case "v1":
-			v1 = kv[1]
+			v1 = append(v1, kv[1])
 		}
 	}
-	if ts == "" || v1 == "" {
+	signed, err := strconv.ParseInt(ts, 10, 64)
+	if err != nil || len(v1) == 0 {
+		return false
+	}
+	if age := now.Sub(time.Unix(signed, 0)); age > stripeTolerance || age < -stripeTolerance {
 		return false
 	}
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(ts))
 	mac.Write([]byte("."))
 	mac.Write(body)
-	expected := hex.EncodeToString(mac.Sum(nil))
-	return hmac.Equal([]byte(expected), []byte(v1))
+	expected := []byte(hex.EncodeToString(mac.Sum(nil)))
+	ok := false
+	for _, sig := range v1 {
+		ok = hmac.Equal(expected, []byte(sig)) || ok
+	}
+	return ok
 }
 
 // --- Razorpay ---

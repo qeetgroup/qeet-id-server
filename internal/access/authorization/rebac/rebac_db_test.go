@@ -307,3 +307,60 @@ func TestTuplesStayInTheirOrganisation(t *testing.T) {
 		t.Error("check after another organisation tried to delete the tuple: false, want true")
 	}
 }
+
+// TestRequestBudgetSpansChecks checks that the checks made with one request's
+// budget share it: once together they have read maxRequestExpansions tuple
+// sets, the next is refused with ErrReBACCheckTooComplex, while the same check
+// in a request of its own is answered.
+func TestRequestBudgetSpansChecks(t *testing.T) {
+	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
+	svc := NewService(pool)
+	tenant := dbtest.Tenant(t)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO auth.relation_tuples (tenant_id, object_type, object_id, relation, subject_type, subject_id, subject_relation)
+		SELECT $1, 'document', 'wide', 'viewer', 'group', 'g' || n, 'member' FROM generate_series(1, $2::int) n`,
+		tenant, maxExpansions*9/10-1); err != nil {
+		t.Fatal(err)
+	}
+	perCheck := maxExpansions * 9 / 10
+	request := WithRequestBudget(ctx)
+	for i := 1; ; i++ {
+		_, err := svc.Check(request, tenant, "document:wide", "viewer", uuid.NewString())
+		if i*perCheck <= maxRequestExpansions {
+			if err != nil {
+				t.Fatalf("check %d within the request's budget: %v", i, err)
+			}
+			continue
+		}
+		if !errors.Is(err, errs.ErrReBACCheckTooComplex) {
+			t.Errorf("check %d past the request's budget: %v, want %v", i, err, errs.ErrReBACCheckTooComplex)
+		}
+		break
+	}
+	if _, err := svc.Check(WithRequestBudget(ctx), tenant, "document:wide", "viewer", uuid.NewString()); err != nil {
+		t.Errorf("the same check in a request of its own: %v", err)
+	}
+}
+
+// TestExpandStopsAtItsBudget checks that the graph of a relationship set wider
+// than a request's budget is refused with ErrReBACCheckTooComplex rather than
+// read one tuple set at a time without end, while a narrower one is drawn.
+func TestExpandStopsAtItsBudget(t *testing.T) {
+	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
+	svc := NewService(pool)
+	tenant := dbtest.Tenant(t)
+	for object, groups := range map[string]int{"wide": maxRequestExpansions + 1, "narrow": 10} {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO auth.relation_tuples (tenant_id, object_type, object_id, relation, subject_type, subject_id, subject_relation)
+			SELECT $1, 'document', $2, 'viewer', 'group', $2 || n, 'member' FROM generate_series(1, $3::int) n`,
+			tenant, object, groups); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if g, err := svc.Expand(ctx, tenant, "document:wide", "viewer", maxExpandDepth); !errors.Is(err, errs.ErrReBACCheckTooComplex) {
+		t.Errorf("the graph of %d groups: %v, %v; want %v", maxRequestExpansions+1, g != nil, err, errs.ErrReBACCheckTooComplex)
+	}
+	if g, err := svc.Expand(ctx, tenant, "document:narrow", "viewer", maxExpandDepth); err != nil || len(g.Nodes) != 11 {
+		t.Errorf("the graph of 10 groups: %v, want its 11 nodes", err)
+	}
+}

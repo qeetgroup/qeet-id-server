@@ -121,7 +121,7 @@ type templateFixture struct {
 func (fixture *templateFixture) Get(_ context.Context, tenantID uuid.UUID, key string) (*Resolved, error) {
 	fixture.tenant = tenantID
 	fixture.calls++
-	return &Resolved{Key: key, Subject: "Custom sign-in", Body: "Use {{magic_url}}", Options: EditorOptions{HTML: `<p><strong>Use</strong> <a href="{{magic_url}}">Sign in</a></p>`}, Custom: true}, nil
+	return &Resolved{Key: key, Subject: "Custom sign-in", Body: "Use this link:\n{{magic_url}}", Options: EditorOptions{HTML: `<p><strong>Use</strong> <a href="{{magic_url}}">Sign in</a></p>`}, Custom: true}, nil
 }
 
 func (fixture *templateFixture) RecipientLocale(context.Context, uuid.UUID, string) (string, error) {
@@ -136,9 +136,9 @@ type localizedTemplates struct {
 }
 
 func (templates localizedTemplates) Get(_ context.Context, _ uuid.UUID, key string) (*Resolved, error) {
-	return &Resolved{Key: key, Custom: true, Subject: "Sign in", Body: "Use {{magic_url}}", Options: EditorOptions{
+	return &Resolved{Key: key, Custom: true, Subject: "Sign in", Body: "Use this link:\n{{magic_url}}", Options: EditorOptions{
 		DefaultLocale: templates.defaultLocale,
-		Translations:  map[string]LocalizedContent{"fr": {Subject: "Connexion", Body: "Utilisez {{magic_url}}"}},
+		Translations:  map[string]LocalizedContent{"fr": {Subject: "Connexion", Body: "Utilisez ce lien :\n{{magic_url}}"}},
 	}}, nil
 }
 
@@ -220,7 +220,7 @@ func TestTemplateSenderScope(t *testing.T) {
 }
 
 func TestTemplateLinksPreserveVariablesAndSanitizeResolvedURLs(t *testing.T) {
-	input := EditorInput{Subject: "Sign in", Body: "Use {{magic_url}}", Options: EditorOptions{HTML: `<p><a href="{{magic_url}}">Continue</a></p>`}}
+	input := EditorInput{Subject: "Sign in", Body: "Use this link:\n{{magic_url}}", Options: EditorOptions{HTML: `<p><a href="{{magic_url}}">Continue</a></p>`}}
 	if err := normalizeEditor(&input, catalog[2]); err != nil {
 		t.Fatal(err)
 	}
@@ -256,6 +256,38 @@ func TestActionVariablesCannotLeakThroughExternalAssets(t *testing.T) {
 		input := EditorInput{Subject: "Sign in", Body: "{{magic_url}}", Options: EditorOptions{HTML: markup}}
 		if err := normalizeEditor(&input, catalog[2]); err == nil {
 			t.Fatal("credential-bearing external URL was accepted")
+		}
+	}
+}
+
+// TestActionURLOnlyInHref checks that a template may carry its one-time link
+// only as a whole href in the HTML and on a line of its own in the text, never
+// in the subject, the preheader or among the words, so an organisation's
+// wording can't dress the link up as something else.
+func TestActionURLOnlyInHref(t *testing.T) {
+	standalone := EditorInput{Subject: "Sign in", Body: "Use the link below to sign in.\n\n{{magic_url}}\n\nIt works once.",
+		Options: EditorOptions{HTML: `<p>Use the button below.</p><p><a href="{{magic_url}}">Sign in</a></p>`}}
+	if err := normalizeEditor(&standalone, catalog[2]); err != nil {
+		t.Errorf("the link on its own line and as a whole href: %v, want it accepted", err)
+	}
+	for name, input := range map[string]EditorInput{
+		"among the text's words":  {Subject: "Sign in", Body: "Claim your prize at {{magic_url}} today"},
+		"in the subject":          {Subject: "Sign in at {{magic_url}}", Body: "{{magic_url}}"},
+		"in the preheader":        {Subject: "Sign in", Body: "{{magic_url}}", Options: EditorOptions{Preheader: "Open {{magic_url}}"}},
+		"among the HTML's words":  {Subject: "Sign in", Body: "{{magic_url}}", Options: EditorOptions{HTML: `<p>Claim your prize at {{magic_url}}</p><a href="{{magic_url}}">Sign in</a>`}},
+		"in a translation's text": {Subject: "Sign in", Body: "{{magic_url}}", Options: EditorOptions{Translations: map[string]LocalizedContent{"fr": {Subject: "Connexion", Body: "Gagnez sur {{magic_url}}"}}}},
+	} {
+		if err := normalizeEditor(&input, catalog[2]); err == nil {
+			t.Errorf("the link %s was accepted", name)
+		}
+	}
+	titled := EditorInput{Subject: "Sign in", Body: "{{magic_url}}", Options: EditorOptions{HTML: `<a href="{{magic_url}}" title="{{magic_url}}">Sign in</a>`}}
+	if err := normalizeEditor(&titled, catalog[2]); err != nil || strings.Count(titled.Options.HTML, "{{magic_url}}") != 1 {
+		t.Errorf("the link in another attribute: %v, %q; want that attribute dropped", err, titled.Options.HTML)
+	}
+	for _, d := range catalog {
+		if err := normalizeEditor(&EditorInput{Subject: d.DefaultSubject, Body: d.DefaultBody}, d); err != nil {
+			t.Errorf("the %s default can't be saved unchanged: %v", d.Key, err)
 		}
 	}
 }

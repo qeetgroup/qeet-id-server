@@ -69,6 +69,7 @@ internal/access/authentication/risksignin.go#Service.newRiskEmailCode  secret-lo
 internal/access/authentication/risksignin.go#Service.riskEmailChallenge  pre-tenant: sign-in reads the account it just verified
 internal/access/authentication/risksignin.go#Service.sendRiskEmailCode  secret-lookup: challenge found by its random MFA token
 internal/access/authentication/password.go#Service.ChangePassword  session-scoped: locks the caller's own account
+internal/access/authentication/credentials.go#forgotten  parent-scoped: the account whose address was just proved, everywhere it set up a credential
 internal/access/authentication/sessions.go#Service.ListSessionsPageFor  session-scoped: the caller's own sessions
 internal/access/authentication/mfachallenge.go#Service.deferEnrollment  secret-lookup: challenge found by its random MFA token
 internal/access/authentication/mfachallenge.go#Service.noticeMFALocked  pre-tenant: emails the account whose second-factor sign-in just locked
@@ -95,18 +96,13 @@ internal/access/recovery/queries.sql#GetMagicLinkByToken  secret-lookup: link fo
 internal/access/recovery/queries.sql#GetResetAccount  secret-lookup: account named by the reset token
 internal/access/recovery/queries.sql#MarkMagicLinkUsed  secret-lookup: link found by its token hash
 internal/access/recovery/queries.sql#RevokeUserSessions  pending-review: unused query; delete it or add a tenant condition
-internal/access/recovery/queries.sql#VerifyEmailByReset  secret-lookup: account named by the reset token
+internal/access/recovery/queries.sql#VerifyEmailByLink  secret-lookup: account named by the reset or sign-in link
 internal/access/recovery/recovery.go#Service.StartPasswordReset  pre-tenant: password reset finds the account by email
 internal/access/threat/risk/history.go#PurgeSignInHistory  background-sweep: retention job
 
-internal/developer/agents/queries.sql#GetAgentForToken  secret-lookup: the agent's secret is verified against this row
-internal/developer/agents/queries.sql#GetAgentStatusByID  session-scoped: agent named by the verified access token
 internal/developer/api-keys/queries.sql#TouchAPIKeyLastUsed  secret-lookup: the key just verified by its secret
-internal/developer/api-keys/queries.sql#VerifyAPIKey  secret-lookup: key found by prefix and checked against its secret hash
 internal/developer/credentials/tokenvault/queries.sql#DeleteConnectState  secret-lookup: single-use random OAuth state
 internal/developer/credentials/vc/queries.sql#GetCredentialRevocation  parent-scoped: ID of a credential whose signature was just verified
-internal/developer/principal/queries.sql#GetServicePrincipalForAuth  secret-lookup: the client secret is verified against this row
-internal/developer/principal/queries.sql#PrincipalLive  session-scoped: principal named by the verified access token
 internal/developer/webhooks/webhook.go#Service.tick  background-sweep: delivery worker for every tenant
 
 internal/federation/adminportal/adminportal.go#Service.Exchange  secret-lookup: link found by its token hash
@@ -136,6 +132,7 @@ internal/federation/oidc/queries.sql#GetRefreshTokenForIntrospect  secret-lookup
 internal/federation/oidc/queries.sql#GetUserinfo  session-scoped: account named by the verified access token
 internal/federation/oidc/queries.sql#ListAllWebOrigins  platform-wide: the CORS allow-list of every application's web origins, read before a request names its application; no other column
 internal/federation/oidc/queries.sql#ListPendingCIBA  session-scoped: the caller's own pending requests
+internal/federation/oidc/queries.sql#CIBARequestTenant  session-scoped: the caller's own request, found by its id and their user id
 internal/federation/oidc/queries.sql#LockCIBARequest  session-scoped: checked against the caller before any use
 internal/federation/oidc/queries.sql#LockCIBARequestByHash  secret-lookup: request found by its auth_req_id hash
 internal/federation/oidc/queries.sql#LockDeviceByCode  secret-lookup: request found by its device code hash
@@ -154,7 +151,6 @@ internal/federation/oidc/queries.sql#TouchDevicePollTime  secret-lookup: request
 internal/federation/oidcsso/queries.sql#ConsumeOidcConnectionLoginCode  secret-lookup: by login code hash; the connection it joins names the tenant
 internal/federation/oidcsso/queries.sql#GetOidcConnectionForSignIn  pre-tenant: public sign-in endpoints; the connection in the path names the tenant
 internal/federation/oidcsso/queries.sql#GetUserByEmail  pre-tenant: federated sign-in finds the account by email
-internal/federation/saml/queries.sql#ConsumeSamlLoginCode  secret-lookup: by login code hash
 internal/federation/saml/queries.sql#GetSamlConnectionByID  pre-tenant: public SSO endpoints; the connection in the path names the tenant
 internal/federation/saml/queries.sql#GetUserByEmail  pre-tenant: federated sign-in finds the account by email
 internal/federation/saml/queries.sql#GetUserForIdP  session-scoped: the IdP session's user; its tenant is compared to the SP's
@@ -167,12 +163,12 @@ internal/federation/scim/queries.sql#TagProvisionedUser  parent-scoped: account 
 internal/federation/social/platform.go#Service.findOrCreatePlatformUser  pre-tenant: platform sign-in finds or creates the account
 internal/federation/social/providers.go#Service.DeleteProvider  parent-scoped: provider ID from the tenant-scoped read above
 internal/federation/social/providers.go#Service.UpdateProvider  parent-scoped: provider ID from the tenant-scoped read above
-internal/federation/social/queries.sql#ConsumeSocialLoginCode  secret-lookup: by login code hash
 internal/federation/social/queries.sql#ConsumeSocialOAuthState  secret-lookup: state found by its hash
 internal/federation/social/queries.sql#DeleteExternalIdentityForUser  pending-review: unused query; delete it or add a tenant condition
 internal/federation/social/queries.sql#GetUserByEmail  pre-tenant: social sign-in finds the account by email
 internal/federation/social/queries.sql#ListExternalIdentitiesForUser  pending-review: unused query; delete it or add a tenant condition
 internal/federation/social/queries.sql#MarkSocialLoginCodeUsed  secret-lookup: by login code hash
+internal/federation/social/social.go#Service.refuseCapturedAccount  pre-tenant: social sign-in reads the address of the account it found
 internal/federation/social/social.go#requireVerifiedAddress  pre-tenant: social sign-in checks the account it found
 
 internal/identity/domainverify/queries.sql#EmailDomainManager  platform-wide: a domain is verified by one organisation; callers compare it with their own
@@ -184,6 +180,8 @@ internal/identity/invitations/queries.sql#GetInboxEmail  session-scoped: the cal
 internal/identity/invitations/queries.sql#GetInviteByIDForAccept  session-scoped: accepted only for the caller's verified email, or a new account's tenant and email
 internal/identity/invitations/queries.sql#GetInviteForAccept  secret-lookup: invite found by its token hash
 internal/identity/invitations/queries.sql#GetUserEmailByID  session-scoped: the caller's own account
+internal/identity/invitations/queries.sql#InviteSenderByID  session-scoped: read for the same acceptance as GetInviteByIDForAccept, before its transaction
+internal/identity/invitations/queries.sql#InviteSenderByToken  secret-lookup: invite found by its token hash
 internal/identity/invitations/queries.sql#MarkInviteAccepted  parent-scoped: invite read under lock just before
 internal/identity/invitations/queries.sql#MarkInviteExpired  parent-scoped: invite read under lock just before
 internal/identity/tenant/queries.sql#IsEmailVerified  session-scoped: the caller's own account
@@ -201,6 +199,7 @@ internal/identity/verification/queries.sql#EmailTakenByOther  session-scoped: th
 internal/identity/verification/queries.sql#ExpireRecoveryLinksForUser  session-scoped: the caller's own links, ended as their address changes
 internal/identity/verification/queries.sql#GetUserEmail  session-scoped: the caller's own account
 internal/identity/verification/queries.sql#GetUserPhone  session-scoped: the caller's own account
+internal/identity/verification/queries.sql#LockAccountForCodeSend  session-scoped: the caller's own account, held while a code is counted and stored
 internal/identity/verification/queries.sql#MarkUserEmailVerified  session-scoped: the caller's own account
 internal/identity/verification/queries.sql#MarkUserPhoneVerified  pending-review: unused query; delete it or add a tenant condition
 internal/identity/verification/queries.sql#SetUserVerifiedPhone  session-scoped: the caller's own account

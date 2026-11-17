@@ -25,7 +25,7 @@ info:
 
     The responses of agent token minting and the token vault's access-token read, and of the operations returning a new API key, agent or webhook secret, a revealed secret or an issued credential, are sent with `Cache-Control: no-store` and `Pragma: no-cache`.
 
-    Every response carries an `X-Request-Id` header naming the request; quote it when reporting a problem. An error body repeats it as `error.request_id`.
+    Every response carries an `X-Request-Id` header naming the request; quote it when reporting a problem. An error body repeats it as `error.request_id`. A path with an encoded slash or backslash (`%2F`, `%5C`) is refused with 400 `bad_request`.
 
     ## Related APIs
 
@@ -50,7 +50,7 @@ tags:
   - name: Credentials
     description: Verifiable credentials — issue, list and revoke W3C / JWT-VC documents, plus public verification.
   - name: Auth Hooks
-    description: Custom authentication hooks (actions) invoked during authentication flows.
+    description: 'Custom authentication hooks (actions) invoked during authentication flows. Each call is a POST signed as a webhook delivery is: X-Qeet-Timestamp (Unix seconds) and X-Qeet-Signature, "sha256=" and the hex HMAC-SHA256, keyed by the hook''s secret, of the timestamp, a ".", and the raw body. For 24 hours after the secret is changed the header holds two comma-separated values, the new secret''s first; accept the call if any one matches. Verify in constant time before parsing, and refuse a timestamp more than a few minutes old, so a captured call can''t be replayed.'
   - name: Webhooks
     description: 'Outbound webhook endpoint management. A subscription names the events it receives, from the event catalogue; an event''s name is its version, so an incompatible payload change comes as a new name, while new fields may be added to any payload. Each delivery is a POST whose JSON body is the envelope {id, type, tenant_id, occurred_at, data}: id is the same in every delivery of one event, retries included, so deduplicate on it, and data is the event''s own payload. Deliveries are at least once and in no guaranteed order. Headers: X-Qeet-Event (the type), X-Qeet-Delivery-ID, X-Qeet-Timestamp (Unix seconds) and X-Qeet-Signature, "sha256=" and the hex HMAC-SHA256, keyed by the subscription''s secret, of the timestamp, a ".", and the raw body. For 24 hours after the secret is rotated the header holds two comma-separated values, the new secret''s first; accept the delivery if any one matches. Verify in constant time before parsing, and refuse a timestamp more than a few minutes old. Answer 2xx quickly: a network error, a 5xx, 408 or 429 is retried with jittered backoff from 30 seconds up to an hour, for 60 attempts; any other 4xx dead-letters the delivery at once. A dead-lettered delivery stays in the delivery list and can be sent again. A subscription whose deliveries fail for 3 days with no success is disabled (disabled_reason "failing") and the members who hold webhook.write are alerted in-app; deliveries queued meanwhile are sent once it is enabled again.'
   - name: Secrets
@@ -61,7 +61,7 @@ paths:
   /v1/api-keys:
     post:
       operationId: createApiKey
-      description: 'Creates a long-lived API key for machine access. The plaintext key is returned only once at creation and is never retrievable again, so store it securely. Callers present it as `Authorization: ApiKey <key>` and resolve to actor_type `api_key`. A user_id, if sent, must be the caller''s own: a key can act only for the person who creates it (403 apikey.user_not_self otherwise). Such a personal key works only while that person''s account is active: it is refused while they are suspended and once they are deleted. Creating and revoking keys is audited. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key. A credential carries only authority its creator holds: every scope must be one the caller holds (a vault scope needs secret.read; a machine caller, a scope of its own), or the request is refused with 403 rbac.grant_exceeds_caller naming the scope.'
+      description: 'Creates a long-lived API key for machine access. The plaintext key is returned only once at creation and is never retrievable again, so store it securely. Its name is required (422 apikey.name_required) and at most 200 characters (422 validation_failed on name). Callers present it as `Authorization: ApiKey <key>` and resolve to actor_type `api_key`. A user_id, if sent, must be the caller''s own: a key can act only for the person who creates it (403 apikey.user_not_self otherwise). Such a personal key works only while that person''s account is active: it is refused while they are suspended and once they are deleted. It also does only what that person may do now: a route needs both one of the key''s scopes and the person''s permission for it (a vault read, their secret.read), so a key loses what its person loses. Creating and revoking keys is audited. Send an Idempotency-Key header to retry it safely: a retry with the same key and body within 24 hours gets the first answer, marked Idempotent-Replayed: true; the same key with another body answers 422 idempotency.key_reused, one still being processed 409 idempotency.in_progress, and one whose first request stopped before answering 409 idempotency.outcome_unknown: check whether it took effect, then retry with a new key. A credential carries only authority its creator holds: every scope must be one the caller holds (a vault scope needs secret.read; a machine caller, a scope of its own), or the request is refused with 403 rbac.grant_exceeds_caller naming the scope.'
       summary: Create API key
       tags:
         - API Keys
@@ -244,7 +244,7 @@ paths:
     post:
       operationId: mintAgentToken
       summary: Mint agent token
-      description: An AI agent authenticates with its agent_id + secret (JSON body or HTTP Basic) and receives an ephemeral access token marked actor_type="agent" (+ agent_id claim), verifiable on the standard JWKS path. No user session.
+      description: An AI agent authenticates with its agent_id + secret (JSON body or HTTP Basic) and receives an ephemeral access token marked actor_type="agent" (+ agent_id claim), verifiable on the standard JWKS path. No user session. An agent of a suspended or deleted organisation gets no token, and the tokens it already holds stop working, as for a suspended agent.
       tags:
         - Agents
       security: []
@@ -589,7 +589,7 @@ paths:
     post:
       operationId: rotateAgentSecret
       summary: Rotate agent secret
-      description: Gives an agent that is not decommissioned a new secret, returned only now, and keeps the old secret minting tokens for overlap_hours (default 24, at most 168; 0 stops it at once). Requires apikey.write. Needs a recent step-up. Audited as agent.secret_rotated.
+      description: Gives an agent that is not decommissioned a new secret, returned only now, and keeps the old secret minting tokens for overlap_hours (default 24, at most 168; 0 stops it at once). The new secret carries the agent's scopes, so the caller must hold every one of them, as for creating an agent (403 rbac.grant_exceeds_caller, the secret unchanged). Requires apikey.write. Needs a recent step-up. Audited as agent.secret_rotated.
       tags:
         - Agents
       parameters:
@@ -997,7 +997,7 @@ paths:
   /v1/tenants/{tenantID}/auth-hooks/{id}:
     patch:
       operationId: updateAuthHook
-      description: Turns an authentication hook on or off, sets whether it fails open, and changes its URL (checked as on creation, 422 auth_hook.url_invalid) or its signing secret (encrypted at rest; the next call is signed with it). Only the fields sent change; the answer is both switches as stored. Audited as auth_hook.updated, saying whether the secret changed.
+      description: Turns an authentication hook on or off, sets whether it fails open, and changes its URL (checked as on creation, 422 auth_hook.url_invalid) or its signing secret (encrypted at rest; the next call is signed with it, and for 24 hours with the secret it replaced too, shown as previous_secret_expires_at, so the hook's endpoint can move over). Only the fields sent change; the answer is both switches as stored. Audited as auth_hook.updated, saying whether the secret changed.
       summary: Update auth hook
       tags:
         - Auth Hooks
@@ -1868,7 +1868,7 @@ paths:
   /v1/tenants/{tenantID}/vault/tokens/providers:
     post:
       operationId: registerTokenVaultProvider
-      description: Registers a third-party OAuth provider so the Token Vault can store and transparently refresh users' access tokens for it.
+      description: Registers a third-party OAuth provider so the Token Vault can store and transparently refresh users' access tokens for it. provider, client_id and client_secret are required (422 validation_failed, naming each field); authorize_url and token_url must be public http or https URLs (422 tokenvault.provider_authorize_url_invalid and tokenvault.provider_token_url_invalid). Registering an existing provider again updates it, but while anyone is connected through it its authorize_url, token_url and client_id can't change (409 tokenvault.provider_in_use), so their refresh tokens only ever go to the endpoint that issued them; the secret and scopes can. Delete the provider to disconnect everyone first.
       summary: Register a Token Vault OAuth2 provider
       tags:
         - Token Vault
@@ -1917,6 +1917,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -1957,7 +1959,7 @@ paths:
   /v1/tenants/{tenantID}/vault/tokens/providers/{provider}:
     delete:
       operationId: deleteTokenVaultProvider
-      description: Removes a registered Token Vault provider. Tokens already vaulted for that provider become unusable.
+      description: 'Removes a registered Token Vault provider and disconnects everyone connected through it: their vaulted tokens are deleted, so a provider registered again under the same name starts with no connected accounts.'
       summary: Delete a Token Vault provider
       tags:
         - Token Vault
@@ -2129,7 +2131,7 @@ components:
       type: apiKey
       in: header
       name: Authorization
-      description: 'API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey ` prefix). Accepted on the same authenticated routes as bearerAuth.'
+      description: 'API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey ` prefix). Accepted on the same authenticated routes as bearerAuth. A key works only while its organisation is active, not while it is suspended or deleted.'
     scimBearer:
       type: http
       scheme: bearer
@@ -2496,6 +2498,12 @@ components:
           type: integer
         denies:
           type: integer
+        previous_secret_expires_at:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Until when the secret the last change of secret replaced also signs the hook's calls.
     WebhookSubscription:
       type: object
       required:

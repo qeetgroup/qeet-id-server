@@ -260,3 +260,27 @@ func TestSourceNetwork(t *testing.T) {
 		}
 	}
 }
+
+// TestRefuseEncodedSeparators checks that a path with an encoded slash or
+// backslash, in either case, is refused before the handler, while other
+// encodings and a query carrying encoded slashes pass.
+func TestRefuseEncodedSeparators(t *testing.T) {
+	h := RefuseEncodedSeparators(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	for target, want := range map[string]int{
+		"/v1/users/a%2Fb":       http.StatusBadRequest,
+		"/v1/users/a%2fb/roles": http.StatusBadRequest,
+		"/v1/users/a%5Cb":       http.StatusBadRequest,
+		"/v1/users/a%5cb":       http.StatusBadRequest,
+		"/v1/users/a%252Fb":     http.StatusNoContent,
+		"/v1/users/a%20b":       http.StatusNoContent,
+		"/v1/oauth/authorize?redirect_uri=https%3A%2F%2Fapp.example%2Fcb": http.StatusNoContent,
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		if rec.Code != want {
+			t.Errorf("%s: %d, want %d", target, rec.Code, want)
+		}
+	}
+}

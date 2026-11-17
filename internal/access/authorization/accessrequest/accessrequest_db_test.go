@@ -19,6 +19,8 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
+func TestMain(m *testing.M) { dbtest.Main(m) }
+
 // inbox records the in-app notifications sent.
 type inbox struct {
 	mu   sync.Mutex
@@ -170,6 +172,35 @@ func TestARoleAlreadyHeldIsNeverTakenBack(t *testing.T) {
 	}
 	if _, err := w.svc.Create(ctx, w.tenant, w.requester, CreateInput{RoleID: w.finance, Reason: "more"}, audit.Actor{}); !errors.Is(err, errs.ErrAccessRequestRoleHeld) {
 		t.Errorf("asking for a role held: %v, want %v", err, errs.ErrAccessRequestRoleHeld)
+	}
+}
+
+// TestPermanentGrantSurvivesTheAccessRequestSweep checks that a role given for
+// a time by a request, then given outright by an administrator, is not taken
+// back when the request's time is up.
+func TestPermanentGrantSurvivesTheAccessRequestSweep(t *testing.T) {
+	ctx := dbtest.Context(t)
+	w := setup(t)
+	approver := audit.Actor{Type: "user", UserID: &w.approver}
+	req, err := w.svc.Create(ctx, w.tenant, w.requester, CreateInput{RoleID: w.finance, Reason: "Quarter close", DurationHours: hours(8)}, audit.Actor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.svc.Approve(ctx, w.tenant, req.ID, w.approver, "", approver); err != nil {
+		t.Fatal(err)
+	}
+	// The administrator then gives the role for good.
+	if err := rbac.NewService(rbac.NewRepository(dbtest.Pool(t))).AssignRole(ctx, w.requester, w.tenant, w.finance, &w.approver, approver); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE rbac.access_requests SET access_ends_at = NOW() - interval '1 minute' WHERE id = $1 AND access_ends_at IS NOT NULL`, req.ID); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := w.svc.Sweep(ctx); err != nil || res.Ended != 0 {
+		t.Errorf("sweep: %+v, %v; want nothing ended", res, err)
+	}
+	if !holds(t, w.requester, w.tenant, w.finance) {
+		t.Error("the sweep took back a role given for good since")
 	}
 }
 

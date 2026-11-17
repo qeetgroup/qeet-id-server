@@ -144,3 +144,34 @@ func TestOpenedSessionsContinueTheirSignIn(t *testing.T) {
 		t.Errorf("switched into the home organisation, want %s", other)
 	}
 }
+
+// TestCapturedAddressCannotSwitchIntoItsOrganisation checks that once an
+// organisation requires single sign-on on a member's domain, no session of
+// theirs is switched into it, as its identity provider signs them in there,
+// while a session they hold still switches into an organisation where they
+// are a guest.
+func TestCapturedAddressCannotSwitchIntoItsOrganisation(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	svc := newService(t)
+	home, guestOf := dbtest.Tenant(t), dbtest.Tenant(t)
+	domain := dbtest.Domain(t, home)
+	a := dbtest.UserAt(t, dbtest.Unique("asha")+"@"+domain, home, guestOf)
+	dbtest.SetPassword(t, a.ID, testPassword)
+	switchTo := func(from *TokenPair, tenant uuid.UUID) (*TokenPair, error) {
+		return svc.SwitchTenant(ctx, SwitchTenantInput{UserID: a.ID, FromSessionID: from.SessionID, TenantID: tenant})
+	}
+	signedIn := signIn(t, svc, a)
+
+	if _, err := pool.Exec(ctx, `UPDATE tenant.domains SET sso_enabled = TRUE WHERE tenant_id = $1`, home); err != nil {
+		t.Fatal(err)
+	}
+	svc.SetDomainCapture(captureDomain(domain))
+	there, err := switchTo(signedIn, guestOf)
+	if err != nil {
+		t.Fatalf("switch into an organisation they are a guest of: %v", err)
+	}
+	if back, err := switchTo(there, home); !errors.Is(err, errs.ErrAuthSSORequired) || back != nil {
+		t.Errorf("switch into the organisation that captures their address: %+v, %v; want %v", back, err, errs.ErrAuthSSORequired)
+	}
+}

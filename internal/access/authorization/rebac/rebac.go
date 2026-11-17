@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -30,6 +31,26 @@ import (
 
 // maxDepth bounds userset expansion (defense-in-depth alongside the visited set).
 const maxDepth = 25
+
+// maxExpansions bounds the distinct object#relation pairs one check expands,
+// one read each, so a wide relationship set can't make a check run unbounded
+// queries.
+const maxExpansions = 1000
+
+// maxRequestExpansions bounds the reads of every check made with a context
+// from WithRequestBudget together, as an AuthZEN batch makes up to 100.
+const maxRequestExpansions = 5000
+
+type requestBudgetKey struct{}
+
+// WithRequestBudget returns ctx carrying one budget of maxRequestExpansions
+// reads that every check made with it draws on, so a request making many
+// checks is bounded as one check is.
+func WithRequestBudget(ctx context.Context) context.Context {
+	left := new(atomic.Int64)
+	left.Store(maxRequestExpansions)
+	return context.WithValue(ctx, requestBudgetKey{}, left)
+}
 
 // objectRef is a parsed "type:id".
 type objectRef struct{ Type, ID string }
@@ -95,14 +116,19 @@ type Explanation struct {
 // expanding direct + userset tuples, and — when found — the root-to-leaf chain
 // of tuples that granted it. visited holds the shallowest depth each
 // object#relation was expanded at, so a cycle stops and a shorter path to one
-// first met near maxDepth is still walked. Pure given the fetcher.
+// first met near maxDepth is still walked; past maxExpansions of them the
+// check stops with ErrReBACCheckTooComplex. Pure given the fetcher.
 func resolve(fetch fetcher, objType, objID, relation, userID string, visited map[string]int, depth int) (bool, []ExplainStep, error) {
 	if depth > maxDepth {
 		return false, nil, nil
 	}
 	key := objType + ":" + objID + "#" + relation
-	if at, seen := visited[key]; seen && at <= depth {
+	at, seen := visited[key]
+	if seen && at <= depth {
 		return false, nil, nil
+	}
+	if !seen && len(visited) >= maxExpansions {
+		return false, nil, errs.ErrReBACCheckTooComplex
 	}
 	visited[key] = depth
 
@@ -377,14 +403,19 @@ func (s *Service) Objects(ctx context.Context, tenantID uuid.UUID, objType strin
 }
 
 // tupleFetcher returns a fetcher scoped to one tenant, backed by the database
-// and reading each object#relation once, however often a walk meets it.
+// and reading each object#relation once, however often a walk meets it. Each
+// read draws on ctx's request budget (WithRequestBudget), if it carries one.
 // FetchSubjects is the hot-path query for Check/Explain/Expand.
 func (s *Service) tupleFetcher(ctx context.Context, tenantID uuid.UUID) fetcher {
 	read := map[string][]tuple{}
+	left, _ := ctx.Value(requestBudgetKey{}).(*atomic.Int64)
 	return func(objectType, objectID, rel string) ([]tuple, error) {
 		key := objectType + ":" + objectID + "#" + rel
 		if ts, ok := read[key]; ok {
 			return ts, nil
+		}
+		if left != nil && left.Add(-1) < 0 {
+			return nil, errs.ErrReBACCheckTooComplex
 		}
 		rows, err := s.q.FetchSubjects(ctx, dbgen.FetchSubjectsParams{
 			TenantID:   tenantID,
@@ -509,7 +540,8 @@ func expand(fetch fetcher, objType, objID, relation string, limit int) (map[stri
 
 // Expand returns the graph of every subject reachable from object#relation
 // ("who can reach this resource?"), following usersets up to depth hops
-// (maxExpandDepth when depth is out of range). Each node appears once.
+// (maxExpandDepth when depth is out of range). Each node appears once. It
+// reads within one request budget: a wider graph is ErrReBACCheckTooComplex.
 func (s *Service) Expand(ctx context.Context, tenantID uuid.UUID, object, relation string, depth int) (*Graph, error) {
 	o, ok := parseObject(object)
 	if !ok {
@@ -521,7 +553,7 @@ func (s *Service) Expand(ctx context.Context, tenantID uuid.UUID, object, relati
 	if depth <= 0 || depth > maxExpandDepth {
 		depth = maxExpandDepth
 	}
-	nodes, edges, err := expand(s.tupleFetcher(ctx, tenantID), o.Type, o.ID, relation, depth)
+	nodes, edges, err := expand(s.tupleFetcher(WithRequestBudget(ctx), tenantID), o.Type, o.ID, relation, depth)
 	if err != nil {
 		return nil, err
 	}
@@ -730,6 +762,8 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrReBACObjectInvalid)
 		return
 	}
+	// The check and its explanation share one budget.
+	r = r.WithContext(WithRequestBudget(r.Context()))
 	dec, err := h.Decider.Relation(r.Context(), tenantID, in.UserID, in.Object, in.Relation)
 	if err != nil {
 		httpx.WriteError(w, r, err)

@@ -20,9 +20,14 @@ delete:
     - bearerAuth: []
     - apiKeyAuth: []
   description: >-
-    Removes a user from a group. Requires group.write. Someone whose identity
-    provider still asserts a group mapped to this one rejoins it at their next
-    single sign-on.
+    Removes a user from a group. Requires group.write and a fresh second factor
+    (step-up). Removing takes the group's roles from them, so it is held to the
+    rule for giving them, as adding is (403 rbac.owner_only for a group holding
+    the owner role, 403 rbac.grant_exceeds_caller for one whose roles carry a
+    permission the caller lacks), and to their standing: nobody removes someone
+    who outranks them (403 rbac.target_is_owner or rbac.target_outranks_caller).
+    Someone whose identity provider still asserts a group mapped to this one
+    rejoins it at their next single sign-on.
   responses:
     '204':
       description: No Content

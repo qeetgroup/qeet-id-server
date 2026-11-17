@@ -35,6 +35,9 @@ type InvitationAcceptor interface {
 	// organisation. It grants the invited role and records the acceptance,
 	// made from ip with user agent ua.
 	AcceptForNewAccountTx(ctx context.Context, tx pgx.Tx, id, tenantID, userID uuid.UUID, email, ip, ua string) error
+	// CheckInvitationSender refuses invitation id once whoever sent it may no
+	// longer give it. It reads the pool, so it runs before the transaction.
+	CheckInvitationSender(ctx context.Context, id uuid.UUID) error
 }
 
 // SetInvitations wires invitation acceptance by passkey (nil turns it off).
@@ -78,8 +81,12 @@ func (s *Service) FinishInviteSignup(ctx context.Context, sessionID uuid.UUID, c
 	if sess.inviteID == uuid.Nil || sess.tenantID == uuid.Nil {
 		return nil, errs.ErrPasskeySessionInvalid
 	}
-	// The organisation may have switched passkeys off since the ceremony began.
+	// The organisation may have switched passkeys off since the ceremony began,
+	// or whoever sent the invitation lost the right to.
 	if err := s.passkeysAllowed(ctx, sess.tenantID); err != nil {
+		return nil, err
+	}
+	if err := s.invitations.CheckInvitationSender(ctx, sess.inviteID); err != nil {
 		return nil, err
 	}
 	userID, err := s.createUserFromSignup(ctx, sess, cred, name, func(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {

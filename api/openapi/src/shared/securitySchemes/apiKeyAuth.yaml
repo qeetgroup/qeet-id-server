@@ -3,4 +3,6 @@ in: header
 name: Authorization
 description: >-
   API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey
-  ` prefix). Accepted on the same authenticated routes as bearerAuth.
+  ` prefix). Accepted on the same authenticated routes as bearerAuth. A key
+  works only while its organisation is active, not while it is suspended or
+  deleted.

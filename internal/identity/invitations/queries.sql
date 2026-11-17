@@ -63,6 +63,9 @@ UPDATE tenant.invites SET status = 'revoked'
 WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
 RETURNING email, role_id;
 
+-- name: GetInviteRole :one
+SELECT role_id FROM tenant.invites WHERE id = $1 AND tenant_id = $2;
+
 -- RegenerateInvite rotates the token + extends the expiry for a resend (a fresh
 -- link; the old one stops working). Also revives an expired invite back to
 -- pending. Accepted/revoked invites are left untouched (0 rows).
@@ -79,6 +82,25 @@ SELECT id, tenant_id, email, role_id, status, expires_at
 FROM tenant.invites
 WHERE token_hash = $1
 FOR UPDATE;
+
+-- InviteSenderByToken is who sent the invitation a token names, and what it
+-- gives, for the check acceptance makes before its transaction.
+-- name: InviteSenderByToken :one
+SELECT tenant_id, role_id, invited_by, status, expires_at FROM tenant.invites WHERE token_hash = $1;
+
+-- InviteSenderByID is InviteSenderByToken for an invitation picked by id.
+-- name: InviteSenderByID :one
+SELECT tenant_id, role_id, invited_by, status, expires_at FROM tenant.invites WHERE id = $1;
+
+-- InviterActive reports whether the account that sent an invitation is active
+-- and still belongs to its organisation: at home there or holding a role.
+-- name: InviterActive :one
+SELECT EXISTS (
+    SELECT 1 FROM "user".users u
+    WHERE u.id = @user_id AND u.status = 'active' AND u.deleted_at IS NULL
+      AND (u.tenant_id = @tenant_id::uuid OR EXISTS (
+          SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = @tenant_id::uuid))
+);
 
 -- GetInviteByIDForAccept is the by-id counterpart used by the in-app "accept
 -- from my inbox" flow (the caller never sees the raw token).
@@ -143,9 +165,7 @@ SELECT email, (email_verified_at IS NOT NULL)::boolean AS verified
 FROM "user".users WHERE id = @user_id AND deleted_at IS NULL;
 
 -- InsertInvitedUser creates a brand-new invited account (no prior user). Its
--- address is not verified: the invitation link is also handed to the inviter
--- to share, so having it proves nothing about who owns the address. A code or
--- link sent to it later does.
+-- address is left unverified; a code or link sent to it later verifies it.
 -- name: InsertInvitedUser :one
 INSERT INTO "user".users (tenant_id, email, display_name, status)
 VALUES (@tenant_id, @email, NULLIF(@display_name, ''), 'active')
@@ -176,7 +196,7 @@ WHERE i.token_hash = @token_hash;
 
 -- ActivateInvitedAccount activates the account created to accept an
 -- invitation. Its address stays unverified, as the password path's
--- InsertInvitedUser leaves it: the link proves nothing about who owns it.
+-- InsertInvitedUser leaves it.
 -- name: ActivateInvitedAccount :exec
 UPDATE "user".users SET status = 'active'
 WHERE id = @user_id;

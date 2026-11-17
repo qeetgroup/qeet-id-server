@@ -17,9 +17,9 @@ type Sweep struct {
 
 // SignInSweeps delete sign-in state once it is spent: links, codes, states and
 // requests a day after they expire (kept that long so a late click is told the
-// link expired rather than that it is unknown), and failed sign-in counters a
-// week after the last failure, once no lock or throttle is in force. A week is
-// longer than any lockout window an organisation may set.
+// link expired rather than that it is unknown), and failed sign-in and wrong
+// application secret counters a week after the last failure, once no lock or
+// throttle is in force. A week is longer than any lockout window.
 var SignInSweeps = []Sweep{
 	{"authorization codes", `DELETE FROM auth.oidc_authorization_codes WHERE ctid = ANY(ARRAY(
 		SELECT c.ctid FROM auth.oidc_authorization_codes c WHERE c.expires_at < NOW() - INTERVAL '1 day' LIMIT $1))`},
@@ -69,6 +69,10 @@ var SignInSweeps = []Sweep{
 		SELECT c.ctid FROM auth.login_attempts_by_network c
 		WHERE c.last_failed_at < NOW() - INTERVAL '7 days' AND (c.locked_until IS NULL OR c.locked_until < NOW())
 		LIMIT $1))`},
+	{"application secret failures", `DELETE FROM auth.oidc_client_auth_lockouts WHERE ctid = ANY(ARRAY(
+		SELECT c.ctid FROM auth.oidc_client_auth_lockouts c
+		WHERE c.last_failure_at < NOW() - INTERVAL '7 days' AND (c.locked_until IS NULL OR c.locked_until < NOW())
+		LIMIT $1))`},
 	{"failed sign-ins by source", `DELETE FROM auth.login_source_failures WHERE ctid = ANY(ARRAY(
 		SELECT c.ctid FROM auth.login_source_failures c WHERE c.last_failed_at < NOW() - INTERVAL '7 days' LIMIT $1))`},
 	{"source throttles", `DELETE FROM auth.login_source_throttles WHERE ctid = ANY(ARRAY(
@@ -81,8 +85,8 @@ var SignInSweeps = []Sweep{
 // events and audit anomalies 90 days after they are resolved or a year after
 // they were raised, invitations 90 days after they lapse, application grants a
 // week after they end, and access decisions after 30 days. A delivery still to
-// be made, an open alert and a live grant are kept. audit.events is never
-// deleted.
+// be made, an open alert and a live grant are kept. audit.events goes by each
+// organisation's plan instead (audit.PurgeExpired).
 var RecordSweeps = []Sweep{
 	{"webhook deliveries", `DELETE FROM tenant.webhook_deliveries WHERE ctid = ANY(ARRAY(
 		SELECT d.ctid FROM tenant.webhook_deliveries d

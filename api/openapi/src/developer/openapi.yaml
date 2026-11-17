@@ -57,6 +57,8 @@ info:
 
     Every response carries an `X-Request-Id` header naming the request; quote it
     when reporting a problem. An error body repeats it as `error.request_id`.
+    A path with an encoded slash or backslash (`%2F`, `%5C`) is refused with
+    400 `bad_request`.
 
 
     ## Related APIs
@@ -97,7 +99,15 @@ tags:
       Verifiable credentials — issue, list and revoke W3C / JWT-VC documents,
       plus public verification.
   - name: Auth Hooks
-    description: Custom authentication hooks (actions) invoked during authentication flows.
+    description: >-
+      Custom authentication hooks (actions) invoked during authentication
+      flows. Each call is a POST signed as a webhook delivery is: X-Qeet-Timestamp
+      (Unix seconds) and X-Qeet-Signature, "sha256=" and the hex HMAC-SHA256,
+      keyed by the hook's secret, of the timestamp, a ".", and the raw body. For
+      24 hours after the secret is changed the header holds two comma-separated
+      values, the new secret's first; accept the call if any one matches. Verify
+      in constant time before parsing, and refuse a timestamp more than a few
+      minutes old, so a captured call can't be replayed.
   - name: Webhooks
     description: >-
       Outbound webhook endpoint management. A subscription names the events it

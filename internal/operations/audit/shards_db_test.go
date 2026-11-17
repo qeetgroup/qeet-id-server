@@ -151,17 +151,17 @@ func TestPlatformChainsVerify(t *testing.T) {
 	recordPlatform(t, 4, "auth.logout")
 	legacy := writeAsTheSinglePlatformChain(t)
 
-	res, err := NewVerifier(pool).Verify(ctx, nil)
+	res, err := NewVerifier(pool, nil).Verify(ctx, nil)
 	if err != nil || !res.OK || res.RowsChecked < PlatformChainShards+5 {
 		t.Fatalf("verify the platform chains: %+v, %v; want every row intact", res, err)
 	}
 	for shard, want := range map[int16]int{0: 1, 3: 3, 4: 2} {
-		res, _, err := NewVerifier(pool).walk(ctx, nil, shard, nil, true)
+		res, _, err := NewVerifier(pool, nil).walk(ctx, nil, shard, nil, true)
 		if err != nil || !res.OK || res.RowsChecked < want {
 			t.Errorf("verify chain %d alone: %+v, %v; want at least %d rows intact", shard, res, err, want)
 		}
 	}
-	if res, _, err := NewVerifier(pool).walk(ctx, nil, 0, nil, true); err != nil || !res.OK || *res.LastVerifiedID != legacy {
+	if res, _, err := NewVerifier(pool, nil).walk(ctx, nil, 0, nil, true); err != nil || !res.OK || *res.LastVerifiedID != legacy {
 		t.Errorf("chain 0 with a row written the old way: %+v, %v; want it intact to %s", res, err, legacy)
 	}
 
@@ -210,7 +210,7 @@ func TestPlatformChainsVerify(t *testing.T) {
 			t.Errorf("scheduled run with a row on no chain: %+v, %v; want it reported", run.Broken, err)
 		}
 	})
-	if res, err := NewVerifier(pool).Verify(ctx, nil); err != nil || !res.OK {
+	if res, err := NewVerifier(pool, nil).Verify(ctx, nil); err != nil || !res.OK {
 		t.Errorf("verify once the tampering is rolled back: %+v, %v; want intact", res, err)
 	}
 }
@@ -284,7 +284,7 @@ func TestEachPlatformChainKeepsItsCheckpoint(t *testing.T) {
 	if at(10) != grown || at(11) != last11 {
 		t.Errorf("after chain 10 grew: checkpoints at %s and %s, want %s and %s unmoved", at(10), at(11), grown, last11)
 	}
-	v := NewVerifier(pool)
+	v := NewVerifier(pool, nil)
 	for range 2 {
 		if err := v.keepCheckpoint(ctx, chain{shard: 10}, nil, &checkpoint{EventID: uuid.New(), CreatedAt: time.Now(), RowHash: chainSeed}, true); err != nil {
 			t.Fatalf("a second first checkpoint of chain 10: %v", err)

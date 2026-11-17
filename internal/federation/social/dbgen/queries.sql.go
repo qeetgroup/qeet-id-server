@@ -14,8 +14,11 @@ import (
 )
 
 const consumeSocialLoginCode = `-- name: ConsumeSocialLoginCode :one
-SELECT user_id, tenant_id, expires_at, used_at
-FROM auth.social_login_codes WHERE code_hash = $1 FOR UPDATE
+SELECT lc.user_id, lc.tenant_id, lc.expires_at, lc.used_at, p.enabled
+FROM auth.social_login_codes lc
+JOIN tenant.social_providers p ON p.tenant_id = lc.tenant_id AND p.provider = lc.provider
+WHERE lc.code_hash = $1
+FOR UPDATE OF lc
 `
 
 type ConsumeSocialLoginCodeRow struct {
@@ -23,8 +26,10 @@ type ConsumeSocialLoginCodeRow struct {
 	TenantID  uuid.UUID
 	ExpiresAt time.Time
 	UsedAt    pgtype.Timestamptz
+	Enabled   bool
 }
 
+// With whether the provider that issued the code is on: one since deleted finds no row.
 func (q *Queries) ConsumeSocialLoginCode(ctx context.Context, codeHash string) (ConsumeSocialLoginCodeRow, error) {
 	row := q.db.QueryRow(ctx, consumeSocialLoginCode, codeHash)
 	var i ConsumeSocialLoginCodeRow
@@ -33,6 +38,7 @@ func (q *Queries) ConsumeSocialLoginCode(ctx context.Context, codeHash string) (
 		&i.TenantID,
 		&i.ExpiresAt,
 		&i.UsedAt,
+		&i.Enabled,
 	)
 	return i, err
 }
@@ -212,14 +218,15 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (uuid.UUID, 
 }
 
 const insertSocialLoginCode = `-- name: InsertSocialLoginCode :exec
-INSERT INTO auth.social_login_codes (code_hash, user_id, tenant_id, expires_at)
-VALUES ($1, $2, $3, $4)
+INSERT INTO auth.social_login_codes (code_hash, user_id, tenant_id, provider, expires_at)
+VALUES ($1, $2, $3, $4::text, $5)
 `
 
 type InsertSocialLoginCodeParams struct {
 	CodeHash  string
 	UserID    uuid.UUID
 	TenantID  uuid.UUID
+	Provider  string
 	ExpiresAt time.Time
 }
 
@@ -228,6 +235,7 @@ func (q *Queries) InsertSocialLoginCode(ctx context.Context, arg InsertSocialLog
 		arg.CodeHash,
 		arg.UserID,
 		arg.TenantID,
+		arg.Provider,
 		arg.ExpiresAt,
 	)
 	return err

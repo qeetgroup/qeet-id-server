@@ -345,7 +345,7 @@ func TestRedirectRegistered(t *testing.T) {
 		"http://[::1]:61000/cb?app=1",
 		"http://localhost:3000/cb",
 	} {
-		if !redirectRegistered(registered, uri) {
+		if !redirectRegistered(registered, uri, "public") {
 			t.Errorf("%s: not matched", uri)
 		}
 	}
@@ -367,8 +367,29 @@ func TestRedirectRegistered(t *testing.T) {
 		"http://127.0.0.1.evil.test:53682/cb",
 		"http://[::1]x:61000/cb?app=1",
 	} {
-		if redirectRegistered(registered, uri) {
+		if redirectRegistered(registered, uri, "public") {
 			t.Errorf("%s: matched", uri)
+		}
+	}
+}
+
+// TestLoopbackAnyPortOnlyForPublicClients checks that only a public (native)
+// application's loopback redirect may name another port: a confidential web
+// application's must match exactly, so a local process on another port can't
+// receive its codes.
+func TestLoopbackAnyPortOnlyForPublicClients(t *testing.T) {
+	registered := []string{"http://127.0.0.1:8080/cb", "http://[::1]/cb"}
+	for _, uri := range []string{"http://127.0.0.1:53682/cb", "http://[::1]:61000/cb"} {
+		if !redirectRegistered(registered, uri, "public") {
+			t.Errorf("%s for a public application: not matched", uri)
+		}
+		if redirectRegistered(registered, uri, "confidential") {
+			t.Errorf("%s for a confidential application: matched", uri)
+		}
+	}
+	for _, uri := range registered {
+		if !redirectRegistered(registered, uri, "confidential") {
+			t.Errorf("%s exactly, for a confidential application: not matched", uri)
 		}
 	}
 }
@@ -583,9 +604,10 @@ func TestWriteTokenError(t *testing.T) {
 	}
 }
 
-// TestTokenSessionLive checks that only a user's own access token is checked
-// against its session, and that an ended session or a failed lookup makes it
-// not live.
+// TestTokenSessionLive checks that a person's own access token is checked
+// against the session it names, and that an ended session or a failed lookup
+// makes it not live; an exchanged token, an agent's and one naming no session
+// pass. An application's hosted-login session needs the database: logout's tests.
 func TestTokenSessionLive(t *testing.T) {
 	liveSession, failingSession, lookupErr := uuid.New(), uuid.New(), errors.New("lookup failed")
 	s := &Service{sessionLive: func(_ context.Context, sessionID, _ uuid.UUID) (bool, error) {
@@ -603,12 +625,13 @@ func TestTokenSessionLive(t *testing.T) {
 		want    bool
 		wantErr error
 	}{
-		"own token, live session":  {tokens.Claims{UserID: user, SessionID: liveSession}, true, nil},
-		"own token, ended session": {tokens.Claims{UserID: user, SessionID: uuid.New()}, false, nil},
-		"own token, failed lookup": {tokens.Claims{UserID: user, SessionID: failingSession}, false, lookupErr},
-		"an application's token":   {tokens.Claims{UserID: user, SessionID: uuid.New(), ClientID: "app"}, true, nil},
-		"an agent's token":         {tokens.Claims{UserID: user, SessionID: uuid.New(), ActorType: "agent"}, true, nil},
-		"a token with no session":  {tokens.Claims{UserID: user}, true, nil},
+		"own token, live session":                  {tokens.Claims{UserID: user, SessionID: liveSession}, true, nil},
+		"own token, ended session":                 {tokens.Claims{UserID: user, SessionID: uuid.New()}, false, nil},
+		"own token, failed lookup":                 {tokens.Claims{UserID: user, SessionID: failingSession}, false, lookupErr},
+		"an exchanged token":                       {tokens.Claims{UserID: user, SessionID: uuid.New(), ClientID: "app", ExchangeDepth: 1}, true, nil},
+		"an application's token naming no session": {tokens.Claims{UserID: user, ClientID: "app"}, true, nil},
+		"an agent's token":                         {tokens.Claims{UserID: user, SessionID: uuid.New(), ActorType: "agent"}, true, nil},
+		"a token with no session":                  {tokens.Claims{UserID: user}, true, nil},
 	}
 	for name, tc := range cases {
 		live, err := s.tokenSessionLive(context.Background(), &tc.claims)

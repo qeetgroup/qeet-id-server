@@ -25,7 +25,7 @@ func captureService(t *testing.T) *Service {
 	pool := dbtest.Pool(t)
 	svc := NewService(pool)
 	svc.SetOwners(rbac.NewRepository(pool))
-	svc.SetAdminPermissions(identitylink.AdminPermissions())
+	svc.SetMemberPermissions(identitylink.MemberPermissions())
 	return svc
 }
 
@@ -367,5 +367,29 @@ func TestDiscoverRoutesByDomainAlone(t *testing.T) {
 		if resp.StatusCode != want {
 			t.Errorf("POST /sso/discovery %s: %d, want %d", body, resp.StatusCode, want)
 		}
+	}
+}
+
+// TestCaptureLeavesEveryAdministratorTheirMethods checks that a member holding
+// any permission outside the member allowlist, such as only gdpr.write, keeps
+// their own sign-in methods on a captured domain until linked, while one
+// holding only allowlisted reads is captured.
+func TestCaptureLeavesEveryAdministratorTheirMethods(t *testing.T) {
+	svc := captureService(t)
+	tenant := dbtest.Tenant(t)
+	domain := dbtest.Domain(t, tenant)
+	exec(t, `UPDATE tenant.domains SET sso_enabled = TRUE WHERE tenant_id = $1`, tenant)
+	samlConnection(t, tenant, "active")
+	for _, key := range []string{"gdpr.write", "secret.read", "billing.write", "branding.write"} {
+		officer := dbtest.UserAt(t, dbtest.Unique("officer")+"@"+domain, tenant)
+		dbtest.Assign(t, officer.ID, tenant, dbtest.Role(t, tenant, key))
+		if got, _ := captured(t, svc, officer.Email); got {
+			t.Errorf("a member holding %s, an administrator, is captured", key)
+		}
+	}
+	reader := dbtest.UserAt(t, dbtest.Unique("reader")+"@"+domain, tenant)
+	dbtest.Assign(t, reader.ID, tenant, dbtest.Role(t, tenant, "audit.read", "user.read"))
+	if got, _ := captured(t, svc, reader.Email); !got {
+		t.Error("a member holding only reads is not captured")
 	}
 }

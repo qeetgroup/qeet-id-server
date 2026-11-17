@@ -860,30 +860,14 @@ func (s *Service) UpdatePushToken(ctx context.Context, deviceID, userID uuid.UUI
 	return tx.Commit(ctx)
 }
 
-// memberInScope returns the member a route names, refused as not found unless
-// they belong to the caller's organisation.
-func (h *Handler) memberInScope(r *http.Request) (uuid.UUID, uuid.UUID, error) {
-	tenantID, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, uuid.Nil, err
-	}
-	userID, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		return uuid.Nil, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid id")
-	}
-	member, err := h.Service.q.IsTenantMember(r.Context(), dbgen.IsTenantMemberParams{UserID: userID, TenantID: tenantID})
-	if err != nil {
-		return uuid.Nil, uuid.Nil, err
-	}
-	if !member {
-		return uuid.Nil, uuid.Nil, errs.ErrNotFound
-	}
-	return userID, tenantID, nil
+// isMember reports whether userID belongs to tenantID, for the member routes.
+func (h *Handler) isMember(ctx context.Context, userID, tenantID uuid.UUID) (bool, error) {
+	return h.Service.q.IsTenantMember(ctx, dbgen.IsTenantMemberParams{UserID: userID, TenantID: tenantID})
 }
 
 // listMemberPushDevices → GET /v1/users/{id}/push-devices.
 func (h *Handler) listMemberPushDevices(w http.ResponseWriter, r *http.Request) {
-	userID, _, err := h.memberInScope(r)
+	userID, _, err := httpx.Member(r, "id", h.isMember)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -897,9 +881,9 @@ func (h *Handler) listMemberPushDevices(w http.ResponseWriter, r *http.Request) 
 }
 
 // revokeMemberPushDevice → DELETE /v1/users/{id}/push-devices/{deviceID}: an
-// administrator disconnects a member's lost phone.
+// administrator disconnects a lost phone of a member they outrank.
 func (h *Handler) revokeMemberPushDevice(w http.ResponseWriter, r *http.Request) {
-	userID, tenantID, err := h.memberInScope(r)
+	userID, tenantID, err := httpx.MemberToActOn(r, "id", h.isMember, h.ActOnCheck)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

@@ -20,7 +20,7 @@ func TestControlsSayWhenTheyStartedFailingAndWhoOwnsThem(t *testing.T) {
 	tenant, other := dbtest.Tenant(t), dbtest.Tenant(t)
 	admin, stranger := dbtest.User(t, tenant, tenant), dbtest.User(t, other, other)
 	h := dbtest.Serve(dbtest.Principal(admin.ID, tenant),
-		(&Handler{Service: NewService(pool, 0), Evidence: NewEvidenceService(pool, audit.NewVerifier(pool), false)}).Mount)
+		(&Handler{Service: NewService(pool, 0), Evidence: NewEvidenceService(pool, audit.NewVerifier(pool, nil), false)}).Mount)
 	base := "/tenants/" + tenant.String() + "/compliance"
 	run := func() EvidenceRun {
 		t.Helper()

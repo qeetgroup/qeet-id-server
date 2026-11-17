@@ -11,6 +11,11 @@ post:
     saml.metadata_invalid. With no source and no stored URL, 422
     saml.metadata_required. Audited; another organisation's connection answers
     404.
+    Changing what the connection trusts (metadata pasted in or from another URL;
+    a refresh from the connection's own metadata_url is not) is acting on every
+    account linked to it, as the changed connection could sign in as any of
+    them: while an administrator is linked, it needs a caller who outranks each
+    one (403 rbac.trust_change_outranks_caller otherwise).
   tags:
     - SAML
   parameters:

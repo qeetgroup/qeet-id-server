@@ -6,6 +6,8 @@ package errs
 const (
 	CodeTokenVaultProviderNotFound         = "tokenvault.provider_not_found"
 	CodeTokenVaultProviderAuthorizeInvalid = "tokenvault.provider_authorize_url_invalid"
+	CodeTokenVaultProviderInUse            = "tokenvault.provider_in_use"
+	CodeTokenVaultProviderTokenURLInvalid  = "tokenvault.provider_token_url_invalid"
 	CodeTokenVaultConnectStateInvalid      = "tokenvault.connect_state_invalid"
 	CodeTokenVaultConnectExpired           = "tokenvault.connect_expired"
 	CodeTokenVaultConnectOtherBrowser      = "tokenvault.connect_other_browser"
@@ -22,6 +24,8 @@ const (
 var (
 	ErrTokenVaultProviderNotFound         = New(CodeTokenVaultProviderNotFound, "That provider isn't registered for your account.")
 	ErrTokenVaultProviderAuthorizeInvalid = New(CodeTokenVaultProviderAuthorizeInvalid, "This provider is misconfigured and can't be used to connect.")
+	ErrTokenVaultProviderTokenURLInvalid  = New(CodeTokenVaultProviderTokenURLInvalid, "The provider's token URL must be a public http or https URL.")
+	ErrTokenVaultProviderInUse            = New(CodeTokenVaultProviderInUse, "People are connected through this provider, so its endpoints and client can't change. Delete it to disconnect them first.")
 	ErrTokenVaultConnectStateInvalid      = New(CodeTokenVaultConnectStateInvalid, "This connection link is invalid or has already been used. Please start again.")
 	ErrTokenVaultConnectExpired           = New(CodeTokenVaultConnectExpired, "This connection request has expired. Please start again.")
 	ErrTokenVaultConnectOtherBrowser      = New(CodeTokenVaultConnectOtherBrowser, "This connection was started in another browser. Start it again in the browser you are using.")

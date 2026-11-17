@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/paging"
 )
@@ -164,7 +165,7 @@ func (f ListFilter) where(args []any) (string, []any) {
 		conds = append(conds, "m.id = "+arg(*f.id))
 	}
 	if f.Query != "" {
-		p := arg("%" + escapeLike(f.Query) + "%")
+		p := arg("%" + postgres.EscapeLike(f.Query) + "%")
 		conds = append(conds, "(m.display_name ILIKE "+p+" OR m.email ILIKE "+p+" OR m.phone ILIKE "+p+")")
 	}
 	if f.Role != "" {
@@ -186,11 +187,6 @@ func (f ListFilter) where(args []any) (string, []any) {
 		conds = append(conds, "("+lastSeenBuckets[f.LastSeen]+")")
 	}
 	return strings.Join(conds, " AND "), args
-}
-
-// escapeLike makes s match itself in a LIKE pattern.
-func escapeLike(s string) string {
-	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
 // List returns a page of the tenant's members that f matches, the next

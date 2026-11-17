@@ -4,7 +4,10 @@ post:
     Confirms email verification by validating the code delivered by the
     start-email-verification call and marking the address verified. Codes are
     single-use, expire after a short window, and are retired after a small
-    number of wrong attempts, at which point a new code must be requested.
+    number of wrong attempts, at which point a new code must be requested; ten
+    wrong codes in an hour, over every code asked for in between, refuse even
+    the right one until the hour has passed (429
+    verification.attempts_exceeded with retry_after, in seconds).
     Request the code with the start-email-verification call before invoking
     this. Only a code sent by the start-email-verification call to the address
     now on the account counts; a code sent for an email change is the

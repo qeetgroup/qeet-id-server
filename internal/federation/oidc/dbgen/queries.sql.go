@@ -13,6 +13,39 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const applicationSignInLive = `-- name: ApplicationSignInLive :one
+SELECT (EXISTS (
+            SELECT 1 FROM auth.login_sessions ls
+            WHERE ls.id = $1 AND ls.user_id = $2 AND ls.expires_at > NOW())
+        OR EXISTS (
+            SELECT 1 FROM auth.oidc_refresh_tokens rt
+            WHERE rt.login_session_id = $1 AND rt.tenant_id = $3 AND rt.client_id = $4
+              AND rt.user_id = $2 AND rt.revoked_at IS NULL AND rt.expires_at > NOW()
+              AND (rt.grant_expires_at IS NULL OR rt.grant_expires_at > NOW())))::boolean AS live
+`
+
+type ApplicationSignInLiveParams struct {
+	SessionID uuid.UUID
+	UserID    uuid.UUID
+	TenantID  uuid.UUID
+	ClientID  string
+}
+
+// Whether the hosted-login session an application's token names is still open,
+// or a grant it started for that application still stands: signing out deletes
+// the session and revokes its grants, while expiry leaves the grants.
+func (q *Queries) ApplicationSignInLive(ctx context.Context, arg ApplicationSignInLiveParams) (bool, error) {
+	row := q.db.QueryRow(ctx, applicationSignInLive,
+		arg.SessionID,
+		arg.UserID,
+		arg.TenantID,
+		arg.ClientID,
+	)
+	var live bool
+	err := row.Scan(&live)
+	return live, err
+}
+
 const approveCIBARequest = `-- name: ApproveCIBARequest :exec
 UPDATE auth.oidc_ciba_requests SET status = 'authorized', approved_at = NOW() WHERE id = $1
 `
@@ -35,6 +68,24 @@ type ApproveDeviceParams struct {
 func (q *Queries) ApproveDevice(ctx context.Context, arg ApproveDeviceParams) error {
 	_, err := q.db.Exec(ctx, approveDevice, arg.UserID, arg.ID)
 	return err
+}
+
+const cIBARequestTenant = `-- name: CIBARequestTenant :one
+SELECT tenant_id FROM auth.oidc_ciba_requests WHERE id = $1 AND user_id = $2
+`
+
+type CIBARequestTenantParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+// CIBARequestTenant is the organisation of one of the user's backchannel
+// requests, for the checks its approval makes before locking it.
+func (q *Queries) CIBARequestTenant(ctx context.Context, arg CIBARequestTenantParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, cIBARequestTenant, arg.ID, arg.UserID)
+	var tenant_id uuid.UUID
+	err := row.Scan(&tenant_id)
+	return tenant_id, err
 }
 
 const claimLogoutDeliveries = `-- name: ClaimLogoutDeliveries :many
@@ -86,13 +137,18 @@ func (q *Queries) ClaimLogoutDeliveries(ctx context.Context, maxRows int32) ([]C
 }
 
 const clearClientAuthFailures = `-- name: ClearClientAuthFailures :exec
-DELETE FROM auth.oidc_client_auth_lockouts WHERE client_row_id = $1
+DELETE FROM auth.oidc_client_auth_lockouts WHERE client_row_id = $1 AND source_network = $2
 `
 
-// ClearClientAuthFailures forgets an application's failures after it
-// authenticates.
-func (q *Queries) ClearClientAuthFailures(ctx context.Context, clientRowID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, clearClientAuthFailures, clientRowID)
+type ClearClientAuthFailuresParams struct {
+	ClientRowID   uuid.UUID
+	SourceNetwork string
+}
+
+// ClearClientAuthFailures forgets an application's failures from a source
+// network after it authenticates from there; other networks' stand.
+func (q *Queries) ClearClientAuthFailures(ctx context.Context, arg ClearClientAuthFailuresParams) error {
+	_, err := q.db.Exec(ctx, clearClientAuthFailures, arg.ClientRowID, arg.SourceNetwork)
 	return err
 }
 
@@ -294,18 +350,39 @@ func (q *Queries) GetClientForAuth(ctx context.Context, clientID string) (GetCli
 	return i, err
 }
 
+const getClientLatestLockout = `-- name: GetClientLatestLockout :one
+SELECT max(locked_until)::timestamptz AS locked_until FROM auth.oidc_client_auth_lockouts
+WHERE client_row_id = $1 AND locked_until > NOW()
+HAVING count(*) > 0
+`
+
+// GetClientLatestLockout reports the lockout in force for an application from
+// any source network that ends last.
+func (q *Queries) GetClientLatestLockout(ctx context.Context, clientRowID uuid.UUID) (time.Time, error) {
+	row := q.db.QueryRow(ctx, getClientLatestLockout, clientRowID)
+	var locked_until time.Time
+	err := row.Scan(&locked_until)
+	return locked_until, err
+}
+
 const getClientLockedUntil = `-- name: GetClientLockedUntil :one
 
 SELECT locked_until FROM auth.oidc_client_auth_lockouts
-WHERE client_row_id = $1 AND locked_until > NOW()
+WHERE client_row_id = $1 AND source_network = $2 AND locked_until > NOW()
 `
+
+type GetClientLockedUntilParams struct {
+	ClientRowID   uuid.UUID
+	SourceNetwork string
+}
 
 // ==========================================================================
 // Application secret lockout
 // ==========================================================================
-// GetClientLockedUntil reports a lockout still in force for an application.
-func (q *Queries) GetClientLockedUntil(ctx context.Context, clientRowID uuid.UUID) (pgtype.Timestamptz, error) {
-	row := q.db.QueryRow(ctx, getClientLockedUntil, clientRowID)
+// GetClientLockedUntil reports a lockout still in force for an application
+// from a source network.
+func (q *Queries) GetClientLockedUntil(ctx context.Context, arg GetClientLockedUntilParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, getClientLockedUntil, arg.ClientRowID, arg.SourceNetwork)
 	var locked_until pgtype.Timestamptz
 	err := row.Scan(&locked_until)
 	return locked_until, err
@@ -857,11 +934,12 @@ const insertOIDCClient = `-- name: InsertOIDCClient :one
 INSERT INTO auth.oidc_clients (
     tenant_id, client_id, client_secret_hash, type, name,
     redirect_uris, post_logout_uris, grant_types, scopes, backchannel_logout_uri, frontchannel_logout_uri,
-    logo_uri, client_uri
+    logo_uri, client_uri, created_by
 ) VALUES ($1, $2, $3, $4, $5,
           $6, $7, $8, $9,
           NULLIF($10::text, ''), NULLIF($11::text, ''),
-          NULLIF($12::text, ''), NULLIF($13::text, ''))
+          NULLIF($12::text, ''), NULLIF($13::text, ''),
+          NULLIF($14::uuid, '00000000-0000-0000-0000-000000000000'))
 RETURNING id, tenant_id, client_id, type, name, redirect_uris,
           post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri, logo_uri, client_uri
 `
@@ -880,6 +958,7 @@ type InsertOIDCClientParams struct {
 	FrontchannelLogoutUri string
 	LogoUri               string
 	ClientUri             string
+	CreatedBy             uuid.UUID
 }
 
 type InsertOIDCClientRow struct {
@@ -920,6 +999,7 @@ func (q *Queries) InsertOIDCClient(ctx context.Context, arg InsertOIDCClientPara
 		arg.FrontchannelLogoutUri,
 		arg.LogoUri,
 		arg.ClientUri,
+		arg.CreatedBy,
 	)
 	var i InsertOIDCClientRow
 	err := row.Scan(
@@ -1575,12 +1655,13 @@ func (q *Queries) ListShadowAICandidates(ctx context.Context, arg ListShadowAICa
 }
 
 const lockCIBARequest = `-- name: LockCIBARequest :one
-SELECT user_id, status, expires_at
+SELECT user_id, tenant_id, status, expires_at
 FROM auth.oidc_ciba_requests WHERE id = $1 FOR UPDATE
 `
 
 type LockCIBARequestRow struct {
 	UserID    uuid.UUID
+	TenantID  uuid.UUID
 	Status    string
 	ExpiresAt time.Time
 }
@@ -1588,7 +1669,12 @@ type LockCIBARequestRow struct {
 func (q *Queries) LockCIBARequest(ctx context.Context, id uuid.UUID) (LockCIBARequestRow, error) {
 	row := q.db.QueryRow(ctx, lockCIBARequest, id)
 	var i LockCIBARequestRow
-	err := row.Scan(&i.UserID, &i.Status, &i.ExpiresAt)
+	err := row.Scan(
+		&i.UserID,
+		&i.TenantID,
+		&i.Status,
+		&i.ExpiresAt,
+	)
 	return i, err
 }
 
@@ -1633,19 +1719,22 @@ const lockClient = `-- name: LockClient :one
 UPDATE auth.oidc_client_auth_lockouts
 SET locked_until = NOW() + make_interval(secs => $1::float8),
     failures = 0, window_started_at = NOW()
-WHERE client_row_id = $2 AND (locked_until IS NULL OR locked_until <= NOW())
+WHERE client_row_id = $2 AND source_network = $3
+  AND (locked_until IS NULL OR locked_until <= NOW())
 RETURNING locked_until
 `
 
 type LockClientParams struct {
 	DurationSeconds float64
 	ClientRowID     uuid.UUID
+	SourceNetwork   string
 }
 
-// LockClient starts a lockout and restarts the count, unless one is already
-// in force: only the attempt that starts it gets a row back.
+// LockClient starts a lockout of a source network and restarts its count,
+// unless one is already in force: only the attempt that starts it gets a row
+// back.
 func (q *Queries) LockClient(ctx context.Context, arg LockClientParams) (pgtype.Timestamptz, error) {
-	row := q.db.QueryRow(ctx, lockClient, arg.DurationSeconds, arg.ClientRowID)
+	row := q.db.QueryRow(ctx, lockClient, arg.DurationSeconds, arg.ClientRowID, arg.SourceNetwork)
 	var locked_until pgtype.Timestamptz
 	err := row.Scan(&locked_until)
 	return locked_until, err
@@ -1873,12 +1962,12 @@ func (q *Queries) MarkRefreshTokenUsed(ctx context.Context, arg MarkRefreshToken
 }
 
 const recordClientAuthFailure = `-- name: RecordClientAuthFailure :one
-INSERT INTO auth.oidc_client_auth_lockouts AS l (client_row_id, failures, window_started_at, last_failure_at)
-VALUES ($1, 1, NOW(), NOW())
-ON CONFLICT (client_row_id) DO UPDATE SET
-    failures = CASE WHEN l.window_started_at <= NOW() - make_interval(secs => $2::float8)
+INSERT INTO auth.oidc_client_auth_lockouts AS l (client_row_id, source_network, failures, window_started_at, last_failure_at)
+VALUES ($1, $2, 1, NOW(), NOW())
+ON CONFLICT (client_row_id, source_network) DO UPDATE SET
+    failures = CASE WHEN l.window_started_at <= NOW() - make_interval(secs => $3::float8)
                     THEN 1 ELSE l.failures + 1 END,
-    window_started_at = CASE WHEN l.window_started_at <= NOW() - make_interval(secs => $2::float8)
+    window_started_at = CASE WHEN l.window_started_at <= NOW() - make_interval(secs => $3::float8)
                              THEN NOW() ELSE l.window_started_at END,
     last_failure_at = NOW()
 RETURNING failures
@@ -1886,13 +1975,15 @@ RETURNING failures
 
 type RecordClientAuthFailureParams struct {
 	ClientRowID   uuid.UUID
+	SourceNetwork string
 	WindowSeconds float64
 }
 
-// RecordClientAuthFailure counts one wrong secret, restarting the count when
-// the window it started has passed, and returns the count.
+// RecordClientAuthFailure counts one wrong secret from a source network,
+// restarting the count when the window it started has passed, and returns the
+// count.
 func (q *Queries) RecordClientAuthFailure(ctx context.Context, arg RecordClientAuthFailureParams) (int32, error) {
-	row := q.db.QueryRow(ctx, recordClientAuthFailure, arg.ClientRowID, arg.WindowSeconds)
+	row := q.db.QueryRow(ctx, recordClientAuthFailure, arg.ClientRowID, arg.SourceNetwork, arg.WindowSeconds)
 	var failures int32
 	err := row.Scan(&failures)
 	return failures, err
@@ -1916,6 +2007,28 @@ type ResourceHostClaimedElsewhereParams struct {
 // organisation may name a service there.
 func (q *Queries) ResourceHostClaimedElsewhere(ctx context.Context, arg ResourceHostClaimedElsewhereParams) (bool, error) {
 	row := q.db.QueryRow(ctx, resourceHostClaimedElsewhere, arg.TenantID, arg.Host)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const resourceHostVerifiedHere = `-- name: ResourceHostVerifiedHere :one
+SELECT EXISTS (
+    SELECT 1 FROM tenant.domains d
+    WHERE d.tenant_id = $1 AND d.verified_at IS NOT NULL
+      AND (lower($2::text) = lower(d.domain) OR lower($2::text) LIKE '%.' || lower(d.domain))
+)::bool
+`
+
+type ResourceHostVerifiedHereParams struct {
+	TenantID uuid.UUID
+	Host     string
+}
+
+// ResourceHostVerifiedHere reports whether the organisation has verified the
+// host of a resource identifier, or a domain above it.
+func (q *Queries) ResourceHostVerifiedHere(ctx context.Context, arg ResourceHostVerifiedHereParams) (bool, error) {
+	row := q.db.QueryRow(ctx, resourceHostVerifiedHere, arg.TenantID, arg.Host)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err

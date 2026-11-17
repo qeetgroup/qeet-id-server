@@ -76,10 +76,19 @@ func (s *Service) CreatePasskeyLoginSession(ctx context.Context, userID uuid.UUI
 
 // createLoginSession mints the session and records the sign-in by method to
 // tenantID (uuid.Nil: the account's own organisation), with how it met a
-// second factor ("": it didn't).
+// second factor ("": it didn't). The session reaches the account's
+// self-service routes, so its own organisation's address rules apply however
+// it signed in, whichever organisation's application asked.
 func (s *Service) createLoginSession(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, method, secondFactor string) (string, error) {
 	// Every hosted sign-in ends here, whatever its method.
 	if err := s.refuseInactiveAccount(ctx, userID, uuid.Nil, "hosted", ip, ua); err != nil {
+		return "", err
+	}
+	u, err := s.users.Get(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	if err := s.checkAddress(ctx, u.TenantID, userID, ip, "hosted_"+method); err != nil {
 		return "", err
 	}
 	raw, hash, err := tokens.NewRefreshToken()
@@ -91,10 +100,6 @@ func (s *Service) createLoginSession(ctx context.Context, userID, tenantID uuid.
 		return "", err
 	}
 	if tenantID == uuid.Nil {
-		u, err := s.users.Get(ctx, userID)
-		if err != nil {
-			return "", err
-		}
 		tenantID = u.TenantID
 	}
 	meta := s.signInClientMeta(ctx)

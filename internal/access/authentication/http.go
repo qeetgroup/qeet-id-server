@@ -41,6 +41,9 @@ type Handler struct {
 	// Throttle wraps sensitive self-service routes (password change/set) with a
 	// tight per-user rate limit to blunt online guessing. Nil = no extra throttle.
 	Throttle func(http.Handler) http.Handler
+	// ActOnCheck refuses an administrator changing the sign-in methods of a
+	// member who outranks them (rbac CheckActOn); nil refuses every change.
+	ActOnCheck func(ctx context.Context, caller *httpx.Principal, tenantID, targetID uuid.UUID) error
 }
 
 // evalBot runs the bot scorer for an auth attempt when detection is wired. The
@@ -113,10 +116,11 @@ type signupInput struct {
 }
 
 // NeutralSignupError keeps a sign-up's answer from saying whether the email
-// already has an account: ErrAuthEmailExists, and a generic conflict, become
-// one neutral 422. Other errors are returned unchanged.
+// already has an account: ErrAuthEmailExists, a generic conflict, and an
+// address on a domain another organisation manages become one neutral 422.
+// Other errors are returned unchanged.
 func NeutralSignupError(err error) error {
-	if errors.Is(err, errs.ErrAuthEmailExists) || errors.Is(err, errs.ErrConflict) {
+	if errors.Is(err, errs.ErrAuthEmailExists) || errors.Is(err, errs.ErrConflict) || errors.Is(err, errs.ErrUserDomainManaged) {
 		return errs.ErrUnprocessable.WithMessage(
 			"We couldn't complete your signup. If you already have an account, try signing in or resetting your password.")
 	}
@@ -850,31 +854,10 @@ func (h *Handler) forgetOwnTrustedDevices(w http.ResponseWriter, r *http.Request
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"forgotten": n})
 }
 
-// memberInScope returns the user a member route names, refused as not found
-// unless they belong to the caller's organisation.
-func (h *Handler) memberInScope(r *http.Request) (uuid.UUID, uuid.UUID, error) {
-	tenantID, err := httpx.RequireTenant(r)
-	if err != nil {
-		return uuid.Nil, uuid.Nil, err
-	}
-	userID, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		return uuid.Nil, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid id")
-	}
-	member, err := h.Service.IsMember(r.Context(), userID, tenantID)
-	if err != nil {
-		return uuid.Nil, uuid.Nil, err
-	}
-	if !member {
-		return uuid.Nil, uuid.Nil, errs.ErrNotFound
-	}
-	return userID, tenantID, nil
-}
-
 // listMemberTrustedDevices → GET /v1/users/{id}/trusted-devices: a member's
 // devices remembered in the caller's organisation.
 func (h *Handler) listMemberTrustedDevices(w http.ResponseWriter, r *http.Request) {
-	userID, tenantID, err := h.memberInScope(r)
+	userID, tenantID, err := httpx.Member(r, "id", h.Service.IsMember)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -888,10 +871,10 @@ func (h *Handler) listMemberTrustedDevices(w http.ResponseWriter, r *http.Reques
 }
 
 // forgetMemberTrustedDevices → DELETE /v1/users/{id}/trusted-devices[/{deviceID}]:
-// forget one or all of a member's devices remembered in the caller's
-// organisation.
+// forget one or all of the devices remembered in the caller's organisation of
+// a member they outrank.
 func (h *Handler) forgetMemberTrustedDevices(w http.ResponseWriter, r *http.Request) {
-	userID, tenantID, err := h.memberInScope(r)
+	userID, tenantID, err := httpx.MemberToActOn(r, "id", h.Service.IsMember, h.ActOnCheck)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

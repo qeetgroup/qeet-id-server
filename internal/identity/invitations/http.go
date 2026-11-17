@@ -121,6 +121,23 @@ func (h *Handler) resend(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	// Resending revives the invitation, so its role is held to the check
+	// creating it is.
+	role, err := h.Service.RoleOf(r.Context(), tid, id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if role != nil {
+		if h.GrantCheck == nil {
+			httpx.WriteError(w, r, errs.ErrNotImplemented)
+			return
+		}
+		if err := h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tid, *role); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+	}
 	iv, _, err := h.Service.Resend(r.Context(), tid, id, audit.ActorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -130,9 +147,9 @@ func (h *Handler) resend(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	tid, err := httpx.PathTenant(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	out, err := h.Service.List(r.Context(), tid)

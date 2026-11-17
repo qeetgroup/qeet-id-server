@@ -69,7 +69,9 @@ post:
     account's own organisation decides once the password is verified. While the
     address rules of that client's organisation are on, an address they refuse
     is answered 403 auth.address_not_allowed before any password is checked, and
-    no cookie is set. A body not sent as JSON is refused (415
+    no cookie is set; the account's own organisation's address rules then apply
+    as well, whichever application asked, since the session reaches the
+    account's self-service routes. A body not sent as JSON is refused (415
     unsupported_media_type). Failed attempts are recorded as for POST
     /v1/auth/login. On a domain whose organisation requires single sign-on, the
     sign-in is refused with 403 auth.sso_required before any account is looked

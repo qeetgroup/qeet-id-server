@@ -3,7 +3,9 @@ patch:
   description: >-
     Turns an authentication hook on or off, sets whether it fails open, and
     changes its URL (checked as on creation, 422 auth_hook.url_invalid) or its
-    signing secret (encrypted at rest; the next call is signed with it). Only
+    signing secret (encrypted at rest; the next call is signed with it, and for
+    24 hours with the secret it replaced too, shown as
+    previous_secret_expires_at, so the hook's endpoint can move over). Only
     the fields sent change; the answer is both switches as stored. Audited as
     auth_hook.updated, saying whether the secret changed.
   summary: Update auth hook

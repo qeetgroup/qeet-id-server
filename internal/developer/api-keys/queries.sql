@@ -26,19 +26,23 @@ UPDATE auth.api_keys SET revoked_at = NOW() WHERE id = $1 AND tenant_id = $2 AND
 -- bcrypt/argon2 comparison. Only non-revoked keys are eligible.
 -- VerifyAPIKey finds a live key by its prefix. A personal key works only
 -- while its person's account is active, so suspending, deleting or
--- deprovisioning them stops it too.
+-- deprovisioning them stops it too, and any key only while its organisation
+-- is active.
 -- name: VerifyAPIKey :one
 SELECT k.id, k.tenant_id, k.user_id, k.name, k.prefix, k.scopes, k.expires_at, k.last_used_at, k.revoked_at, k.created_at, k.key_hash
 FROM auth.api_keys k
+JOIN tenant.tenants t ON t.id = k.tenant_id AND t.status = 'active' AND t.deleted_at IS NULL
 LEFT JOIN "user".users u ON u.id = k.user_id
 WHERE k.prefix = $1 AND k.revoked_at IS NULL
   AND (k.user_id IS NULL OR (u.status = 'active' AND u.deleted_at IS NULL));
 
 -- name: APIKeyLive :one
 -- Whether a key would still authenticate, as VerifyAPIKey decides: not revoked
--- or expired, and the person it acts for, if any, still active.
+-- or expired, its organisation and the person it acts for, if any, still
+-- active.
 SELECT EXISTS (
     SELECT 1 FROM auth.api_keys k
+    JOIN tenant.tenants t ON t.id = k.tenant_id AND t.status = 'active' AND t.deleted_at IS NULL
     LEFT JOIN "user".users u ON u.id = k.user_id
     WHERE k.id = @id AND k.tenant_id = @tenant_id AND k.revoked_at IS NULL
       AND (k.expires_at IS NULL OR k.expires_at > NOW())
@@ -66,3 +70,7 @@ UPDATE auth.api_keys
 SET expires_at = LEAST(COALESCE(expires_at, @until::timestamptz), @until::timestamptz),
     revoked_at = CASE WHEN @until::timestamptz <= NOW() THEN NOW() ELSE revoked_at END
 WHERE id = @id AND tenant_id = @tenant_id;
+
+-- APIKeyScopes returns the scopes of one of the tenant's API keys.
+-- name: APIKeyScopes :one
+SELECT scopes FROM auth.api_keys WHERE id = @id AND tenant_id = @tenant_id;

@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/risk/ipallow"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
@@ -740,4 +741,41 @@ func TestHostedSignInsAreRecorded(t *testing.T) {
 			t.Error("signing up is not recorded as a password sign-in to no organisation")
 		}
 	})
+}
+
+// TestHostedLoginSessionRefusedFromABlockedAddress checks that no hosted-login
+// session is opened from an address the account's own organisation refuses:
+// not by a passkey, a password, nor a password through another organisation's
+// application whose rules allow the address, and that each refusal is
+// recorded; from an allowed address the session opens.
+func TestHostedLoginSessionRefusedFromABlockedAddress(t *testing.T) {
+	ctx := dbtest.Context(t)
+	svc := newService(t)
+	svc.SetAddressPolicy(ipallow.NewService(dbtest.Pool(t)))
+	a, home := member(t)
+	enforceAddressRules(t, home) // only 192.0.2.0/24
+	other := dbtest.Tenant(t)
+	client := dbtest.Unique("app")
+	if _, err := dbtest.Pool(t).Exec(ctx, `INSERT INTO auth.oidc_clients (tenant_id, client_id, name) VALUES ($1, $2, $2)`, other, client); err != nil {
+		t.Fatal(err)
+	}
+	const blocked = "198.51.100.7"
+	if _, err := svc.CreatePasskeyLoginSession(ctx, a.ID, blocked, testUserAgent); !errors.Is(err, errs.ErrAuthAddressNotAllowed) {
+		t.Errorf("a passkey sign-in from a blocked address: %v, want %v", err, errs.ErrAuthAddressNotAllowed)
+	}
+	if _, err := svc.CreateLoginSession(ctx, a.ID, blocked, testUserAgent); !errors.Is(err, errs.ErrAuthAddressNotAllowed) {
+		t.Errorf("a password sign-in from a blocked address: %v, want %v", err, errs.ErrAuthAddressNotAllowed)
+	}
+	if res, err := svc.BeginLoginSession(ctx, SignInAttempt{Email: a.Email, Password: testPassword, IP: blocked, ClientID: client}, testUserAgent, "", ""); !errors.Is(err, errs.ErrAuthAddressNotAllowed) {
+		t.Errorf("a password sign-in through another organisation's application from a blocked address: %+v, %v; want %v", res, err, errs.ErrAuthAddressNotAllowed)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.login_sessions WHERE user_id = $1`, a.ID); n != 0 {
+		t.Errorf("%d hosted-login sessions opened from a blocked address", n)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM audit.events WHERE action = 'auth.address_refused' AND tenant_id = $1 AND metadata->>'address' = $2`, home, blocked); n != 3 {
+		t.Errorf("%d refusals recorded, want 3", n)
+	}
+	if _, err := svc.CreatePasskeyLoginSession(ctx, a.ID, "192.0.2.10", testUserAgent); err != nil {
+		t.Errorf("a passkey sign-in from an allowed address: %v", err)
+	}
 }

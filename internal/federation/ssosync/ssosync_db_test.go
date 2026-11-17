@@ -149,11 +149,13 @@ func TestSignInSyncsGroups(t *testing.T) {
 	design := f.group("Design")
 	admins := f.group("Admins", dbtest.Role(t, f.tenant, "role.write", "user.read"))
 	owners := f.group("Owners", ownerRole(t, f.tenant))
+	privacy := f.group("Privacy", dbtest.Role(t, f.tenant, "gdpr.write"))
 	elsewhere := f.group("Elsewhere")
 	mapGroup(t, f.tenant, conn, "Engineering", engineering)
 	mapGroup(t, f.tenant, conn, "Design", design)
 	mapGroup(t, f.tenant, conn, "Admins", admins)
 	mapGroup(t, f.tenant, conn, "Owners", owners)
+	mapGroup(t, f.tenant, conn, "Privacy", privacy)
 	mapGroup(t, f.tenant, other, "Elsewhere", elsewhere)
 	// An administrator already put the person in Design.
 	if err := group.NewService(dbtest.Pool(t)).AddMember(context.Background(), design, f.person.ID, f.tenant, audit.Actor{Type: "user"}); err != nil {
@@ -161,7 +163,7 @@ func TestSignInSyncsGroups(t *testing.T) {
 	}
 	f.signIn(other, SignIn{Groups: []string{"Elsewhere"}})
 
-	f.signIn(conn, SignIn{Groups: []string{"engineering", "00G-EXT-1", "Design", "Admins", "Owners", "Unmapped"}})
+	f.signIn(conn, SignIn{Groups: []string{"engineering", "00G-EXT-1", "Design", "Admins", "Owners", "Privacy", "Unmapped"}})
 	got := f.memberships()
 	want := map[uuid.UUID]uuid.UUID{engineering: conn, directory: conn, design: uuid.Nil, elsewhere: other}
 	if len(got) != len(want) {

@@ -204,6 +204,7 @@ func (s *Service) issue(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, name
 		TokenHash:   codes.Hash(full),
 		TokenPrefix: tokenPrefix + raw[:6],
 		ExpiresAt:   timestamptz(expiresAt),
+		CreatedBy:   httpx.PrincipalUserID(ctx),
 	})
 	if err != nil {
 		return nil, "", err

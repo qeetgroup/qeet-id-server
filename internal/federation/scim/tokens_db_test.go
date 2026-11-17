@@ -21,10 +21,11 @@ import (
 // tokenOrg is an organisation with an administrator managing its SCIM tokens
 // and the SCIM endpoint its identity provider calls.
 type tokenOrg struct {
-	id     uuid.UUID
-	admin  http.Handler
-	scim   chi.Router
-	tokens string // the admin path of its token list
+	id      uuid.UUID
+	adminID uuid.UUID
+	admin   http.Handler
+	scim    chi.Router
+	tokens  string // the admin path of its token list
 }
 
 func newTokenOrg(t *testing.T) *tokenOrg {
@@ -35,10 +36,11 @@ func newTokenOrg(t *testing.T) *tokenOrg {
 	r := chi.NewRouter()
 	h.MountPublic(r)
 	return &tokenOrg{
-		id:     id,
-		admin:  dbtest.Serve(dbtest.Principal(admin.ID, id), h.Mount),
-		scim:   r,
-		tokens: "/tenants/" + id.String() + "/scim/tokens",
+		id:      id,
+		adminID: admin.ID,
+		admin:   dbtest.Serve(dbtest.Principal(admin.ID, id), h.Mount),
+		scim:    r,
+		tokens:  "/tenants/" + id.String() + "/scim/tokens",
 	}
 }
 
@@ -110,6 +112,9 @@ func TestSCIMTokenRotatesWithOverlap(t *testing.T) {
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.scim_tokens WHERE id = $1 AND token_hash = $2`, first.SCIMToken.ID, codes.Hash(first.Token)); n != 1 {
 		t.Fatal("the token is not stored as its hash")
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.scim_tokens WHERE id = $1 AND tenant_id = $2 AND created_by = $3`, first.SCIMToken.ID, o.id, o.adminID); n != 1 {
+		t.Error("the token doesn't record who created it")
 	}
 	if !o.works(t, first.Token) {
 		t.Fatal("a new token is refused")

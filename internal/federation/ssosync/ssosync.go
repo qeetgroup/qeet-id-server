@@ -129,7 +129,7 @@ func syncGroups(ctx context.Context, tx pgx.Tx, in SignIn) error {
 		var err error
 		targets, err = q.SyncTargets(ctx, dbgen.SyncTargetsParams{
 			TenantID: in.TenantID, ConnectionID: in.ConnectionID,
-			AdminPermissions: identitylink.AdminPermissions(), IdpGroups: values,
+			MemberPermissions: identitylink.MemberPermissions(), IdpGroups: values,
 		})
 		if err != nil {
 			return err

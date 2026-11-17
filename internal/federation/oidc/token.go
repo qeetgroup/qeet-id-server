@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -79,7 +80,9 @@ func (s *Service) authenticateClient(ctx context.Context, clientID, clientSecret
 		}
 		var ok, rehash bool
 		if row.ClientSecretHash != nil {
-			ok, rehash = password.VerifySecret(*row.ClientSecretHash, clientSecret)
+			if ok, rehash, err = password.VerifySecret(ctx, *row.ClientSecretHash, clientSecret); err != nil {
+				return authedClient{}, err
+			}
 		}
 		if !ok {
 			s.clientAuthFailed(ctx, c)
@@ -93,7 +96,7 @@ func (s *Service) authenticateClient(ctx context.Context, clientID, clientSecret
 				slog.Warn("oidc client hash upgrade failed", "err", err, "client_id", clientID)
 			}
 		}
-		if err := s.q.ClearClientAuthFailures(ctx, row.ID); err != nil {
+		if err := s.q.ClearClientAuthFailures(ctx, dbgen.ClearClientAuthFailuresParams{ClientRowID: row.ID, SourceNetwork: callerNetwork(ctx)}); err != nil {
 			return authedClient{}, err
 		}
 	}
@@ -308,6 +311,10 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	if err != nil {
 		return nil, err
 	}
+	// A client no longer registered for codes redeems none it was issued.
+	if !contains(client.GrantTypes, "authorization_code") {
+		return nil, errs.ErrOIDCGrantTypeNotAllowed
+	}
 	clientInfo, err := s.q.GetClientForAuth(ctx, clientID)
 	if err != nil {
 		return nil, err
@@ -382,20 +389,27 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 			return nil, errs.ErrOIDCCodeVerifierInvalid
 		}
 	}
-	// A code issued before the account was suspended or deleted is spent, not
-	// redeemed.
+	// A code issued before the account was suspended or deleted, or before its
+	// person left the application's organisation, is spent, not redeemed.
 	active, err := accountActive(ctx, q, userID)
+	if err != nil {
+		return nil, err
+	}
+	member, err := s.activeTenantPrincipal(ctx, q, userID, tenantID)
 	if err != nil {
 		return nil, err
 	}
 	if err := q.MarkAuthorizationCodeUsed(ctx, hash); err != nil {
 		return nil, err
 	}
-	if !active {
+	if !active || !member {
 		if err := tx.Commit(ctx); err != nil {
 			return nil, err
 		}
-		return nil, errs.ErrAuthAccountSuspended
+		if !active {
+			return nil, errs.ErrAuthAccountSuspended
+		}
+		return nil, errs.ErrOIDCUserTenantMismatch
 	}
 	// The grant is written while the code is still locked, so a sign-out of
 	// the hosted-login session the code came from either spends the code first
@@ -414,10 +428,10 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 		return nil, err
 	}
 
-	sessionID := uuid.New()
 	// RFC 8707: bind the token's audience to the requested resource (if any).
+	// Its sid is the hosted-login session, as the ID token's is.
 	access, _, err := s.issuer.IssueClientAccess(tokens.ClientAccess{
-		UserID: userID, TenantID: tenantID, SessionID: sessionID, Scopes: strings.Join(scopes, " "), Resource: resource, ClientID: clientID,
+		UserID: userID, TenantID: tenantID, SessionID: uuidOrNil(ac.LoginSessionID), Scopes: strings.Join(scopes, " "), Resource: resource, ClientID: clientID,
 	})
 	if err != nil {
 		return nil, err
@@ -555,6 +569,12 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	if err := checkResource(ctx, q, rt.TenantID, resource); err != nil {
 		return nil, err
 	}
+	// Only the granted scopes the application still registers carry forward
+	// (RFC 6749 §6 lets a refresh narrow); with none left it renews nothing.
+	scopes := stillPermitted(client, rt.Scopes)
+	if !slices.ContainsFunc(scopes, func(sc string) bool { return sc != scopeOfflineAccess }) {
+		return nil, oauthErr("invalid_scope", "the application no longer registers any scope of this grant")
+	}
 
 	newRaw, newHash, err := tokens.NewRefreshToken()
 	if err != nil {
@@ -567,7 +587,7 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	newExp := time.Now().UTC().Add(s.issuer.RefreshTTL())
 	newID, err := q.InsertRotatedRefreshToken(ctx, dbgen.InsertRotatedRefreshTokenParams{
 		TokenHash: newHash, ClientID: clientID, UserID: rt.UserID, TenantID: rt.TenantID,
-		Scopes: rt.Scopes, ExpiresAt: newExp, Resource: newRes, LoginSessionID: rt.LoginSessionID,
+		Scopes: scopes, ExpiresAt: newExp, Resource: newRes, LoginSessionID: rt.LoginSessionID,
 		GrantExpiresAt: rt.GrantExpiresAt, AuthorizationCodeHash: rt.AuthorizationCodeHash,
 		GrantID: rt.GrantID, AuthTime: rt.AuthTime,
 	})
@@ -588,10 +608,9 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	}
 	userID := rt.UserID
 	tenantID := rt.TenantID
-	scopes := rt.Scopes
 
 	access, _, err := s.issuer.IssueClientAccess(tokens.ClientAccess{
-		UserID: userID, TenantID: tenantID, SessionID: uuid.New(), Scopes: strings.Join(scopes, " "), Resource: resource, ClientID: clientID,
+		UserID: userID, TenantID: tenantID, SessionID: uuidOrNil(rt.LoginSessionID), Scopes: strings.Join(scopes, " "), Resource: resource, ClientID: clientID,
 	})
 	if err != nil {
 		return nil, err
@@ -616,6 +635,13 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 		ExpiresIn:    int(s.issuer.AccessTTL().Seconds()),
 		Scope:        strings.Join(scopes, " "),
 	}, nil
+}
+
+// stillPermitted returns the scopes of granted that client may still request.
+func stillPermitted(client authedClient, granted []string) []string {
+	return slices.DeleteFunc(slices.Clone(granted), func(sc string) bool {
+		return !scopePermitted(client.Scopes, client.GrantTypes, sc)
+	})
 }
 
 // handleRefreshReuse revokes every live refresh token for a (client, user) on replay and audits it.
@@ -819,12 +845,21 @@ func (s *Service) tokenSubjectLive(ctx context.Context, claims *tokens.Claims) (
 	return true, nil
 }
 
-// tokenSessionLive reports whether the session of a user's own access token
-// (one issued to no application) has not ended. Other tokens have no session
-// of their own to end and pass.
+// tokenSessionLive reports whether the sign-in a person's access token names
+// (sid) has not ended: their own session, or for an application's token the
+// hosted-login session it was issued in. A token naming none passes, as does
+// an exchanged one, whose session is its own and ends with the token.
 func (s *Service) tokenSessionLive(ctx context.Context, claims *tokens.Claims) (bool, error) {
-	own := claims.ClientID == "" && (claims.ActorType == "" || claims.ActorType == "user")
-	if !own || claims.SessionID == uuid.Nil || claims.UserID == uuid.Nil || s.sessionLive == nil {
+	person := claims.ActorType == "" || claims.ActorType == "user"
+	if !person || claims.SessionID == uuid.Nil || claims.UserID == uuid.Nil || claims.ExchangeDepth > 0 {
+		return true, nil
+	}
+	if claims.ClientID != "" {
+		return s.q.ApplicationSignInLive(ctx, dbgen.ApplicationSignInLiveParams{
+			SessionID: claims.SessionID, UserID: claims.UserID, TenantID: claims.TenantID, ClientID: claims.ClientID,
+		})
+	}
+	if s.sessionLive == nil {
 		return true, nil
 	}
 	return s.sessionLive(ctx, claims.SessionID, claims.UserID)

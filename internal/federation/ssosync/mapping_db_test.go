@@ -56,7 +56,8 @@ func TestGroupMappings(t *testing.T) {
 	owner := ownerRole(t, tenant)
 	payments := makeGroup(t, tenant, "Payments", "")
 	auditors := makeGroup(t, tenant, "Auditors", "", dbtest.Role(t, tenant, "audit.read"))
-	billing := makeGroup(t, tenant, "Billing", "", dbtest.Role(t, tenant, "billing.write"))
+	analysts := makeGroup(t, tenant, "Analysts", "", dbtest.Role(t, tenant, "analytics.read"))
+	privacy := makeGroup(t, tenant, "Privacy", "", dbtest.Role(t, tenant, "gdpr.write"))
 	admins := makeGroup(t, tenant, "Admins", "", dbtest.Role(t, tenant, "user.write"))
 	owners := makeGroup(t, tenant, "Owners", "", owner)
 
@@ -97,8 +98,9 @@ func TestGroupMappings(t *testing.T) {
 		code           string
 	}{
 		"the same pair in another case":     {h, base, "PAYMENTS", payments, http.StatusConflict, errs.CodeGroupMappingExists},
-		"a group with authority not held":   {h, base, "Billing", billing, http.StatusForbidden, errs.CodeRBACGrantExceedsCaller},
+		"a group with authority not held":   {h, base, "Analysts", analysts, http.StatusForbidden, errs.CodeRBACGrantExceedsCaller},
 		"a group granting user.write":       {h, base, "Admins", admins, http.StatusUnprocessableEntity, errs.CodeGroupMappingPrivileged},
+		"a group granting gdpr.write":       {h, base, "Privacy", privacy, http.StatusUnprocessableEntity, errs.CodeGroupMappingPrivileged},
 		"the owners' group":                 {h, base, "Owners", owners, http.StatusUnprocessableEntity, errs.CodeGroupMappingPrivileged},
 		"the owners' group, as an owner":    {as(ownerAccount.ID), base, "Owners", owners, http.StatusUnprocessableEntity, errs.CodeGroupMappingPrivileged},
 		"an empty identity provider group":  {h, base, "   ", payments, http.StatusUnprocessableEntity, errs.CodeValidation},

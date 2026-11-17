@@ -11,6 +11,8 @@ func init() {
 	registerStatuses(map[string]int{
 		errs.CodeTokenVaultProviderNotFound:         http.StatusNotFound,
 		errs.CodeTokenVaultProviderAuthorizeInvalid: http.StatusUnprocessableEntity,
+		errs.CodeTokenVaultProviderInUse:            http.StatusConflict,
+		errs.CodeTokenVaultProviderTokenURLInvalid:  http.StatusUnprocessableEntity,
 		errs.CodeTokenVaultConnectStateInvalid:      http.StatusBadRequest,
 		errs.CodeTokenVaultConnectExpired:           http.StatusBadRequest,
 		errs.CodeTokenVaultConnectOtherBrowser:      http.StatusBadRequest,

@@ -26,7 +26,9 @@ post:
     credentials issued to them are revoked and their claims cleared. The audit
     trail and the request itself are kept; the request goes on naming the
     account by user_id after the account is deleted for good. Requires
-    gdpr.write.
+    gdpr.write. Held to the rule for deleting the account:
+    nobody erases someone who outranks them (403 rbac.target_is_owner for an
+    owner, unless the caller is one, or 403 rbac.target_outranks_caller).
   responses:
     '201':
       description: Created

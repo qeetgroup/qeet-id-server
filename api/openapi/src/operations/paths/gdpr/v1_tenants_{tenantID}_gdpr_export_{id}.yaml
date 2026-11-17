@@ -18,7 +18,9 @@ get:
     Returns status plus the full data payload once status is "ready"; response
     carries a Content-Disposition download header in that case. The payload is
     deleted seven days after it was built, or when the person is erased, and the
-    status becomes "expired".
+    status becomes "expired". Reading an export is held to the rule for asking
+    for one: an export of someone who outranks the caller answers 403
+    (rbac.target_is_owner or rbac.target_outranks_caller).
   responses:
     '200':
       description: OK

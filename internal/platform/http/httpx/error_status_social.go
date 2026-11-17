@@ -27,6 +27,7 @@ func init() {
 		errs.CodeSocialAccountNotInTenant:    http.StatusForbidden,
 		errs.CodeSocialEmailUnverified:       http.StatusForbidden,
 		errs.CodeSocialAccountUnverified:     http.StatusForbidden,
+		errs.CodeSocialAccountAdministers:    http.StatusForbidden,
 		errs.CodeSocialCodeRequired:          http.StatusBadRequest,
 		errs.CodeSocialLoginCodeInvalid:      http.StatusUnauthorized,
 		errs.CodeSocialLoginCodeUsed:         http.StatusUnauthorized,

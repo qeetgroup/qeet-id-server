@@ -18,6 +18,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // Client is a registered OAuth client, without its secret.
@@ -160,6 +161,7 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 		FrontchannelLogoutUri: in.FrontchannelLogoutURI,
 		LogoUri:               in.LogoURI,
 		ClientUri:             in.ClientURI,
+		CreatedBy:             httpx.PrincipalUserID(ctx),
 	})
 	if err != nil {
 		return nil, "", err
@@ -358,16 +360,20 @@ func (s *Service) RegisteredRedirect(ctx context.Context, clientID, redirectURI 
 	if err != nil {
 		return false
 	}
-	return redirectRegistered(info.RedirectUris, redirectURI)
+	return redirectRegistered(info.RedirectUris, redirectURI, info.Type)
 }
 
 // redirectRegistered reports whether redirectURI is one of registered: the same
-// string or, for an http redirect to a loopback IP literal, the same but for
-// its port, as a native app listens on whatever port it is given (RFC 8252
-// §7.3). "localhost" is not a literal and must match exactly.
-func redirectRegistered(registered []string, redirectURI string) bool {
+// string or, for a public client's http redirect to a loopback IP literal, the
+// same but for its port, as a native app listens on whatever port it is given
+// (RFC 8252 §7.3). A confidential client's must match exactly. "localhost" is
+// not a literal and must match exactly.
+func redirectRegistered(registered []string, redirectURI, clientType string) bool {
 	if contains(registered, redirectURI) {
 		return true
+	}
+	if clientType != "public" {
+		return false
 	}
 	want, ok := withoutLoopbackPort(redirectURI)
 	if !ok {

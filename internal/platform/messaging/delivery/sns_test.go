@@ -227,3 +227,44 @@ func TestWebhookReadsNothingWithoutTopics(t *testing.T) {
 		t.Fatalf("= %d, want 404", rr.Code)
 	}
 }
+
+// anyCertificate serves the signer's certificate at every .pem URL, as SNS
+// does whatever query follows a certificate's path.
+type anyCertificate struct{ *snsSigner }
+
+func (a anyCertificate) RoundTrip(r *http.Request) (*http.Response, error) {
+	a.fetched = append(a.fetched, r.URL.String())
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(a.certPEM)), Header: http.Header{}}, nil
+}
+
+// TestSNSCertificateCacheIsBounded checks that a signing certificate URL with
+// a query string or fragment is refused unfetched, so a known topic alone
+// can't make the server fetch and keep a certificate per request, and that the
+// certificates kept never exceed the cache's cap.
+func TestSNSCertificateCacheIsBounded(t *testing.T) {
+	signer := newSNSSigner(t)
+	transport := anyCertificate{signer}
+	h := &Webhook{TopicARNs: []string{testTopic}, Client: &http.Client{Transport: transport}}
+	note := func(certURL string) map[string]string {
+		m := signer.sign(t, map[string]string{"Type": "Notification", "MessageId": "n-1", "TopicArn": testTopic, "Message": `{"eventType":"Send","mail":{"messageId":"m-1"}}`})
+		m["SigningCertURL"] = certURL
+		return m
+	}
+	for _, certURL := range []string{testCertURL + "?v=1", testCertURL + "?", testCertURL + "#x"} {
+		if code := post(h, note(certURL)); code != http.StatusUnauthorized {
+			t.Errorf("certificate at %s = %d, want 401", certURL, code)
+		}
+	}
+	if len(signer.fetched) != 0 {
+		t.Errorf("fetched %v; a certificate URL with a query or fragment must not be fetched", signer.fetched)
+	}
+	for i := range maxCachedCerts + 10 {
+		certURL := strings.Replace(testCertURL, "-test.pem", "-"+string(rune('a'+i%26))+strings.Repeat("x", i/26)+".pem", 1)
+		if code := post(h, note(certURL)); code != http.StatusNoContent {
+			t.Fatalf("signed notification with certificate %s = %d, want 204", certURL, code)
+		}
+	}
+	if n := len(h.certs); n > maxCachedCerts {
+		t.Errorf("%d certificates kept, want at most %d", n, maxCachedCerts)
+	}
+}

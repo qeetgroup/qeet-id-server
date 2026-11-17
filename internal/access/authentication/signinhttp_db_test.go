@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/password"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -96,7 +97,8 @@ func answered(rec *httptest.ResponseRecorder, status int, code string) bool {
 
 // newHandler returns the HTTP handler of svc, with its cookies marked Secure.
 func newHandler(svc *Service) *Handler {
-	return &Handler{Service: svc, Validate: validator.New(validator.WithRequiredStructEnabled()), CookieSecure: true}
+	return &Handler{Service: svc, Validate: validator.New(validator.WithRequiredStructEnabled()), CookieSecure: true,
+		ActOnCheck: rbac.NewRepository(svc.pool).CheckActOn}
 }
 
 // publicRoutes serves h's sign-in routes and its authenticated ones, of which

@@ -26,24 +26,11 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/logging"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/worker"
 )
 
 func main() {
-	slog.SetDefault(slog.New(logging.NewRedactingHandler(slog.NewJSONHandler(os.Stdout, nil))))
-	cfg, err := config.Load()
-	if err != nil {
-		slog.Error("load config", "err", err)
-		os.Exit(1)
-	}
-	if err := cfg.Validate(); err != nil {
-		slog.Error("refusing to start: "+err.Error(), "service_env", cfg.ServiceEnv)
-		os.Exit(1)
-	}
-
-	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
-	slog.SetDefault(slog.New(logging.NewRedactingHandler(handler)))
+	cfg := setUp()
 
 	bi := buildinfo.Get()
 	slog.Info("scheduler starting",
@@ -101,9 +88,14 @@ func main() {
 
 	jobs := append(bootstrap.MaintenanceJobs(pool, sessionSignals, box, bootstrap.OutboundPolicy(cfg)), bootstrap.BillingJobs(billingService)...)
 	jobs = append(jobs, bootstrap.AccessRequestJobs(bootstrap.SchedulerAccessRequests(pool))...)
+	jobs = append(jobs, bootstrap.AuditRetentionJobs(pool, billingService, box)...)
 	for _, j := range jobs {
 		slog.Info("job registered", "name", j.Name, "interval", j.Interval)
 	}
 	worker.RunScheduled(rootCtx, pool, jobs, worker.SchedulerTick)
 	slog.Info("scheduler shutdown complete")
 }
+
+// setUp loads the configuration and installs the logger as the API does,
+// exiting if either fails.
+func setUp() *config.Config { return bootstrap.LoadConfig() }

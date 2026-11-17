@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/activity/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -380,7 +381,7 @@ func historyCountParams(tenantID uuid.UUID, f ListFilter) dbgen.CountActivityHis
 	p := historyParams(tenantID, f)
 	return dbgen.CountActivityHistoryParams{
 		TenantID: p.TenantID, Actions: p.Actions, ActorID: p.ActorID, Subject: p.Subject,
-		FromTs: p.FromTs, ToTs: p.ToTs, Q: p.Q, ResourceTypes: p.ResourceTypes, ResourceID: p.ResourceID,
+		FromTs: p.FromTs, ToTs: p.ToTs, Q: p.Q, QLike: p.QLike, ResourceTypes: p.ResourceTypes, ResourceID: p.ResourceID,
 		Ip: p.Ip, Categories: p.Categories, Severities: p.Severities, MinSeverity: p.MinSeverity,
 		CountCap: maxCountedEvents + 1,
 	}
@@ -417,7 +418,8 @@ func historyParams(tenantID uuid.UUID, f ListFilter) dbgen.ListActivityHistoryPa
 		params.ToTs = pgtype.Timestamptz{Time: *f.To, Valid: true}
 	}
 	if f.Search != "" {
-		params.Q = &f.Search
+		like := postgres.EscapeLike(f.Search)
+		params.Q, params.QLike = &f.Search, &like
 	}
 	return params
 }
@@ -635,7 +637,7 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 	p := historyParams(tenantID, f)
 	byAction, err := q.SummarizeActivityByAction(ctx, dbgen.SummarizeActivityByActionParams{
 		TenantID: p.TenantID, Actions: p.Actions, ActorID: p.ActorID, Subject: p.Subject,
-		FromTs: p.FromTs, ToTs: p.ToTs, Q: p.Q, ResourceTypes: p.ResourceTypes, ResourceID: p.ResourceID,
+		FromTs: p.FromTs, ToTs: p.ToTs, Q: p.Q, QLike: p.QLike, ResourceTypes: p.ResourceTypes, ResourceID: p.ResourceID,
 		Ip: p.Ip, Categories: p.Categories, Severities: p.Severities, MinSeverity: p.MinSeverity,
 	})
 	if err != nil {
@@ -645,7 +647,7 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 
 	totals, err := q.SummarizeActivityTotals(ctx, dbgen.SummarizeActivityTotalsParams{
 		TenantID: p.TenantID, Actions: p.Actions, ActorID: p.ActorID, Subject: p.Subject,
-		FromTs: p.FromTs, ToTs: p.ToTs, Q: p.Q, ResourceTypes: p.ResourceTypes, ResourceID: p.ResourceID,
+		FromTs: p.FromTs, ToTs: p.ToTs, Q: p.Q, QLike: p.QLike, ResourceTypes: p.ResourceTypes, ResourceID: p.ResourceID,
 		Ip: p.Ip, Categories: p.Categories, Severities: p.Severities, MinSeverity: p.MinSeverity,
 	})
 	if err != nil {
@@ -656,7 +658,7 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 	series, err := q.SummarizeActivityTimeSeries(ctx, dbgen.SummarizeActivityTimeSeriesParams{
 		BucketSeconds: bucket,
 		TenantID:      p.TenantID, Actions: p.Actions, ActorID: p.ActorID, Subject: p.Subject,
-		FromTs: p.FromTs, ToTs: p.ToTs, Q: p.Q, ResourceTypes: p.ResourceTypes, ResourceID: p.ResourceID,
+		FromTs: p.FromTs, ToTs: p.ToTs, Q: p.Q, QLike: p.QLike, ResourceTypes: p.ResourceTypes, ResourceID: p.ResourceID,
 		Ip: p.Ip, Categories: p.Categories, Severities: p.Severities, MinSeverity: p.MinSeverity,
 	})
 	if err != nil {

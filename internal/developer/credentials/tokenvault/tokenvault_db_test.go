@@ -3,14 +3,17 @@
 package tokenvault
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -311,5 +314,227 @@ func TestProviderSecretIsEncryptedOnUse(t *testing.T) {
 		Provider: "internal", ClientID: "c", ClientSecret: "s", AuthorizeURL: "http://127.0.0.1:9/authorize", TokenURL: "http://127.0.0.1:9/token",
 	}); err == nil {
 		t.Error("a provider at a private address was registered")
+	}
+}
+
+// connected stores a grant of person's for provider, as a finished connect
+// ceremony would.
+func connected(t *testing.T, tenant, person uuid.UUID, provider string) {
+	t.Helper()
+	if _, err := dbtest.Pool(t).Exec(dbtest.Context(t), `
+		INSERT INTO tenant.token_vault_grants (tenant_id, user_id, provider, access_token_ct, access_token_nonce, refresh_token_ct, refresh_token_nonce)
+		VALUES ($1, $2, $3, 'ct', 'nonce', 'ct', 'nonce')`, tenant, person, provider); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestTokenVaultEndpointsCannotChangeUnderLiveGrants checks that while anyone
+// is connected through a provider its token URL, authorize URL and client
+// can't change, nor can deleting and adding it again hand its grants to new
+// endpoints, so a refresh token goes only to the endpoint it came from; the
+// secret and scopes still change, and an unused provider changes freely.
+func TestTokenVaultEndpointsCannotChangeUnderLiveGrants(t *testing.T) {
+	svc := vaultService(t)
+	tenant := dbtest.Tenant(t)
+	person := dbtest.User(t, tenant, tenant)
+	admin := dbtest.Serve(dbtest.Principal(dbtest.User(t, tenant, tenant).ID, tenant), (&Handler{Service: svc}).Mount)
+	providers := "/tenants/" + tenant.String() + "/vault/tokens/providers"
+	settings := map[string]string{
+		"provider": "acme", "client_id": "qeet-client", "client_secret": "secret-1",
+		"authorize_url": "https://auth.acme.example/authorize", "token_url": "https://auth.acme.example/token", "scopes": "read",
+	}
+	with := func(key, value string) map[string]string {
+		out := map[string]string{}
+		for k, v := range settings {
+			out[k] = v
+		}
+		out[key] = value
+		return out
+	}
+	if rec := dbtest.Do(t, admin, http.MethodPost, providers, settings); rec.Code != http.StatusCreated {
+		t.Fatalf("register: %d %s", rec.Code, rec.Body.String())
+	}
+	connected(t, tenant, person.ID, "acme")
+	for key, value := range map[string]string{
+		"token_url":     "https://collector.example/token",
+		"authorize_url": "https://collector.example/authorize",
+		"client_id":     "other-client",
+	} {
+		if rec := dbtest.Do(t, admin, http.MethodPost, providers, with(key, value)); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), errs.CodeTokenVaultProviderInUse) {
+			t.Errorf("change %s under a live grant: %d %s, want 409 %s", key, rec.Code, rec.Body.String(), errs.CodeTokenVaultProviderInUse)
+		}
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.token_vault_providers WHERE tenant_id = $1 AND token_url = 'https://auth.acme.example/token' AND client_id = 'qeet-client'`, tenant); n != 1 {
+		t.Error("a refused change was stored")
+	}
+	if rec := dbtest.Do(t, admin, http.MethodPost, providers, with("client_secret", "secret-2")); rec.Code != http.StatusCreated {
+		t.Errorf("rotate the client secret under a live grant: %d %s, want 201", rec.Code, rec.Body.String())
+	}
+	if rec := dbtest.Do(t, admin, http.MethodPost, providers, with("scopes", "read write")); rec.Code != http.StatusCreated {
+		t.Errorf("change the scopes under a live grant: %d %s, want 201", rec.Code, rec.Body.String())
+	}
+
+	if rec := dbtest.Do(t, admin, http.MethodDelete, providers+"/acme", nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.token_vault_grants WHERE tenant_id = $1 AND provider = 'acme'`, tenant); n != 0 {
+		t.Errorf("%d grants kept by a deleted provider, want none", n)
+	}
+	if rec := dbtest.Do(t, admin, http.MethodPost, providers, with("token_url", "https://collector.example/token")); rec.Code != http.StatusCreated {
+		t.Errorf("register again, with nobody connected, at another token URL: %d %s, want 201", rec.Code, rec.Body.String())
+	}
+	connected(t, tenant, person.ID, "orphaned")
+	if rec := dbtest.Do(t, admin, http.MethodPost, providers, with("provider", "orphaned")); rec.Code != http.StatusConflict {
+		t.Errorf("register a provider whose name still has grants: %d %s, want 409", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAGrantIsKeptOnlyUnderTheEndpointItCameFrom checks that tokens a
+// provider's token URL issued are not stored once the provider has been
+// pointed elsewhere while they were being fetched, so its refresh token can't
+// later go to the new endpoint.
+func TestAGrantIsKeptOnlyUnderTheEndpointItCameFrom(t *testing.T) {
+	ctx := dbtest.Context(t)
+	svc := vaultService(t)
+	tenant := dbtest.Tenant(t)
+	person := dbtest.User(t, tenant, tenant)
+	issuing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The provider is repointed while its token request is in flight.
+		if _, err := dbtest.Pool(t).Exec(context.Background(), `UPDATE tenant.token_vault_providers SET token_url = 'https://collector.example/token' WHERE tenant_id = $1`, tenant); err != nil {
+			t.Error(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"access-1","refresh_token":"refresh-1","expires_in":3600}`))
+	}))
+	t.Cleanup(issuing.Close)
+	if _, err := svc.RegisterProvider(ctx, tenant, RegisterProviderInput{Provider: "acme", ClientID: "qeet-client", ClientSecret: "secret",
+		AuthorizeURL: issuing.URL + "/authorize", TokenURL: issuing.URL + "/token"}); err != nil {
+		t.Fatal(err)
+	}
+	_, state, err := svc.BeginConnect(ctx, tenant, person.ID, "acme", "https://id.example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.FinishConnect(ctx, state, "good-code", "https://id.example.test"); err == nil {
+		t.Error("tokens from a token URL the provider no longer has were accepted")
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.token_vault_grants WHERE tenant_id = $1`, tenant); n != 0 {
+		t.Errorf("%d grants stored under the new token URL, want none", n)
+	}
+}
+
+// TestProviderRegistrationValidatesItsInput checks that a provider without a
+// name, client or secret is refused with the field named, and that a bad
+// token URL is reported as the token URL, not the authorize URL.
+func TestProviderRegistrationValidatesItsInput(t *testing.T) {
+	tenant := dbtest.Tenant(t)
+	admin := dbtest.Serve(dbtest.Principal(dbtest.User(t, tenant, tenant).ID, tenant), (&Handler{Service: NewService(dbtest.Pool(t), testCipher(t))}).Mount)
+	providers := "/tenants/" + tenant.String() + "/vault/tokens/providers"
+	valid := map[string]string{
+		"provider": "acme", "client_id": "qeet-client", "client_secret": "secret",
+		"authorize_url": "https://auth.acme.example/authorize", "token_url": "https://auth.acme.example/token",
+	}
+	for _, tc := range []struct{ field, value, code string }{
+		{"provider", "", errs.CodeValidation},
+		{"client_id", "", errs.CodeValidation},
+		{"client_secret", " ", errs.CodeValidation},
+		{"token_url", "http://127.0.0.1:9/token", errs.CodeTokenVaultProviderTokenURLInvalid},
+		{"token_url", "not a url", errs.CodeTokenVaultProviderTokenURLInvalid},
+		{"authorize_url", "ftp://auth.acme.example/authorize", errs.CodeTokenVaultProviderAuthorizeInvalid},
+	} {
+		body := map[string]string{}
+		for k, v := range valid {
+			body[k] = v
+		}
+		body[tc.field] = tc.value
+		rec := dbtest.Do(t, admin, http.MethodPost, providers, body)
+		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), tc.code) ||
+			(tc.code == errs.CodeValidation && !strings.Contains(rec.Body.String(), `"field":"`+tc.field+`"`)) {
+			t.Errorf("%s %q: %d %s, want 422 %s", tc.field, tc.value, rec.Code, rec.Body.String(), tc.code)
+		}
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.token_vault_providers WHERE tenant_id = $1`, tenant); n != 0 {
+		t.Errorf("%d invalid providers stored", n)
+	}
+}
+
+// rotatingProvider is a token endpoint that rotates refresh tokens: each is
+// good once, and presenting a spent one revokes every token of the grant, as
+// providers that detect reuse do. Each refresh takes a moment.
+type rotatingProvider struct {
+	*httptest.Server
+	mu        sync.Mutex
+	live      string // the refresh token that works; "" once revoked
+	refreshes int
+}
+
+// count is the refreshes the provider has received.
+func (p *rotatingProvider) count() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.refreshes
+}
+
+func newRotatingProvider(t *testing.T) *rotatingProvider {
+	p := &rotatingProvider{live: "refresh-1"}
+	p.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		time.Sleep(200 * time.Millisecond)
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		p.refreshes++
+		presented := r.PostForm.Get("refresh_token")
+		if p.live == "" || presented != p.live {
+			p.live = ""
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+			return
+		}
+		p.live = fmt.Sprintf("refresh-%d", p.refreshes+1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"access_token":"access-%d","refresh_token":%q,"expires_in":3600}`, p.refreshes+1, p.live)
+	}))
+	t.Cleanup(p.Close)
+	return p
+}
+
+// TestConcurrentTokenVaultRefreshKeepsTheGrant checks that two reads of a
+// token due for refresh at once refresh it once, both getting the new token,
+// so a provider that rotates refresh tokens doesn't see the old one reused
+// and the grant keeps working.
+func TestConcurrentTokenVaultRefreshKeepsTheGrant(t *testing.T) {
+	ctx := dbtest.Context(t)
+	svc := vaultService(t)
+	tenant := dbtest.Tenant(t)
+	person := dbtest.User(t, tenant, tenant)
+	provider := newRotatingProvider(t)
+	if _, err := svc.RegisterProvider(ctx, tenant, RegisterProviderInput{Provider: "acme", ClientID: "qeet-client", ClientSecret: "secret",
+		AuthorizeURL: provider.URL + "/authorize", TokenURL: provider.URL + "/token"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.storeGrant(ctx, svc.q, tenant, person.ID, "acme", provider.URL+"/token", "qeet-client",
+		&oauthTokenResponse{AccessToken: "access-1", RefreshToken: "refresh-1", ExpiresIn: float64(1)}); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	got := make([]string, 2)
+	failed := make([]error, 2)
+	for i := range 2 {
+		wg.Go(func() { got[i], failed[i] = svc.GetAccessToken(ctx, tenant, person.ID, "acme") })
+	}
+	wg.Wait()
+	for i := range 2 {
+		if failed[i] != nil || got[i] != "access-2" {
+			t.Errorf("read %d at once: %q, %v; want the one refreshed token access-2", i, got[i], failed[i])
+		}
+	}
+	if n := provider.count(); n != 1 {
+		t.Errorf("%d refreshes reached the provider, want 1", n)
+	}
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE tenant.token_vault_grants SET expires_at = NOW() WHERE tenant_id = $1`, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if token, err := svc.GetAccessToken(ctx, tenant, person.ID, "acme"); err != nil || token != "access-3" {
+		t.Errorf("the next refresh: %q, %v; want the grant still working", token, err)
 	}
 }

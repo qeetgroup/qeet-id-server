@@ -40,6 +40,10 @@ patch:
     admin adjust IdP details without a Qeet ID account; validate the result with
     the portal test endpoint. A new IdP SSO URL or certificate is checked as on
     create (422 saml.sso_url_invalid, saml.certificate_invalid).
+    A portal session is no person who could outrank anyone, so it changes what
+    the connection trusts (a new idp_entity_id or idp_certificate) only while no
+    administrator is linked to it (403 rbac.trust_change_outranks_caller
+    otherwise).
   summary: Update connection (portal)
   tags:
     - Admin Portal

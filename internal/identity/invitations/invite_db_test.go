@@ -10,8 +10,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
@@ -21,6 +23,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 func TestMain(m *testing.M) { dbtest.Main(m) }
@@ -33,6 +36,7 @@ func newHandler(t *testing.T) (*Handler, *auth.Service) {
 	pool := dbtest.Pool(t)
 	svc := NewService(pool, &dbtest.Mailbox{}, 0, "https://console.example.test")
 	svc.SetPasswordRules(authpolicy.NewService(pool))
+	svc.SetGrantCheck(rbac.NewRepository(pool).CheckGrantRole)
 	authSvc := auth.NewService(pool, user.NewRepository(pool), dbtest.Issuer(t))
 	h := &Handler{
 		Service:     svc,
@@ -471,5 +475,150 @@ func TestInvitationsMatchAddressesAndNeedARoleForOutsiders(t *testing.T) {
 	}
 	if n := dbtest.Count(t, `SELECT count(*) FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, member.ID, tenant); n != 1 {
 		t.Errorf("%d roles in the organisation after accepting, want 1", n)
+	}
+}
+
+// TestInvitationFromSomeoneNoLongerEntitledIsRefused checks that every way of
+// accepting an invitation refuses it once whoever sent it may no longer give
+// its role (demoted, suspended, removed from the organisation or deleted),
+// that removing or deleting them withdraws the invitations they sent, and
+// that an invitation from someone still entitled is accepted.
+func TestInvitationFromSomeoneNoLongerEntitledIsRefused(t *testing.T) {
+	ctx := dbtest.Context(t)
+	pool := dbtest.Pool(t)
+	h, _ := newHandler(t)
+	svc := h.Service
+	users := user.NewRepository(pool)
+	tenant := dbtest.Tenant(t)
+	invited := dbtest.Role(t, tenant, "audit.read")
+	inviterRole := dbtest.Role(t, tenant, "member.invite", "audit.read")
+	lesser := dbtest.Role(t, tenant, "member.invite")
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inTx := func(f func(tx pgx.Tx) error) {
+		t.Helper()
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(ctx)
+		if err := f(tx); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	changes := map[string]func(inviter uuid.UUID){
+		"still entitled": func(uuid.UUID) {},
+		"demoted": func(inviter uuid.UUID) {
+			exec(`DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, inviter, tenant)
+			dbtest.Assign(t, inviter, tenant, lesser)
+		},
+		"suspended": func(inviter uuid.UUID) { exec(`UPDATE "user".users SET status = 'suspended' WHERE id = $1`, inviter) },
+		"removed from the organisation": func(inviter uuid.UUID) {
+			inTx(func(tx pgx.Tx) error {
+				if _, err := users.RemoveFromTenantTx(ctx, tx, inviter, tenant); err != nil {
+					return err
+				}
+				return users.OffboardTx(ctx, tx, tenant, inviter, audit.Actor{})
+			})
+		},
+		"deleted": func(inviter uuid.UUID) {
+			inTx(func(tx pgx.Tx) error {
+				if _, err := users.SoftDeleteByTx(ctx, tx, inviter, nil); err != nil {
+					return err
+				}
+				return users.OffboardTx(ctx, tx, tenant, inviter, audit.Actor{})
+			})
+		},
+	}
+	// Each way of accepting, for the invitation inv sent to email with token.
+	accepts := map[string]func(inv *Invite, token, email string) error{
+		"a new account's password": func(_ *Invite, token, _ string) error {
+			_, err := svc.Accept(ctx, AcceptInput{Token: token, Password: testPassword}, audit.Actor{})
+			return err
+		},
+		"a new account's passkey": func(inv *Invite, token, _ string) error {
+			if _, _, _, err := svc.InvitationForNewAccount(ctx, token); err != nil {
+				return err
+			}
+			return svc.CheckInvitationSender(ctx, inv.ID)
+		},
+		"an existing account's link": func(_ *Invite, token, email string) error {
+			a := dbtest.UserAt(t, email, dbtest.Tenant(t))
+			_, err := svc.AcceptAuthenticated(ctx, a.ID, token, audit.Actor{})
+			return err
+		},
+		"an existing account's inbox": func(inv *Invite, _, email string) error {
+			a := dbtest.UserAt(t, email, dbtest.Tenant(t))
+			exec(`UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, a.ID)
+			_, err := svc.AcceptAuthenticatedByID(ctx, a.ID, inv.ID, audit.Actor{})
+			return err
+		},
+	}
+	for change, apply := range changes {
+		for way, accept := range accepts {
+			inviter := dbtest.User(t, tenant)
+			dbtest.Assign(t, inviter.ID, tenant, inviterRole)
+			email := dbtest.Unique("invitee") + "@example.test"
+			inv, token, err := svc.Create(ctx, CreateInput{TenantID: tenant, Email: email, RoleID: &invited}, audit.Actor{UserID: &inviter.ID, Type: "user"})
+			if err != nil {
+				t.Fatalf("invite: %v", err)
+			}
+			apply(inviter.ID)
+			err = accept(inv, token, email)
+			if change == "still entitled" {
+				if err != nil {
+					t.Errorf("%s accepts an invitation from someone %s: %v", way, change, err)
+				}
+				continue
+			}
+			if !errors.Is(err, errs.ErrInviteInvalid) {
+				t.Errorf("%s accepts an invitation from someone %s: %v, want %v", way, change, err, errs.ErrInviteInvalid)
+			}
+			if n := dbtest.Count(t, `SELECT count(*) FROM rbac.user_roles ur JOIN "user".users u ON u.id = ur.user_id
+				WHERE ur.tenant_id = $1 AND ur.role_id = $2 AND u.email = $3`, tenant, invited, email); n != 0 {
+				t.Errorf("%s, from someone %s: the invited role was given", way, change)
+			}
+		}
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM tenant.invites i JOIN "user".users u ON u.id = i.invited_by
+		WHERE i.tenant_id = $1 AND i.status = 'pending' AND (u.deleted_at IS NOT NULL OR NOT EXISTS (
+			SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $1))`, tenant); n != 0 {
+		t.Errorf("%d invitations from people removed or deleted are still pending, want them withdrawn", n)
+	}
+}
+
+// TestInvitationListTakesTheOrganisationFromTheCaller checks that the list of
+// invitations answers only for the caller's own organisation, even without the
+// router's tenant guard in front: another organisation's in the path is
+// refused, not read.
+func TestInvitationListTakesTheOrganisationFromTheCaller(t *testing.T) {
+	ctx := dbtest.Context(t)
+	h, _ := newHandler(t)
+	mine, theirs := dbtest.Tenant(t), dbtest.Tenant(t)
+	admin := dbtest.User(t, mine, mine)
+	theirEmail := dbtest.Unique("invitee") + "@example.test"
+	if _, _, err := h.Service.Create(ctx, CreateInput{TenantID: theirs, Email: theirEmail}, audit.Actor{}); err != nil {
+		t.Fatal(err)
+	}
+	r := chi.NewRouter()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			next.ServeHTTP(w, req.WithContext(httpx.WithPrincipal(req.Context(), dbtest.Principal(admin.ID, mine))))
+		})
+	})
+	h.MountAuthed(r)
+	rec := dbtest.Do(t, r, http.MethodGet, "/tenants/"+theirs.String()+"/invites", nil)
+	if rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), theirEmail) {
+		t.Errorf("list another organisation's invitations: %d %.120s, want 403", rec.Code, rec.Body.String())
+	}
+	if rec := dbtest.Do(t, r, http.MethodGet, "/tenants/"+mine.String()+"/invites", nil); rec.Code != http.StatusOK {
+		t.Errorf("list the caller's own: %d %s", rec.Code, rec.Body.String())
 	}
 }

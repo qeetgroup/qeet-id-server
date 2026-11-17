@@ -15,8 +15,8 @@ import (
 
 const createServicePrincipal = `-- name: CreateServicePrincipal :one
 
-INSERT INTO auth.service_principals (tenant_id, name, description, secret_hash, scopes)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO auth.service_principals (tenant_id, name, description, secret_hash, scopes, created_by)
+VALUES ($1, $2, $3, $4, $5, NULLIF($6::uuid, '00000000-0000-0000-0000-000000000000'))
 RETURNING id, tenant_id, name, scopes, disabled_at, created_at, description
 `
 
@@ -26,6 +26,7 @@ type CreateServicePrincipalParams struct {
 	Description string
 	SecretHash  string
 	Scopes      []string
+	CreatedBy   uuid.UUID
 }
 
 type CreateServicePrincipalRow struct {
@@ -48,6 +49,7 @@ func (q *Queries) CreateServicePrincipal(ctx context.Context, arg CreateServiceP
 		arg.Description,
 		arg.SecretHash,
 		arg.Scopes,
+		arg.CreatedBy,
 	)
 	var i CreateServicePrincipalRow
 	err := row.Scan(
@@ -106,8 +108,10 @@ func (q *Queries) EnableServicePrincipal(ctx context.Context, arg EnableServiceP
 }
 
 const getServicePrincipalForAuth = `-- name: GetServicePrincipalForAuth :one
-SELECT id, tenant_id, secret_hash, scopes, disabled_at, previous_secret_hash, previous_secret_expires_at
-FROM auth.service_principals WHERE id = $1
+SELECT p.id, p.tenant_id, p.secret_hash, p.scopes, p.disabled_at, p.previous_secret_hash, p.previous_secret_expires_at
+FROM auth.service_principals p
+JOIN tenant.tenants t ON t.id = p.tenant_id AND t.status = 'active' AND t.deleted_at IS NULL
+WHERE p.id = $1
 `
 
 type GetServicePrincipalForAuthRow struct {
@@ -120,6 +124,8 @@ type GetServicePrincipalForAuthRow struct {
 	PreviousSecretExpiresAt pgtype.Timestamptz
 }
 
+// GetServicePrincipalForAuth finds no principal of a suspended or deleted
+// organisation.
 func (q *Queries) GetServicePrincipalForAuth(ctx context.Context, id uuid.UUID) (GetServicePrincipalForAuthRow, error) {
 	row := q.db.QueryRow(ctx, getServicePrincipalForAuth, id)
 	var i GetServicePrincipalForAuthRow
@@ -185,7 +191,9 @@ func (q *Queries) ListServicePrincipals(ctx context.Context, tenantID uuid.UUID)
 }
 
 const principalLive = `-- name: PrincipalLive :one
-SELECT (disabled_at IS NULL)::bool AS live FROM auth.service_principals WHERE id = $1
+SELECT (p.disabled_at IS NULL)::bool AS live FROM auth.service_principals p
+JOIN tenant.tenants t ON t.id = p.tenant_id AND t.status = 'active' AND t.deleted_at IS NULL
+WHERE p.id = $1
 `
 
 // GetServicePrincipalForAuth fetches the full credential row for the
@@ -193,6 +201,8 @@ SELECT (disabled_at IS NULL)::bool AS live FROM auth.service_principals WHERE id
 // for argon2/bcrypt verification — never returned to the API caller.
 // PrincipalLive reports whether a service principal exists and isn't
 // disabled. No row: it doesn't exist.
+// PrincipalLive is whether a principal is enabled, in an active
+// organisation: no row for one of a suspended or deleted organisation.
 func (q *Queries) PrincipalLive(ctx context.Context, id uuid.UUID) (bool, error) {
 	row := q.db.QueryRow(ctx, principalLive, id)
 	var live bool
@@ -226,6 +236,23 @@ func (q *Queries) RotateServicePrincipalSecret(ctx context.Context, arg RotateSe
 	var name string
 	err := row.Scan(&name)
 	return name, err
+}
+
+const servicePrincipalScopes = `-- name: ServicePrincipalScopes :one
+SELECT scopes FROM auth.service_principals WHERE id = $1 AND tenant_id = $2
+`
+
+type ServicePrincipalScopesParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+// ServicePrincipalScopes returns the scopes of one of the tenant's service principals.
+func (q *Queries) ServicePrincipalScopes(ctx context.Context, arg ServicePrincipalScopesParams) ([]string, error) {
+	row := q.db.QueryRow(ctx, servicePrincipalScopes, arg.ID, arg.TenantID)
+	var scopes []string
+	err := row.Scan(&scopes)
+	return scopes, err
 }
 
 const touchServicePrincipal = `-- name: TouchServicePrincipal :exec

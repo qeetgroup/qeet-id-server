@@ -44,6 +44,9 @@ type Webhook struct {
 // snsHost is the only host SNS signs from and confirms subscriptions on.
 var snsHost = regexp.MustCompile(`^sns\.[a-z0-9-]+\.amazonaws\.com(\.cn)?$`)
 
+// maxCachedCerts caps the signing certificates kept: SNS signs with a few.
+const maxCachedCerts = 8
+
 // maxMessageAge bounds replay of a captured, validly signed message.
 const maxMessageAge = time.Hour
 
@@ -193,17 +196,20 @@ func (h *Webhook) client() *http.Client {
 	return &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
-// cert fetches (and caches) the signing certificate at raw.
+// cert fetches (and caches) the signing certificate at raw. A URL with a
+// query or fragment is refused: SNS serves the same certificate whatever
+// follows its path, so each variant would be fetched and kept anew.
 func (h *Webhook) cert(ctx context.Context, raw string) (*x509.Certificate, error) {
 	u, err := snsURL(raw)
 	if err != nil {
 		return nil, err
 	}
-	if !strings.HasSuffix(u.Path, ".pem") {
+	if !strings.HasSuffix(u.Path, ".pem") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return nil, fmt.Errorf("%q is not a certificate", raw)
 	}
+	key := u.Host + u.Path
 	h.certMu.Lock()
-	cached := h.certs[raw]
+	cached := h.certs[key]
 	h.certMu.Unlock()
 	if cached != nil && time.Now().Before(cached.NotAfter) {
 		return cached, nil
@@ -235,13 +241,33 @@ func (h *Webhook) cert(ctx context.Context, raw string) (*x509.Certificate, erro
 	if now := time.Now(); now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
 		return nil, errors.New("signing certificate is not valid now")
 	}
+	h.keepCert(key, cert)
+	return cert, nil
+}
+
+// keepCert caches cert under key, making room first, so the cache holds at
+// most maxCachedCerts: expired certificates go, then any one.
+func (h *Webhook) keepCert(key string, cert *x509.Certificate) {
 	h.certMu.Lock()
+	defer h.certMu.Unlock()
 	if h.certs == nil {
 		h.certs = map[string]*x509.Certificate{}
 	}
-	h.certs[raw] = cert
-	h.certMu.Unlock()
-	return cert, nil
+	if _, ok := h.certs[key]; !ok && len(h.certs) >= maxCachedCerts {
+		now := time.Now()
+		for k, c := range h.certs {
+			if now.After(c.NotAfter) {
+				delete(h.certs, k)
+			}
+		}
+		for k := range h.certs {
+			if len(h.certs) < maxCachedCerts {
+				break
+			}
+			delete(h.certs, k)
+		}
+	}
+	h.certs[key] = cert
 }
 
 // confirm completes an SNS subscription by visiting its SubscribeURL.

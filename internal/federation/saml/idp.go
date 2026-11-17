@@ -25,6 +25,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -189,6 +190,29 @@ type IdP struct {
 	sessions     SessionResolver
 	loginBaseURL string
 	gate         PlanGate
+	addresses    AddressPolicy
+	factors      FactorPolicy
+}
+
+// AddressPolicy applies an organisation's address rules: CheckSignIn returns
+// errs.ErrAuthAddressNotAllowed, after recording the refusal, when ip may not
+// sign in to tenantID. Satisfied by *ipallow.Service.
+type AddressPolicy interface {
+	CheckSignIn(ctx context.Context, tenantID, userID uuid.UUID, ip, path string) error
+}
+
+// FactorPolicy reads a hosted-login session's sign-in and what second factor
+// an organisation still requires of it. Satisfied by *auth.Service.
+type FactorPolicy interface {
+	ResolveLoginSessionAt(ctx context.Context, raw string) (sessionID, userID uuid.UUID, signedInAt time.Time, err error)
+	LoginSessionFactorShortfall(ctx context.Context, loginSessionID, userID, tenantID uuid.UUID) error
+}
+
+// SetSignInRules sets the organisation rules an assertion is signed under, as
+// OIDC authorize applies them: its address rules and its second-factor
+// requirement. A nil one checks nothing.
+func (i *IdP) SetSignInRules(addresses AddressPolicy, factors FactorPolicy) {
+	i.addresses, i.factors = addresses, factors
 }
 
 // PlanGate reports whether a plan-gated boolean feature is included in the
@@ -939,6 +963,66 @@ func writeSSOError(w http.ResponseWriter, r *http.Request, err error) {
 	_, _ = w.Write([]byte(b.String())) // #nosec G705 -- every value on the page is HTML-escaped
 }
 
+// loginAfterParam marks an SSO request sent back from the sign-in it asked
+// for: a session signed in at or after the time it names (Unix seconds) was
+// signed in for this request. It decides only whether to refuse rather than
+// ask again, so it needn't be signed.
+const loginAfterParam = "login_after"
+
+// meetsSignInRules applies sp's organisation's sign-in rules to the hosted-login
+// session, as OIDC authorize does: an address its rules refuse is refused (and
+// recorded), and a second factor it requires that the session didn't meet sends
+// the browser to sign in again for this request, once; a fresh sign-in still
+// short of it is refused. It reports whether to go on, having answered if not.
+func (h *Handler) meetsSignInRules(w http.ResponseWriter, r *http.Request, sp *ServiceProvider, userID uuid.UUID) bool {
+	ctx := r.Context()
+	if h.IdP.addresses != nil {
+		if err := h.IdP.addresses.CheckSignIn(ctx, sp.TenantID, userID, httpx.ClientIP(r), "saml_idp"); err != nil {
+			writeSSOError(w, r, err)
+			return false
+		}
+	}
+	if h.IdP.factors == nil {
+		return true
+	}
+	c, err := r.Cookie(auth.LoginSessionCookie)
+	if err != nil {
+		writeSSOError(w, r, errs.ErrUnauthorized)
+		return false
+	}
+	sessionID, sessionUser, signedInAt, err := h.IdP.factors.ResolveLoginSessionAt(ctx, c.Value)
+	if err == nil && sessionUser != userID {
+		err = errs.ErrUnauthorized
+	}
+	if err == nil {
+		err = h.IdP.factors.LoginSessionFactorShortfall(ctx, sessionID, userID, sp.TenantID)
+	}
+	switch {
+	case err == nil:
+		return true
+	case !errors.Is(err, errs.ErrStepUpRequired) && !errors.Is(err, errs.ErrMFAEnrollmentRequired):
+		writeSSOError(w, r, err)
+	case signedInForRequest(r, signedInAt):
+		h.refuse(w, r, sp, userID, err, "second_factor_required")
+	default:
+		ret, err := ssoReturnURL(h.publicBase(r), r)
+		if err != nil {
+			writeSSOError(w, r, errs.ErrSAMLAuthnRequestInvalid)
+			return false
+		}
+		ret += "&" + loginAfterParam + "=" + strconv.FormatInt(time.Now().Unix(), 10)
+		http.Redirect(w, r, h.IdP.loginBaseURL+"/sign-in?prompt=login&return_to="+url.QueryEscape(ret), http.StatusFound)
+	}
+	return false
+}
+
+// signedInForRequest reports whether a sign-in at signedInAt was made for r:
+// r came back from the sign-in it asked for, and the sign-in is no older.
+func signedInForRequest(r *http.Request, signedInAt time.Time) bool {
+	la, err := strconv.ParseInt(r.FormValue(loginAfterParam), 10, 64)
+	return err == nil && !signedInAt.Before(time.Unix(la, 0))
+}
+
 // refuse answers a signed-in person sp won't sign in with err, and audits the
 // refusal with reason.
 func (h *Handler) refuse(w http.ResponseWriter, r *http.Request, sp *ServiceProvider, userID uuid.UUID, err error, reason string) {
@@ -1153,6 +1237,9 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 			h.refuse(w, r, sp, userID, errs.ErrSAMLSPNotAssigned, "not_assigned")
 			return
 		}
+	}
+	if !h.meetsSignInRules(w, r, sp, userID) {
+		return
 	}
 	subj, err := h.IdP.subjectFor(ctx, sp, who)
 	if errors.Is(err, errs.ErrSAMLNameIDUnavailable) {

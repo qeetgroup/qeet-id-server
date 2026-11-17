@@ -4,12 +4,15 @@ package social
 
 import (
 	"errors"
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/dbtest"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -29,8 +32,9 @@ func TestSocialSignInAdoptsOnlyAnAccountInTheTenant(t *testing.T) {
 	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE "user".users SET email_verified_at = NOW() WHERE id = $1`, account.ID); err != nil {
 		t.Fatal(err)
 	}
+	// GitHub, whose endpoints are fixed, vouches for an address in any tenant.
 	signIn := func(tenant uuid.UUID) (uuid.UUID, error) {
-		return svc.findOrCreateUser(ctx, tenant, "google", userInfo{Subject: uuid.NewString(), Email: account.Email, EmailVerified: true})
+		return svc.findOrCreateUser(ctx, tenant, "github", userInfo{Subject: uuid.NewString(), Email: account.Email, EmailVerified: true})
 	}
 
 	if got, err := signIn(home); err != nil || got != account.ID {
@@ -88,7 +92,7 @@ func TestSocialSignInAdoptsADirectoryProvisionedAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	signIn := func(email string) (uuid.UUID, error) {
-		return svc.findOrCreateUser(ctx, tenant, "google", userInfo{Subject: uuid.NewString(), Email: email, EmailVerified: true})
+		return svc.findOrCreateUser(ctx, tenant, "github", userInfo{Subject: uuid.NewString(), Email: email, EmailVerified: true})
 	}
 	if got, err := signIn(provisioned.Email); err != nil || got != provisioned.ID {
 		t.Errorf("a directory-provisioned account: %s, %v; want it adopted", got, err)
@@ -121,5 +125,126 @@ func TestSocialSignInIgnoresConnectionLinks(t *testing.T) {
 		if got == linked.ID || !errors.Is(err, errs.ErrSocialEmailMissing) {
 			t.Errorf("a social %q sign-in with a connection's subject = %s, %v; want no link found", provider, got, err)
 		}
+	}
+}
+
+// TestSocialProviderTrustChangeMustOutrankLinkedAdministrators checks that
+// pointing an organisation's OpenID Connect provider an owner is linked
+// through at another discovery URL, by setting it up again or by changing it,
+// is refused to someone who can change providers but doesn't outrank the
+// owner, as it could then sign in as them, while other changes aren't, and an
+// owner may make it.
+func TestSocialProviderTrustChangeMustOutrankLinkedAdministrators(t *testing.T) {
+	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
+	f := newSocialFixture(t)
+	h := &Handler{Service: f.svc, ActOnCheck: rbac.NewRepository(pool).CheckActOn}
+	tenant := dbtest.Tenant(t)
+	var ownerRole uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', true) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+		t.Fatal(err)
+	}
+	owner, editor := dbtest.User(t, tenant, tenant), dbtest.User(t, tenant, tenant)
+	dbtest.Assign(t, owner.ID, tenant, ownerRole)
+	dbtest.Assign(t, editor.ID, tenant, dbtest.Role(t, tenant, "connection.write", "connection.read"))
+	as := func(a dbtest.Account, method, path string, body any) (int, string) {
+		rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, tenant), h.Mount), method, path, body)
+		return rec.Code, rec.Body.String()
+	}
+	discovery := f.idp.URL + "/.well-known/openid-configuration"
+	provider := func(url string) map[string]string {
+		return map[string]string{"provider": "corp", "client_id": "qeet", "client_secret": "idp-client-secret", "discovery_url": url}
+	}
+	if status, body := as(owner, http.MethodPost, "/social/providers", provider(discovery)); status != http.StatusOK {
+		t.Fatalf("set the provider up: %d %s", status, body)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject) VALUES ($1, $2, 'corp', 'owner-subject')`, owner.ID, tenant); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := "https://idp.attacker.example/.well-known/openid-configuration"
+
+	for name, c := range map[string]struct {
+		method, path string
+		body         any
+	}{
+		"sets the provider up again elsewhere": {http.MethodPost, "/social/providers", provider(elsewhere)},
+		"changes its discovery URL":            {http.MethodPatch, "/social/providers/corp", map[string]string{"discovery_url": elsewhere}},
+	} {
+		if status, body := as(editor, c.method, c.path, c.body); status != http.StatusForbidden || !strings.Contains(body, errs.CodeRBACTrustChangeOutranks) {
+			t.Errorf("an editor %s: %d %s, want 403 %s", name, status, body, errs.CodeRBACTrustChangeOutranks)
+		}
+	}
+	for name, c := range map[string]struct {
+		method, path string
+		body         any
+	}{
+		"saves it unchanged":  {http.MethodPost, "/social/providers", provider(discovery)},
+		"replaces its secret": {http.MethodPatch, "/social/providers/corp", map[string]any{"client_secret": "rotated-client-secret"}},
+	} {
+		if status, body := as(editor, c.method, c.path, c.body); status != http.StatusOK {
+			t.Errorf("an editor %s: %d %s, want 200", name, status, body)
+		}
+	}
+	if status, body := as(owner, http.MethodPatch, "/social/providers/corp", map[string]string{"discovery_url": f.idp.URL + "/v2/.well-known/openid-configuration"}); status != http.StatusOK {
+		t.Errorf("an owner changes its discovery URL: %d %s, want 200", status, body)
+	}
+}
+
+// TestUnlinkingAnOwnersSocialIdentityNeedsToOutrankThem checks that an
+// administrator who may unlink members' social sign-ins can't unlink an
+// owner's, nor that of a member holding a permission they don't, while an
+// owner can.
+func TestUnlinkingAnOwnersSocialIdentityNeedsToOutrankThem(t *testing.T) {
+	ctx, pool := dbtest.Context(t), dbtest.Pool(t)
+	f := newSocialFixture(t)
+	h := &Handler{Service: f.svc, ActOnCheck: rbac.NewRepository(pool).CheckActOn}
+	tenant := dbtest.Tenant(t)
+	var ownerRole uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO rbac.roles (tenant_id, name, is_system) VALUES ($1, 'owner', TRUE) RETURNING id`, tenant).Scan(&ownerRole); err != nil {
+		t.Fatal(err)
+	}
+	owner, otherOwner := dbtest.User(t, tenant), dbtest.User(t, tenant)
+	dbtest.Assign(t, owner.ID, tenant, ownerRole)
+	dbtest.Assign(t, otherOwner.ID, tenant, ownerRole)
+	admin := dbtest.User(t, tenant)
+	dbtest.Assign(t, admin.ID, tenant, dbtest.Role(t, tenant, "user.read", "user.write"))
+	billing := dbtest.User(t, tenant)
+	dbtest.Assign(t, billing.ID, tenant, dbtest.Role(t, tenant, "billing.write"))
+	member := dbtest.User(t, tenant, tenant)
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant.social_providers (tenant_id, provider, client_id, client_secret) VALUES ($1, 'google', 'id', 'secret')`, tenant); err != nil {
+		t.Fatal(err)
+	}
+	identity := func(a dbtest.Account) string {
+		t.Helper()
+		dbtest.SetPassword(t, a.ID, dbtest.Unique("Kx7mQ2vLp9Wz"))
+		var id uuid.UUID
+		if err := pool.QueryRow(ctx, `INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject) VALUES ($1, $2, 'google', $3) RETURNING id`,
+			a.ID, tenant, dbtest.Unique("subject")).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return "/social/identities/" + id.String()
+	}
+	unlink := func(as dbtest.Account, path string) (int, string) {
+		rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(as.ID, tenant), h.Mount), http.MethodDelete, path, nil)
+		return rec.Code, rec.Body.String()
+	}
+
+	owners := identity(owner)
+	if status, body := unlink(admin, owners); status != http.StatusForbidden || !strings.Contains(body, errs.CodeRBACTargetIsOwner) {
+		t.Errorf("an administrator unlinks an owner's sign-in: %d %s, want 403 %s", status, body, errs.CodeRBACTargetIsOwner)
+	}
+	if status, body := unlink(admin, identity(billing)); status != http.StatusForbidden || !strings.Contains(body, errs.CodeRBACTargetOutranks) {
+		t.Errorf("an administrator unlinks the sign-in of someone holding billing.write: %d %s, want 403 %s", status, body, errs.CodeRBACTargetOutranks)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM "user".external_identities WHERE user_id = ANY($1)`, []uuid.UUID{owner.ID, billing.ID}); n != 2 {
+		t.Errorf("%d of the outranking people's sign-ins left, want both", n)
+	}
+	if status, body := unlink(admin, identity(member)); status != http.StatusNoContent {
+		t.Errorf("an administrator unlinks a member's sign-in: %d %s, want 204", status, body)
+	}
+	if status, body := unlink(otherOwner, owners); status != http.StatusNoContent {
+		t.Errorf("an owner unlinks another owner's sign-in: %d %s, want 204", status, body)
+	}
+	if status, _ := unlink(admin, "/social/identities/"+uuid.NewString()); status != http.StatusNotFound {
+		t.Errorf("unlink an identity that doesn't exist: %d, want 404", status)
 	}
 }

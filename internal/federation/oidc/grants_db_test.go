@@ -153,6 +153,65 @@ func TestRefreshKeepsTheGrantsResource(t *testing.T) {
 	wantOAuthError(t, "refresh carrying a removed resource forward", err, "invalid_target")
 }
 
+// TestRefreshDropsScopesTheClientNoLongerHas checks that a refresh carries
+// forward only the granted scopes the application still registers, says so in
+// its scope, and keeps the narrower set for later refreshes; and that a grant
+// left with none of its scopes renews nothing.
+func TestRefreshDropsScopesTheClientNoLongerHas(t *testing.T) {
+	ctx := dbtest.Context(t)
+	issuer := dbtest.Issuer(t)
+	svc := NewService(dbtest.Pool(t), issuer)
+	tenant := dbtest.Tenant(t)
+	person := dbtest.User(t, tenant, tenant)
+	client, secret := registerClient(t, svc, tenant)
+	register := func(scopes ...string) {
+		t.Helper()
+		if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE auth.oidc_clients SET scopes = $2 WHERE client_id = $1`, client.ClientID, scopes); err != nil {
+			t.Fatal(err)
+		}
+	}
+	verifier, challenge, err := codes.URLToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, _, err := svc.Authorize(ctx, person.ID, client.ClientID, testRedirect, []string{"openid", "email"}, "n-1", challenge, "S256")
+	if err != nil {
+		t.Fatalf("authorize: %v", err)
+	}
+	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, testRedirect, verifier, "")
+	if err != nil {
+		t.Fatalf("exchange: %v", err)
+	}
+
+	register("openid", "profile")
+	refreshed, err := svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken, "")
+	if err != nil {
+		t.Fatalf("refresh after the application dropped email: %v", err)
+	}
+	claims, err := issuer.VerifyAccess(refreshed.AccessToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.Scope != "openid" || claims.Scope != "openid" || refreshed.IDToken == "" {
+		t.Errorf("refresh after the application dropped email: scope %q, token scope %q, id token %t; want openid only",
+			refreshed.Scope, claims.Scope, refreshed.IDToken != "")
+	}
+
+	// Registering email again doesn't bring it back without a new consent.
+	register("openid", "profile", "email")
+	again, err := svc.RefreshToken(ctx, client.ClientID, secret, refreshed.RefreshToken, "")
+	if err != nil {
+		t.Fatalf("second refresh: %v", err)
+	}
+	if again.Scope != "openid" {
+		t.Errorf("second refresh: scope %q, want openid", again.Scope)
+	}
+
+	register("profile")
+	_, err = svc.RefreshToken(ctx, client.ClientID, secret, again.RefreshToken, "")
+	wantOAuthError(t, "refresh of a grant none of whose scopes the application still registers", err, "invalid_scope")
+}
+
 // TestDevicePollingAuthenticatesConfidentialClients checks that collecting a
 // device grant's tokens needs a confidential client's secret, and a public
 // client's device_code alone.
@@ -209,7 +268,7 @@ func TestBackchannelPollingAuthenticatesTheClient(t *testing.T) {
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending requests: %+v, %v", pending, err)
 	}
-	if err := svc.DecideBackchannel(ctx, user.ID, pending[0].ID, true); err != nil {
+	if err := svc.DecideBackchannel(ctx, user.ID, uuid.Nil, pending[0].ID, true, ""); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 	for name, presented := range map[string]string{"no secret": "", "a wrong secret": "wrong-secret"} {
@@ -420,5 +479,49 @@ func TestClientRegistrationPlanCapWithOneConnection(t *testing.T) {
 				t.Errorf("POST %s %v at the cap = %d %s, want 402", path, body, rec.Code, rec.Body.String())
 			}
 		}
+	}
+}
+
+// TestCodeRedemptionRefusedAfterRemoval checks that an authorization code is
+// re-judged when it is redeemed: once its person has left the application's
+// organisation, or the application no longer has the authorization_code
+// grant, it buys no token, and it is spent.
+func TestCodeRedemptionRefusedAfterRemoval(t *testing.T) {
+	ctx := dbtest.Context(t)
+	svc := NewService(dbtest.Pool(t), dbtest.Issuer(t))
+	tenant := dbtest.Tenant(t)
+	client, secret := registerClient(t, svc, tenant)
+	code := func(userID uuid.UUID) (string, string) {
+		t.Helper()
+		verifier, challenge, err := codes.URLToken()
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, _, err := svc.Authorize(ctx, userID, client.ClientID, testRedirect, []string{"openid"}, "n-1", challenge, "S256")
+		if err != nil {
+			t.Fatalf("authorize: %v", err)
+		}
+		return c, verifier
+	}
+
+	leaver := dbtest.User(t, dbtest.Tenant(t), tenant)
+	c, verifier := code(leaver.ID)
+	if _, err := dbtest.Pool(t).Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2`, leaver.ID, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, c, testRedirect, verifier, ""); !errors.Is(err, errs.ErrOIDCUserTenantMismatch) {
+		t.Errorf("redeem the code of someone removed since: %v, want %v", err, errs.ErrOIDCUserTenantMismatch)
+	}
+	if n := dbtest.Count(t, `SELECT count(*) FROM auth.oidc_authorization_codes WHERE code_hash = $1 AND used_at IS NOT NULL`, codes.Hash(c)); n != 1 {
+		t.Error("the refused code was not spent")
+	}
+
+	member := dbtest.User(t, tenant, tenant)
+	c, verifier = code(member.ID)
+	if _, err := dbtest.Pool(t).Exec(ctx, `UPDATE auth.oidc_clients SET grant_types = '{refresh_token}' WHERE client_id = $1`, client.ClientID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, c, testRedirect, verifier, ""); !errors.Is(err, errs.ErrOIDCGrantTypeNotAllowed) {
+		t.Errorf("redeem a code after the application lost the authorization_code grant: %v, want %v", err, errs.ErrOIDCGrantTypeNotAllowed)
 	}
 }

@@ -88,7 +88,7 @@ func TestExportsCoverEveryPart(t *testing.T) {
 	signedIn(t, other, a.ID, "auth.login_succeeded")
 
 	svc := NewService(dbtest.Pool(t), 0)
-	h := &Handler{Service: svc}
+	h := requests(t, svc)
 	var own exported
 	rec := dbtest.Do(t, dbtest.Serve(dbtest.Principal(a.ID, tenant), h.Mount), http.MethodPost, "/account/export", nil)
 	dbtest.Decode(t, rec, &own)
@@ -150,7 +150,7 @@ func TestExportPayloadExpires(t *testing.T) {
 	admin := dbtest.User(t, tenant, tenant)
 	old, fresh, gone := account(t, tenant), account(t, tenant), account(t, tenant)
 	svc := NewService(pool, 0)
-	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), (&Handler{Service: svc}).Mount)
+	asAdmin := dbtest.Serve(dbtest.Principal(admin.ID, tenant), requests(t, svc).Mount)
 	queue := func(userID uuid.UUID) uuid.UUID {
 		var req ExportRequest
 		dbtest.Decode(t, dbtest.Do(t, asAdmin, http.MethodPost, "/gdpr/export", map[string]any{"user_id": userID}), &req)

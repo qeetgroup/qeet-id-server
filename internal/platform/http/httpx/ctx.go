@@ -64,6 +64,16 @@ func PrincipalFromCtx(ctx context.Context) *Principal {
 	return p
 }
 
+// PrincipalUserID returns the person ctx's principal is or acts for: uuid.Nil
+// without a principal, or for one acting for no one. What a request creates
+// records it as its creator.
+func PrincipalUserID(ctx context.Context) uuid.UUID {
+	if p := PrincipalFromCtx(ctx); p != nil && p.UserID != nil {
+		return *p.UserID
+	}
+	return uuid.Nil
+}
+
 // RequestID returns the ID chi's RequestID middleware gave r, or "".
 func RequestID(r *http.Request) string {
 	return middleware.GetReqID(r.Context())
@@ -87,8 +97,9 @@ func SetTrustedProxyHops(n int) {
 
 // ClientIP returns the client's IP for rate limiting, audit and logs: the
 // address a keyed relay names (see SetRelayKeys), else the X-Forwarded-For entry
-// just left of those our trusted proxies appended (anything further left is
-// caller-chosen), else the transport peer. X-Real-IP is never trusted.
+// the outermost of our trusted proxies appended, the one TRUSTED_PROXY_HOPS from
+// the right (anything further left is caller-chosen), else the transport peer.
+// X-Real-IP is never trusted.
 func ClientIP(r *http.Request) string {
 	if ip := relayedClientIP(r); ip != "" {
 		return ip
@@ -99,7 +110,7 @@ func ClientIP(r *http.Request) string {
 		if v := strings.Join(r.Header.Values("X-Forwarded-For"), ","); v != "" {
 			parts := strings.Split(v, ",")
 			// The right-most `hops` entries were appended by our proxies; the
-			// client is the entry immediately to their left.
+			// left-most of them, from the outermost, is the client it saw.
 			if idx := len(parts) - hops; idx >= 0 && idx < len(parts) {
 				if ip := strings.TrimSpace(parts[idx]); ip != "" {
 					return normalizeIP(ip)

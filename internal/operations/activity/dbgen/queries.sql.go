@@ -26,17 +26,17 @@ SELECT count(*)::bigint FROM (
       AND ($6::timestamptz IS NULL OR e.created_at <= $6)
       AND ($7::text IS NULL OR e.search_vector @@ audit.search_query($7)
        OR e.actor_user_id IN (SELECT su.id FROM "user".users su
-           WHERE (su.email ILIKE audit.like_escape($7::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape($7::text) || '%')
+           WHERE (su.email ILIKE $8::text || '%' OR su.display_name ILIKE '%' || $8::text || '%')
              AND (su.tenant_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $1))))
-      AND ($8::text[] IS NULL OR e.resource_type = ANY($8))
-      AND ($9::uuid IS NULL OR e.resource_id = $9)
-      AND ($10::inet IS NULL OR e.ip = $10)
-      AND ($11::text[] IS NULL OR audit.activity_category(e.action) = ANY($11))
-      AND ($12::text[] IS NULL OR audit.activity_severity(e.action) = ANY($12))
-      AND ($13::text IS NULL
+      AND ($9::text[] IS NULL OR e.resource_type = ANY($9))
+      AND ($10::uuid IS NULL OR e.resource_id = $10)
+      AND ($11::inet IS NULL OR e.ip = $11)
+      AND ($12::text[] IS NULL OR audit.activity_category(e.action) = ANY($12))
+      AND ($13::text[] IS NULL OR audit.activity_severity(e.action) = ANY($13))
+      AND ($14::text IS NULL
            OR array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], audit.activity_severity(e.action))
-              >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $13::text))
-    LIMIT $14
+              >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $14::text))
+    LIMIT $15
 ) matched
 `
 
@@ -48,6 +48,7 @@ type CountActivityHistoryParams struct {
 	FromTs        pgtype.Timestamptz
 	ToTs          pgtype.Timestamptz
 	Q             *string
+	QLike         *string
 	ResourceTypes []string
 	ResourceID    pgtype.UUID
 	Ip            *netip.Addr
@@ -68,6 +69,7 @@ func (q *Queries) CountActivityHistory(ctx context.Context, arg CountActivityHis
 		arg.FromTs,
 		arg.ToTs,
 		arg.Q,
+		arg.QLike,
 		arg.ResourceTypes,
 		arg.ResourceID,
 		arg.Ip,
@@ -152,19 +154,19 @@ WHERE e.tenant_id = $1
   AND ($6::timestamptz IS NULL OR e.created_at <= $6)
   AND ($7::text IS NULL OR e.search_vector @@ audit.search_query($7)
        OR e.actor_user_id IN (SELECT su.id FROM "user".users su
-           WHERE (su.email ILIKE audit.like_escape($7::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape($7::text) || '%')
+           WHERE (su.email ILIKE $8::text || '%' OR su.display_name ILIKE '%' || $8::text || '%')
              AND (su.tenant_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $1))))
-  AND ($8::text[] IS NULL OR e.resource_type = ANY($8))
-  AND ($9::uuid IS NULL OR e.resource_id = $9)
-  AND ($10::inet IS NULL OR e.ip = $10)
-  AND ($11::text[] IS NULL OR audit.activity_category(e.action) = ANY($11))
-  AND ($12::text[] IS NULL OR audit.activity_severity(e.action) = ANY($12))
-  AND ($13::text IS NULL
+  AND ($9::text[] IS NULL OR e.resource_type = ANY($9))
+  AND ($10::uuid IS NULL OR e.resource_id = $10)
+  AND ($11::inet IS NULL OR e.ip = $11)
+  AND ($12::text[] IS NULL OR audit.activity_category(e.action) = ANY($12))
+  AND ($13::text[] IS NULL OR audit.activity_severity(e.action) = ANY($13))
+  AND ($14::text IS NULL
        OR array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], audit.activity_severity(e.action))
-          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $13::text))
-  AND ($14::timestamptz IS NULL OR e.created_at < $14 OR (e.created_at = $14 AND e.id < $15::uuid))
+          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $14::text))
+  AND ($15::timestamptz IS NULL OR e.created_at < $15 OR (e.created_at = $15 AND e.id < $16::uuid))
 ORDER BY e.created_at DESC, e.id DESC
-LIMIT $16
+LIMIT $17
 `
 
 type ListActivityHistoryParams struct {
@@ -175,6 +177,7 @@ type ListActivityHistoryParams struct {
 	FromTs        pgtype.Timestamptz
 	ToTs          pgtype.Timestamptz
 	Q             *string
+	QLike         *string
 	ResourceTypes []string
 	ResourceID    pgtype.UUID
 	Ip            *netip.Addr
@@ -233,6 +236,7 @@ func (q *Queries) ListActivityHistory(ctx context.Context, arg ListActivityHisto
 		arg.FromTs,
 		arg.ToTs,
 		arg.Q,
+		arg.QLike,
 		arg.ResourceTypes,
 		arg.ResourceID,
 		arg.Ip,
@@ -524,16 +528,16 @@ WHERE audit.events.tenant_id = $1
   AND ($6::timestamptz IS NULL OR created_at <= $6)
   AND ($7::text IS NULL OR search_vector @@ audit.search_query($7)
        OR actor_user_id IN (SELECT su.id FROM "user".users su
-           WHERE (su.email ILIKE audit.like_escape($7::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape($7::text) || '%')
+           WHERE (su.email ILIKE $8::text || '%' OR su.display_name ILIKE '%' || $8::text || '%')
              AND (su.tenant_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $1))))
-  AND ($8::text[] IS NULL OR resource_type = ANY($8))
-  AND ($9::uuid IS NULL OR resource_id = $9)
-  AND ($10::inet IS NULL OR ip = $10)
-  AND ($11::text[] IS NULL OR audit.activity_category(action) = ANY($11))
-  AND ($12::text[] IS NULL OR audit.activity_severity(action) = ANY($12))
-  AND ($13::text IS NULL
+  AND ($9::text[] IS NULL OR resource_type = ANY($9))
+  AND ($10::uuid IS NULL OR resource_id = $10)
+  AND ($11::inet IS NULL OR ip = $11)
+  AND ($12::text[] IS NULL OR audit.activity_category(action) = ANY($12))
+  AND ($13::text[] IS NULL OR audit.activity_severity(action) = ANY($13))
+  AND ($14::text IS NULL
        OR array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], audit.activity_severity(action))
-          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $13::text))
+          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $14::text))
 GROUP BY action
 `
 
@@ -545,6 +549,7 @@ type SummarizeActivityByActionParams struct {
 	FromTs        pgtype.Timestamptz
 	ToTs          pgtype.Timestamptz
 	Q             *string
+	QLike         *string
 	ResourceTypes []string
 	ResourceID    pgtype.UUID
 	Ip            *netip.Addr
@@ -571,6 +576,7 @@ func (q *Queries) SummarizeActivityByAction(ctx context.Context, arg SummarizeAc
 		arg.FromTs,
 		arg.ToTs,
 		arg.Q,
+		arg.QLike,
 		arg.ResourceTypes,
 		arg.ResourceID,
 		arg.Ip,
@@ -609,16 +615,16 @@ WHERE audit.events.tenant_id = $2
   AND ($7::timestamptz IS NULL OR created_at <= $7)
   AND ($8::text IS NULL OR search_vector @@ audit.search_query($8)
        OR actor_user_id IN (SELECT su.id FROM "user".users su
-           WHERE (su.email ILIKE audit.like_escape($8::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape($8::text) || '%')
+           WHERE (su.email ILIKE $9::text || '%' OR su.display_name ILIKE '%' || $9::text || '%')
              AND (su.tenant_id = $2 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $2))))
-  AND ($9::text[] IS NULL OR resource_type = ANY($9))
-  AND ($10::uuid IS NULL OR resource_id = $10)
-  AND ($11::inet IS NULL OR ip = $11)
-  AND ($12::text[] IS NULL OR audit.activity_category(action) = ANY($12))
-  AND ($13::text[] IS NULL OR audit.activity_severity(action) = ANY($13))
-  AND ($14::text IS NULL
+  AND ($10::text[] IS NULL OR resource_type = ANY($10))
+  AND ($11::uuid IS NULL OR resource_id = $11)
+  AND ($12::inet IS NULL OR ip = $12)
+  AND ($13::text[] IS NULL OR audit.activity_category(action) = ANY($13))
+  AND ($14::text[] IS NULL OR audit.activity_severity(action) = ANY($14))
+  AND ($15::text IS NULL
        OR array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], audit.activity_severity(action))
-          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $14::text))
+          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $15::text))
 GROUP BY bucket, action
 ORDER BY bucket ASC
 `
@@ -632,6 +638,7 @@ type SummarizeActivityTimeSeriesParams struct {
 	FromTs        pgtype.Timestamptz
 	ToTs          pgtype.Timestamptz
 	Q             *string
+	QLike         *string
 	ResourceTypes []string
 	ResourceID    pgtype.UUID
 	Ip            *netip.Addr
@@ -660,6 +667,7 @@ func (q *Queries) SummarizeActivityTimeSeries(ctx context.Context, arg Summarize
 		arg.FromTs,
 		arg.ToTs,
 		arg.Q,
+		arg.QLike,
 		arg.ResourceTypes,
 		arg.ResourceID,
 		arg.Ip,
@@ -700,16 +708,16 @@ WHERE audit.events.tenant_id = $1
   AND ($6::timestamptz IS NULL OR created_at <= $6)
   AND ($7::text IS NULL OR search_vector @@ audit.search_query($7)
        OR actor_user_id IN (SELECT su.id FROM "user".users su
-           WHERE (su.email ILIKE audit.like_escape($7::text) || '%' OR su.display_name ILIKE '%' || audit.like_escape($7::text) || '%')
+           WHERE (su.email ILIKE $8::text || '%' OR su.display_name ILIKE '%' || $8::text || '%')
              AND (su.tenant_id = $1 OR su.id IN (SELECT sr.user_id FROM rbac.user_roles sr WHERE sr.tenant_id = $1))))
-  AND ($8::text[] IS NULL OR resource_type = ANY($8))
-  AND ($9::uuid IS NULL OR resource_id = $9)
-  AND ($10::inet IS NULL OR ip = $10)
-  AND ($11::text[] IS NULL OR audit.activity_category(action) = ANY($11))
-  AND ($12::text[] IS NULL OR audit.activity_severity(action) = ANY($12))
-  AND ($13::text IS NULL
+  AND ($9::text[] IS NULL OR resource_type = ANY($9))
+  AND ($10::uuid IS NULL OR resource_id = $10)
+  AND ($11::inet IS NULL OR ip = $11)
+  AND ($12::text[] IS NULL OR audit.activity_category(action) = ANY($12))
+  AND ($13::text[] IS NULL OR audit.activity_severity(action) = ANY($13))
+  AND ($14::text IS NULL
        OR array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], audit.activity_severity(action))
-          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $13::text))
+          >= array_position(ARRAY['info', 'success', 'warning', 'error', 'critical'], $14::text))
 `
 
 type SummarizeActivityTotalsParams struct {
@@ -720,6 +728,7 @@ type SummarizeActivityTotalsParams struct {
 	FromTs        pgtype.Timestamptz
 	ToTs          pgtype.Timestamptz
 	Q             *string
+	QLike         *string
 	ResourceTypes []string
 	ResourceID    pgtype.UUID
 	Ip            *netip.Addr
@@ -749,6 +758,7 @@ func (q *Queries) SummarizeActivityTotals(ctx context.Context, arg SummarizeActi
 		arg.FromTs,
 		arg.ToTs,
 		arg.Q,
+		arg.QLike,
 		arg.ResourceTypes,
 		arg.ResourceID,
 		arg.Ip,

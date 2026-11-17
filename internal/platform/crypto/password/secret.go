@@ -1,6 +1,7 @@
 package password
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
@@ -23,11 +24,12 @@ func HashSecret(raw string) string {
 
 // VerifySecret reports whether raw is the machine secret hash was made from,
 // and whether hash is an Argon2id one from before, to replace with
-// HashSecret(raw) now that raw is known to be right.
-func VerifySecret(hash, raw string) (ok, rehash bool) {
+// HashSecret(raw) now that raw is known to be right. An Argon2id one waits for
+// the hasher as a password does (VerifyWithin): ErrHasherBusy when it is full.
+func VerifySecret(ctx context.Context, hash, raw string) (ok, rehash bool, err error) {
 	if strings.HasPrefix(hash, secretPrefix) {
-		return subtle.ConstantTimeCompare([]byte(hash), []byte(HashSecret(raw))) == 1, false
+		return subtle.ConstantTimeCompare([]byte(hash), []byte(HashSecret(raw))) == 1, false, nil
 	}
-	ok = Verify(hash, raw)
-	return ok, ok
+	ok, err = VerifyWithin(ctx, hash, raw)
+	return ok, ok, err
 }

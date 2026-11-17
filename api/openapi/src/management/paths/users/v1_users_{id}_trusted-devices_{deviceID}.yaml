@@ -4,7 +4,10 @@ delete:
   description: >-
     Forgets one device a member has remembered in the caller's organisation.
     Requires the user.credentials permission; 404 for a device that is not
-    theirs there. Audited as auth.trusted_device_revoked.
+    theirs there. Audited as auth.trusted_device_revoked. Refused with 403
+    rbac.target_is_owner when the member is an owner and the caller isn't, and
+    403 rbac.target_outranks_caller when they hold a permission the caller
+    doesn't.
   tags:
     - Users
   parameters:

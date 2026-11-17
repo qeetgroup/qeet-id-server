@@ -12,8 +12,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -77,6 +79,8 @@ func (s *Service) magicLinkAllowed(ctx context.Context, req MagicLinkRequest) bo
 // alike either way. It returns ErrTooManyRequests past the bounds,
 // ErrAuthMethodDisabled when the asking organisation has magic links off, and
 // ErrAuthSSORequired for an address whose organisation requires single sign-on.
+// The account's own organisation decides whether a link is sent and how long it
+// lasts, whichever organisation asked.
 func (s *Service) RequestMagicLink(ctx context.Context, req MagicLinkRequest) error {
 	req.Email = strings.TrimSpace(req.Email)
 	if req.Email == "" {
@@ -84,10 +88,8 @@ func (s *Service) RequestMagicLink(ctx context.Context, req MagicLinkRequest) er
 	}
 	// An organisation that has magic links off refuses before anything is
 	// counted; its setting is no secret (its sign-in page omits the option).
-	var ttl time.Duration
 	if req.TenantID != uuid.Nil {
-		var err error
-		if ttl, err = s.magicLinkTTL(ctx, req.TenantID); err != nil {
+		if _, err := s.magicLinkTTL(ctx, req.TenantID); err != nil {
 			return err
 		}
 	}
@@ -107,23 +109,30 @@ func (s *Service) RequestMagicLink(ctx context.Context, req MagicLinkRequest) er
 		return err
 	}
 	s.afterAnswer(ctx, "send a magic link", func(ctx context.Context) error {
-		return s.sendMagicLink(ctx, req, account, ttl)
+		return s.sendMagicLink(ctx, req, account)
 	})
 	return nil
 }
 
-// sendMagicLink stores and emails a link for account, requested by req; ttl
-// is the asking organisation's link lifetime (zero for a console request,
-// which the account's own organisation decides).
-func (s *Service) sendMagicLink(ctx context.Context, req MagicLinkRequest, account dbgen.GetMagicLinkAccountRow, ttl time.Duration) error {
-	if req.TenantID == uuid.Nil {
-		// From the console: the account's own organisation decides.
-		var err error
-		if ttl, err = s.magicLinkTTL(ctx, uuid.UUID(account.TenantID.Bytes)); err != nil {
-			if errors.Is(err, errs.ErrAuthMethodDisabled) {
-				return nil
-			}
+// sendMagicLink stores and emails a link for account, requested by req. The
+// asking organisation brands the message and sees the request only when the
+// account belongs to it; to anyone else's account it is the console's link.
+func (s *Service) sendMagicLink(ctx context.Context, req MagicLinkRequest, account dbgen.GetMagicLinkAccountRow) error {
+	home := uuid.UUID(account.TenantID.Bytes)
+	ttl, err := s.magicLinkTTL(ctx, home)
+	if errors.Is(err, errs.ErrAuthMethodDisabled) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if req.TenantID != uuid.Nil {
+		belongs, err := s.q.AccountBelongsTo(ctx, dbgen.AccountBelongsToParams{UserID: account.ID, TenantID: req.TenantID})
+		if err != nil {
 			return err
+		}
+		if !belongs {
+			req.TenantID = uuid.Nil
 		}
 	}
 	app := MagicLinkConsole
@@ -177,16 +186,7 @@ func (s *Service) sendMagicLink(ctx context.Context, req MagicLinkRequest, accou
 	}); err != nil {
 		return err
 	}
-	// Recorded under the organisation that asked, or the account's own.
-	org := req.TenantID
-	if org == uuid.Nil && account.TenantID.Valid {
-		org = account.TenantID.Bytes
-	}
-	var orgOf *uuid.UUID
-	if org != uuid.Nil {
-		orgOf = &org
-	}
-	s.recordRequest(ctx, "auth.magic_link_requested", account.ID, orgOf, AuditCtx{IP: req.Caller, UserAgent: req.UserAgent}, map[string]any{"app": app})
+	s.recordRequest(ctx, "auth.magic_link_requested", account.ID, []uuid.UUID{home, req.TenantID}, AuditCtx{IP: req.Caller, UserAgent: req.UserAgent}, map[string]any{"app": app})
 	return nil
 }
 
@@ -256,15 +256,10 @@ func (s *Service) consumeMagicLink(ctx context.Context, rawToken, app string, ac
 	if err != nil {
 		return nil, err
 	}
-	// A link issued before its organisation switched magic links off stops
-	// working too; it stays unused. A console link answers to the account's
-	// own organisation. The policy is read before the transaction, and the
-	// link checked again under lock inside it.
-	policyTenant := uuid.UUID(ml.TenantID.Bytes)
-	if !ml.TenantID.Valid {
-		policyTenant = uuid.UUID(account.TenantID.Bytes)
-	}
-	if _, err := s.magicLinkTTL(ctx, policyTenant); err != nil {
+	// A link issued before the account's organisation switched magic links off
+	// stops working too; it stays unused. The policy is read before the
+	// transaction, and the link checked again under lock inside it.
+	if _, err := s.magicLinkTTL(ctx, uuid.UUID(account.TenantID.Bytes)); err != nil {
 		return nil, err
 	}
 	// So does a link to an address whose organisation now requires single
@@ -285,33 +280,43 @@ func (s *Service) consumeMagicLink(ctx context.Context, rawToken, app string, ac
 		return nil, err
 	}
 	res := &MagicLinkResult{UserID: account.ID}
+	var home *uuid.UUID
 	if account.TenantID.Valid {
 		res.TenantID = uuid.UUID(account.TenantID.Bytes)
+		home = &res.TenantID
+	}
+	// The link proves the address as a reset does. Its first proof leaves
+	// nothing set up before it, password included, and no session open.
+	proved, err := proveAddress(ctx, tx, account.ID, home, "magic_link", false, ac)
+	if err != nil {
+		return nil, err
+	}
+	if proved {
+		if _, err := auth.EndSignIns(ctx, tx, s.signals, account.ID, sessionsignal.ReasonAllSessionsRevoked); err != nil {
+			return nil, err
+		}
 	}
 	if ml.ReturnTo != nil {
 		res.ReturnTo = *ml.ReturnTo
 	}
-	var auditTenant *uuid.UUID
-	if ml.TenantID.Valid {
-		t := uuid.UUID(ml.TenantID.Bytes)
-		auditTenant = &t
-	} else if account.TenantID.Valid {
-		auditTenant = &res.TenantID
-	}
+	// Recorded for the account's organisation, and for the one that asked,
+	// which the link names only when the account belongs to it.
 	target := account.ID
-	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     auditTenant,
-		ActorUserID:  &target,
-		ActorType:    "system",
-		Action:       "auth.magic_link_consumed",
-		ResourceType: "user",
-		ResourceID:   &target,
-		IP:           ac.IP,
-		UserAgent:    ac.UserAgent,
-		RequestID:    ac.RequestID,
-		Metadata:     map[string]any{"app": ml.App},
-	}); err != nil {
-		return nil, err
+	for _, org := range auditOrgs([]uuid.UUID{res.TenantID, uuid.UUID(ml.TenantID.Bytes)}) {
+		if err := audit.Record(ctx, tx, audit.Event{
+			TenantID:     org,
+			ActorUserID:  &target,
+			ActorType:    "system",
+			Action:       "auth.magic_link_consumed",
+			ResourceType: "user",
+			ResourceID:   &target,
+			IP:           ac.IP,
+			UserAgent:    ac.UserAgent,
+			RequestID:    ac.RequestID,
+			Metadata:     map[string]any{"app": ml.App},
+		}); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err

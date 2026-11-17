@@ -98,7 +98,7 @@ var errIdPGroupInvalid = errs.ErrValidationFailed.WithFields([]errs.FieldError{{
 // errs.ErrGroupMappingPrivileged: sign-in never puts anyone in such a group.
 func (s *Service) checkGroup(ctx context.Context, tenantID, groupID uuid.UUID) (string, error) {
 	g, err := s.q.GroupPrivileged(ctx, dbgen.GroupPrivilegedParams{
-		TenantID: tenantID, GroupID: groupID, AdminPermissions: identitylink.AdminPermissions(),
+		TenantID: tenantID, GroupID: groupID, MemberPermissions: identitylink.MemberPermissions(),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", errs.ErrGroupNotFound
